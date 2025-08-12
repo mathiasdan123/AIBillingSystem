@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Landing Page</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 40px;
+            text-align: center;
+            background: #f9fafb;
+        }
+        h1 {
+            color: #111827;
+            font-size: 2.5rem;
+            margin: 0 0 16px 0;
+        }
+        p {
+            color: #6b7280;
+            font-size: 1.1rem;
+            margin-bottom: 40px;
+        }
+        .button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .button:hover {
+            transform: translateY(-1px);
+        }
+        .button-primary {
+            background: #3b82f6;
+        }
+        .button-primary:hover {
+            background: #2563eb;
+        }
+        .button-success {
+            background: #10b981;
+        }
+        .button-success:hover {
+            background: #059669;
+        }
+        .button-warning {
+            background: #f59e0b;
+        }
+        .button-warning:hover {
+            background: #d97706;
+        }
+        .debug {
+            margin-top: 30px;
+            font-size: 12px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <h1>TherapyBill AI</h1>
+    <p>AI-powered billing for occupational therapy practices</p>
+    
+    <div>
+        <button class="button button-primary" onclick="navigateToSoap()">
+            Demo Access (SOAP Notes)
+        </button>
+        
+        <button class="button button-success" onclick="navigateToIntake()">
+            Complete Patient Intake
+        </button>
+        
+        <button class="button button-warning" onclick="navigateToDataUpload()">
+            Upload Historical Data
+        </button>
+    </div>
+    
+    <div class="debug">
+        Direct HTML navigation test. Click buttons to navigate.
+    </div>
+
+    <script>
+        function navigateToSoap() {
+            console.log('SOAP button clicked');
+            localStorage.setItem('dev-bypass', 'true');
+            window.location.href = '/soap-notes';
+        }
+        
+        function navigateToIntake() {
+            console.log('Intake button clicked');
+            window.location.href = '/intake';
+        }
+        
+        function navigateToDataUpload() {
+            console.log('Data upload button clicked');
+            window.location.href = '/data-upload';
+        }
+        
+        // Test if JavaScript is working
+        console.log('Test landing page loaded');
+        
+        // Add click event listeners as backup
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, adding backup event listeners');
+        });
+    </script>
+</body>
+</html>
