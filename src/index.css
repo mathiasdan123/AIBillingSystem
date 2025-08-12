@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(0, 0%, 100%);
+  --foreground: hsl(20, 14.3%, 4.1%);
+  --muted: hsl(60, 4.8%, 95.9%);
+  --muted-foreground: hsl(25, 5.3%, 44.7%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(20, 14.3%, 4.1%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(20, 14.3%, 4.1%);
+  --border: hsl(20, 5.9%, 90%);
+  --input: hsl(20, 5.9%, 90%);
+  --primary: hsl(207, 90%, 54%);
+  --primary-foreground: hsl(211, 100%, 99%);
+  --secondary: hsl(60, 4.8%, 95.9%);
+  --secondary-foreground: hsl(24, 9.8%, 10%);
+  --accent: hsl(60, 4.8%, 95.9%);
+  --accent-foreground: hsl(24, 9.8%, 10%);
+  --destructive: hsl(0, 84.2%, 60.2%);
+  --destructive-foreground: hsl(60, 9.1%, 97.8%);
+  --ring: hsl(20, 14.3%, 4.1%);
+  --radius: 0.5rem;
+  
+  /* Medical Theme Colors */
+  --medical-blue-50: hsl(214, 100%, 97%);
+  --medical-blue-100: hsl(214, 95%, 93%);
+  --medical-blue-500: hsl(207, 90%, 54%);
+  --medical-blue-600: hsl(207, 90%, 48%);
+  --medical-blue-700: hsl(207, 90%, 42%);
+  
+  --healthcare-green-50: hsl(138, 62%, 97%);
+  --healthcare-green-100: hsl(138, 62%, 93%);
+  --healthcare-green-500: hsl(142, 71%, 45%);
+  --healthcare-green-600: hsl(142, 71%, 40%);
+  --healthcare-green-700: hsl(142, 71%, 35%);
+}
+
+.dark {
+  --background: hsl(240, 10%, 3.9%);
+  --foreground: hsl(0, 0%, 98%);
+  --muted: hsl(240, 3.7%, 15.9%);
+  --muted-foreground: hsl(240, 5%, 64.9%);
+  --popover: hsl(240, 10%, 3.9%);
+  --popover-foreground: hsl(0, 0%, 98%);
+  --card: hsl(240, 10%, 3.9%);
+  --card-foreground: hsl(0, 0%, 98%);
+  --border: hsl(240, 3.7%, 15.9%);
+  --input: hsl(240, 3.7%, 15.9%);
+  --primary: hsl(207, 90%, 54%);
+  --primary-foreground: hsl(211, 100%, 99%);
+  --secondary: hsl(240, 3.7%, 15.9%);
+  --secondary-foreground: hsl(0, 0%, 98%);
+  --accent: hsl(240, 3.7%, 15.9%);
+  --accent-foreground: hsl(0, 0%, 98%);
+  --destructive: hsl(0, 62.8%, 30.6%);
+  --destructive-foreground: hsl(0, 0%, 98%);
+  --ring: hsl(240, 4.9%, 83.9%);
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .medical-blue-50 {
+    background-color: var(--medical-blue-50);
+  }
+  
+  .medical-blue-100 {
+    background-color: var(--medical-blue-100);
+  }
+  
+  .medical-blue-500 {
+    background-color: var(--medical-blue-500);
+  }
+  
+  .medical-blue-600 {
+    background-color: var(--medical-blue-600);
+  }
+  
+  .medical-blue-700 {
+    background-color: var(--medical-blue-700);
+  }
+  
+  .healthcare-green-50 {
+    background-color: var(--healthcare-green-50);
+  }
+  
+  .healthcare-green-100 {
+    background-color: var(--healthcare-green-100);
+  }
+  
+  .healthcare-green-500 {
+    background-color: var(--healthcare-green-500);
+  }
+  
+  .healthcare-green-600 {
+    background-color: var(--healthcare-green-600);
+  }
+  
+  .healthcare-green-700 {
+    background-color: var(--healthcare-green-700);
+  }
+  
+  .text-medical-blue-500 {
+    color: var(--medical-blue-500);
+  }
+  
+  .text-medical-blue-600 {
+    color: var(--medical-blue-600);
+  }
+  
+  .text-healthcare-green-500 {
+    color: var(--healthcare-green-500);
+  }
+  
+  .text-healthcare-green-600 {
+    color: var(--healthcare-green-600);
+  }
+  
+  .border-medical-blue-500 {
+    border-color: var(--medical-blue-500);
+  }
+  
+  .border-healthcare-green-500 {
+    border-color: var(--healthcare-green-500);
+  }
+  
+  .hover\:bg-medical-blue-50:hover {
+    background-color: var(--medical-blue-50);
+  }
+  
+  .hover\:bg-medical-blue-600:hover {
+    background-color: var(--medical-blue-600);
+  }
+  
+  .hover\:bg-healthcare-green-50:hover {
+    background-color: var(--healthcare-green-50);
+  }
+  
+  .hover\:text-medical-blue-500:hover {
+    color: var(--medical-blue-500);
+  }
+  
+  .hover\:text-medical-blue-600:hover {
+    color: var(--medical-blue-600);
+  }
+}
