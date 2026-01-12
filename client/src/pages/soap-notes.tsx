@@ -329,7 +329,7 @@ export default function SoapNotes() {
   // Show loading state while data is being fetched
   if (patientsLoading || cptCodesLoading || soapNotesLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 md:ml-64">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 pt-20 md:pt-0 md:ml-64">
         <div className="p-6">
           <div className="max-w-7xl mx-auto">
             <div className="flex items-center justify-center h-64">
@@ -349,7 +349,7 @@ export default function SoapNotes() {
   // If no patients exist yet, show a helpful message
   if (!patients || patients.length === 0) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 md:ml-64">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 pt-20 md:pt-0 md:ml-64">
         <div className="p-6">
           <div className="max-w-7xl mx-auto">
             <div className="mb-8">
@@ -381,7 +381,7 @@ export default function SoapNotes() {
   }
 
   return (
-    <div className="md:ml-64 min-h-screen bg-white">
+    <div className="md:ml-64 min-h-screen bg-white pt-20 md:pt-0">
       <div className="container mx-auto py-8 px-4 max-w-6xl">
         <div className="flex items-center gap-3 mb-8">
           <FileText className="w-8 h-8 text-blue-600" />

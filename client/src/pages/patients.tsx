@@ -111,7 +111,7 @@ export default function Patients() {
   };
 
   return (
-    <div className="p-6 md:ml-64">
+    <div className="p-6 pt-20 md:pt-6 md:ml-64">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Patient Management</h1>

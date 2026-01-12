@@ -271,7 +271,7 @@ export default function PatientIntake() {
   const progress = ((currentStep + 1) / INTAKE_STEPS.length) * 100;
 
   return (
-    <div className="md:ml-64 min-h-screen bg-slate-50 py-8">
+    <div className="md:ml-64 min-h-screen bg-slate-50 py-8 pt-20 md:pt-8">
       <div className="max-w-4xl mx-auto px-4">
         {/* Header */}
         <div className="text-center mb-8">
