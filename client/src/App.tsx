@@ -28,29 +28,32 @@ function Router() {
     );
   }
 
+  if (!isAuthenticated) {
+    return (
+      <Switch>
+        <Route path="/" component={Landing} />
+        <Route path="/intake" component={PatientIntake} />
+        <Route component={NotFound} />
+      </Switch>
+    );
+  }
+
   return (
-    <Switch>
-      {!isAuthenticated ? (
-        <>
-          <Route path="/" component={Landing} />
-          <Route path="/intake" component={PatientIntake} />
-        </>
-      ) : (
-        <>
-          <SimpleNavigation />
-          <Route path="/" component={Dashboard} />
-          <Route path="/claims" component={Claims} />
-          <Route path="/patients" component={Patients} />
-          <Route path="/intake" component={PatientIntake} />
-          <Route path="/soap-notes" component={SoapNotes} />
-          <Route path="/analytics" component={Analytics} />
-          <Route path="/expenses" component={Expenses} />
-          <Route path="/settings" component={Settings} />
-          <Route path="/data-upload" component={DataUpload} />
-        </>
-      )}
-      <Route component={NotFound} />
-    </Switch>
+    <>
+      <SimpleNavigation />
+      <Switch>
+        <Route path="/" component={Dashboard} />
+        <Route path="/claims" component={Claims} />
+        <Route path="/patients" component={Patients} />
+        <Route path="/intake" component={PatientIntake} />
+        <Route path="/soap-notes" component={SoapNotes} />
+        <Route path="/analytics" component={Analytics} />
+        <Route path="/expenses" component={Expenses} />
+        <Route path="/settings" component={Settings} />
+        <Route path="/data-upload" component={DataUpload} />
+        <Route component={NotFound} />
+      </Switch>
+    </>
   );
 }
 
