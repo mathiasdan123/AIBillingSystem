@@ -14,13 +14,9 @@ export default function Dashboard() {
   const { toast } = useToast();
   const [practiceId] = useState(1); // Mock practice ID for now
 
-  // Check if we have dev bypass
-  const hasDevBypass = localStorage.getItem('dev-bypass') === 'true';
-  const shouldAllowAccess = isAuthenticated || hasDevBypass;
-
-  // Redirect to login if not authenticated and no dev bypass
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!isLoading && !shouldAllowAccess) {
+    if (!isLoading && !isAuthenticated) {
       toast({
         title: "Unauthorized",
         description: "You are logged out. Logging in again...",
@@ -31,23 +27,23 @@ export default function Dashboard() {
       }, 500);
       return;
     }
-  }, [shouldAllowAccess, isLoading, toast]);
+  }, [isAuthenticated, isLoading, toast]);
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['/api/analytics/dashboard'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
     retry: false,
   });
 
   const { data: recentClaims, isLoading: claimsLoading } = useQuery({
     queryKey: ['/api/claims'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
     retry: false,
   });
 
   const { data: recentPatients, isLoading: patientsLoading } = useQuery({
     queryKey: ['/api/patients'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
     retry: false,
   });
 
@@ -59,7 +55,7 @@ export default function Dashboard() {
     );
   }
 
-  if (!shouldAllowAccess) {
+  if (!isAuthenticated) {
     return null;
   }
 

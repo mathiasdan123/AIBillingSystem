@@ -21,13 +21,9 @@ export default function Patients() {
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
 
-  // Check if we have dev bypass
-  const hasDevBypass = localStorage.getItem('dev-bypass') === 'true';
-  const shouldAllowAccess = isAuthenticated || hasDevBypass;
-
-  // Redirect to login if not authenticated and no dev bypass
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!isLoading && !shouldAllowAccess) {
+    if (!isLoading && !isAuthenticated) {
       toast({
         title: "Unauthorized",
         description: "You are logged out. Logging in again...",
@@ -38,19 +34,13 @@ export default function Patients() {
       }, 500);
       return;
     }
-  }, [shouldAllowAccess, isLoading, toast]);
+  }, [isAuthenticated, isLoading, toast]);
 
   const { data: patients, isLoading: patientsLoading, error: patientsError } = useQuery({
     queryKey: ['/api/patients'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
     retry: false,
   });
-
-  // Debug logging for patients page
-  console.log("Patients page - shouldAllowAccess:", shouldAllowAccess);
-  console.log("Patients page - isLoading:", patientsLoading);
-  console.log("Patients page - error:", patientsError);
-  console.log("Patients page - data:", patients);
 
   const checkEligibilityMutation = useMutation({
     mutationFn: async (data: { patientId: number; insuranceId: number }) => {
@@ -96,7 +86,7 @@ export default function Patients() {
     );
   }
 
-  if (!shouldAllowAccess) {
+  if (!isAuthenticated) {
     return null;
   }
 

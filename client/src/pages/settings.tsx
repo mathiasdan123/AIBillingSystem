@@ -15,7 +15,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 
 const practiceSchema = z.object({
   name: z.string().min(1, "Practice name is required"),
@@ -28,12 +30,24 @@ const practiceSchema = z.object({
 
 type PracticeFormData = z.infer<typeof practiceSchema>;
 
+interface UserData {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  createdAt: string;
+}
+
 export default function Settings() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [practiceId] = useState(1);
   const [activeTab, setActiveTab] = useState("practice");
+
+  // Check if current user is admin
+  const isAdmin = (user as any)?.role === 'admin';
 
   const form = useForm<PracticeFormData>({
     resolver: zodResolver(practiceSchema),
@@ -100,6 +114,35 @@ export default function Settings() {
     },
   });
 
+  // Users query (only for admins)
+  const { data: users, isLoading: usersLoading } = useQuery<UserData[]>({
+    queryKey: ['/api/users'],
+    enabled: isAuthenticated && isAdmin,
+    retry: false,
+  });
+
+  // Update user role mutation
+  const updateRoleMutation = useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const response = await apiRequest("PATCH", `/api/users/${userId}/role`, { role });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({
+        title: "Success",
+        description: "User role updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to update user role",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Populate form with practice data
   useEffect(() => {
     if (practice) {
@@ -136,6 +179,7 @@ export default function Settings() {
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
     { id: "billing", label: "Billing", icon: CreditCard },
+    ...(isAdmin ? [{ id: "users", label: "User Management", icon: Users }] : []),
   ];
 
   return (
@@ -303,34 +347,34 @@ export default function Settings() {
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="firstName">First Name</Label>
-                    <Input 
-                      id="firstName" 
-                      defaultValue={user?.firstName || ""} 
+                    <Input
+                      id="firstName"
+                      defaultValue={(user as any)?.firstName || ""}
                       disabled
                     />
                   </div>
                   <div>
                     <Label htmlFor="lastName">Last Name</Label>
-                    <Input 
-                      id="lastName" 
-                      defaultValue={user?.lastName || ""} 
+                    <Input
+                      id="lastName"
+                      defaultValue={(user as any)?.lastName || ""}
                       disabled
                     />
                   </div>
                   <div>
                     <Label htmlFor="email">Email Address</Label>
-                    <Input 
-                      id="email" 
-                      type="email" 
-                      defaultValue={user?.email || ""} 
+                    <Input
+                      id="email"
+                      type="email"
+                      defaultValue={(user as any)?.email || ""}
                       disabled
                     />
                   </div>
                   <div>
                     <Label htmlFor="role">Role</Label>
-                    <Input 
-                      id="role" 
-                      defaultValue={user?.role || "Therapist"} 
+                    <Input
+                      id="role"
+                      defaultValue={(user as any)?.role || "therapist"}
                       disabled
                     />
                   </div>
@@ -338,6 +382,38 @@ export default function Settings() {
                 <p className="text-sm text-slate-600">
                   Profile information is managed through your authentication provider.
                 </p>
+
+                {/* Initial Admin Setup - shows for non-admins */}
+                <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="font-medium text-amber-900 mb-2">Initial Setup</h4>
+                    <p className="text-sm text-amber-800 mb-4">
+                      Your current role is: <strong>{(user as any)?.role || 'therapist'}</strong>.
+                      Click below to become admin and access User Management.
+                    </p>
+                    <Button
+                      onClick={async () => {
+                        try {
+                          const response = await apiRequest("POST", "/api/setup/make-admin", {});
+                          const data = await response.json();
+                          toast({
+                            title: "Success",
+                            description: data.message || "You are now an admin!",
+                          });
+                          // Refresh the page to update user data
+                          window.location.reload();
+                        } catch (error: any) {
+                          toast({
+                            title: "Error",
+                            description: error?.message || "Failed to complete setup. An admin may already exist.",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                      className="bg-amber-600 hover:bg-amber-700"
+                    >
+                      Become Admin
+                    </Button>
+                  </div>
               </CardContent>
             </Card>
           )}
@@ -463,9 +539,9 @@ export default function Settings() {
                       </div>
                     </div>
                   </div>
-                  
+
                   <Separator />
-                  
+
                   <div>
                     <h4 className="font-medium text-slate-900 mb-2">Usage This Month</h4>
                     <div className="grid grid-cols-2 gap-4">
@@ -479,7 +555,7 @@ export default function Settings() {
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="flex space-x-2">
                     <Button variant="outline">
                       <CreditCard className="w-4 h-4 mr-2" />
@@ -491,6 +567,102 @@ export default function Settings() {
                     </Button>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === "users" && isAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle>User Management</CardTitle>
+                <CardDescription>
+                  Manage user roles and permissions
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {usersLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+                  </div>
+                ) : users && users.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="text-sm text-slate-600 mb-4">
+                      Assign roles to control what users can see. <strong>Therapists</strong> cannot see financial data like reimbursement rates.
+                    </div>
+                    <div className="border rounded-lg overflow-hidden">
+                      <table className="w-full">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">User</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Email</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Role</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {users.map((u) => (
+                            <tr key={u.id}>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center">
+                                  <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center mr-3">
+                                    <User className="w-4 h-4 text-slate-600" />
+                                  </div>
+                                  <div>
+                                    <div className="font-medium text-slate-900">
+                                      {u.firstName} {u.lastName}
+                                    </div>
+                                    {u.id === (user as any)?.id && (
+                                      <Badge variant="outline" className="text-xs">You</Badge>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-slate-600">{u.email}</td>
+                              <td className="px-4 py-3">
+                                <Badge
+                                  variant={u.role === 'admin' ? 'default' : u.role === 'billing' ? 'secondary' : 'outline'}
+                                >
+                                  {u.role || 'therapist'}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3">
+                                <Select
+                                  value={u.role || 'therapist'}
+                                  onValueChange={(newRole) => {
+                                    updateRoleMutation.mutate({ userId: u.id, role: newRole });
+                                  }}
+                                  disabled={updateRoleMutation.isPending}
+                                >
+                                  <SelectTrigger className="w-32">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="therapist">Therapist</SelectItem>
+                                    <SelectItem value="billing">Billing</SelectItem>
+                                    <SelectItem value="admin">Admin</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                      <h4 className="font-medium text-blue-900 mb-2">Role Permissions</h4>
+                      <div className="text-sm text-blue-800 space-y-1">
+                        <p><strong>Therapist:</strong> Can create SOAP notes, view patients, submit claims. Cannot see financial data.</p>
+                        <p><strong>Billing:</strong> Full access to financial data, reimbursement estimates, and analytics.</p>
+                        <p><strong>Admin:</strong> Full access plus user management capabilities.</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-slate-600">
+                    No users found.
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

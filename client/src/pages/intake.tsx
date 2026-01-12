@@ -17,22 +17,19 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertPatientSchema } from "@shared/schema";
-import { 
-  User, 
-  FileText, 
-  Mic, 
-  Upload, 
-  CheckCircle, 
-  ArrowRight, 
+import {
+  User,
+  FileText,
+  Mic,
+  Upload,
+  CheckCircle,
+  ArrowRight,
   ArrowLeft,
   Shield,
   Zap,
   Brain,
   Stethoscope,
-  DollarSign,
 } from "lucide-react";
-import { SimpleInsuranceEstimation } from "@/components/SimpleInsuranceEstimation";
-import { WorkingInsuranceEstimation } from "@/components/WorkingInsuranceEstimation";
 
 // Simplified patient schema for intake
 const patientIntakeSchema = z.object({
@@ -88,214 +85,6 @@ const patientIntakeSchema = z.object({
 });
 
 type PatientIntakeForm = z.infer<typeof patientIntakeSchema>;
-
-// Insurance Estimation Component
-function InsuranceEstimation({ insuranceProvider }: { insuranceProvider: string }) {
-  const [estimates, setEstimates] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [selectedServices, setSelectedServices] = useState<string[]>(['97166', '97530', '97110']);
-
-  const availableServices = [
-    { code: '97165', name: 'OT Evaluation (Low Complexity)', typical: false },
-    { code: '97166', name: 'OT Evaluation (Moderate Complexity)', typical: true },
-    { code: '97167', name: 'OT Evaluation (High Complexity)', typical: false },
-    { code: '97530', name: 'Therapeutic Activities', typical: true },
-    { code: '97535', name: 'Self-Care Training', typical: false },
-    { code: '97110', name: 'Therapeutic Exercise', typical: true },
-    { code: '97112', name: 'Neuromuscular Re-education', typical: false },
-    { code: '97140', name: 'Manual Therapy', typical: false },
-  ];
-
-  const fetchEstimates = (codes: string[]) => {
-    if (!insuranceProvider || codes.length === 0) return;
-    
-    setLoading(true);
-    
-    apiRequest('POST', '/api/estimate-reimbursement', {
-      insuranceProvider,
-      cptCodes: codes,
-      sessionCount: 1,
-      deductibleMet: false
-    })
-    .then(data => {
-      setEstimates(data);
-    })
-    .catch(error => {
-      console.error('Error fetching insurance estimates:', error);
-    })
-    .finally(() => {
-      setLoading(false);
-    });
-  };
-
-  useEffect(() => {
-    fetchEstimates(selectedServices);
-  }, [insuranceProvider, selectedServices]);
-
-  const handleServiceToggle = (code: string) => {
-    const newSelected = selectedServices.includes(code)
-      ? selectedServices.filter(c => c !== code)
-      : [...selectedServices, code];
-    setSelectedServices(newSelected);
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-blue-600">
-        <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-        <span className="text-sm">Calculating estimates...</span>
-      </div>
-    );
-  }
-
-  if (!estimates) {
-    return (
-      <div className="space-y-3">
-        <h5 className="font-medium text-slate-900">Select Expected Services</h5>
-        <p className="text-xs text-blue-700">
-          Choose the services you anticipate needing for more accurate cost estimates
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {availableServices.map((service) => (
-            <label
-              key={service.code}
-              className="flex items-center gap-3 p-2 bg-white rounded border border-slate-200 hover:bg-slate-50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={selectedServices.includes(service.code)}
-                onChange={() => handleServiceToggle(service.code)}
-                className="rounded border-slate-300 text-blue-600"
-                data-testid={`checkbox-service-${service.code}`}
-              />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-slate-800">{service.name}</div>
-                <div className="text-xs text-slate-500">CPT {service.code}</div>
-              </div>
-              {service.typical && (
-                <div className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Typical</div>
-              )}
-            </label>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Service Selection */}
-      <div className="space-y-3">
-        <h5 className="font-medium text-slate-900">Select Expected Services</h5>
-        <p className="text-xs text-blue-700">
-          Choose the services you anticipate needing for more accurate cost estimates
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {availableServices.map((service) => (
-            <label
-              key={service.code}
-              className="flex items-center gap-3 p-2 bg-white rounded border border-slate-200 hover:bg-slate-50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={selectedServices.includes(service.code)}
-                onChange={() => handleServiceToggle(service.code)}
-                className="rounded border-slate-300 text-blue-600"
-                data-testid={`checkbox-service-${service.code}`}
-              />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-slate-800">{service.name}</div>
-                <div className="text-xs text-slate-500">CPT {service.code}</div>
-              </div>
-              {service.typical && (
-                <div className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Typical</div>
-              )}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Always show when we have services selected, even if estimates are loading */}
-      {selectedServices.length > 0 && (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <h5 className="font-medium text-slate-900">Provider Summary</h5>
-              <div className="text-sm space-y-1">
-                <div><span className="font-medium">Provider:</span> {estimates?.summary?.provider || 'UnitedHealth'}</div>
-                <div><span className="font-medium">Coverage:</span> {estimates?.summary?.coverage || 'Out-of-network'}</div>
-                <div><span className="font-medium">Coinsurance:</span> {estimates?.summary?.coinsurance || '40%'}</div>
-                <div><span className="font-medium">Deductible:</span> {estimates?.summary?.deductible || '$3,000'}</div>
-              </div>
-
-            </div>
-            
-            <div className="space-y-2">
-              <h5 className="font-medium text-slate-900">Selected Services Cost</h5>
-              <div className="text-sm space-y-2">
-                {estimates.estimates?.map((est: any, idx: number) => {
-                  const service = availableServices.find(s => s.code === est.cptCode);
-                  const insuranceWillPay = est.practiceCharge - est.patientResponsibility;
-                  
-                  return (
-                    <div key={idx} className="bg-white p-3 rounded border border-slate-200">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex-1">
-                          <div className="font-medium text-slate-800">{service?.name || est.cptCode}</div>
-                          <div className="text-xs text-slate-600">CPT {est.cptCode}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-semibold text-slate-900">
-                            ${est.practiceCharge}/session
-                          </div>
-                          <div className="text-xs text-slate-500">Total charge</div>
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div style={{backgroundColor: '#dbeafe', padding: '8px', borderRadius: '6px'}}>
-                          <div style={{fontWeight: '600', color: '#1e40af'}}>Insurance Pays</div>
-                          <div style={{color: '#2563eb', fontSize: '14px', fontWeight: '500'}}>
-                            ${insuranceWillPay > 0 ? insuranceWillPay : '0'}
-                          </div>
-                          <div style={{color: '#3b82f6', fontSize: '11px', marginTop: '4px'}}>
-                            {est.deductibleApplies ? 'After deductible met' : 'Covered portion'}
-                          </div>
-                        </div>
-                        <div style={{backgroundColor: '#fef3c7', padding: '8px', borderRadius: '6px'}}>
-                          <div style={{fontWeight: '600', color: '#92400e'}}>You Pay</div>
-                          <div style={{color: '#d97706', fontSize: '14px', fontWeight: '500'}}>
-                            ${est.patientResponsibility}
-                          </div>
-                          <div style={{color: '#f59e0b', fontSize: '11px', marginTop: '4px'}}>
-                            {est.deductibleApplies ? 'Until deductible met' : `${est.coinsurancePercent}% coinsurance`}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Debug info */}
-                      <div style={{fontSize: '10px', color: '#666', marginTop: '8px'}}>
-                        Debug: Practice=${est.practiceCharge}, Patient=${est.patientResponsibility}, Insurance=${insuranceWillPay}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-          
-          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-md">
-            <p className="text-xs text-amber-800">
-              <strong>Disclaimer:</strong> These are estimates based on typical out-of-network rates. 
-              Actual costs may vary based on your specific plan details, deductible status, 
-              and insurance company policies. Please verify benefits directly with your insurance provider.
-            </p>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 const INTAKE_STEPS = [
   { id: 0, title: "Data Input Method", description: "Choose how to input patient information" },
@@ -889,23 +678,6 @@ export default function PatientIntake() {
                     )}
                   />
 
-                  {/* Insurance Estimation */}
-                  {form.watch("insuranceProvider") && (
-                    <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="mb-4">
-                        <h4 className="font-semibold text-blue-900 flex items-center gap-2">
-                          <DollarSign className="w-4 h-4" />
-                          Estimated Treatment Costs
-                        </h4>
-                        <p className="text-xs text-blue-700 mt-1">
-                          Based on your insurance provider's typical out-of-network rates for occupational therapy services
-                        </p>
-                      </div>
-                      <WorkingInsuranceEstimation 
-                        insuranceProvider={form.watch("insuranceProvider")} 
-                      />
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             )}

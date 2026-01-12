@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
@@ -6,6 +6,44 @@ import AIReimbursementPredictor from "./aiReimbursementPredictor";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
+
+// Middleware to check if user has admin or billing role
+const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.claims?.sub) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const user = await storage.getUser(req.user.claims.sub);
+    if (!user || (user.role !== 'admin' && user.role !== 'billing')) {
+      return res.status(403).json({ message: "Access denied. Admin or billing role required." });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Error checking user role:", error);
+    res.status(500).json({ message: "Failed to verify permissions" });
+  }
+};
+
+// Middleware to check if user has admin role (for user management)
+const isAdmin = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.claims?.sub) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const user = await storage.getUser(req.user.claims.sub);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ message: "Access denied. Admin role required." });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Error checking user role:", error);
+    res.status(500).json({ message: "Failed to verify permissions" });
+  }
+};
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -30,24 +68,132 @@ export async function registerRoutes(app: Express): Promise<Server> {
       email: 'dev@example.com',
       firstName: 'Dev',
       lastName: 'User',
-      profileImageUrl: null
+      profileImageUrl: null,
+      role: 'admin' // Dev user is admin for testing
     });
   });
 
-  // Dashboard analytics
-  app.get('/api/analytics/dashboard', async (req, res) => {
-    res.json({
-      totalPatients: 3,
-      activeClaims: 2,
-      pendingPayments: 1,
-      monthlyRevenue: 12500,
-      claimApprovalRate: 94.2,
-      averageReimbursement: 142.50
-    });
+  // User management endpoints (admin only)
+  app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const users = await storage.getAllUsers();
+      // Don't expose sensitive fields
+      const safeUsers = users.map(u => ({
+        id: u.id,
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        role: u.role,
+        createdAt: u.createdAt
+      }));
+      res.json(safeUsers);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
   });
 
-  // Enhanced reimbursement estimation with AI predictions
-  app.post('/api/estimate-reimbursement', async (req, res) => {
+  app.patch('/api/users/:id/role', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { role } = req.body;
+
+      // Validate role
+      if (!['therapist', 'admin', 'billing'].includes(role)) {
+        return res.status(400).json({ message: "Invalid role. Must be 'therapist', 'admin', or 'billing'" });
+      }
+
+      // Prevent removing your own admin role
+      const currentUserId = req.user?.claims?.sub;
+      if (id === currentUserId && role !== 'admin') {
+        return res.status(400).json({ message: "You cannot remove your own admin role" });
+      }
+
+      const updatedUser = await storage.updateUserRole(id, role);
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({
+        id: updatedUser.id,
+        email: updatedUser.email,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        role: updatedUser.role
+      });
+    } catch (error) {
+      console.error("Error updating user role:", error);
+      res.status(500).json({ message: "Failed to update user role" });
+    }
+  });
+
+  // One-time setup: Make current user admin (for initial setup only)
+  app.post('/api/setup/make-admin', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      // Check if any admin exists
+      const allUsers = await storage.getAllUsers();
+      const existingAdmin = allUsers.find(u => u.role === 'admin');
+
+      if (existingAdmin) {
+        return res.status(400).json({
+          message: "An admin already exists. Use the User Management settings to change roles."
+        });
+      }
+
+      // Make current user admin
+      const updatedUser = await storage.updateUserRole(userId, 'admin');
+      res.json({
+        message: "You are now an admin!",
+        user: {
+          id: updatedUser?.id,
+          email: updatedUser?.email,
+          role: updatedUser?.role
+        }
+      });
+    } catch (error) {
+      console.error("Error in setup:", error);
+      res.status(500).json({ message: "Failed to complete setup" });
+    }
+  });
+
+  // Dashboard analytics (financial data filtered by role)
+  app.get('/api/analytics/dashboard', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = userId ? await storage.getUser(userId) : null;
+      const isAdminOrBillingRole = user?.role === 'admin' || user?.role === 'billing';
+
+      // Base stats visible to all authenticated users
+      const baseStats = {
+        totalPatients: 3,
+        activeClaims: 2,
+        pendingPayments: 1,
+        claimApprovalRate: 94.2
+      };
+
+      // Financial data only for admin/billing
+      if (isAdminOrBillingRole) {
+        res.json({
+          ...baseStats,
+          monthlyRevenue: 12500,
+          averageReimbursement: 142.50
+        });
+      } else {
+        res.json(baseStats);
+      }
+    } catch (error) {
+      console.error("Error fetching dashboard:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Enhanced reimbursement estimation with AI predictions (admin/billing only)
+  app.post('/api/estimate-reimbursement', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const { insuranceProvider, cptCodes, sessionCount, deductibleMet, planType, region, patientAge } = req.body;
 
@@ -105,8 +251,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Upload historical reimbursement data for AI training
-  app.post('/api/upload-reimbursement-data', isAuthenticated, async (req, res) => {
+  // Upload historical reimbursement data (admin/billing only)
+  app.post('/api/upload-reimbursement-data', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const { records } = req.body;
 
@@ -142,8 +288,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get AI prediction insights
-  app.get('/api/reimbursement-insights/:insuranceProvider/:cptCode', async (req, res) => {
+  // Get AI prediction insights (admin/billing only)
+  app.get('/api/reimbursement-insights/:insuranceProvider/:cptCode', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const { insuranceProvider, cptCode } = req.params;
       
@@ -170,8 +316,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Export training data for external ML systems
-  app.get('/api/export-training-data', isAuthenticated, async (req, res) => {
+  // Export training data for external ML systems (admin/billing only)
+  app.get('/api/export-training-data', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const trainingData = reimbursementPredictor.exportTrainingData();
       

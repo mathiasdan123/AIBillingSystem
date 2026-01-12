@@ -26,13 +26,6 @@ const navigation = [
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
   { name: 'Settings', href: '/settings', icon: Settings },
-  { name: 'Debug', href: '/debug', icon: Settings },
-  { name: 'Test', href: '/test', icon: Settings },
-];
-
-const debugNavigation = [
-  { name: 'Back to Landing', href: '/debug-landing', icon: LogOut },
-  { name: 'Data Upload', href: '/data-upload', icon: Settings },
 ];
 
 export default function SimpleNavigation() {
@@ -49,7 +42,6 @@ export default function SimpleNavigation() {
   };
 
   const handleNavClick = (href: string) => {
-    console.log("Client-side navigating to:", href);
     setLocation(href);
   };
 
@@ -74,8 +66,8 @@ export default function SimpleNavigation() {
                   key={item.name}
                   onClick={() => handleNavClick(item.href)}
                   className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                    isActive 
-                      ? 'bg-blue-50 text-blue-600' 
+                    isActive
+                      ? 'bg-blue-50 text-blue-600'
                       : 'text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -84,36 +76,6 @@ export default function SimpleNavigation() {
                 </div>
               );
             })}
-            
-            {/* Debug Navigation Section */}
-            <div className="pt-4 mt-4 border-t border-slate-200">
-              <p className="text-xs font-medium text-slate-500 mb-2">DEBUG</p>
-              {debugNavigation.map((item) => {
-                const Icon = item.icon;
-                const isActive = location === item.href;
-                return (
-                  <div
-                    key={item.name}
-                    onClick={() => {
-                      if (item.name === 'Back to Landing') {
-                        localStorage.removeItem('dev-bypass');
-                        window.location.reload();
-                      } else {
-                        handleNavClick(item.href);
-                      }
-                    }}
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                      isActive 
-                        ? 'bg-red-50 text-red-600' 
-                        : 'text-slate-700 hover:bg-red-50 hover:text-red-600'
-                    }`}
-                  >
-                    <Icon className="w-5 h-5 mr-3" />
-                    {item.name}
-                  </div>
-                );
-              })}
-            </div>
           </nav>
         </div>
         

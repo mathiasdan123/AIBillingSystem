@@ -1,21 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 
 export function useAuth() {
-  // Check if we're using development bypass
-  const isDevelopment = import.meta.env.DEV;
-  const hasDevBypass = isDevelopment && localStorage.getItem('dev-bypass') === 'true';
-  
-  // Use dev endpoint if bypassing, otherwise use regular auth
-  const endpoint = hasDevBypass ? '/api/dev-user' : '/api/auth/user';
-  
-  const { data: user, isLoading } = useQuery({
-    queryKey: [endpoint],
+  const { data: user, isLoading, error, isFetched } = useQuery({
+    queryKey: ['/api/auth/user'],
     retry: false,
+    staleTime: 0, // Always fetch fresh auth state
+    gcTime: 0, // Don't cache auth data
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
+
+  // Only authenticated if we have user data (not null) and no error
+  // User is null when server returns 401
+  const isAuthenticated = isFetched && user != null && !error;
 
   return {
     user,
     isLoading,
-    isAuthenticated: !!user,
+    isAuthenticated,
   };
 }

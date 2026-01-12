@@ -18,6 +18,7 @@ import { FileText, Brain, CheckCircle, AlertCircle, Clock, Lightbulb, Mic, Uploa
 import { VoiceInput } from "@/components/VoiceInput";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { insertSoapNoteSchema, type SoapNote, type TreatmentSession, type Patient, type CptCode } from "@shared/schema";
 
 const soapNoteFormSchema = insertSoapNoteSchema.extend({
@@ -45,9 +46,13 @@ interface AiOptimization {
 
 export default function SoapNotes() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [selectedPatient, setSelectedPatient] = useState<number | null>(null);
   const [aiOptimization, setAiOptimization] = useState<AiOptimization | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // Check if user can see financial data (admin or billing roles only)
+  const canSeeFinancialData = (user as any)?.role === 'admin' || (user as any)?.role === 'billing';
   const [showVoiceInput, setShowVoiceInput] = useState(false);
 
   const form = useForm<SoapNoteForm>({
@@ -75,14 +80,6 @@ export default function SoapNotes() {
     queryKey: ["/api/cpt-codes"],
     retry: false,
   });
-
-  // Debug logging
-  console.log("Patients loading:", patientsLoading);
-  console.log("Patients data:", patients);
-  console.log("Patients error:", patientsError);
-  console.log("CPT codes loading:", cptCodesLoading);
-  console.log("CPT codes data:", cptCodes);
-  console.log("CPT codes error:", cptCodesError);
 
   const { data: existingSoapNotes, isLoading: soapNotesLoading } = useQuery<SoapNote[]>({
     queryKey: ["/api/soap-notes"],
@@ -703,9 +700,11 @@ export default function SoapNotes() {
                             Insurance Preferred
                           </Badge>
                         )}
-                        <span className="text-sm font-medium">
-                          ${suggestion.reimbursementRate}
-                        </span>
+                        {canSeeFinancialData && (
+                          <span className="text-sm font-medium">
+                            ${suggestion.reimbursementRate}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <p className="text-sm font-medium">{suggestion.description}</p>
@@ -725,7 +724,7 @@ export default function SoapNotes() {
                   <Lightbulb className="h-4 w-4" />
                   <AlertDescription>
                     {aiOptimization.optimizationReason}
-                    {aiOptimization.estimatedIncrease > 0 && (
+                    {canSeeFinancialData && aiOptimization.estimatedIncrease > 0 && (
                       <span className="block mt-1 font-medium text-green-600">
                         Estimated increase: +${aiOptimization.estimatedIncrease} per session
                       </span>
