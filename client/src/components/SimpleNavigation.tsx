@@ -13,7 +13,9 @@ import {
   X,
   LogOut,
   UserPlus,
-  ClipboardList
+  ClipboardList,
+  Calendar,
+  DollarSign
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -21,8 +23,10 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: Home },
   { name: 'Patient Intake', href: '/intake', icon: UserPlus },
   { name: 'Patients', href: '/patients', icon: Users },
+  { name: 'Calendar', href: '/calendar', icon: Calendar },
   { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList },
   { name: 'Claims', href: '/claims', icon: FileText },
+  { name: 'Accounting', href: '/accounting', icon: DollarSign },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
   { name: 'Settings', href: '/settings', icon: Settings },

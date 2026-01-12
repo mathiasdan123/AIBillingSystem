@@ -15,6 +15,8 @@ import Expenses from "@/pages/expenses";
 import Settings from "@/pages/settings";
 import PatientIntake from "@/pages/intake";
 import SoapNotes from "@/pages/soap-notes";
+import Calendar from "@/pages/calendar";
+import Accounting from "@/pages/accounting";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -46,7 +48,9 @@ function Router() {
         <Route path="/claims" component={Claims} />
         <Route path="/patients" component={Patients} />
         <Route path="/intake" component={PatientIntake} />
+        <Route path="/calendar" component={Calendar} />
         <Route path="/soap-notes" component={SoapNotes} />
+        <Route path="/accounting" component={Accounting} />
         <Route path="/analytics" component={Analytics} />
         <Route path="/expenses" component={Expenses} />
         <Route path="/settings" component={Settings} />
