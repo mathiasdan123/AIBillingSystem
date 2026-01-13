@@ -167,13 +167,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, role, practiceId } = req.body;
       const invitedById = req.user?.claims?.sub;
 
+      console.log("Creating invite for:", { email, role, practiceId, invitedById });
+
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
+      }
+
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Please enter a valid email address" });
       }
 
       // Validate role
       if (role && !['therapist', 'admin', 'billing'].includes(role)) {
         return res.status(400).json({ message: "Invalid role" });
+      }
+
+      if (!invitedById) {
+        return res.status(400).json({ message: "Could not determine inviter ID" });
       }
 
       // Check if user already exists with this email
@@ -196,15 +208,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
 
-      const invite = await storage.createInvite({
-        email,
+      const inviteData = {
+        email: email.trim(),
         role: role || 'therapist',
         practiceId: practiceId || 1, // Default practice for now
         invitedById,
         token,
         expiresAt,
         status: 'pending',
-      });
+      };
+
+      console.log("Invite data to insert:", inviteData);
+
+      const invite = await storage.createInvite(inviteData);
 
       res.json({
         message: "Invite created successfully",
@@ -217,9 +233,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           inviteLink: `/invite/${invite.token}`
         }
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating invite:", error);
-      res.status(500).json({ message: "Failed to create invite" });
+      console.error("Error details:", error?.message, error?.code, error?.detail);
+      res.status(500).json({ message: error?.message || "Failed to create invite" });
     }
   });
 

@@ -183,9 +183,26 @@ export default function Settings() {
       });
     },
     onError: (error: any) => {
+      let errorMessage = "Failed to create invite";
+      try {
+        // Try to parse the error message if it contains JSON
+        const errorText = error?.message || "";
+        if (errorText.includes('{')) {
+          const jsonPart = errorText.substring(errorText.indexOf('{'));
+          const parsed = JSON.parse(jsonPart);
+          errorMessage = parsed.message || errorMessage;
+        } else if (errorText.includes(':')) {
+          // Format is "status: message"
+          errorMessage = errorText.split(':').slice(1).join(':').trim() || errorMessage;
+        } else {
+          errorMessage = errorText || errorMessage;
+        }
+      } catch {
+        errorMessage = error?.message || "Failed to create invite";
+      }
       toast({
         title: "Error",
-        description: error?.message || "Failed to create invite",
+        description: errorMessage,
         variant: "destructive",
       });
     },
