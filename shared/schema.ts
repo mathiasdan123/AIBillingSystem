@@ -48,6 +48,24 @@ export const practices = pgTable("practices", {
   address: text("address"),
   phone: varchar("phone"),
   email: varchar("email"),
+  // Additional practice fields
+  monthlyClaimsVolume: integer("monthly_claims_volume"),
+  professionalLicense: varchar("professional_license"),
+  licenseExpiration: date("license_expiration"),
+  businessLicense: varchar("business_license"),
+  caqhProfileId: varchar("caqh_profile_id"),
+  insuranceCertificateStatus: varchar("insurance_certificate_status"),
+  w9FormStatus: varchar("w9_form_status"),
+  itContactName: varchar("it_contact_name"),
+  itContactEmail: varchar("it_contact_email"),
+  itContactPhone: varchar("it_contact_phone"),
+  billingContactName: varchar("billing_contact_name"),
+  billingContactEmail: varchar("billing_contact_email"),
+  billingContactPhone: varchar("billing_contact_phone"),
+  ediEnrollmentStatus: varchar("edi_enrollment_status"),
+  optumSubmitterId: varchar("optum_submitter_id"),
+  optumReceiverId: varchar("optum_receiver_id"),
+  lastEnrollmentCheck: timestamp("last_enrollment_check"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -88,6 +106,7 @@ export const cptCodes = pgTable("cpt_codes", {
   description: text("description").notNull(),
   category: varchar("category"), // evaluation, treatment, etc.
   baseRate: decimal("base_rate", { precision: 10, scale: 2 }),
+  cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
   billingUnits: integer("billing_units").default(1), // 15-minute units
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
@@ -244,6 +263,67 @@ export const dataCaptureEvents = pgTable("data_capture_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// SOAP Note Templates
+export const soapNoteTemplates = pgTable("soap_note_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  name: varchar("name").notNull(),
+  description: text("description"),
+  subjective: text("subjective"),
+  objective: text("objective"),
+  assessment: text("assessment"),
+  plan: text("plan"),
+  isDefault: boolean("is_default").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// SOAP Note Drafts
+export const soapNoteDrafts = pgTable("soap_note_drafts", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  subjective: text("subjective"),
+  objective: text("objective"),
+  assessment: text("assessment"),
+  plan: text("plan"),
+  draftData: jsonb("draft_data"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Appointments / Calendar
+export const appointments = pgTable("appointments", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  title: varchar("title"),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time").notNull(),
+  status: varchar("status").default("scheduled"), // scheduled, completed, cancelled, no_show
+  notes: text("notes"),
+  reminderSent: boolean("reminder_sent").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Invoices
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  invoiceNumber: varchar("invoice_number").unique(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  status: varchar("status").default("draft"), // draft, sent, paid, overdue
+  dueDate: date("due_date"),
+  paidDate: date("paid_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Invites for adding users to practices
 export const invites = pgTable("invites", {
   id: serial("id").primaryKey(),
@@ -266,10 +346,14 @@ export const payments = pgTable("payments", {
   claimId: integer("claim_id"),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   paymentMethod: varchar("payment_method"), // insurance, patient, cash
+  paymentType: varchar("payment_type"), // copay, coinsurance, deductible, full
   paymentDate: date("payment_date").notNull(),
   transactionId: varchar("transaction_id"),
+  referenceNumber: varchar("reference_number"),
+  notes: text("notes"),
   status: varchar("status").default("completed"), // completed, pending, failed
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Relations
