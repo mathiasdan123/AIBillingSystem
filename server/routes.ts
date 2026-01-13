@@ -3,9 +3,11 @@ import { createServer, type Server } from "http";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
+import { AiClaimOptimizer } from "./aiClaimOptimizer";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
+const claimOptimizer = new AiClaimOptimizer();
 
 // Middleware to check if user has admin or billing role
 const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => {
@@ -566,7 +568,247 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: 'Failed to create session' });
     }
   });
-  
+
+  // ==================== INSURANCES ENDPOINT ====================
+
+  app.get('/api/insurances', isAuthenticated, async (req: any, res) => {
+    try {
+      const insurances = await storage.getInsurances();
+      res.json(insurances);
+    } catch (error) {
+      console.error('Error fetching insurances:', error);
+      res.status(500).json({ message: 'Failed to fetch insurances' });
+    }
+  });
+
+  // ==================== CLAIMS ENDPOINTS ====================
+
+  // Get all claims for practice
+  app.get('/api/claims', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1; // Default practice for now
+      const claims = await storage.getClaims(practiceId);
+      res.json(claims);
+    } catch (error) {
+      console.error('Error fetching claims:', error);
+      res.status(500).json({ message: 'Failed to fetch claims' });
+    }
+  });
+
+  // Get single claim
+  app.get('/api/claims/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const claim = await storage.getClaim(parseInt(req.params.id));
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+      res.json(claim);
+    } catch (error) {
+      console.error('Error fetching claim:', error);
+      res.status(500).json({ message: 'Failed to fetch claim' });
+    }
+  });
+
+  // Create new claim with AI optimization
+  app.post('/api/claims', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId, totalAmount, submittedAmount, sessionId } = req.body;
+      const practiceId = 1; // Default practice for now
+
+      if (!patientId || !totalAmount) {
+        return res.status(400).json({ message: 'Patient ID and total amount are required' });
+      }
+
+      // Generate claim number
+      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Initialize AI review fields
+      let aiReviewScore = null;
+      let aiReviewNotes = null;
+
+      // If there's a session, try to run AI optimization on the SOAP note
+      if (sessionId) {
+        try {
+          const soapNotes = await storage.getSoapNotes(practiceId);
+          const sessionSoapNote = soapNotes.find((note: any) => note.sessionId === sessionId);
+          const patients = await storage.getPatients(practiceId);
+          const patient = patients.find((p: any) => p.id === patientId);
+
+          if (sessionSoapNote && patient) {
+            const optimization = await claimOptimizer.optimizeClaim(
+              sessionSoapNote,
+              patient,
+              undefined // insurance provider
+            );
+            aiReviewScore = optimization.aiReviewScore.toString();
+            aiReviewNotes = optimization.aiReviewNotes;
+          }
+        } catch (aiError) {
+          console.error('AI optimization failed, continuing without:', aiError);
+        }
+      }
+
+      // Create the claim
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId,
+        insuranceId: insuranceId || null,
+        sessionId: sessionId || null,
+        claimNumber,
+        totalAmount: totalAmount.toString(),
+        submittedAmount: submittedAmount?.toString() || null,
+        status: 'draft',
+        aiReviewScore,
+        aiReviewNotes,
+      });
+
+      res.json({
+        message: 'Claim created successfully',
+        claim
+      });
+    } catch (error: any) {
+      console.error('Error creating claim:', error);
+      res.status(500).json({ message: error?.message || 'Failed to create claim' });
+    }
+  });
+
+  // Update claim
+  app.patch('/api/claims/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const existingClaim = await storage.getClaim(claimId);
+
+      if (!existingClaim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      // Only allow updates to draft claims (or admin override)
+      if (existingClaim.status !== 'draft') {
+        const user = await storage.getUser(req.user?.claims?.sub);
+        if (user?.role !== 'admin') {
+          return res.status(400).json({ message: 'Can only edit draft claims' });
+        }
+      }
+
+      const updatedClaim = await storage.updateClaim(claimId, req.body);
+      res.json(updatedClaim);
+    } catch (error) {
+      console.error('Error updating claim:', error);
+      res.status(500).json({ message: 'Failed to update claim' });
+    }
+  });
+
+  // Submit claim (change status from draft to submitted)
+  app.post('/api/claims/:id/submit', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const claim = await storage.getClaim(claimId);
+
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      if (claim.status !== 'draft') {
+        return res.status(400).json({ message: 'Only draft claims can be submitted' });
+      }
+
+      const updatedClaim = await storage.updateClaim(claimId, {
+        status: 'submitted',
+        submittedAt: new Date(),
+        submittedAmount: claim.totalAmount, // Set submitted amount to total if not set
+      });
+
+      res.json({
+        success: true,
+        message: 'Claim submitted successfully',
+        claim: updatedClaim
+      });
+    } catch (error) {
+      console.error('Error submitting claim:', error);
+      res.status(500).json({ message: 'Failed to submit claim' });
+    }
+  });
+
+  // Mark claim as paid
+  app.post('/api/claims/:id/paid', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const { paidAmount } = req.body;
+
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      if (claim.status !== 'submitted') {
+        return res.status(400).json({ message: 'Only submitted claims can be marked as paid' });
+      }
+
+      const updatedClaim = await storage.updateClaim(claimId, {
+        status: 'paid',
+        paidAt: new Date(),
+        paidAmount: paidAmount?.toString() || claim.submittedAmount || claim.totalAmount,
+      });
+
+      res.json({
+        message: 'Claim marked as paid',
+        claim: updatedClaim
+      });
+    } catch (error) {
+      console.error('Error marking claim paid:', error);
+      res.status(500).json({ message: 'Failed to mark claim as paid' });
+    }
+  });
+
+  // Deny claim
+  app.post('/api/claims/:id/deny', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const { denialReason } = req.body;
+
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      const updatedClaim = await storage.updateClaim(claimId, {
+        status: 'denied',
+        denialReason: denialReason || 'No reason provided',
+      });
+
+      res.json({
+        message: 'Claim marked as denied',
+        claim: updatedClaim
+      });
+    } catch (error) {
+      console.error('Error denying claim:', error);
+      res.status(500).json({ message: 'Failed to deny claim' });
+    }
+  });
+
+  // Claims analytics
+  app.get('/api/claims/analytics/by-status', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const statusData = await storage.getClaimsByStatus(practiceId);
+      res.json(statusData);
+    } catch (error) {
+      console.error('Error fetching claims by status:', error);
+      res.status(500).json({ message: 'Failed to fetch claims analytics' });
+    }
+  });
+
+  app.get('/api/claims/analytics/denial-reasons', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const denialData = await storage.getTopDenialReasons(practiceId);
+      res.json(denialData);
+    } catch (error) {
+      console.error('Error fetching denial reasons:', error);
+      res.status(500).json({ message: 'Failed to fetch denial reasons' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
