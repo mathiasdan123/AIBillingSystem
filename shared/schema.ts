@@ -244,6 +244,20 @@ export const dataCaptureEvents = pgTable("data_capture_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Invites for adding users to practices
+export const invites = pgTable("invites", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  email: varchar("email").notNull(),
+  role: varchar("role").default("therapist"), // therapist, billing, admin
+  token: varchar("token").unique().notNull(),
+  invitedById: varchar("invited_by_id").references(() => users.id).notNull(),
+  status: varchar("status").default("pending"), // pending, accepted, expired
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Payment records
 export const payments = pgTable("payments", {
   id: serial("id").primaryKey(),
@@ -420,3 +434,10 @@ export type InsertTreatmentSession = z.infer<typeof insertTreatmentSessionSchema
 export type InsertClaim = z.infer<typeof insertClaimSchema>;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
+
+export const insertInviteSchema = createInsertSchema(invites).omit({
+  id: true,
+  createdAt: true,
+});
+export type Invite = typeof invites.$inferSelect;
+export type InsertInvite = z.infer<typeof insertInviteSchema>;

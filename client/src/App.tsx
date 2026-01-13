@@ -17,6 +17,7 @@ import PatientIntake from "@/pages/intake";
 import SoapNotes from "@/pages/soap-notes";
 import Calendar from "@/pages/calendar";
 import Accounting from "@/pages/accounting";
+import InvitePage from "@/pages/invite";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -35,6 +36,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Landing} />
         <Route path="/intake" component={PatientIntake} />
+        <Route path="/invite/:token" component={InvitePage} />
         <Route component={NotFound} />
       </Switch>
     );
@@ -55,6 +57,7 @@ function Router() {
         <Route path="/expenses" component={Expenses} />
         <Route path="/settings" component={Settings} />
         <Route path="/data-upload" component={DataUpload} />
+        <Route path="/invite/:token" component={InvitePage} />
         <Route component={NotFound} />
       </Switch>
     </>

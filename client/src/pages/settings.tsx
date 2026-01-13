@@ -15,9 +15,19 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText, Users } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+
+interface InviteData {
+  id: number;
+  email: string;
+  role: string;
+  token: string;
+  status: string;
+  expiresAt: string;
+  createdAt: string;
+}
 
 const practiceSchema = z.object({
   name: z.string().min(1, "Practice name is required"),
@@ -45,6 +55,8 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [practiceId] = useState(1);
   const [activeTab, setActiveTab] = useState("practice");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("therapist");
 
   // Check if current user is admin
   const isAdmin = (user as any)?.role === 'admin';
@@ -138,6 +150,42 @@ export default function Settings() {
       toast({
         title: "Error",
         description: error?.message || "Failed to update user role",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Invites query (only for admins)
+  const { data: invites, isLoading: invitesLoading } = useQuery<InviteData[]>({
+    queryKey: ['/api/invites'],
+    enabled: isAuthenticated && isAdmin,
+    retry: false,
+  });
+
+  // Create invite mutation
+  const createInviteMutation = useMutation({
+    mutationFn: async ({ email, role }: { email: string; role: string }) => {
+      const response = await apiRequest("POST", "/api/invites", { email, role, practiceId });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/invites'] });
+      setInviteEmail("");
+      setInviteRole("therapist");
+
+      // Copy invite link to clipboard
+      const inviteLink = `${window.location.origin}/invite/${data.invite.token}`;
+      navigator.clipboard.writeText(inviteLink);
+
+      toast({
+        title: "Invite Sent!",
+        description: `Invite link copied to clipboard. Share it with ${data.invite.email}`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create invite",
         variant: "destructive",
       });
     },
@@ -572,99 +620,199 @@ export default function Settings() {
           )}
 
           {activeTab === "users" && isAdmin && (
-            <Card>
-              <CardHeader>
-                <CardTitle>User Management</CardTitle>
-                <CardDescription>
-                  Manage user roles and permissions
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {usersLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+            <div className="space-y-6">
+              {/* Invite New User Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Mail className="w-5 h-5 mr-2" />
+                    Invite New User
+                  </CardTitle>
+                  <CardDescription>
+                    Send an invite link to add a new team member
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex-1">
+                      <Label htmlFor="invite-email">Email Address</Label>
+                      <Input
+                        id="invite-email"
+                        type="email"
+                        placeholder="colleague@example.com"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                      />
+                    </div>
+                    <div className="w-full sm:w-40">
+                      <Label htmlFor="invite-role">Role</Label>
+                      <Select value={inviteRole} onValueChange={setInviteRole}>
+                        <SelectTrigger id="invite-role">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="therapist">Therapist</SelectItem>
+                          <SelectItem value="billing">Billing</SelectItem>
+                          <SelectItem value="admin">Admin</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        onClick={() => {
+                          if (inviteEmail) {
+                            createInviteMutation.mutate({ email: inviteEmail, role: inviteRole });
+                          }
+                        }}
+                        disabled={!inviteEmail || createInviteMutation.isPending}
+                        className="w-full sm:w-auto"
+                      >
+                        {createInviteMutation.isPending ? "Sending..." : "Send Invite"}
+                      </Button>
+                    </div>
                   </div>
-                ) : users && users.length > 0 ? (
-                  <div className="space-y-4">
-                    <div className="text-sm text-slate-600 mb-4">
-                      Assign roles to control what users can see. <strong>Therapists</strong> cannot see financial data like reimbursement rates.
-                    </div>
-                    <div className="border rounded-lg overflow-hidden">
-                      <table className="w-full">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">User</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Email</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Role</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200">
-                          {users.map((u) => (
-                            <tr key={u.id}>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center">
-                                  <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center mr-3">
-                                    <User className="w-4 h-4 text-slate-600" />
-                                  </div>
-                                  <div>
-                                    <div className="font-medium text-slate-900">
-                                      {u.firstName} {u.lastName}
-                                    </div>
-                                    {u.id === (user as any)?.id && (
-                                      <Badge variant="outline" className="text-xs">You</Badge>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-sm text-slate-600">{u.email}</td>
-                              <td className="px-4 py-3">
-                                <Badge
-                                  variant={u.role === 'admin' ? 'default' : u.role === 'billing' ? 'secondary' : 'outline'}
-                                >
-                                  {u.role || 'therapist'}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-3">
-                                <Select
-                                  value={u.role || 'therapist'}
-                                  onValueChange={(newRole) => {
-                                    updateRoleMutation.mutate({ userId: u.id, role: newRole });
-                                  }}
-                                  disabled={updateRoleMutation.isPending}
-                                >
-                                  <SelectTrigger className="w-32">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="therapist">Therapist</SelectItem>
-                                    <SelectItem value="billing">Billing</SelectItem>
-                                    <SelectItem value="admin">Admin</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                </CardContent>
+              </Card>
 
-                    <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                      <h4 className="font-medium text-blue-900 mb-2">Role Permissions</h4>
-                      <div className="text-sm text-blue-800 space-y-1">
-                        <p><strong>Therapist:</strong> Can create SOAP notes, view patients, submit claims. Cannot see financial data.</p>
-                        <p><strong>Billing:</strong> Full access to financial data, reimbursement estimates, and analytics.</p>
-                        <p><strong>Admin:</strong> Full access plus user management capabilities.</p>
+              {/* Pending Invites */}
+              {invites && invites.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center">
+                      <Clock className="w-5 h-5 mr-2" />
+                      Pending Invites
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {invites.filter(i => i.status === 'pending').map((invite) => (
+                        <div key={invite.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                          <div>
+                            <p className="font-medium text-slate-900">{invite.email}</p>
+                            <p className="text-sm text-slate-600">
+                              Role: {invite.role} • Expires: {new Date(invite.expiresAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const inviteLink = `${window.location.origin}/invite/${invite.token}`;
+                              navigator.clipboard.writeText(inviteLink);
+                              toast({
+                                title: "Copied!",
+                                description: "Invite link copied to clipboard",
+                              });
+                            }}
+                          >
+                            <Copy className="w-4 h-4 mr-1" />
+                            Copy Link
+                          </Button>
+                        </div>
+                      ))}
+                      {invites.filter(i => i.status === 'pending').length === 0 && (
+                        <p className="text-sm text-slate-500 text-center py-4">No pending invites</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Current Users */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Current Users</CardTitle>
+                  <CardDescription>
+                    Manage user roles and permissions
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {usersLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+                    </div>
+                  ) : users && users.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="text-sm text-slate-600 mb-4">
+                        Assign roles to control what users can see. <strong>Therapists</strong> cannot see financial data like reimbursement rates.
+                      </div>
+                      <div className="border rounded-lg overflow-hidden">
+                        <table className="w-full">
+                          <thead className="bg-slate-50">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">User</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Email</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Role</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {users.map((u) => (
+                              <tr key={u.id}>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center">
+                                    <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center mr-3">
+                                      <User className="w-4 h-4 text-slate-600" />
+                                    </div>
+                                    <div>
+                                      <div className="font-medium text-slate-900">
+                                        {u.firstName} {u.lastName}
+                                      </div>
+                                      {u.id === (user as any)?.id && (
+                                        <Badge variant="outline" className="text-xs">You</Badge>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-600">{u.email}</td>
+                                <td className="px-4 py-3">
+                                  <Badge
+                                    variant={u.role === 'admin' ? 'default' : u.role === 'billing' ? 'secondary' : 'outline'}
+                                  >
+                                    {u.role || 'therapist'}
+                                  </Badge>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Select
+                                    value={u.role || 'therapist'}
+                                    onValueChange={(newRole) => {
+                                      updateRoleMutation.mutate({ userId: u.id, role: newRole });
+                                    }}
+                                    disabled={updateRoleMutation.isPending}
+                                  >
+                                    <SelectTrigger className="w-32">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="therapist">Therapist</SelectItem>
+                                      <SelectItem value="billing">Billing</SelectItem>
+                                      <SelectItem value="admin">Admin</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                        <h4 className="font-medium text-blue-900 mb-2">Role Permissions</h4>
+                        <div className="text-sm text-blue-800 space-y-1">
+                          <p><strong>Therapist:</strong> Can create SOAP notes, view patients, submit claims. Cannot see financial data.</p>
+                          <p><strong>Billing:</strong> Full access to financial data, reimbursement estimates, and analytics.</p>
+                          <p><strong>Admin:</strong> Full access plus user management capabilities.</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-slate-600">
-                    No users found.
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  ) : (
+                    <div className="text-center py-8 text-slate-600">
+                      No users found.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
         </div>
       </div>

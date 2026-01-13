@@ -11,6 +11,7 @@ import {
   insurances,
   soapNotes,
   cptCodeMappings,
+  invites,
   type User,
   type UpsertUser,
   type Practice,
@@ -31,6 +32,8 @@ import {
   type InsertExpense,
   type InsertPayment,
   type InsertSoapNote,
+  type Invite,
+  type InsertInvite,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql } from "drizzle-orm";
@@ -123,6 +126,13 @@ export interface IStorage {
     reason: string;
     count: number;
   }[]>;
+
+  // Invite operations
+  createInvite(invite: InsertInvite): Promise<Invite>;
+  getInvitesByPractice(practiceId: number): Promise<Invite[]>;
+  getInviteByToken(token: string): Promise<Invite | undefined>;
+  getInviteByEmail(email: string): Promise<Invite | undefined>;
+  updateInviteStatus(id: number, status: string, acceptedAt?: Date): Promise<Invite | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -601,6 +611,45 @@ export class DatabaseStorage implements IStorage {
       reason: row.reason || "Unknown",
       count: row.count,
     }));
+  }
+
+  // Invite operations
+  async createInvite(invite: InsertInvite): Promise<Invite> {
+    const [created] = await db.insert(invites).values(invite).returning();
+    return created;
+  }
+
+  async getInvitesByPractice(practiceId: number): Promise<Invite[]> {
+    return await db
+      .select()
+      .from(invites)
+      .where(eq(invites.practiceId, practiceId))
+      .orderBy(desc(invites.createdAt));
+  }
+
+  async getInviteByToken(token: string): Promise<Invite | undefined> {
+    const [invite] = await db
+      .select()
+      .from(invites)
+      .where(eq(invites.token, token));
+    return invite;
+  }
+
+  async getInviteByEmail(email: string): Promise<Invite | undefined> {
+    const [invite] = await db
+      .select()
+      .from(invites)
+      .where(and(eq(invites.email, email), eq(invites.status, "pending")));
+    return invite;
+  }
+
+  async updateInviteStatus(id: number, status: string, acceptedAt?: Date): Promise<Invite | undefined> {
+    const [updated] = await db
+      .update(invites)
+      .set({ status, acceptedAt })
+      .where(eq(invites.id, id))
+      .returning();
+    return updated;
   }
 }
 

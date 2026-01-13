@@ -161,6 +161,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Invite endpoints (admin only)
+  app.post('/api/invites', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { email, role, practiceId } = req.body;
+      const invitedById = req.user?.claims?.sub;
+
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      // Validate role
+      if (role && !['therapist', 'admin', 'billing'].includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+
+      // Check if user already exists with this email
+      const allUsers = await storage.getAllUsers();
+      const existingUser = allUsers.find(u => u.email?.toLowerCase() === email.toLowerCase());
+      if (existingUser) {
+        return res.status(400).json({ message: "A user with this email already exists" });
+      }
+
+      // Check if there's already a pending invite for this email
+      const existingInvite = await storage.getInviteByEmail(email);
+      if (existingInvite) {
+        return res.status(400).json({ message: "An invite has already been sent to this email" });
+      }
+
+      // Generate unique token
+      const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+
+      // Set expiry to 7 days from now
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
+      const invite = await storage.createInvite({
+        email,
+        role: role || 'therapist',
+        practiceId: practiceId || 1, // Default practice for now
+        invitedById,
+        token,
+        expiresAt,
+        status: 'pending',
+      });
+
+      res.json({
+        message: "Invite created successfully",
+        invite: {
+          id: invite.id,
+          email: invite.email,
+          role: invite.role,
+          token: invite.token,
+          expiresAt: invite.expiresAt,
+          inviteLink: `/invite/${invite.token}`
+        }
+      });
+    } catch (error) {
+      console.error("Error creating invite:", error);
+      res.status(500).json({ message: "Failed to create invite" });
+    }
+  });
+
+  app.get('/api/invites', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const practiceId = 1; // Default practice for now
+      const invites = await storage.getInvitesByPractice(practiceId);
+      res.json(invites);
+    } catch (error) {
+      console.error("Error fetching invites:", error);
+      res.status(500).json({ message: "Failed to fetch invites" });
+    }
+  });
+
+  app.get('/api/invites/:token', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const invite = await storage.getInviteByToken(token);
+
+      if (!invite) {
+        return res.status(404).json({ message: "Invite not found" });
+      }
+
+      if (invite.status === 'accepted') {
+        return res.status(400).json({ message: "This invite has already been used" });
+      }
+
+      if (invite.status === 'expired' || new Date() > invite.expiresAt) {
+        return res.status(400).json({ message: "This invite has expired" });
+      }
+
+      res.json({
+        email: invite.email,
+        role: invite.role,
+        expiresAt: invite.expiresAt
+      });
+    } catch (error) {
+      console.error("Error fetching invite:", error);
+      res.status(500).json({ message: "Failed to fetch invite" });
+    }
+  });
+
+  app.post('/api/invites/:token/accept', isAuthenticated, async (req: any, res) => {
+    try {
+      const { token } = req.params;
+      const userId = req.user?.claims?.sub;
+
+      const invite = await storage.getInviteByToken(token);
+
+      if (!invite) {
+        return res.status(404).json({ message: "Invite not found" });
+      }
+
+      if (invite.status === 'accepted') {
+        return res.status(400).json({ message: "This invite has already been used" });
+      }
+
+      if (new Date() > invite.expiresAt) {
+        await storage.updateInviteStatus(invite.id, 'expired');
+        return res.status(400).json({ message: "This invite has expired" });
+      }
+
+      // Update user's role and practice
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Update user role to match invite
+      await storage.updateUserRole(userId, invite.role || 'therapist');
+
+      // Mark invite as accepted
+      await storage.updateInviteStatus(invite.id, 'accepted', new Date());
+
+      res.json({
+        message: "Invite accepted successfully",
+        role: invite.role
+      });
+    } catch (error) {
+      console.error("Error accepting invite:", error);
+      res.status(500).json({ message: "Failed to accept invite" });
+    }
+  });
+
   // Dashboard analytics (financial data filtered by role)
   app.get('/api/analytics/dashboard', isAuthenticated, async (req: any, res) => {
     try {
