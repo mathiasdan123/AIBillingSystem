@@ -280,7 +280,7 @@ export const soapNoteTemplates = pgTable("soap_note_templates", {
 export const soapNoteDrafts = pgTable("soap_note_drafts", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id),
-  therapistId: varchar("therapist_id").references(() => users.id),
+  therapistId: varchar("therapist_id"), // No FK constraint - may have placeholder values
   draftName: varchar("draft_name"),
   formData: jsonb("form_data"),
   caregiverDropdownState: jsonb("caregiver_dropdown_state"),
