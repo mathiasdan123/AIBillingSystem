@@ -14,13 +14,6 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
-      {/* TEMP: Very obvious sign-in banner */}
-      <div className="bg-red-600 text-white text-center py-4 text-xl font-bold">
-        👉 CLICK HERE TO SIGN IN 👈
-        <button onClick={handleLogin} className="ml-4 bg-white text-red-600 px-6 py-2 rounded-lg font-bold">
-          SIGN IN NOW
-        </button>
-      </div>
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
