@@ -32,7 +32,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
           <FileText className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{stats.monthlyClaimsCount}</div>
+          <div className="text-2xl font-bold">{stats?.monthlyClaimsCount ?? 0}</div>
           <div className="flex items-center text-xs text-muted-foreground">
             <span>Current month activity</span>
           </div>
@@ -45,7 +45,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
           <CheckCircle className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{stats.successRate.toFixed(1)}%</div>
+          <div className="text-2xl font-bold">{(stats?.successRate ?? 0).toFixed(1)}%</div>
           <div className="flex items-center text-xs text-muted-foreground">
             <span>Claims approved/total submitted</span>
           </div>
@@ -58,7 +58,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
           <DollarSign className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{formatCurrency(stats.monthlyRevenue)}</div>
+          <div className="text-2xl font-bold">{formatCurrency(stats?.monthlyRevenue ?? 0)}</div>
           <div className="flex items-center text-xs text-muted-foreground">
             <span>Total payments received this month</span>
           </div>
@@ -71,7 +71,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
           <Clock className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{stats.avgDaysToPayment}</div>
+          <div className="text-2xl font-bold">{stats?.avgDaysToPayment ?? 0}</div>
           <div className="flex items-center text-xs text-muted-foreground">
             <span>Average processing time</span>
           </div>
