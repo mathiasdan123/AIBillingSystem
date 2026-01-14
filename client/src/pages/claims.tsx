@@ -93,13 +93,13 @@ export default function Claims() {
   }, [isAuthenticated, isLoading, toast]);
 
   const { data: claims, isLoading: claimsLoading } = useQuery<Claim[]>({
-    queryKey: ['/api/claims', practiceId],
+    queryKey: [`/api/claims?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
 
   const { data: patients } = useQuery<any[]>({
-    queryKey: ['/api/patients', practiceId],
+    queryKey: [`/api/patients?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
