@@ -56,12 +56,25 @@ export default function Claims() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showSessionsDialog, setShowSessionsDialog] = useState(false);
+  const [showSuperbillDialog, setShowSuperbillDialog] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState<Claim | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [showPayDialog, setShowPayDialog] = useState(false);
   const [showDenyDialog, setShowDenyDialog] = useState(false);
   const [paidAmount, setPaidAmount] = useState("");
   const [denialReason, setDenialReason] = useState("");
+  const [selectedInsuranceForSession, setSelectedInsuranceForSession] = useState("");
+
+  // Superbill creation state
+  const [superbillPatient, setSuperbillPatient] = useState("");
+  const [superbillInsurance, setSuperbillInsurance] = useState("");
+  const [superbillDate, setSuperbillDate] = useState(new Date().toISOString().split('T')[0]);
+  const [superbillLineItems, setSuperbillLineItems] = useState<Array<{
+    cptCodeId: string;
+    units: number;
+    icd10CodeId?: string;
+  }>>([{ cptCodeId: "", units: 1 }]);
 
   const isAdmin = (user as any)?.role === 'admin';
   const isBilling = (user as any)?.role === 'billing';
@@ -109,6 +122,129 @@ export default function Claims() {
     enabled: isAuthenticated,
     retry: false,
   });
+
+  const { data: cptCodes } = useQuery<any[]>({
+    queryKey: ['/api/cpt-codes'],
+    enabled: isAuthenticated,
+    retry: false,
+  });
+
+  const { data: icd10Codes } = useQuery<any[]>({
+    queryKey: ['/api/icd10-codes'],
+    enabled: isAuthenticated,
+    retry: false,
+  });
+
+  const { data: unbilledSessions, isLoading: sessionsLoading } = useQuery<any[]>({
+    queryKey: [`/api/sessions/unbilled?practiceId=${practiceId}`],
+    enabled: isAuthenticated && showSessionsDialog,
+    retry: false,
+  });
+
+  const generateSuperbillMutation = useMutation({
+    mutationFn: async ({ sessionId, insuranceId }: { sessionId: number; insuranceId?: number }) => {
+      const response = await apiRequest("POST", `/api/sessions/${sessionId}/generate-claim`, {
+        insuranceId: insuranceId || null,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/sessions/unbilled?practiceId=${practiceId}`] });
+      toast({
+        title: "Superbill Generated",
+        description: `Claim ${data.claim.claimNumber} created for $${data.superbillDetails.totalAmount}`,
+      });
+      setShowSessionsDialog(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate superbill",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createSuperbillMutation = useMutation({
+    mutationFn: async (data: {
+      patientId: number;
+      insuranceId?: number;
+      dateOfService: string;
+      lineItems: Array<{ cptCodeId: number; units: number; icd10CodeId?: number }>;
+    }) => {
+      const response = await apiRequest("POST", "/api/superbills", data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      toast({
+        title: "Superbill Created",
+        description: `Claim ${data.claim.claimNumber} created for $${data.totalAmount}`,
+      });
+      setShowSuperbillDialog(false);
+      // Reset form
+      setSuperbillPatient("");
+      setSuperbillInsurance("");
+      setSuperbillDate(new Date().toISOString().split('T')[0]);
+      setSuperbillLineItems([{ cptCodeId: "", units: 1 }]);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create superbill",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCreateSuperbill = () => {
+    if (!superbillPatient) {
+      toast({ title: "Error", description: "Please select a patient", variant: "destructive" });
+      return;
+    }
+    const validLineItems = superbillLineItems.filter(item => item.cptCodeId);
+    if (validLineItems.length === 0) {
+      toast({ title: "Error", description: "Please add at least one CPT code", variant: "destructive" });
+      return;
+    }
+
+    createSuperbillMutation.mutate({
+      patientId: parseInt(superbillPatient),
+      insuranceId: superbillInsurance ? parseInt(superbillInsurance) : undefined,
+      dateOfService: superbillDate,
+      lineItems: validLineItems.map(item => ({
+        cptCodeId: parseInt(item.cptCodeId),
+        units: item.units,
+        icd10CodeId: item.icd10CodeId ? parseInt(item.icd10CodeId) : undefined,
+      })),
+    });
+  };
+
+  const addLineItem = () => {
+    setSuperbillLineItems([...superbillLineItems, { cptCodeId: "", units: 1 }]);
+  };
+
+  const removeLineItem = (index: number) => {
+    if (superbillLineItems.length > 1) {
+      setSuperbillLineItems(superbillLineItems.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateLineItem = (index: number, field: string, value: any) => {
+    const updated = [...superbillLineItems];
+    updated[index] = { ...updated[index], [field]: value };
+    setSuperbillLineItems(updated);
+  };
+
+  const calculateSuperbillTotal = () => {
+    return superbillLineItems.reduce((total, item) => {
+      if (!item.cptCodeId || !cptCodes) return total;
+      const cptCode = cptCodes.find((c: any) => c.id === parseInt(item.cptCodeId));
+      if (!cptCode) return total;
+      return total + (parseFloat(cptCode.baseRate || '289') * item.units);
+    }, 0);
+  };
 
   const createClaimMutation = useMutation({
     mutationFn: async (data: ClaimFormData) => {
@@ -333,13 +469,22 @@ export default function Claims() {
           <h1 className="text-2xl font-bold text-slate-900">Claims Management</h1>
           <p className="text-slate-600">Create, track, and manage insurance claims</p>
         </div>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              New Claim
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setShowSessionsDialog(true)}>
+            <FileText className="w-4 h-4 mr-2" />
+            Generate from Session
+          </Button>
+          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)}>
+            <DollarSign className="w-4 h-4 mr-2" />
+            Create Superbill
+          </Button>
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="w-4 h-4 mr-2" />
+                New Claim
+              </Button>
+            </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Create New Claim</DialogTitle>
@@ -430,7 +575,253 @@ export default function Claims() {
             </Form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {/* Generate from Session Dialog */}
+      <Dialog open={showSessionsDialog} onOpenChange={setShowSessionsDialog}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Generate Superbill from Session</DialogTitle>
+            <DialogDescription>
+              Select a completed session to automatically generate a claim/superbill
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {sessionsLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto" />
+                <p className="text-slate-600 mt-2">Loading sessions...</p>
+              </div>
+            ) : unbilledSessions && unbilledSessions.length > 0 ? (
+              <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                {unbilledSessions.map((session: any) => (
+                  <Card key={session.id} className="cursor-pointer hover:border-blue-300 transition-colors">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-medium">
+                              {session.patient?.firstName} {session.patient?.lastName}
+                            </span>
+                            <Badge variant="outline" className="text-xs">
+                              {new Date(session.sessionDate).toLocaleDateString()}
+                            </Badge>
+                          </div>
+                          <div className="text-sm text-slate-600">
+                            <span className="font-mono bg-slate-100 px-1 rounded">
+                              {session.cptCode?.code}
+                            </span>
+                            {" - "}
+                            {session.cptCode?.description}
+                          </div>
+                          <div className="text-sm text-slate-500 mt-1">
+                            {session.units || 1} unit(s) × ${session.cptCode?.baseRate || '0'} =
+                            <span className="font-medium text-green-600 ml-1">
+                              ${((session.units || 1) * parseFloat(session.cptCode?.baseRate || '0')).toFixed(2)}
+                            </span>
+                          </div>
+                          {session.icd10Code && (
+                            <div className="text-xs text-slate-400 mt-1">
+                              Dx: {session.icd10Code.code} - {session.icd10Code.description}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2 ml-4">
+                          <Select
+                            value={selectedInsuranceForSession}
+                            onValueChange={setSelectedInsuranceForSession}
+                          >
+                            <SelectTrigger className="w-[140px]">
+                              <SelectValue placeholder="Insurance" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {insurances?.map((ins: any) => (
+                                <SelectItem key={ins.id} value={ins.id.toString()}>
+                                  {ins.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            size="sm"
+                            onClick={() => generateSuperbillMutation.mutate({
+                              sessionId: session.id,
+                              insuranceId: selectedInsuranceForSession ? parseInt(selectedInsuranceForSession) : undefined,
+                            })}
+                            disabled={generateSuperbillMutation.isPending}
+                          >
+                            {generateSuperbillMutation.isPending ? "Generating..." : "Generate"}
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
+                <p className="text-slate-600">All sessions have been billed!</p>
+                <p className="text-sm text-slate-400 mt-1">
+                  Complete a new session to generate a superbill
+                </p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Superbill Dialog */}
+      <Dialog open={showSuperbillDialog} onOpenChange={setShowSuperbillDialog}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create Superbill</DialogTitle>
+            <DialogDescription>
+              Create a superbill with multiple CPT codes for billing
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Patient and Insurance Selection */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Patient *</Label>
+                <Select value={superbillPatient} onValueChange={setSuperbillPatient}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select patient" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {patients?.map((patient) => (
+                      <SelectItem key={patient.id} value={patient.id.toString()}>
+                        {patient.firstName} {patient.lastName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Insurance</Label>
+                <Select value={superbillInsurance} onValueChange={setSuperbillInsurance}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select insurance (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {insurances?.map((insurance) => (
+                      <SelectItem key={insurance.id} value={insurance.id.toString()}>
+                        {insurance.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div>
+              <Label>Date of Service</Label>
+              <Input
+                type="date"
+                value={superbillDate}
+                onChange={(e) => setSuperbillDate(e.target.value)}
+              />
+            </div>
+
+            {/* Line Items */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>CPT Codes (Line Items)</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLineItem}>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Code
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {superbillLineItems.map((item, index) => (
+                  <div key={index} className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
+                    <div className="flex-1">
+                      <Select
+                        value={item.cptCodeId}
+                        onValueChange={(value) => updateLineItem(index, 'cptCodeId', value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select CPT code" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {cptCodes?.map((cpt) => (
+                            <SelectItem key={cpt.id} value={cpt.id.toString()}>
+                              {cpt.code} - {cpt.description} (${cpt.baseRate})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-20">
+                      <Input
+                        type="number"
+                        min="1"
+                        value={item.units}
+                        onChange={(e) => updateLineItem(index, 'units', parseInt(e.target.value) || 1)}
+                        placeholder="Units"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <Select
+                        value={item.icd10CodeId || ""}
+                        onValueChange={(value) => updateLineItem(index, 'icd10CodeId', value || undefined)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="ICD-10 (optional)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {icd10Codes?.map((icd) => (
+                            <SelectItem key={icd.id} value={icd.id.toString()}>
+                              {icd.code} - {icd.description}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-24 text-right font-medium">
+                      ${item.cptCodeId && cptCodes
+                        ? ((cptCodes.find((c: any) => c.id === parseInt(item.cptCodeId))?.baseRate || 0) * item.units).toFixed(2)
+                        : '0.00'}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeLineItem(index)}
+                      disabled={superbillLineItems.length === 1}
+                    >
+                      <XCircle className="w-4 h-4 text-red-500" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Total */}
+            <div className="flex justify-end items-center gap-4 p-4 bg-green-50 rounded-lg">
+              <span className="font-medium text-slate-700">Total:</span>
+              <span className="text-2xl font-bold text-green-600">
+                ${calculateSuperbillTotal().toFixed(2)}
+              </span>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowSuperbillDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateSuperbill}
+                disabled={createSuperbillMutation.isPending}
+              >
+                {createSuperbillMutation.isPending ? "Creating..." : "Create Superbill"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

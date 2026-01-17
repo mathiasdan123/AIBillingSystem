@@ -4,6 +4,7 @@ import {
   patients,
   treatmentSessions,
   claims,
+  claimLineItems,
   expenses,
   payments,
   cptCodes,
@@ -18,6 +19,7 @@ import {
   type Patient,
   type TreatmentSession,
   type Claim,
+  type ClaimLineItem,
   type Expense,
   type Payment,
   type CptCode,
@@ -29,6 +31,7 @@ import {
   type InsertPatient,
   type InsertTreatmentSession,
   type InsertClaim,
+  type InsertClaimLineItem,
   type InsertExpense,
   type InsertPayment,
   type InsertSoapNote,
@@ -66,7 +69,12 @@ export interface IStorage {
   getClaims(practiceId: number): Promise<Claim[]>;
   getClaim(id: number): Promise<Claim | undefined>;
   updateClaim(id: number, claim: Partial<InsertClaim>): Promise<Claim>;
-  
+
+  // Claim Line Items operations
+  createClaimLineItem(lineItem: InsertClaimLineItem): Promise<ClaimLineItem>;
+  getClaimLineItems(claimId: number): Promise<ClaimLineItem[]>;
+  deleteClaimLineItems(claimId: number): Promise<void>;
+
   // Expense operations
   createExpense(expense: InsertExpense): Promise<Expense>;
   getExpenses(practiceId: number): Promise<Expense[]>;
@@ -289,6 +297,28 @@ export class DatabaseStorage implements IStorage {
       .where(eq(claims.id, id))
       .returning();
     return updatedClaim;
+  }
+
+  // Claim Line Items operations
+  async createClaimLineItem(lineItem: InsertClaimLineItem): Promise<ClaimLineItem> {
+    const [newLineItem] = await db
+      .insert(claimLineItems)
+      .values(lineItem)
+      .returning();
+    return newLineItem;
+  }
+
+  async getClaimLineItems(claimId: number): Promise<ClaimLineItem[]> {
+    return await db
+      .select()
+      .from(claimLineItems)
+      .where(eq(claimLineItems.claimId, claimId));
+  }
+
+  async deleteClaimLineItems(claimId: number): Promise<void> {
+    await db
+      .delete(claimLineItems)
+      .where(eq(claimLineItems.claimId, claimId));
   }
 
   // Expense operations

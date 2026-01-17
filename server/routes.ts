@@ -581,6 +581,308 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== SESSIONS ENDPOINTS ====================
+
+  // Get all sessions for practice
+  app.get('/api/sessions', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const sessions = await storage.getAllSessions();
+      const practiceSessions = sessions.filter((s: any) => s.practiceId === practiceId);
+      res.json(practiceSessions);
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+      res.status(500).json({ message: 'Failed to fetch sessions' });
+    }
+  });
+
+  // Get unbilled sessions (sessions without a claim)
+  app.get('/api/sessions/unbilled', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const sessions = await storage.getAllSessions();
+      const claims = await storage.getClaims(practiceId);
+
+      // Filter sessions that don't have a claim yet
+      const billedSessionIds = claims
+        .filter((c: any) => c.sessionId)
+        .map((c: any) => c.sessionId);
+
+      const unbilledSessions = sessions.filter((s: any) =>
+        s.practiceId === practiceId &&
+        s.status === 'completed' &&
+        !billedSessionIds.includes(s.id)
+      );
+
+      // Enrich with patient, CPT code, and ICD-10 info
+      const patients = await storage.getPatients(practiceId);
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedSessions = unbilledSessions.map((session: any) => ({
+        ...session,
+        patient: patients.find((p: any) => p.id === session.patientId),
+        cptCode: cptCodes.find((c: any) => c.id === session.cptCodeId),
+        icd10Code: icd10Codes.find((i: any) => i.id === session.icd10CodeId),
+      }));
+
+      res.json(enrichedSessions);
+    } catch (error) {
+      console.error('Error fetching unbilled sessions:', error);
+      res.status(500).json({ message: 'Failed to fetch unbilled sessions' });
+    }
+  });
+
+  // Generate superbill/claim with multiple line items
+  app.post('/api/superbills', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId, dateOfService, lineItems, sessionId } = req.body;
+      const practiceId = 1;
+
+      if (!patientId || !lineItems || lineItems.length === 0) {
+        return res.status(400).json({ message: 'Patient ID and at least one line item are required' });
+      }
+
+      // Get CPT codes for rate lookup
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      // Calculate totals and validate line items
+      let totalAmount = 0;
+      const processedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        if (!cptCode) {
+          throw new Error(`Invalid CPT code ID: ${item.cptCodeId}`);
+        }
+        const rate = parseFloat(cptCode.baseRate || '289.00');
+        const units = item.units || 1;
+        const amount = rate * units;
+        totalAmount += amount;
+
+        return {
+          cptCodeId: item.cptCodeId,
+          icd10CodeId: item.icd10CodeId || null,
+          units,
+          rate: rate.toFixed(2),
+          amount: amount.toFixed(2),
+          dateOfService: dateOfService || new Date().toISOString().split('T')[0],
+          modifier: item.modifier || null,
+          notes: item.notes || null,
+        };
+      });
+
+      // Generate claim number
+      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Create the claim
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId,
+        sessionId: sessionId || null,
+        insuranceId: insuranceId || null,
+        claimNumber,
+        totalAmount: totalAmount.toFixed(2),
+        status: 'draft',
+      });
+
+      // Create line items
+      const createdLineItems = [];
+      for (const item of processedLineItems) {
+        const lineItem = await storage.createClaimLineItem({
+          claimId: claim.id,
+          ...item,
+        });
+        createdLineItems.push(lineItem);
+      }
+
+      // Enrich response with CPT code details
+      const enrichedLineItems = createdLineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
+        return {
+          ...item,
+          cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+          icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+        };
+      });
+
+      res.json({
+        message: 'Superbill created successfully',
+        claim,
+        lineItems: enrichedLineItems,
+        totalAmount: totalAmount.toFixed(2),
+      });
+    } catch (error: any) {
+      console.error('Error creating superbill:', error);
+      res.status(500).json({ message: error.message || 'Failed to create superbill' });
+    }
+  });
+
+  // Legacy: Generate simple claim from session (single CPT code)
+  app.post('/api/sessions/:id/generate-claim', isAuthenticated, async (req: any, res) => {
+    try {
+      const sessionId = parseInt(req.params.id);
+      const { insuranceId } = req.body;
+      const practiceId = 1;
+
+      // Get session details
+      const sessions = await storage.getAllSessions();
+      const session = sessions.find((s: any) => s.id === sessionId);
+
+      if (!session) {
+        return res.status(404).json({ message: 'Session not found' });
+      }
+
+      // Check if session already has a claim
+      const existingClaims = await storage.getClaims(practiceId);
+      const existingClaim = existingClaims.find((c: any) => c.sessionId === sessionId);
+      if (existingClaim) {
+        return res.status(400).json({ message: 'Session already has a claim', claim: existingClaim });
+      }
+
+      // Get CPT code to calculate amount
+      const cptCodes = await storage.getCptCodes();
+      const cptCode = cptCodes.find((c: any) => c.id === session.cptCodeId);
+
+      if (!cptCode) {
+        return res.status(400).json({ message: 'Session has no valid CPT code' });
+      }
+
+      // Calculate total amount: rate × units
+      const rate = parseFloat(cptCode.baseRate || '289.00');
+      const units = session.units || 1;
+      const totalAmount = (rate * units).toFixed(2);
+
+      // Generate claim number
+      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Create the claim/superbill
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId: session.patientId,
+        sessionId,
+        insuranceId: insuranceId || null,
+        claimNumber,
+        totalAmount,
+        status: 'draft',
+      });
+
+      // Create the line item
+      const lineItem = await storage.createClaimLineItem({
+        claimId: claim.id,
+        cptCodeId: session.cptCodeId,
+        icd10CodeId: session.icd10CodeId || null,
+        units,
+        rate: rate.toFixed(2),
+        amount: totalAmount,
+        dateOfService: session.sessionDate,
+      });
+
+      res.json({
+        message: 'Superbill generated successfully',
+        claim,
+        lineItems: [{
+          ...lineItem,
+          cptCode: { code: cptCode.code, description: cptCode.description },
+        }],
+        superbillDetails: {
+          dateOfService: session.sessionDate,
+          cptCode: cptCode.code,
+          cptDescription: cptCode.description,
+          units,
+          rate,
+          totalAmount,
+          icd10CodeId: session.icd10CodeId,
+        }
+      });
+    } catch (error: any) {
+      console.error('Error generating superbill:', error);
+      res.status(500).json({ message: 'Failed to generate superbill' });
+    }
+  });
+
+  // Create superbill with multiple CPT codes (line items)
+  app.post('/api/superbills', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId, dateOfService, lineItems } = req.body;
+      const practiceId = 1;
+
+      if (!patientId) {
+        return res.status(400).json({ message: 'Patient ID is required' });
+      }
+
+      if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
+        return res.status(400).json({ message: 'At least one line item is required' });
+      }
+
+      // Get CPT codes to calculate amounts
+      const cptCodes = await storage.getCptCodes();
+
+      // Calculate total from all line items
+      let totalAmount = 0;
+      const validatedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        if (!cptCode) {
+          throw new Error(`Invalid CPT code ID: ${item.cptCodeId}`);
+        }
+        const rate = parseFloat(cptCode.baseRate || '289.00');
+        const units = item.units || 1;
+        const amount = rate * units;
+        totalAmount += amount;
+        return {
+          cptCodeId: item.cptCodeId,
+          icd10CodeId: item.icd10CodeId || null,
+          units,
+          rate: rate.toFixed(2),
+          amount: amount.toFixed(2),
+          dateOfService: dateOfService || new Date().toISOString().split('T')[0],
+          cptCode,
+        };
+      });
+
+      // Generate claim number
+      const claimNumber = `SB-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Create the claim
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId,
+        insuranceId: insuranceId || null,
+        claimNumber,
+        totalAmount: totalAmount.toFixed(2),
+        status: 'draft',
+      });
+
+      // Create all line items
+      const createdLineItems = [];
+      for (const item of validatedLineItems) {
+        const lineItem = await storage.createClaimLineItem({
+          claimId: claim.id,
+          cptCodeId: item.cptCodeId,
+          icd10CodeId: item.icd10CodeId,
+          units: item.units,
+          rate: item.rate,
+          amount: item.amount,
+          dateOfService: item.dateOfService,
+        });
+        createdLineItems.push({
+          ...lineItem,
+          cptCode: { code: item.cptCode.code, description: item.cptCode.description },
+        });
+      }
+
+      res.json({
+        message: 'Superbill created successfully',
+        claim,
+        lineItems: createdLineItems,
+        totalAmount: totalAmount.toFixed(2),
+      });
+    } catch (error: any) {
+      console.error('Error creating superbill:', error);
+      res.status(500).json({ message: error.message || 'Failed to create superbill' });
+    }
+  });
+
   // ==================== CLAIMS ENDPOINTS ====================
 
   // Get all claims for practice
@@ -595,17 +897,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get single claim
+  // Get single claim with line items
   app.get('/api/claims/:id', isAuthenticated, async (req: any, res) => {
     try {
       const claim = await storage.getClaim(parseInt(req.params.id));
       if (!claim) {
         return res.status(404).json({ message: 'Claim not found' });
       }
-      res.json(claim);
+
+      // Get line items for this claim
+      const lineItems = await storage.getClaimLineItems(claim.id);
+
+      // Enrich line items with CPT and ICD-10 details
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
+        return {
+          ...item,
+          cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+          icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+        };
+      });
+
+      res.json({
+        ...claim,
+        lineItems: enrichedLineItems,
+      });
     } catch (error) {
       console.error('Error fetching claim:', error);
       res.status(500).json({ message: 'Failed to fetch claim' });
+    }
+  });
+
+  // Get line items for a claim
+  app.get('/api/claims/:id/line-items', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const lineItems = await storage.getClaimLineItems(claimId);
+
+      // Enrich with CPT and ICD-10 details
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
+        return {
+          ...item,
+          cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+          icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+        };
+      });
+
+      res.json(enrichedLineItems);
+    } catch (error) {
+      console.error('Error fetching claim line items:', error);
+      res.status(500).json({ message: 'Failed to fetch line items' });
+    }
+  });
+
+  // Add line item to claim
+  app.post('/api/claims/:id/line-items', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const { cptCodeId, icd10CodeId, units, dateOfService, modifier, notes } = req.body;
+
+      // Get CPT code for rate
+      const cptCodes = await storage.getCptCodes();
+      const cptCode = cptCodes.find((c: any) => c.id === cptCodeId);
+      if (!cptCode) {
+        return res.status(400).json({ message: 'Invalid CPT code' });
+      }
+
+      const rate = parseFloat(cptCode.baseRate || '289.00');
+      const lineUnits = units || 1;
+      const amount = (rate * lineUnits).toFixed(2);
+
+      const lineItem = await storage.createClaimLineItem({
+        claimId,
+        cptCodeId,
+        icd10CodeId: icd10CodeId || null,
+        units: lineUnits,
+        rate: rate.toFixed(2),
+        amount,
+        dateOfService: dateOfService || new Date().toISOString().split('T')[0],
+        modifier: modifier || null,
+        notes: notes || null,
+      });
+
+      // Update claim total
+      const existingLineItems = await storage.getClaimLineItems(claimId);
+      const newTotal = existingLineItems.reduce((sum: number, item: any) =>
+        sum + parseFloat(item.amount), 0);
+      await storage.updateClaim(claimId, { totalAmount: newTotal.toFixed(2) });
+
+      res.json({
+        ...lineItem,
+        cptCode: { code: cptCode.code, description: cptCode.description },
+      });
+    } catch (error) {
+      console.error('Error adding line item:', error);
+      res.status(500).json({ message: 'Failed to add line item' });
     }
   });
 
