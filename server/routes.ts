@@ -5,6 +5,8 @@ import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
 import { AiClaimOptimizer } from "./aiClaimOptimizer";
 import { appealGenerator } from "./aiAppealGenerator";
+import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedClaimsReportInput } from "./email";
+import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow } from "./scheduler";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
@@ -1609,6 +1611,298 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching denial reasons:', error);
       res.status(500).json({ message: 'Failed to fetch denial reasons' });
+    }
+  });
+
+  // Denied Claims Report endpoints
+  app.get('/api/reports/denied-claims', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const period = req.query.period || 'today';
+      const customStartDate = req.query.startDate;
+      const customEndDate = req.query.endDate;
+
+      let startDate: Date;
+      let endDate: Date = new Date();
+      endDate.setHours(23, 59, 59, 999);
+
+      switch (period) {
+        case 'today':
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate = new Date();
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'custom':
+          if (!customStartDate || !customEndDate) {
+            return res.status(400).json({ message: 'Custom date range requires startDate and endDate' });
+          }
+          startDate = new Date(customStartDate);
+          endDate = new Date(customEndDate);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        default:
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+      }
+
+      const deniedClaimsWithDetails = await storage.getDeniedClaimsWithDetails(practiceId, startDate, endDate);
+      const denialReasons = await storage.getTopDenialReasons(practiceId);
+
+      // Calculate summary statistics
+      const totalAmount = deniedClaimsWithDetails.reduce((sum, item) =>
+        sum + parseFloat(item.claim.totalAmount || '0'), 0);
+      const appealsGenerated = deniedClaimsWithDetails.filter(item => item.appeal !== null).length;
+      const appealsSent = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'sent').length;
+      const appealsWon = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'completed').length;
+
+      res.json({
+        period,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        summary: {
+          totalDenied: deniedClaimsWithDetails.length,
+          totalAmountAtRisk: totalAmount,
+          appealsGenerated,
+          appealsSent,
+          appealsWon,
+        },
+        topDenialReasons: denialReasons,
+        claims: deniedClaimsWithDetails.map(item => ({
+          id: item.claim.id,
+          claimNumber: item.claim.claimNumber,
+          patientName: item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : 'Unknown',
+          patientId: item.claim.patientId,
+          amount: item.claim.totalAmount,
+          denialReason: item.claim.denialReason,
+          deniedAt: item.claim.updatedAt,
+          appealStatus: item.appeal?.status || 'none',
+          appealId: item.appeal?.id || null,
+        })),
+      });
+    } catch (error) {
+      console.error('Error fetching denied claims report:', error);
+      res.status(500).json({ message: 'Failed to fetch denied claims report' });
+    }
+  });
+
+  // Export denied claims report as CSV
+  app.get('/api/reports/denied-claims/export', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const period = req.query.period || 'month';
+      const customStartDate = req.query.startDate;
+      const customEndDate = req.query.endDate;
+
+      let startDate: Date;
+      let endDate: Date = new Date();
+      endDate.setHours(23, 59, 59, 999);
+
+      switch (period) {
+        case 'today':
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate = new Date();
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'custom':
+          if (!customStartDate || !customEndDate) {
+            return res.status(400).json({ message: 'Custom date range requires startDate and endDate' });
+          }
+          startDate = new Date(customStartDate);
+          endDate = new Date(customEndDate);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        default:
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+      }
+
+      const deniedClaimsWithDetails = await storage.getDeniedClaimsWithDetails(practiceId, startDate, endDate);
+
+      // Generate CSV
+      const csvHeader = 'Claim Number,Patient Name,Amount,Denial Reason,Denied Date,Appeal Status\n';
+      const csvRows = deniedClaimsWithDetails.map(item => {
+        const patientName = item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : 'Unknown';
+        const amount = item.claim.totalAmount || '0';
+        const denialReason = (item.claim.denialReason || 'Unknown').replace(/,/g, ';').replace(/\n/g, ' ');
+        const deniedAt = item.claim.updatedAt ? new Date(item.claim.updatedAt).toLocaleDateString() : '';
+        const appealStatus = item.appeal?.status || 'none';
+
+        return `${item.claim.claimNumber},"${patientName}",${amount},"${denialReason}",${deniedAt},${appealStatus}`;
+      }).join('\n');
+
+      const csv = csvHeader + csvRows;
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="denied-claims-${period}-${new Date().toISOString().split('T')[0]}.csv"`);
+      res.send(csv);
+    } catch (error) {
+      console.error('Error exporting denied claims report:', error);
+      res.status(500).json({ message: 'Failed to export denied claims report' });
+    }
+  });
+
+  // Email settings endpoints
+  app.get('/api/reports/email-settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      res.json({
+        configured: isEmailConfigured(),
+        recipients: getDailyReportRecipients(),
+      });
+    } catch (error) {
+      console.error('Error fetching email settings:', error);
+      res.status(500).json({ message: 'Failed to fetch email settings' });
+    }
+  });
+
+  app.post('/api/reports/email-settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const { recipients } = req.body;
+
+      if (!Array.isArray(recipients)) {
+        return res.status(400).json({ message: 'Recipients must be an array of email addresses' });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const invalidEmails = recipients.filter((email: string) => !emailRegex.test(email));
+      if (invalidEmails.length > 0) {
+        return res.status(400).json({ message: `Invalid email addresses: ${invalidEmails.join(', ')}` });
+      }
+
+      setDailyReportRecipients(recipients);
+
+      res.json({
+        message: 'Email settings updated successfully',
+        recipients: getDailyReportRecipients(),
+      });
+    } catch (error) {
+      console.error('Error updating email settings:', error);
+      res.status(500).json({ message: 'Failed to update email settings' });
+    }
+  });
+
+  app.post('/api/reports/send-test-email', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: 'Email address is required' });
+      }
+
+      const result = await sendTestEmail(email);
+
+      if (result.success) {
+        res.json({ message: 'Test email sent successfully' });
+      } else {
+        res.status(500).json({ message: result.error || 'Failed to send test email' });
+      }
+    } catch (error) {
+      console.error('Error sending test email:', error);
+      res.status(500).json({ message: 'Failed to send test email' });
+    }
+  });
+
+  app.post('/api/reports/send-report-now', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const { period = 'today', email } = req.body;
+
+      // Get date range based on period
+      let startDate: Date;
+      let endDate: Date = new Date();
+      endDate.setHours(23, 59, 59, 999);
+
+      switch (period) {
+        case 'today':
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate = new Date();
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        default:
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+      }
+
+      const deniedClaimsWithDetails = await storage.getDeniedClaimsWithDetails(practiceId, startDate, endDate);
+      const denialReasons = await storage.getTopDenialReasons(practiceId);
+      const practice = await storage.getPractice(practiceId);
+
+      const totalAmount = deniedClaimsWithDetails.reduce((sum, item) =>
+        sum + parseFloat(item.claim.totalAmount || '0'), 0);
+      const appealsGenerated = deniedClaimsWithDetails.filter(item => item.appeal !== null).length;
+      const appealsSent = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'sent').length;
+      const appealsWon = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'completed').length;
+
+      const reportData: DeniedClaimsReportInput = {
+        practiceName: practice?.name || 'Your Practice',
+        reportDate: new Date(),
+        period: period === 'today' ? 'Today' : period === 'week' ? 'Last 7 Days' : 'Last 30 Days',
+        summary: {
+          totalDenied: deniedClaimsWithDetails.length,
+          totalAmountAtRisk: totalAmount,
+          appealsGenerated,
+          appealsSent,
+          appealsWon,
+        },
+        topDenialReasons: denialReasons,
+        claims: deniedClaimsWithDetails.map(item => ({
+          claimNumber: item.claim.claimNumber || 'Unknown',
+          patientName: item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : 'Unknown',
+          amount: item.claim.totalAmount || '0',
+          denialReason: item.claim.denialReason,
+          deniedAt: item.claim.updatedAt,
+          appealStatus: item.appeal?.status || 'none',
+        })),
+        reportUrl: process.env.APP_URL ? `${process.env.APP_URL}/reports` : undefined,
+      };
+
+      const recipients = email ? [email] : getDailyReportRecipients();
+      if (recipients.length === 0) {
+        return res.status(400).json({ message: 'No email recipients configured' });
+      }
+
+      const result = await sendDeniedClaimsReport(recipients, reportData);
+
+      if (result.success) {
+        res.json({ message: `Report sent successfully to ${recipients.join(', ')}` });
+      } else {
+        res.status(500).json({ message: result.error || 'Failed to send report' });
+      }
+    } catch (error) {
+      console.error('Error sending report:', error);
+      res.status(500).json({ message: 'Failed to send report' });
     }
   });
 

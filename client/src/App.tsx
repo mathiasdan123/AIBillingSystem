@@ -11,6 +11,7 @@ import Dashboard from "@/pages/dashboard";
 import Claims from "@/pages/claims";
 import Patients from "@/pages/patients";
 import Analytics from "@/pages/analytics";
+import Reports from "@/pages/reports";
 import Expenses from "@/pages/expenses";
 import Settings from "@/pages/settings";
 import PatientIntake from "@/pages/intake";
@@ -54,6 +55,7 @@ function Router() {
         <Route path="/soap-notes" component={SoapNotes} />
         <Route path="/accounting" component={Accounting} />
         <Route path="/analytics" component={Analytics} />
+        <Route path="/reports" component={Reports} />
         <Route path="/expenses" component={Expenses} />
         <Route path="/settings" component={Settings} />
         <Route path="/data-upload" component={DataUpload} />

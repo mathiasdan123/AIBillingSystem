@@ -157,6 +157,14 @@ export interface IStorage {
   createReimbursementOptimization(optimization: InsertReimbursementOptimization): Promise<ReimbursementOptimization>;
   getClaimAppeals(claimId: number): Promise<ReimbursementOptimization[]>;
   updateAppealStatus(id: number, status: string, completedAt?: Date): Promise<ReimbursementOptimization | undefined>;
+
+  // Denied Claims Report operations
+  getDeniedClaimsByDateRange(practiceId: number, startDate: Date, endDate: Date): Promise<Claim[]>;
+  getDeniedClaimsWithDetails(practiceId: number, startDate: Date, endDate: Date): Promise<{
+    claim: Claim;
+    patient: Patient | null;
+    appeal: ReimbursementOptimization | null;
+  }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -752,6 +760,44 @@ export class DatabaseStorage implements IStorage {
       .where(eq(reimbursementOptimizations.id, id))
       .returning();
     return updated;
+  }
+
+  // Denied Claims Report operations
+  async getDeniedClaimsByDateRange(practiceId: number, startDate: Date, endDate: Date): Promise<Claim[]> {
+    return await db
+      .select()
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        eq(claims.status, "denied"),
+        gte(claims.updatedAt, startDate),
+        lte(claims.updatedAt, endDate)
+      ))
+      .orderBy(desc(claims.updatedAt));
+  }
+
+  async getDeniedClaimsWithDetails(practiceId: number, startDate: Date, endDate: Date): Promise<{
+    claim: Claim;
+    patient: Patient | null;
+    appeal: ReimbursementOptimization | null;
+  }[]> {
+    const deniedClaims = await this.getDeniedClaimsByDateRange(practiceId, startDate, endDate);
+
+    const results = await Promise.all(
+      deniedClaims.map(async (claim) => {
+        const patient = claim.patientId ? await this.getPatient(claim.patientId) : null;
+        const appeals = await this.getClaimAppeals(claim.id);
+        const appeal = appeals.length > 0 ? appeals[0] : null;
+
+        return {
+          claim,
+          patient: patient || null,
+          appeal,
+        };
+      })
+    );
+
+    return results;
   }
 }
 

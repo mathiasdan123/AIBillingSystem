@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { seedDatabase } from "./seeds";
+import { startScheduler } from "./scheduler";
 
 const app = express();
 app.use(express.json());
@@ -78,5 +79,8 @@ app.use((req, res, next) => {
 
   server.listen(listenOptions, () => {
     log(`serving on port ${port}`);
+
+    // Start the scheduler for daily reports
+    startScheduler();
   });
 })();
