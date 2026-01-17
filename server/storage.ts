@@ -13,6 +13,7 @@ import {
   soapNotes,
   cptCodeMappings,
   invites,
+  eligibilityChecks,
   type User,
   type UpsertUser,
   type Practice,
@@ -37,6 +38,8 @@ import {
   type InsertSoapNote,
   type Invite,
   type InsertInvite,
+  type EligibilityCheck,
+  type InsertEligibilityCheck,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql } from "drizzle-orm";
@@ -141,6 +144,11 @@ export interface IStorage {
   getInviteByToken(token: string): Promise<Invite | undefined>;
   getInviteByEmail(email: string): Promise<Invite | undefined>;
   updateInviteStatus(id: number, status: string, acceptedAt?: Date): Promise<Invite | undefined>;
+
+  // Eligibility operations
+  createEligibilityCheck(check: InsertEligibilityCheck): Promise<EligibilityCheck>;
+  getPatientEligibility(patientId: number): Promise<EligibilityCheck | undefined>;
+  getEligibilityHistory(patientId: number): Promise<EligibilityCheck[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -680,6 +688,33 @@ export class DatabaseStorage implements IStorage {
       .where(eq(invites.id, id))
       .returning();
     return updated;
+  }
+
+  // Eligibility operations
+  async createEligibilityCheck(check: InsertEligibilityCheck): Promise<EligibilityCheck> {
+    const [created] = await db
+      .insert(eligibilityChecks)
+      .values(check)
+      .returning();
+    return created;
+  }
+
+  async getPatientEligibility(patientId: number): Promise<EligibilityCheck | undefined> {
+    const [check] = await db
+      .select()
+      .from(eligibilityChecks)
+      .where(eq(eligibilityChecks.patientId, patientId))
+      .orderBy(desc(eligibilityChecks.checkDate))
+      .limit(1);
+    return check;
+  }
+
+  async getEligibilityHistory(patientId: number): Promise<EligibilityCheck[]> {
+    return await db
+      .select()
+      .from(eligibilityChecks)
+      .where(eq(eligibilityChecks.patientId, patientId))
+      .orderBy(desc(eligibilityChecks.checkDate));
   }
 }
 

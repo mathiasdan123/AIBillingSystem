@@ -368,6 +368,29 @@ export const payments = pgTable("payments", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Eligibility Checks - stores results from eligibility verification
+export const eligibilityChecks = pgTable("eligibility_checks", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  insuranceId: integer("insurance_id").references(() => insurances.id),
+  checkDate: timestamp("check_date").defaultNow(),
+  status: varchar("status").notNull(), // "active", "inactive", "unknown"
+  coverageType: varchar("coverage_type"), // "HMO", "PPO", "Medicare", etc.
+  effectiveDate: date("effective_date"),
+  terminationDate: date("termination_date"),
+  copay: decimal("copay", { precision: 10, scale: 2 }),
+  deductible: decimal("deductible", { precision: 10, scale: 2 }),
+  deductibleMet: decimal("deductible_met", { precision: 10, scale: 2 }),
+  outOfPocketMax: decimal("out_of_pocket_max", { precision: 10, scale: 2 }),
+  outOfPocketMet: decimal("out_of_pocket_met", { precision: 10, scale: 2 }),
+  coinsurance: integer("coinsurance"), // percentage (e.g., 20 for 20%)
+  visitsAllowed: integer("visits_allowed"), // total visits per year
+  visitsUsed: integer("visits_used"),
+  authRequired: boolean("auth_required"),
+  rawResponse: jsonb("raw_response"), // store full API response for debugging
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one }) => ({
   practice: one(practices, {
@@ -560,3 +583,10 @@ export const insertInviteSchema = createInsertSchema(invites).omit({
 });
 export type Invite = typeof invites.$inferSelect;
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
+
+export const insertEligibilityCheckSchema = createInsertSchema(eligibilityChecks).omit({
+  id: true,
+  createdAt: true,
+});
+export type EligibilityCheck = typeof eligibilityChecks.$inferSelect;
+export type InsertEligibilityCheck = z.infer<typeof insertEligibilityCheckSchema>;

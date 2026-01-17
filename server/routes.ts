@@ -47,6 +47,85 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
   }
 };
 
+// Generate mock eligibility data for testing
+// In production, this would be replaced by real API calls
+function generateMockEligibility(patient: any, insurance: any) {
+  // Simulate realistic eligibility outcomes
+  const random = Math.random();
+
+  // 85% active, 10% inactive, 5% unknown
+  let status: 'active' | 'inactive' | 'unknown';
+  if (random < 0.85) {
+    status = 'active';
+  } else if (random < 0.95) {
+    status = 'inactive';
+  } else {
+    status = 'unknown';
+  }
+
+  // If inactive or unknown, return minimal info
+  if (status !== 'active') {
+    return {
+      status,
+      coverageType: null,
+      effectiveDate: null,
+      terminationDate: status === 'inactive' ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null,
+      copay: null,
+      deductible: null,
+      deductibleMet: null,
+      outOfPocketMax: null,
+      outOfPocketMet: null,
+      coinsurance: null,
+      visitsAllowed: null,
+      visitsUsed: null,
+      authRequired: null,
+      message: status === 'inactive' ? 'Coverage terminated' : 'Unable to verify eligibility',
+    };
+  }
+
+  // Generate realistic coverage details for active coverage
+  const coverageTypes = ['PPO', 'HMO', 'POS', 'EPO'];
+  const copayOptions = [20, 25, 30, 35, 40, 50];
+  const deductibleOptions = [500, 1000, 1500, 2000, 2500, 3000];
+  const outOfPocketOptions = [3000, 4000, 5000, 6000, 7500, 8000];
+  const visitLimits = [30, 40, 50, 60];
+
+  const coverageType = coverageTypes[Math.floor(Math.random() * coverageTypes.length)];
+  const copay = copayOptions[Math.floor(Math.random() * copayOptions.length)];
+  const deductible = deductibleOptions[Math.floor(Math.random() * deductibleOptions.length)];
+  const deductibleMet = Math.round(deductible * Math.random() * 100) / 100;
+  const outOfPocketMax = outOfPocketOptions[Math.floor(Math.random() * outOfPocketOptions.length)];
+  const outOfPocketMet = Math.round(outOfPocketMax * Math.random() * 0.5 * 100) / 100;
+  const coinsurance = [10, 20, 30][Math.floor(Math.random() * 3)];
+  const visitsAllowed = visitLimits[Math.floor(Math.random() * visitLimits.length)];
+  const visitsUsed = Math.floor(Math.random() * visitsAllowed * 0.6);
+  const authRequired = Math.random() < 0.3;
+
+  // Effective date is 1-2 years ago
+  const effectiveDate = new Date(Date.now() - (365 + Math.random() * 365) * 24 * 60 * 60 * 1000);
+
+  // Termination date is end of current year or next year
+  const currentYear = new Date().getFullYear();
+  const terminationDate = new Date(currentYear + (Math.random() < 0.5 ? 0 : 1), 11, 31);
+
+  return {
+    status,
+    coverageType,
+    effectiveDate: effectiveDate.toISOString().split('T')[0],
+    terminationDate: terminationDate.toISOString().split('T')[0],
+    copay,
+    deductible,
+    deductibleMet,
+    outOfPocketMax,
+    outOfPocketMet,
+    coinsurance,
+    visitsAllowed,
+    visitsUsed,
+    authRequired,
+    message: 'Coverage verified successfully',
+  };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -578,6 +657,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching insurances:', error);
       res.status(500).json({ message: 'Failed to fetch insurances' });
+    }
+  });
+
+  // ==================== ELIGIBILITY VERIFICATION ====================
+
+  // Check insurance eligibility for a patient
+  app.post('/api/insurance/eligibility', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId } = req.body;
+
+      if (!patientId) {
+        return res.status(400).json({ message: 'Patient ID is required' });
+      }
+
+      // Get patient details
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      // Get insurance details if provided
+      let insurance = null;
+      if (insuranceId) {
+        const insurances = await storage.getInsurances();
+        insurance = insurances.find((i: any) => i.id === insuranceId);
+      }
+
+      // Check if real API is configured (future: check insurance.eligibilityApiConfig)
+      const hasRealApi = insurance?.eligibilityApiConfig &&
+                         Object.keys(insurance.eligibilityApiConfig as object).length > 0;
+
+      let eligibilityResult;
+
+      if (hasRealApi) {
+        // Future: Call real eligibility API based on config
+        // For now, fall through to mock
+      }
+
+      // Generate mock eligibility response
+      eligibilityResult = generateMockEligibility(patient, insurance);
+
+      // Store the result in the database
+      const savedCheck = await storage.createEligibilityCheck({
+        patientId,
+        insuranceId: insuranceId || null,
+        status: eligibilityResult.status,
+        coverageType: eligibilityResult.coverageType,
+        effectiveDate: eligibilityResult.effectiveDate,
+        terminationDate: eligibilityResult.terminationDate,
+        copay: eligibilityResult.copay?.toString(),
+        deductible: eligibilityResult.deductible?.toString(),
+        deductibleMet: eligibilityResult.deductibleMet?.toString(),
+        outOfPocketMax: eligibilityResult.outOfPocketMax?.toString(),
+        outOfPocketMet: eligibilityResult.outOfPocketMet?.toString(),
+        coinsurance: eligibilityResult.coinsurance,
+        visitsAllowed: eligibilityResult.visitsAllowed,
+        visitsUsed: eligibilityResult.visitsUsed,
+        authRequired: eligibilityResult.authRequired,
+        rawResponse: eligibilityResult,
+      });
+
+      res.json({
+        success: true,
+        eligibility: savedCheck,
+        patient: {
+          id: patient.id,
+          name: `${patient.firstName} ${patient.lastName}`,
+          memberId: patient.insuranceId,
+          groupNumber: patient.groupNumber,
+        },
+        insurance: insurance ? {
+          id: insurance.id,
+          name: insurance.name,
+        } : null,
+      });
+    } catch (error: any) {
+      console.error('Error checking eligibility:', error);
+      res.status(500).json({ message: error.message || 'Failed to check eligibility' });
+    }
+  });
+
+  // Get most recent eligibility for a patient
+  app.get('/api/patients/:id/eligibility', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const eligibility = await storage.getPatientEligibility(patientId);
+      res.json(eligibility || null);
+    } catch (error) {
+      console.error('Error fetching eligibility:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility' });
+    }
+  });
+
+  // Get eligibility history for a patient
+  app.get('/api/patients/:id/eligibility/history', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const history = await storage.getEligibilityHistory(patientId);
+      res.json(history);
+    } catch (error) {
+      console.error('Error fetching eligibility history:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility history' });
     }
   });
 
