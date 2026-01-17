@@ -12,7 +12,8 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Plus, Search, Send, CheckCircle, Clock, XCircle, AlertCircle,
-  DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical
+  DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical,
+  Copy, RefreshCw, Loader2, Scale, Mail
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -65,6 +66,9 @@ export default function Claims() {
   const [paidAmount, setPaidAmount] = useState("");
   const [denialReason, setDenialReason] = useState("");
   const [selectedInsuranceForSession, setSelectedInsuranceForSession] = useState("");
+  const [claimAppeals, setClaimAppeals] = useState<any[]>([]);
+  const [loadingAppeals, setLoadingAppeals] = useState(false);
+  const [showAppealLetter, setShowAppealLetter] = useState(false);
 
   // Superbill creation state
   const [superbillPatient, setSuperbillPatient] = useState("");
@@ -350,12 +354,19 @@ export default function Claims() {
       const response = await apiRequest("POST", `/api/claims/${claimId}/deny`, { denialReason });
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
-      toast({
-        title: "Success",
-        description: "Claim marked as denied",
-      });
+      if (data.appealGenerated) {
+        toast({
+          title: "Claim Denied - AI Appeal Generated",
+          description: `Success probability: ${data.appeal?.successProbability}%`,
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Claim marked as denied",
+        });
+      }
       setShowDenyDialog(false);
       setDenialReason("");
       setSelectedClaim(null);
@@ -368,6 +379,87 @@ export default function Claims() {
       });
     },
   });
+
+  // Fetch appeals for a claim
+  const fetchAppeals = async (claimId: number) => {
+    setLoadingAppeals(true);
+    try {
+      const response = await apiRequest("GET", `/api/claims/${claimId}/appeals`);
+      const data = await response.json();
+      setClaimAppeals(data);
+    } catch (error) {
+      console.error('Error fetching appeals:', error);
+      setClaimAppeals([]);
+    }
+    setLoadingAppeals(false);
+  };
+
+  // Mark appeal as sent
+  const markAppealSentMutation = useMutation({
+    mutationFn: async ({ claimId, appealId }: { claimId: number; appealId: number }) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/appeals/${appealId}/sent`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "Appeal marked as sent" });
+      if (selectedClaim) fetchAppeals(selectedClaim.id);
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update appeal", variant: "destructive" });
+    },
+  });
+
+  // Mark appeal as completed
+  const markAppealCompletedMutation = useMutation({
+    mutationFn: async ({ claimId, appealId }: { claimId: number; appealId: number }) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/appeals/${appealId}/completed`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "Appeal marked as completed (won)" });
+      if (selectedClaim) fetchAppeals(selectedClaim.id);
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update appeal", variant: "destructive" });
+    },
+  });
+
+  // Mark appeal as failed
+  const markAppealFailedMutation = useMutation({
+    mutationFn: async ({ claimId, appealId }: { claimId: number; appealId: number }) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/appeals/${appealId}/failed`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Appeal Failed", description: "Appeal marked as unsuccessful", variant: "destructive" });
+      if (selectedClaim) fetchAppeals(selectedClaim.id);
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update appeal", variant: "destructive" });
+    },
+  });
+
+  // Regenerate appeal
+  const regenerateAppealMutation = useMutation({
+    mutationFn: async (claimId: number) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/regenerate-appeal`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "New appeal generated" });
+      if (selectedClaim) fetchAppeals(selectedClaim.id);
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to regenerate appeal", variant: "destructive" });
+    },
+  });
+
+  // Copy appeal letter to clipboard
+  const copyAppealLetter = (letter: string) => {
+    navigator.clipboard.writeText(letter);
+    toast({ title: "Copied", description: "Appeal letter copied to clipboard" });
+  };
 
   if (isLoading || claimsLoading) {
     return (
@@ -448,6 +540,13 @@ export default function Claims() {
   const handleViewClaim = (claim: Claim) => {
     setSelectedClaim(claim);
     setShowDetailDialog(true);
+    setShowAppealLetter(false);
+    // Fetch appeals for denied claims
+    if (claim.status === 'denied') {
+      fetchAppeals(claim.id);
+    } else {
+      setClaimAppeals([]);
+    }
   };
 
   const handleMarkPaid = (claim: Claim) => {
@@ -1118,6 +1217,179 @@ export default function Claims() {
                 <div>
                   <Label className="text-slate-500">Denial Reason</Label>
                   <p className="text-sm mt-1 p-3 bg-red-50 rounded-lg text-red-800">{selectedClaim.denialReason}</p>
+                </div>
+              )}
+
+              {/* AI Appeal Section */}
+              {selectedClaim.status === 'denied' && (
+                <div className="border-t pt-4 mt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-5 h-5 text-blue-600" />
+                      <Label className="text-lg font-semibold">AI Appeal Recommendation</Label>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => regenerateAppealMutation.mutate(selectedClaim.id)}
+                      disabled={regenerateAppealMutation.isPending}
+                    >
+                      {regenerateAppealMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4" />
+                      )}
+                      <span className="ml-1">Regenerate</span>
+                    </Button>
+                  </div>
+
+                  {loadingAppeals ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                    </div>
+                  ) : claimAppeals.length > 0 ? (
+                    <div className="space-y-4">
+                      {claimAppeals.map((appeal: any) => (
+                        <div key={appeal.id} className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                          {/* Appeal Header */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <Badge className={
+                                appeal.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                appeal.status === 'sent' ? 'bg-blue-100 text-blue-800' :
+                                appeal.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                'bg-red-100 text-red-800'
+                              }>
+                                {appeal.status === 'pending' ? 'Pending' :
+                                 appeal.status === 'sent' ? 'Sent' :
+                                 appeal.status === 'completed' ? 'Won' : 'Failed'}
+                              </Badge>
+                              <span className="text-sm text-slate-500">
+                                Category: {appeal.parsedNotes?.denialCategory || 'N/A'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="bg-white">
+                                {appeal.parsedNotes?.successProbability || 0}% Success Rate
+                              </Badge>
+                            </div>
+                          </div>
+
+                          {/* Key Arguments */}
+                          {appeal.parsedNotes?.keyArguments && (
+                            <div className="mb-3">
+                              <p className="text-sm font-medium text-slate-700 mb-1">Key Arguments:</p>
+                              <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                                {appeal.parsedNotes.keyArguments.slice(0, 3).map((arg: string, i: number) => (
+                                  <li key={i}>{arg}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Suggested Actions */}
+                          {appeal.parsedNotes?.suggestedActions && (
+                            <div className="mb-3">
+                              <p className="text-sm font-medium text-slate-700 mb-1">Suggested Actions:</p>
+                              <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                                {appeal.parsedNotes.suggestedActions.slice(0, 3).map((action: string, i: number) => (
+                                  <li key={i}>{action}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Appeal Letter Toggle */}
+                          <div className="mb-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowAppealLetter(!showAppealLetter)}
+                              className="w-full"
+                            >
+                              <FileText className="w-4 h-4 mr-2" />
+                              {showAppealLetter ? 'Hide Appeal Letter' : 'View Appeal Letter'}
+                            </Button>
+                          </div>
+
+                          {/* Appeal Letter */}
+                          {showAppealLetter && appeal.parsedNotes?.appealLetter && (
+                            <div className="bg-white rounded-lg p-4 border">
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="text-sm font-medium">Appeal Letter</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => copyAppealLetter(appeal.parsedNotes.appealLetter)}
+                                >
+                                  <Copy className="w-4 h-4 mr-1" />
+                                  Copy
+                                </Button>
+                              </div>
+                              <pre className="text-xs whitespace-pre-wrap font-mono bg-slate-50 p-3 rounded max-h-64 overflow-y-auto">
+                                {appeal.parsedNotes.appealLetter}
+                              </pre>
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2 mt-3">
+                            {appeal.status === 'pending' && (
+                              <Button
+                                size="sm"
+                                onClick={() => markAppealSentMutation.mutate({ claimId: selectedClaim.id, appealId: appeal.id })}
+                                disabled={markAppealSentMutation.isPending}
+                              >
+                                <Mail className="w-4 h-4 mr-1" />
+                                Mark as Sent
+                              </Button>
+                            )}
+                            {appeal.status === 'sent' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  className="bg-green-600 hover:bg-green-700"
+                                  onClick={() => markAppealCompletedMutation.mutate({ claimId: selectedClaim.id, appealId: appeal.id })}
+                                  disabled={markAppealCompletedMutation.isPending}
+                                >
+                                  <CheckCircle className="w-4 h-4 mr-1" />
+                                  Won
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => markAppealFailedMutation.mutate({ claimId: selectedClaim.id, appealId: appeal.id })}
+                                  disabled={markAppealFailedMutation.isPending}
+                                >
+                                  <XCircle className="w-4 h-4 mr-1" />
+                                  Failed
+                                </Button>
+                              </>
+                            )}
+                          </div>
+
+                          <p className="text-xs text-slate-400 mt-2">
+                            Generated: {new Date(appeal.parsedNotes?.generatedAt || appeal.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 bg-slate-50 rounded-lg">
+                      <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">No appeal generated yet</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => regenerateAppealMutation.mutate(selectedClaim.id)}
+                        disabled={regenerateAppealMutation.isPending}
+                      >
+                        Generate Appeal
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

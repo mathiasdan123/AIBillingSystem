@@ -590,3 +590,10 @@ export const insertEligibilityCheckSchema = createInsertSchema(eligibilityChecks
 });
 export type EligibilityCheck = typeof eligibilityChecks.$inferSelect;
 export type InsertEligibilityCheck = z.infer<typeof insertEligibilityCheckSchema>;
+
+export const insertReimbursementOptimizationSchema = createInsertSchema(reimbursementOptimizations).omit({
+  id: true,
+  createdAt: true,
+});
+export type ReimbursementOptimization = typeof reimbursementOptimizations.$inferSelect;
+export type InsertReimbursementOptimization = z.infer<typeof insertReimbursementOptimizationSchema>;

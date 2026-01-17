@@ -4,6 +4,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
 import { AiClaimOptimizer } from "./aiClaimOptimizer";
+import { appealGenerator } from "./aiAppealGenerator";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
@@ -1341,6 +1342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const claimId = parseInt(req.params.id);
       const { denialReason } = req.body;
+      const practiceId = 1;
 
       const claim = await storage.getClaim(claimId);
       if (!claim) {
@@ -1352,13 +1354,238 @@ export async function registerRoutes(app: Express): Promise<Server> {
         denialReason: denialReason || 'No reason provided',
       });
 
+      // Auto-generate AI appeal
+      let appealResult = null;
+      try {
+        // Get claim details for AI analysis
+        const lineItems = await storage.getClaimLineItems(claimId);
+        const patient = await storage.getPatient(claim.patientId);
+        const practice = await storage.getPractice(practiceId);
+
+        // Get CPT and ICD-10 codes for line items
+        const cptCodes = await storage.getCptCodes();
+        const icd10Codes = await storage.getIcd10Codes();
+
+        const enrichedLineItems = lineItems.map((item: any) => ({
+          ...item,
+          cptCode: cptCodes.find((c: any) => c.id === item.cptCodeId),
+          icd10Code: icd10Codes.find((c: any) => c.id === item.icd10CodeId),
+        }));
+
+        if (patient && practice) {
+          // Generate AI appeal
+          appealResult = await appealGenerator.generateAppeal(
+            { ...updatedClaim, denialReason: denialReason || 'No reason provided' },
+            enrichedLineItems,
+            patient,
+            practice
+          );
+
+          // Store appeal in reimbursement_optimizations table
+          await storage.createReimbursementOptimization({
+            practiceId,
+            claimId,
+            originalAmount: claim.totalAmount,
+            optimizedAmount: claim.totalAmount, // Same amount - we're appealing for full payment
+            improvementAmount: "0",
+            ourShareAmount: "0",
+            optimizationType: 'appeal',
+            optimizationNotes: JSON.stringify({
+              appealLetter: appealResult.appealLetter,
+              denialCategory: appealResult.denialCategory,
+              successProbability: appealResult.successProbability,
+              suggestedActions: appealResult.suggestedActions,
+              keyArguments: appealResult.keyArguments,
+              generatedAt: appealResult.generatedAt,
+            }),
+            status: 'pending',
+          });
+
+          // Update claim with AI notes
+          await storage.updateClaim(claimId, {
+            aiReviewNotes: `AI Appeal Generated (${appealResult.successProbability}% success probability). Category: ${appealResult.denialCategory}`,
+          });
+        }
+      } catch (aiError) {
+        console.error('Error generating AI appeal:', aiError);
+        // Continue even if AI appeal fails - the claim is still denied
+      }
+
       res.json({
         message: 'Claim marked as denied',
-        claim: updatedClaim
+        claim: updatedClaim,
+        appealGenerated: !!appealResult,
+        appeal: appealResult ? {
+          denialCategory: appealResult.denialCategory,
+          successProbability: appealResult.successProbability,
+          suggestedActions: appealResult.suggestedActions,
+        } : null,
       });
     } catch (error) {
       console.error('Error denying claim:', error);
       res.status(500).json({ message: 'Failed to deny claim' });
+    }
+  });
+
+  // Get appeals for a claim
+  app.get('/api/claims/:id/appeals', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const appeals = await storage.getClaimAppeals(claimId);
+
+      // Parse the optimizationNotes JSON for each appeal
+      const parsedAppeals = appeals.map((appeal: any) => {
+        let notes = {};
+        try {
+          notes = JSON.parse(appeal.optimizationNotes || '{}');
+        } catch (e) {
+          notes = { raw: appeal.optimizationNotes };
+        }
+        return {
+          ...appeal,
+          parsedNotes: notes,
+        };
+      });
+
+      res.json(parsedAppeals);
+    } catch (error) {
+      console.error('Error fetching appeals:', error);
+      res.status(500).json({ message: 'Failed to fetch appeals' });
+    }
+  });
+
+  // Mark appeal as sent
+  app.post('/api/claims/:id/appeals/:appealId/sent', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.appealId);
+      const updated = await storage.updateAppealStatus(appealId, 'sent', new Date());
+
+      if (!updated) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      res.json({
+        message: 'Appeal marked as sent',
+        appeal: updated,
+      });
+    } catch (error) {
+      console.error('Error updating appeal status:', error);
+      res.status(500).json({ message: 'Failed to update appeal status' });
+    }
+  });
+
+  // Mark appeal as completed (won/paid)
+  app.post('/api/claims/:id/appeals/:appealId/completed', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.appealId);
+      const updated = await storage.updateAppealStatus(appealId, 'completed', new Date());
+
+      if (!updated) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      res.json({
+        message: 'Appeal marked as completed',
+        appeal: updated,
+      });
+    } catch (error) {
+      console.error('Error updating appeal status:', error);
+      res.status(500).json({ message: 'Failed to update appeal status' });
+    }
+  });
+
+  // Mark appeal as failed
+  app.post('/api/claims/:id/appeals/:appealId/failed', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.appealId);
+      const updated = await storage.updateAppealStatus(appealId, 'failed', new Date());
+
+      if (!updated) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      res.json({
+        message: 'Appeal marked as failed',
+        appeal: updated,
+      });
+    } catch (error) {
+      console.error('Error updating appeal status:', error);
+      res.status(500).json({ message: 'Failed to update appeal status' });
+    }
+  });
+
+  // Regenerate appeal for a denied claim
+  app.post('/api/claims/:id/regenerate-appeal', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const practiceId = 1;
+
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      if (claim.status !== 'denied') {
+        return res.status(400).json({ message: 'Can only regenerate appeals for denied claims' });
+      }
+
+      // Get claim details for AI analysis
+      const lineItems = await storage.getClaimLineItems(claimId);
+      const patient = await storage.getPatient(claim.patientId);
+      const practice = await storage.getPractice(practiceId);
+
+      if (!patient || !practice) {
+        return res.status(400).json({ message: 'Missing patient or practice data' });
+      }
+
+      // Get CPT and ICD-10 codes for line items
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedLineItems = lineItems.map((item: any) => ({
+        ...item,
+        cptCode: cptCodes.find((c: any) => c.id === item.cptCodeId),
+        icd10Code: icd10Codes.find((c: any) => c.id === item.icd10CodeId),
+      }));
+
+      // Generate new AI appeal
+      const appealResult = await appealGenerator.generateAppeal(
+        claim,
+        enrichedLineItems,
+        patient,
+        practice
+      );
+
+      // Store new appeal in reimbursement_optimizations table
+      const newAppeal = await storage.createReimbursementOptimization({
+        practiceId,
+        claimId,
+        originalAmount: claim.totalAmount,
+        optimizedAmount: claim.totalAmount,
+        improvementAmount: "0",
+        ourShareAmount: "0",
+        optimizationType: 'appeal',
+        optimizationNotes: JSON.stringify({
+          appealLetter: appealResult.appealLetter,
+          denialCategory: appealResult.denialCategory,
+          successProbability: appealResult.successProbability,
+          suggestedActions: appealResult.suggestedActions,
+          keyArguments: appealResult.keyArguments,
+          generatedAt: appealResult.generatedAt,
+        }),
+        status: 'pending',
+      });
+
+      res.json({
+        message: 'Appeal regenerated successfully',
+        appeal: {
+          id: newAppeal.id,
+          ...appealResult,
+        },
+      });
+    } catch (error) {
+      console.error('Error regenerating appeal:', error);
+      res.status(500).json({ message: 'Failed to regenerate appeal' });
     }
   });
 

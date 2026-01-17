@@ -14,6 +14,7 @@ import {
   cptCodeMappings,
   invites,
   eligibilityChecks,
+  reimbursementOptimizations,
   type User,
   type UpsertUser,
   type Practice,
@@ -40,6 +41,8 @@ import {
   type InsertInvite,
   type EligibilityCheck,
   type InsertEligibilityCheck,
+  type ReimbursementOptimization,
+  type InsertReimbursementOptimization,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql } from "drizzle-orm";
@@ -149,6 +152,11 @@ export interface IStorage {
   createEligibilityCheck(check: InsertEligibilityCheck): Promise<EligibilityCheck>;
   getPatientEligibility(patientId: number): Promise<EligibilityCheck | undefined>;
   getEligibilityHistory(patientId: number): Promise<EligibilityCheck[]>;
+
+  // Appeal/Optimization operations
+  createReimbursementOptimization(optimization: InsertReimbursementOptimization): Promise<ReimbursementOptimization>;
+  getClaimAppeals(claimId: number): Promise<ReimbursementOptimization[]>;
+  updateAppealStatus(id: number, status: string, completedAt?: Date): Promise<ReimbursementOptimization | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -715,6 +723,35 @@ export class DatabaseStorage implements IStorage {
       .from(eligibilityChecks)
       .where(eq(eligibilityChecks.patientId, patientId))
       .orderBy(desc(eligibilityChecks.checkDate));
+  }
+
+  // Appeal/Optimization operations
+  async createReimbursementOptimization(optimization: InsertReimbursementOptimization): Promise<ReimbursementOptimization> {
+    const [created] = await db
+      .insert(reimbursementOptimizations)
+      .values(optimization)
+      .returning();
+    return created;
+  }
+
+  async getClaimAppeals(claimId: number): Promise<ReimbursementOptimization[]> {
+    return await db
+      .select()
+      .from(reimbursementOptimizations)
+      .where(and(
+        eq(reimbursementOptimizations.claimId, claimId),
+        eq(reimbursementOptimizations.optimizationType, 'appeal')
+      ))
+      .orderBy(desc(reimbursementOptimizations.createdAt));
+  }
+
+  async updateAppealStatus(id: number, status: string, completedAt?: Date): Promise<ReimbursementOptimization | undefined> {
+    const [updated] = await db
+      .update(reimbursementOptimizations)
+      .set({ status, completedAt })
+      .where(eq(reimbursementOptimizations.id, id))
+      .returning();
+    return updated;
   }
 }
 
