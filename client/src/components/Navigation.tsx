@@ -3,18 +3,19 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { 
-  FileText, 
-  Home, 
-  Users, 
-  CreditCard, 
-  TrendingUp, 
-  Receipt, 
-  Settings, 
+import {
+  FileText,
+  Home,
+  Users,
+  CreditCard,
+  TrendingUp,
+  Receipt,
+  Settings,
   Menu,
   LogOut,
   UserPlus,
-  ClipboardList
+  ClipboardList,
+  BarChart3
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -25,6 +26,7 @@ const navigation = [
   { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList },
   { name: 'Claims', href: '/claims', icon: FileText },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
+  { name: 'Reports', href: '/reports', icon: BarChart3 },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];

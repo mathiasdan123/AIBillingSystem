@@ -204,6 +204,21 @@ export const claims = pgTable("claims", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Claim Line Items (multiple CPT codes per claim/superbill)
+export const claimLineItems = pgTable("claim_line_items", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  cptCodeId: integer("cpt_code_id").references(() => cptCodes.id).notNull(),
+  icd10CodeId: integer("icd10_code_id").references(() => icd10Codes.id),
+  units: integer("units").default(1).notNull(),
+  rate: decimal("rate", { precision: 10, scale: 2 }).notNull(), // rate at time of billing
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(), // units × rate
+  dateOfService: date("date_of_service"),
+  modifier: varchar("modifier"), // CPT modifier (e.g., 59, GP)
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Expenses
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
@@ -353,6 +368,29 @@ export const payments = pgTable("payments", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Eligibility Checks - stores results from eligibility verification
+export const eligibilityChecks = pgTable("eligibility_checks", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  insuranceId: integer("insurance_id").references(() => insurances.id),
+  checkDate: timestamp("check_date").defaultNow(),
+  status: varchar("status").notNull(), // "active", "inactive", "unknown"
+  coverageType: varchar("coverage_type"), // "HMO", "PPO", "Medicare", etc.
+  effectiveDate: date("effective_date"),
+  terminationDate: date("termination_date"),
+  copay: decimal("copay", { precision: 10, scale: 2 }),
+  deductible: decimal("deductible", { precision: 10, scale: 2 }),
+  deductibleMet: decimal("deductible_met", { precision: 10, scale: 2 }),
+  outOfPocketMax: decimal("out_of_pocket_max", { precision: 10, scale: 2 }),
+  outOfPocketMet: decimal("out_of_pocket_met", { precision: 10, scale: 2 }),
+  coinsurance: integer("coinsurance"), // percentage (e.g., 20 for 20%)
+  visitsAllowed: integer("visits_allowed"), // total visits per year
+  visitsUsed: integer("visits_used"),
+  authRequired: boolean("auth_required"),
+  rawResponse: jsonb("raw_response"), // store full API response for debugging
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one }) => ({
   practice: one(practices, {
@@ -403,7 +441,7 @@ export const treatmentSessionsRelations = relations(treatmentSessions, ({ one })
   }),
 }));
 
-export const claimsRelations = relations(claims, ({ one }) => ({
+export const claimsRelations = relations(claims, ({ one, many }) => ({
   practice: one(practices, {
     fields: [claims.practiceId],
     references: [practices.id],
@@ -419,6 +457,22 @@ export const claimsRelations = relations(claims, ({ one }) => ({
   insurance: one(insurances, {
     fields: [claims.insuranceId],
     references: [insurances.id],
+  }),
+  lineItems: many(claimLineItems),
+}));
+
+export const claimLineItemsRelations = relations(claimLineItems, ({ one }) => ({
+  claim: one(claims, {
+    fields: [claimLineItems.claimId],
+    references: [claims.id],
+  }),
+  cptCode: one(cptCodes, {
+    fields: [claimLineItems.cptCodeId],
+    references: [cptCodes.id],
+  }),
+  icd10Code: one(icd10Codes, {
+    fields: [claimLineItems.icd10CodeId],
+    references: [icd10Codes.id],
   }),
 }));
 
@@ -451,6 +505,11 @@ export const insertClaimSchema = createInsertSchema(claims).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+});
+
+export const insertClaimLineItemSchema = createInsertSchema(claimLineItems).omit({
+  id: true,
+  createdAt: true,
 });
 
 export const insertExpenseSchema = createInsertSchema(expenses).omit({
@@ -513,6 +572,8 @@ export type InsertPractice = z.infer<typeof insertPracticeSchema>;
 export type InsertPatient = z.infer<typeof insertPatientSchema>;
 export type InsertTreatmentSession = z.infer<typeof insertTreatmentSessionSchema>;
 export type InsertClaim = z.infer<typeof insertClaimSchema>;
+export type ClaimLineItem = typeof claimLineItems.$inferSelect;
+export type InsertClaimLineItem = z.infer<typeof insertClaimLineItemSchema>;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
 
@@ -522,3 +583,17 @@ export const insertInviteSchema = createInsertSchema(invites).omit({
 });
 export type Invite = typeof invites.$inferSelect;
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
+
+export const insertEligibilityCheckSchema = createInsertSchema(eligibilityChecks).omit({
+  id: true,
+  createdAt: true,
+});
+export type EligibilityCheck = typeof eligibilityChecks.$inferSelect;
+export type InsertEligibilityCheck = z.infer<typeof insertEligibilityCheckSchema>;
+
+export const insertReimbursementOptimizationSchema = createInsertSchema(reimbursementOptimizations).omit({
+  id: true,
+  createdAt: true,
+});
+export type ReimbursementOptimization = typeof reimbursementOptimizations.$inferSelect;
+export type InsertReimbursementOptimization = z.infer<typeof insertReimbursementOptimizationSchema>;

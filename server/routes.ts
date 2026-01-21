@@ -4,6 +4,9 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
 import { AiClaimOptimizer } from "./aiClaimOptimizer";
+import { appealGenerator } from "./aiAppealGenerator";
+import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedClaimsReportInput } from "./email";
+import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow } from "./scheduler";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
@@ -46,6 +49,85 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
     res.status(500).json({ message: "Failed to verify permissions" });
   }
 };
+
+// Generate mock eligibility data for testing
+// In production, this would be replaced by real API calls
+function generateMockEligibility(patient: any, insurance: any) {
+  // Simulate realistic eligibility outcomes
+  const random = Math.random();
+
+  // 85% active, 10% inactive, 5% unknown
+  let status: 'active' | 'inactive' | 'unknown';
+  if (random < 0.85) {
+    status = 'active';
+  } else if (random < 0.95) {
+    status = 'inactive';
+  } else {
+    status = 'unknown';
+  }
+
+  // If inactive or unknown, return minimal info
+  if (status !== 'active') {
+    return {
+      status,
+      coverageType: null,
+      effectiveDate: null,
+      terminationDate: status === 'inactive' ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null,
+      copay: null,
+      deductible: null,
+      deductibleMet: null,
+      outOfPocketMax: null,
+      outOfPocketMet: null,
+      coinsurance: null,
+      visitsAllowed: null,
+      visitsUsed: null,
+      authRequired: null,
+      message: status === 'inactive' ? 'Coverage terminated' : 'Unable to verify eligibility',
+    };
+  }
+
+  // Generate realistic coverage details for active coverage
+  const coverageTypes = ['PPO', 'HMO', 'POS', 'EPO'];
+  const copayOptions = [20, 25, 30, 35, 40, 50];
+  const deductibleOptions = [500, 1000, 1500, 2000, 2500, 3000];
+  const outOfPocketOptions = [3000, 4000, 5000, 6000, 7500, 8000];
+  const visitLimits = [30, 40, 50, 60];
+
+  const coverageType = coverageTypes[Math.floor(Math.random() * coverageTypes.length)];
+  const copay = copayOptions[Math.floor(Math.random() * copayOptions.length)];
+  const deductible = deductibleOptions[Math.floor(Math.random() * deductibleOptions.length)];
+  const deductibleMet = Math.round(deductible * Math.random() * 100) / 100;
+  const outOfPocketMax = outOfPocketOptions[Math.floor(Math.random() * outOfPocketOptions.length)];
+  const outOfPocketMet = Math.round(outOfPocketMax * Math.random() * 0.5 * 100) / 100;
+  const coinsurance = [10, 20, 30][Math.floor(Math.random() * 3)];
+  const visitsAllowed = visitLimits[Math.floor(Math.random() * visitLimits.length)];
+  const visitsUsed = Math.floor(Math.random() * visitsAllowed * 0.6);
+  const authRequired = Math.random() < 0.3;
+
+  // Effective date is 1-2 years ago
+  const effectiveDate = new Date(Date.now() - (365 + Math.random() * 365) * 24 * 60 * 60 * 1000);
+
+  // Termination date is end of current year or next year
+  const currentYear = new Date().getFullYear();
+  const terminationDate = new Date(currentYear + (Math.random() < 0.5 ? 0 : 1), 11, 31);
+
+  return {
+    status,
+    coverageType,
+    effectiveDate: effectiveDate.toISOString().split('T')[0],
+    terminationDate: terminationDate.toISOString().split('T')[0],
+    copay,
+    deductible,
+    deductibleMet,
+    outOfPocketMax,
+    outOfPocketMet,
+    coinsurance,
+    visitsAllowed,
+    visitsUsed,
+    authRequired,
+    message: 'Coverage verified successfully',
+  };
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -581,6 +663,410 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== ELIGIBILITY VERIFICATION ====================
+
+  // Check insurance eligibility for a patient
+  app.post('/api/insurance/eligibility', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId } = req.body;
+
+      if (!patientId) {
+        return res.status(400).json({ message: 'Patient ID is required' });
+      }
+
+      // Get patient details
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      // Get insurance details if provided
+      let insurance = null;
+      if (insuranceId) {
+        const insurances = await storage.getInsurances();
+        insurance = insurances.find((i: any) => i.id === insuranceId);
+      }
+
+      // Check if real API is configured (future: check insurance.eligibilityApiConfig)
+      const hasRealApi = insurance?.eligibilityApiConfig &&
+                         Object.keys(insurance.eligibilityApiConfig as object).length > 0;
+
+      let eligibilityResult;
+
+      if (hasRealApi) {
+        // Future: Call real eligibility API based on config
+        // For now, fall through to mock
+      }
+
+      // Generate mock eligibility response
+      eligibilityResult = generateMockEligibility(patient, insurance);
+
+      // Store the result in the database
+      const savedCheck = await storage.createEligibilityCheck({
+        patientId,
+        insuranceId: insuranceId || null,
+        status: eligibilityResult.status,
+        coverageType: eligibilityResult.coverageType,
+        effectiveDate: eligibilityResult.effectiveDate,
+        terminationDate: eligibilityResult.terminationDate,
+        copay: eligibilityResult.copay?.toString(),
+        deductible: eligibilityResult.deductible?.toString(),
+        deductibleMet: eligibilityResult.deductibleMet?.toString(),
+        outOfPocketMax: eligibilityResult.outOfPocketMax?.toString(),
+        outOfPocketMet: eligibilityResult.outOfPocketMet?.toString(),
+        coinsurance: eligibilityResult.coinsurance,
+        visitsAllowed: eligibilityResult.visitsAllowed,
+        visitsUsed: eligibilityResult.visitsUsed,
+        authRequired: eligibilityResult.authRequired,
+        rawResponse: eligibilityResult,
+      });
+
+      res.json({
+        success: true,
+        eligibility: savedCheck,
+        patient: {
+          id: patient.id,
+          name: `${patient.firstName} ${patient.lastName}`,
+          memberId: patient.insuranceId,
+          groupNumber: patient.groupNumber,
+        },
+        insurance: insurance ? {
+          id: insurance.id,
+          name: insurance.name,
+        } : null,
+      });
+    } catch (error: any) {
+      console.error('Error checking eligibility:', error);
+      res.status(500).json({ message: error.message || 'Failed to check eligibility' });
+    }
+  });
+
+  // Get most recent eligibility for a patient
+  app.get('/api/patients/:id/eligibility', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const eligibility = await storage.getPatientEligibility(patientId);
+      res.json(eligibility || null);
+    } catch (error) {
+      console.error('Error fetching eligibility:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility' });
+    }
+  });
+
+  // Get eligibility history for a patient
+  app.get('/api/patients/:id/eligibility/history', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const history = await storage.getEligibilityHistory(patientId);
+      res.json(history);
+    } catch (error) {
+      console.error('Error fetching eligibility history:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility history' });
+    }
+  });
+
+  // ==================== SESSIONS ENDPOINTS ====================
+
+  // Get all sessions for practice
+  app.get('/api/sessions', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const sessions = await storage.getAllSessions();
+      const practiceSessions = sessions.filter((s: any) => s.practiceId === practiceId);
+      res.json(practiceSessions);
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+      res.status(500).json({ message: 'Failed to fetch sessions' });
+    }
+  });
+
+  // Get unbilled sessions (sessions without a claim)
+  app.get('/api/sessions/unbilled', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const sessions = await storage.getAllSessions();
+      const claims = await storage.getClaims(practiceId);
+
+      // Filter sessions that don't have a claim yet
+      const billedSessionIds = claims
+        .filter((c: any) => c.sessionId)
+        .map((c: any) => c.sessionId);
+
+      const unbilledSessions = sessions.filter((s: any) =>
+        s.practiceId === practiceId &&
+        s.status === 'completed' &&
+        !billedSessionIds.includes(s.id)
+      );
+
+      // Enrich with patient, CPT code, and ICD-10 info
+      const patients = await storage.getPatients(practiceId);
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedSessions = unbilledSessions.map((session: any) => ({
+        ...session,
+        patient: patients.find((p: any) => p.id === session.patientId),
+        cptCode: cptCodes.find((c: any) => c.id === session.cptCodeId),
+        icd10Code: icd10Codes.find((i: any) => i.id === session.icd10CodeId),
+      }));
+
+      res.json(enrichedSessions);
+    } catch (error) {
+      console.error('Error fetching unbilled sessions:', error);
+      res.status(500).json({ message: 'Failed to fetch unbilled sessions' });
+    }
+  });
+
+  // Generate superbill/claim with multiple line items
+  app.post('/api/superbills', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId, dateOfService, lineItems, sessionId } = req.body;
+      const practiceId = 1;
+
+      if (!patientId || !lineItems || lineItems.length === 0) {
+        return res.status(400).json({ message: 'Patient ID and at least one line item are required' });
+      }
+
+      // Get CPT codes for rate lookup
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      // Calculate totals and validate line items
+      let totalAmount = 0;
+      const processedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        if (!cptCode) {
+          throw new Error(`Invalid CPT code ID: ${item.cptCodeId}`);
+        }
+        const rate = parseFloat(cptCode.baseRate || '289.00');
+        const units = item.units || 1;
+        const amount = rate * units;
+        totalAmount += amount;
+
+        return {
+          cptCodeId: item.cptCodeId,
+          icd10CodeId: item.icd10CodeId || null,
+          units,
+          rate: rate.toFixed(2),
+          amount: amount.toFixed(2),
+          dateOfService: dateOfService || new Date().toISOString().split('T')[0],
+          modifier: item.modifier || null,
+          notes: item.notes || null,
+        };
+      });
+
+      // Generate claim number
+      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Create the claim
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId,
+        sessionId: sessionId || null,
+        insuranceId: insuranceId || null,
+        claimNumber,
+        totalAmount: totalAmount.toFixed(2),
+        status: 'draft',
+      });
+
+      // Create line items
+      const createdLineItems = [];
+      for (const item of processedLineItems) {
+        const lineItem = await storage.createClaimLineItem({
+          claimId: claim.id,
+          ...item,
+        });
+        createdLineItems.push(lineItem);
+      }
+
+      // Enrich response with CPT code details
+      const enrichedLineItems = createdLineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
+        return {
+          ...item,
+          cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+          icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+        };
+      });
+
+      res.json({
+        message: 'Superbill created successfully',
+        claim,
+        lineItems: enrichedLineItems,
+        totalAmount: totalAmount.toFixed(2),
+      });
+    } catch (error: any) {
+      console.error('Error creating superbill:', error);
+      res.status(500).json({ message: error.message || 'Failed to create superbill' });
+    }
+  });
+
+  // Legacy: Generate simple claim from session (single CPT code)
+  app.post('/api/sessions/:id/generate-claim', isAuthenticated, async (req: any, res) => {
+    try {
+      const sessionId = parseInt(req.params.id);
+      const { insuranceId } = req.body;
+      const practiceId = 1;
+
+      // Get session details
+      const sessions = await storage.getAllSessions();
+      const session = sessions.find((s: any) => s.id === sessionId);
+
+      if (!session) {
+        return res.status(404).json({ message: 'Session not found' });
+      }
+
+      // Check if session already has a claim
+      const existingClaims = await storage.getClaims(practiceId);
+      const existingClaim = existingClaims.find((c: any) => c.sessionId === sessionId);
+      if (existingClaim) {
+        return res.status(400).json({ message: 'Session already has a claim', claim: existingClaim });
+      }
+
+      // Get CPT code to calculate amount
+      const cptCodes = await storage.getCptCodes();
+      const cptCode = cptCodes.find((c: any) => c.id === session.cptCodeId);
+
+      if (!cptCode) {
+        return res.status(400).json({ message: 'Session has no valid CPT code' });
+      }
+
+      // Calculate total amount: rate × units
+      const rate = parseFloat(cptCode.baseRate || '289.00');
+      const units = session.units || 1;
+      const totalAmount = (rate * units).toFixed(2);
+
+      // Generate claim number
+      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Create the claim/superbill
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId: session.patientId,
+        sessionId,
+        insuranceId: insuranceId || null,
+        claimNumber,
+        totalAmount,
+        status: 'draft',
+      });
+
+      // Create the line item
+      const lineItem = await storage.createClaimLineItem({
+        claimId: claim.id,
+        cptCodeId: session.cptCodeId,
+        icd10CodeId: session.icd10CodeId || null,
+        units,
+        rate: rate.toFixed(2),
+        amount: totalAmount,
+        dateOfService: session.sessionDate,
+      });
+
+      res.json({
+        message: 'Superbill generated successfully',
+        claim,
+        lineItems: [{
+          ...lineItem,
+          cptCode: { code: cptCode.code, description: cptCode.description },
+        }],
+        superbillDetails: {
+          dateOfService: session.sessionDate,
+          cptCode: cptCode.code,
+          cptDescription: cptCode.description,
+          units,
+          rate,
+          totalAmount,
+          icd10CodeId: session.icd10CodeId,
+        }
+      });
+    } catch (error: any) {
+      console.error('Error generating superbill:', error);
+      res.status(500).json({ message: 'Failed to generate superbill' });
+    }
+  });
+
+  // Create superbill with multiple CPT codes (line items)
+  app.post('/api/superbills', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, insuranceId, dateOfService, lineItems } = req.body;
+      const practiceId = 1;
+
+      if (!patientId) {
+        return res.status(400).json({ message: 'Patient ID is required' });
+      }
+
+      if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
+        return res.status(400).json({ message: 'At least one line item is required' });
+      }
+
+      // Get CPT codes to calculate amounts
+      const cptCodes = await storage.getCptCodes();
+
+      // Calculate total from all line items
+      let totalAmount = 0;
+      const validatedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        if (!cptCode) {
+          throw new Error(`Invalid CPT code ID: ${item.cptCodeId}`);
+        }
+        const rate = parseFloat(cptCode.baseRate || '289.00');
+        const units = item.units || 1;
+        const amount = rate * units;
+        totalAmount += amount;
+        return {
+          cptCodeId: item.cptCodeId,
+          icd10CodeId: item.icd10CodeId || null,
+          units,
+          rate: rate.toFixed(2),
+          amount: amount.toFixed(2),
+          dateOfService: dateOfService || new Date().toISOString().split('T')[0],
+          cptCode,
+        };
+      });
+
+      // Generate claim number
+      const claimNumber = `SB-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // Create the claim
+      const claim = await storage.createClaim({
+        practiceId,
+        patientId,
+        insuranceId: insuranceId || null,
+        claimNumber,
+        totalAmount: totalAmount.toFixed(2),
+        status: 'draft',
+      });
+
+      // Create all line items
+      const createdLineItems = [];
+      for (const item of validatedLineItems) {
+        const lineItem = await storage.createClaimLineItem({
+          claimId: claim.id,
+          cptCodeId: item.cptCodeId,
+          icd10CodeId: item.icd10CodeId,
+          units: item.units,
+          rate: item.rate,
+          amount: item.amount,
+          dateOfService: item.dateOfService,
+        });
+        createdLineItems.push({
+          ...lineItem,
+          cptCode: { code: item.cptCode.code, description: item.cptCode.description },
+        });
+      }
+
+      res.json({
+        message: 'Superbill created successfully',
+        claim,
+        lineItems: createdLineItems,
+        totalAmount: totalAmount.toFixed(2),
+      });
+    } catch (error: any) {
+      console.error('Error creating superbill:', error);
+      res.status(500).json({ message: error.message || 'Failed to create superbill' });
+    }
+  });
+
   // ==================== CLAIMS ENDPOINTS ====================
 
   // Get all claims for practice
@@ -595,17 +1081,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get single claim
+  // Get single claim with line items
   app.get('/api/claims/:id', isAuthenticated, async (req: any, res) => {
     try {
       const claim = await storage.getClaim(parseInt(req.params.id));
       if (!claim) {
         return res.status(404).json({ message: 'Claim not found' });
       }
-      res.json(claim);
+
+      // Get line items for this claim
+      const lineItems = await storage.getClaimLineItems(claim.id);
+
+      // Enrich line items with CPT and ICD-10 details
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
+        return {
+          ...item,
+          cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+          icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+        };
+      });
+
+      res.json({
+        ...claim,
+        lineItems: enrichedLineItems,
+      });
     } catch (error) {
       console.error('Error fetching claim:', error);
       res.status(500).json({ message: 'Failed to fetch claim' });
+    }
+  });
+
+  // Get line items for a claim
+  app.get('/api/claims/:id/line-items', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const lineItems = await storage.getClaimLineItems(claimId);
+
+      // Enrich with CPT and ICD-10 details
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedLineItems = lineItems.map((item: any) => {
+        const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+        const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
+        return {
+          ...item,
+          cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+          icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+        };
+      });
+
+      res.json(enrichedLineItems);
+    } catch (error) {
+      console.error('Error fetching claim line items:', error);
+      res.status(500).json({ message: 'Failed to fetch line items' });
+    }
+  });
+
+  // Add line item to claim
+  app.post('/api/claims/:id/line-items', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const { cptCodeId, icd10CodeId, units, dateOfService, modifier, notes } = req.body;
+
+      // Get CPT code for rate
+      const cptCodes = await storage.getCptCodes();
+      const cptCode = cptCodes.find((c: any) => c.id === cptCodeId);
+      if (!cptCode) {
+        return res.status(400).json({ message: 'Invalid CPT code' });
+      }
+
+      const rate = parseFloat(cptCode.baseRate || '289.00');
+      const lineUnits = units || 1;
+      const amount = (rate * lineUnits).toFixed(2);
+
+      const lineItem = await storage.createClaimLineItem({
+        claimId,
+        cptCodeId,
+        icd10CodeId: icd10CodeId || null,
+        units: lineUnits,
+        rate: rate.toFixed(2),
+        amount,
+        dateOfService: dateOfService || new Date().toISOString().split('T')[0],
+        modifier: modifier || null,
+        notes: notes || null,
+      });
+
+      // Update claim total
+      const existingLineItems = await storage.getClaimLineItems(claimId);
+      const newTotal = existingLineItems.reduce((sum: number, item: any) =>
+        sum + parseFloat(item.amount), 0);
+      await storage.updateClaim(claimId, { totalAmount: newTotal.toFixed(2) });
+
+      res.json({
+        ...lineItem,
+        cptCode: { code: cptCode.code, description: cptCode.description },
+      });
+    } catch (error) {
+      console.error('Error adding line item:', error);
+      res.status(500).json({ message: 'Failed to add line item' });
     }
   });
 
@@ -765,6 +1344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const claimId = parseInt(req.params.id);
       const { denialReason } = req.body;
+      const practiceId = 1;
 
       const claim = await storage.getClaim(claimId);
       if (!claim) {
@@ -776,13 +1356,238 @@ export async function registerRoutes(app: Express): Promise<Server> {
         denialReason: denialReason || 'No reason provided',
       });
 
+      // Auto-generate AI appeal
+      let appealResult = null;
+      try {
+        // Get claim details for AI analysis
+        const lineItems = await storage.getClaimLineItems(claimId);
+        const patient = await storage.getPatient(claim.patientId);
+        const practice = await storage.getPractice(practiceId);
+
+        // Get CPT and ICD-10 codes for line items
+        const cptCodes = await storage.getCptCodes();
+        const icd10Codes = await storage.getIcd10Codes();
+
+        const enrichedLineItems = lineItems.map((item: any) => ({
+          ...item,
+          cptCode: cptCodes.find((c: any) => c.id === item.cptCodeId),
+          icd10Code: icd10Codes.find((c: any) => c.id === item.icd10CodeId),
+        }));
+
+        if (patient && practice) {
+          // Generate AI appeal
+          appealResult = await appealGenerator.generateAppeal(
+            { ...updatedClaim, denialReason: denialReason || 'No reason provided' },
+            enrichedLineItems,
+            patient,
+            practice
+          );
+
+          // Store appeal in reimbursement_optimizations table
+          await storage.createReimbursementOptimization({
+            practiceId,
+            claimId,
+            originalAmount: claim.totalAmount,
+            optimizedAmount: claim.totalAmount, // Same amount - we're appealing for full payment
+            improvementAmount: "0",
+            ourShareAmount: "0",
+            optimizationType: 'appeal',
+            optimizationNotes: JSON.stringify({
+              appealLetter: appealResult.appealLetter,
+              denialCategory: appealResult.denialCategory,
+              successProbability: appealResult.successProbability,
+              suggestedActions: appealResult.suggestedActions,
+              keyArguments: appealResult.keyArguments,
+              generatedAt: appealResult.generatedAt,
+            }),
+            status: 'pending',
+          });
+
+          // Update claim with AI notes
+          await storage.updateClaim(claimId, {
+            aiReviewNotes: `AI Appeal Generated (${appealResult.successProbability}% success probability). Category: ${appealResult.denialCategory}`,
+          });
+        }
+      } catch (aiError) {
+        console.error('Error generating AI appeal:', aiError);
+        // Continue even if AI appeal fails - the claim is still denied
+      }
+
       res.json({
         message: 'Claim marked as denied',
-        claim: updatedClaim
+        claim: updatedClaim,
+        appealGenerated: !!appealResult,
+        appeal: appealResult ? {
+          denialCategory: appealResult.denialCategory,
+          successProbability: appealResult.successProbability,
+          suggestedActions: appealResult.suggestedActions,
+        } : null,
       });
     } catch (error) {
       console.error('Error denying claim:', error);
       res.status(500).json({ message: 'Failed to deny claim' });
+    }
+  });
+
+  // Get appeals for a claim
+  app.get('/api/claims/:id/appeals', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const appeals = await storage.getClaimAppeals(claimId);
+
+      // Parse the optimizationNotes JSON for each appeal
+      const parsedAppeals = appeals.map((appeal: any) => {
+        let notes = {};
+        try {
+          notes = JSON.parse(appeal.optimizationNotes || '{}');
+        } catch (e) {
+          notes = { raw: appeal.optimizationNotes };
+        }
+        return {
+          ...appeal,
+          parsedNotes: notes,
+        };
+      });
+
+      res.json(parsedAppeals);
+    } catch (error) {
+      console.error('Error fetching appeals:', error);
+      res.status(500).json({ message: 'Failed to fetch appeals' });
+    }
+  });
+
+  // Mark appeal as sent
+  app.post('/api/claims/:id/appeals/:appealId/sent', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.appealId);
+      const updated = await storage.updateAppealStatus(appealId, 'sent', new Date());
+
+      if (!updated) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      res.json({
+        message: 'Appeal marked as sent',
+        appeal: updated,
+      });
+    } catch (error) {
+      console.error('Error updating appeal status:', error);
+      res.status(500).json({ message: 'Failed to update appeal status' });
+    }
+  });
+
+  // Mark appeal as completed (won/paid)
+  app.post('/api/claims/:id/appeals/:appealId/completed', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.appealId);
+      const updated = await storage.updateAppealStatus(appealId, 'completed', new Date());
+
+      if (!updated) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      res.json({
+        message: 'Appeal marked as completed',
+        appeal: updated,
+      });
+    } catch (error) {
+      console.error('Error updating appeal status:', error);
+      res.status(500).json({ message: 'Failed to update appeal status' });
+    }
+  });
+
+  // Mark appeal as failed
+  app.post('/api/claims/:id/appeals/:appealId/failed', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.appealId);
+      const updated = await storage.updateAppealStatus(appealId, 'failed', new Date());
+
+      if (!updated) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      res.json({
+        message: 'Appeal marked as failed',
+        appeal: updated,
+      });
+    } catch (error) {
+      console.error('Error updating appeal status:', error);
+      res.status(500).json({ message: 'Failed to update appeal status' });
+    }
+  });
+
+  // Regenerate appeal for a denied claim
+  app.post('/api/claims/:id/regenerate-appeal', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const practiceId = 1;
+
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      if (claim.status !== 'denied') {
+        return res.status(400).json({ message: 'Can only regenerate appeals for denied claims' });
+      }
+
+      // Get claim details for AI analysis
+      const lineItems = await storage.getClaimLineItems(claimId);
+      const patient = await storage.getPatient(claim.patientId);
+      const practice = await storage.getPractice(practiceId);
+
+      if (!patient || !practice) {
+        return res.status(400).json({ message: 'Missing patient or practice data' });
+      }
+
+      // Get CPT and ICD-10 codes for line items
+      const cptCodes = await storage.getCptCodes();
+      const icd10Codes = await storage.getIcd10Codes();
+
+      const enrichedLineItems = lineItems.map((item: any) => ({
+        ...item,
+        cptCode: cptCodes.find((c: any) => c.id === item.cptCodeId),
+        icd10Code: icd10Codes.find((c: any) => c.id === item.icd10CodeId),
+      }));
+
+      // Generate new AI appeal
+      const appealResult = await appealGenerator.generateAppeal(
+        claim,
+        enrichedLineItems,
+        patient,
+        practice
+      );
+
+      // Store new appeal in reimbursement_optimizations table
+      const newAppeal = await storage.createReimbursementOptimization({
+        practiceId,
+        claimId,
+        originalAmount: claim.totalAmount,
+        optimizedAmount: claim.totalAmount,
+        improvementAmount: "0",
+        ourShareAmount: "0",
+        optimizationType: 'appeal',
+        optimizationNotes: JSON.stringify({
+          appealLetter: appealResult.appealLetter,
+          denialCategory: appealResult.denialCategory,
+          successProbability: appealResult.successProbability,
+          suggestedActions: appealResult.suggestedActions,
+          keyArguments: appealResult.keyArguments,
+          generatedAt: appealResult.generatedAt,
+        }),
+        status: 'pending',
+      });
+
+      res.json({
+        message: 'Appeal regenerated successfully',
+        appeal: {
+          id: newAppeal.id,
+          ...appealResult,
+        },
+      });
+    } catch (error) {
+      console.error('Error regenerating appeal:', error);
+      res.status(500).json({ message: 'Failed to regenerate appeal' });
     }
   });
 
@@ -806,6 +1611,298 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching denial reasons:', error);
       res.status(500).json({ message: 'Failed to fetch denial reasons' });
+    }
+  });
+
+  // Denied Claims Report endpoints
+  app.get('/api/reports/denied-claims', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const period = req.query.period || 'today';
+      const customStartDate = req.query.startDate;
+      const customEndDate = req.query.endDate;
+
+      let startDate: Date;
+      let endDate: Date = new Date();
+      endDate.setHours(23, 59, 59, 999);
+
+      switch (period) {
+        case 'today':
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate = new Date();
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'custom':
+          if (!customStartDate || !customEndDate) {
+            return res.status(400).json({ message: 'Custom date range requires startDate and endDate' });
+          }
+          startDate = new Date(customStartDate);
+          endDate = new Date(customEndDate);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        default:
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+      }
+
+      const deniedClaimsWithDetails = await storage.getDeniedClaimsWithDetails(practiceId, startDate, endDate);
+      const denialReasons = await storage.getTopDenialReasons(practiceId);
+
+      // Calculate summary statistics
+      const totalAmount = deniedClaimsWithDetails.reduce((sum, item) =>
+        sum + parseFloat(item.claim.totalAmount || '0'), 0);
+      const appealsGenerated = deniedClaimsWithDetails.filter(item => item.appeal !== null).length;
+      const appealsSent = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'sent').length;
+      const appealsWon = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'completed').length;
+
+      res.json({
+        period,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        summary: {
+          totalDenied: deniedClaimsWithDetails.length,
+          totalAmountAtRisk: totalAmount,
+          appealsGenerated,
+          appealsSent,
+          appealsWon,
+        },
+        topDenialReasons: denialReasons,
+        claims: deniedClaimsWithDetails.map(item => ({
+          id: item.claim.id,
+          claimNumber: item.claim.claimNumber,
+          patientName: item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : 'Unknown',
+          patientId: item.claim.patientId,
+          amount: item.claim.totalAmount,
+          denialReason: item.claim.denialReason,
+          deniedAt: item.claim.updatedAt,
+          appealStatus: item.appeal?.status || 'none',
+          appealId: item.appeal?.id || null,
+        })),
+      });
+    } catch (error) {
+      console.error('Error fetching denied claims report:', error);
+      res.status(500).json({ message: 'Failed to fetch denied claims report' });
+    }
+  });
+
+  // Export denied claims report as CSV
+  app.get('/api/reports/denied-claims/export', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const period = req.query.period || 'month';
+      const customStartDate = req.query.startDate;
+      const customEndDate = req.query.endDate;
+
+      let startDate: Date;
+      let endDate: Date = new Date();
+      endDate.setHours(23, 59, 59, 999);
+
+      switch (period) {
+        case 'today':
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate = new Date();
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'custom':
+          if (!customStartDate || !customEndDate) {
+            return res.status(400).json({ message: 'Custom date range requires startDate and endDate' });
+          }
+          startDate = new Date(customStartDate);
+          endDate = new Date(customEndDate);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        default:
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+      }
+
+      const deniedClaimsWithDetails = await storage.getDeniedClaimsWithDetails(practiceId, startDate, endDate);
+
+      // Generate CSV
+      const csvHeader = 'Claim Number,Patient Name,Amount,Denial Reason,Denied Date,Appeal Status\n';
+      const csvRows = deniedClaimsWithDetails.map(item => {
+        const patientName = item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : 'Unknown';
+        const amount = item.claim.totalAmount || '0';
+        const denialReason = (item.claim.denialReason || 'Unknown').replace(/,/g, ';').replace(/\n/g, ' ');
+        const deniedAt = item.claim.updatedAt ? new Date(item.claim.updatedAt).toLocaleDateString() : '';
+        const appealStatus = item.appeal?.status || 'none';
+
+        return `${item.claim.claimNumber},"${patientName}",${amount},"${denialReason}",${deniedAt},${appealStatus}`;
+      }).join('\n');
+
+      const csv = csvHeader + csvRows;
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="denied-claims-${period}-${new Date().toISOString().split('T')[0]}.csv"`);
+      res.send(csv);
+    } catch (error) {
+      console.error('Error exporting denied claims report:', error);
+      res.status(500).json({ message: 'Failed to export denied claims report' });
+    }
+  });
+
+  // Email settings endpoints
+  app.get('/api/reports/email-settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      res.json({
+        configured: isEmailConfigured(),
+        recipients: getDailyReportRecipients(),
+      });
+    } catch (error) {
+      console.error('Error fetching email settings:', error);
+      res.status(500).json({ message: 'Failed to fetch email settings' });
+    }
+  });
+
+  app.post('/api/reports/email-settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const { recipients } = req.body;
+
+      if (!Array.isArray(recipients)) {
+        return res.status(400).json({ message: 'Recipients must be an array of email addresses' });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const invalidEmails = recipients.filter((email: string) => !emailRegex.test(email));
+      if (invalidEmails.length > 0) {
+        return res.status(400).json({ message: `Invalid email addresses: ${invalidEmails.join(', ')}` });
+      }
+
+      setDailyReportRecipients(recipients);
+
+      res.json({
+        message: 'Email settings updated successfully',
+        recipients: getDailyReportRecipients(),
+      });
+    } catch (error) {
+      console.error('Error updating email settings:', error);
+      res.status(500).json({ message: 'Failed to update email settings' });
+    }
+  });
+
+  app.post('/api/reports/send-test-email', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: 'Email address is required' });
+      }
+
+      const result = await sendTestEmail(email);
+
+      if (result.success) {
+        res.json({ message: 'Test email sent successfully' });
+      } else {
+        res.status(500).json({ message: result.error || 'Failed to send test email' });
+      }
+    } catch (error) {
+      console.error('Error sending test email:', error);
+      res.status(500).json({ message: 'Failed to send test email' });
+    }
+  });
+
+  app.post('/api/reports/send-report-now', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const { period = 'today', email } = req.body;
+
+      // Get date range based on period
+      let startDate: Date;
+      let endDate: Date = new Date();
+      endDate.setHours(23, 59, 59, 999);
+
+      switch (period) {
+        case 'today':
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate = new Date();
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate = new Date();
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        default:
+          startDate = new Date();
+          startDate.setHours(0, 0, 0, 0);
+      }
+
+      const deniedClaimsWithDetails = await storage.getDeniedClaimsWithDetails(practiceId, startDate, endDate);
+      const denialReasons = await storage.getTopDenialReasons(practiceId);
+      const practice = await storage.getPractice(practiceId);
+
+      const totalAmount = deniedClaimsWithDetails.reduce((sum, item) =>
+        sum + parseFloat(item.claim.totalAmount || '0'), 0);
+      const appealsGenerated = deniedClaimsWithDetails.filter(item => item.appeal !== null).length;
+      const appealsSent = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'sent').length;
+      const appealsWon = deniedClaimsWithDetails.filter(item =>
+        item.appeal && item.appeal.status === 'completed').length;
+
+      const reportData: DeniedClaimsReportInput = {
+        practiceName: practice?.name || 'Your Practice',
+        reportDate: new Date(),
+        period: period === 'today' ? 'Today' : period === 'week' ? 'Last 7 Days' : 'Last 30 Days',
+        summary: {
+          totalDenied: deniedClaimsWithDetails.length,
+          totalAmountAtRisk: totalAmount,
+          appealsGenerated,
+          appealsSent,
+          appealsWon,
+        },
+        topDenialReasons: denialReasons,
+        claims: deniedClaimsWithDetails.map(item => ({
+          claimNumber: item.claim.claimNumber || 'Unknown',
+          patientName: item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : 'Unknown',
+          amount: item.claim.totalAmount || '0',
+          denialReason: item.claim.denialReason,
+          deniedAt: item.claim.updatedAt,
+          appealStatus: item.appeal?.status || 'none',
+        })),
+        reportUrl: process.env.APP_URL ? `${process.env.APP_URL}/reports` : undefined,
+      };
+
+      const recipients = email ? [email] : getDailyReportRecipients();
+      if (recipients.length === 0) {
+        return res.status(400).json({ message: 'No email recipients configured' });
+      }
+
+      const result = await sendDeniedClaimsReport(recipients, reportData);
+
+      if (result.success) {
+        res.json({ message: `Report sent successfully to ${recipients.join(', ')}` });
+      } else {
+        res.status(500).json({ message: result.error || 'Failed to send report' });
+      }
+    } catch (error) {
+      console.error('Error sending report:', error);
+      res.status(500).json({ message: 'Failed to send report' });
     }
   });
 

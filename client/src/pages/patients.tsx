@@ -8,9 +8,28 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
+
+interface EligibilityCheck {
+  id: number;
+  patientId: number;
+  status: string;
+  coverageType: string | null;
+  effectiveDate: string | null;
+  terminationDate: string | null;
+  copay: string | null;
+  deductible: string | null;
+  deductibleMet: string | null;
+  outOfPocketMax: string | null;
+  outOfPocketMet: string | null;
+  coinsurance: number | null;
+  visitsAllowed: number | null;
+  visitsUsed: number | null;
+  authRequired: boolean | null;
+  checkDate: string;
+}
 
 export default function Patients() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -20,6 +39,8 @@ export default function Patients() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
+  const [eligibilityResults, setEligibilityResults] = useState<Record<number, EligibilityCheck>>({});
+  const [checkingEligibility, setCheckingEligibility] = useState<number | null>(null);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -43,18 +64,32 @@ export default function Patients() {
   });
 
   const checkEligibilityMutation = useMutation({
-    mutationFn: async (data: { patientId: number; insuranceId: number }) => {
+    mutationFn: async (data: { patientId: number; insuranceId?: number }) => {
+      setCheckingEligibility(data.patientId);
       const response = await apiRequest("POST", "/api/insurance/eligibility", data);
       return response.json();
     },
     onSuccess: (data, variables) => {
+      setCheckingEligibility(null);
+      if (data.eligibility) {
+        setEligibilityResults(prev => ({
+          ...prev,
+          [variables.patientId]: data.eligibility
+        }));
+      }
+      const status = data.eligibility?.status;
       toast({
-        title: "Eligibility Check Complete",
-        description: data.message,
-        variant: data.eligible ? "default" : "destructive",
+        title: status === 'active' ? "Coverage Active" : status === 'inactive' ? "Coverage Inactive" : "Eligibility Check Complete",
+        description: status === 'active'
+          ? `${data.eligibility.coverageType} plan verified. Copay: $${data.eligibility.copay}`
+          : status === 'inactive'
+          ? "Patient coverage has been terminated"
+          : "Unable to verify coverage",
+        variant: status === 'active' ? "default" : "destructive",
       });
     },
     onError: (error) => {
+      setCheckingEligibility(null);
       if (isUnauthorizedError(error)) {
         toast({
           title: "Unauthorized",
@@ -73,6 +108,35 @@ export default function Patients() {
       });
     },
   });
+
+  // Helper function to get eligibility status badge
+  const getEligibilityBadge = (patientId: number) => {
+    const eligibility = eligibilityResults[patientId];
+    if (!eligibility) return null;
+
+    if (eligibility.status === 'active') {
+      return (
+        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+          <CheckCircle className="w-3 h-3 mr-1" />
+          Active
+        </Badge>
+      );
+    } else if (eligibility.status === 'inactive') {
+      return (
+        <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
+          <XCircle className="w-3 h-3 mr-1" />
+          Inactive
+        </Badge>
+      );
+    } else {
+      return (
+        <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">
+          <AlertCircle className="w-3 h-3 mr-1" />
+          Unknown
+        </Badge>
+      );
+    }
+  };
 
   if (isLoading || patientsLoading) {
     return (
@@ -207,9 +271,12 @@ export default function Patients() {
                       )}
                     </CardDescription>
                   </div>
-                  <Badge variant="outline">
-                    {patient.insuranceProvider || "No Insurance"}
-                  </Badge>
+                  <div className="flex flex-col items-end gap-1">
+                    <Badge variant="outline">
+                      {patient.insuranceProvider || "No Insurance"}
+                    </Badge>
+                    {getEligibilityBadge(patient.id)}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -244,17 +311,25 @@ export default function Patients() {
                     View Details
                   </Button>
                   {patient.insuranceProvider && (
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={() => checkEligibilityMutation.mutate({
                         patientId: patient.id,
-                        insuranceId: 1 // Mock insurance ID
                       })}
-                      disabled={checkEligibilityMutation.isPending}
+                      disabled={checkingEligibility === patient.id}
                     >
-                      <Shield className="w-4 h-4 mr-1" />
-                      {checkEligibilityMutation.isPending ? "Checking..." : "Check Eligibility"}
+                      {checkingEligibility === patient.id ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <Shield className="w-4 h-4 mr-1" />
+                          Check Eligibility
+                        </>
+                      )}
                     </Button>
                   )}
                 </div>
@@ -350,6 +425,113 @@ export default function Patients() {
                   </div>
                 </div>
               </div>
+
+              {/* Eligibility Information */}
+              {eligibilityResults[selectedPatient.id] && (
+                <div className="border-t pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-medium text-slate-900">Eligibility Status</h4>
+                    {getEligibilityBadge(selectedPatient.id)}
+                  </div>
+
+                  {eligibilityResults[selectedPatient.id].status === 'active' && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Plan Type</label>
+                          <p className="text-sm text-slate-600">{eligibilityResults[selectedPatient.id].coverageType}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Copay</label>
+                          <p className="text-sm text-slate-600">${eligibilityResults[selectedPatient.id].copay}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Deductible</label>
+                          <p className="text-sm text-slate-600">
+                            ${eligibilityResults[selectedPatient.id].deductibleMet} / ${eligibilityResults[selectedPatient.id].deductible}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Coinsurance</label>
+                          <p className="text-sm text-slate-600">{eligibilityResults[selectedPatient.id].coinsurance}%</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">OT Visits</label>
+                          <p className="text-sm text-slate-600">
+                            {eligibilityResults[selectedPatient.id].visitsUsed} used / {eligibilityResults[selectedPatient.id].visitsAllowed} allowed
+                          </p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Auth Required</label>
+                          <p className="text-sm text-slate-600">
+                            {eligibilityResults[selectedPatient.id].authRequired ? "Yes" : "No"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Effective Date</label>
+                          <p className="text-sm text-slate-600">
+                            {new Date(eligibilityResults[selectedPatient.id].effectiveDate!).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Term Date</label>
+                          <p className="text-sm text-slate-600">
+                            {new Date(eligibilityResults[selectedPatient.id].terminationDate!).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-400 mt-2">
+                        Last checked: {new Date(eligibilityResults[selectedPatient.id].checkDate).toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+
+                  {eligibilityResults[selectedPatient.id].status !== 'active' && (
+                    <div className="p-3 bg-red-50 rounded-lg">
+                      <p className="text-sm text-red-700">
+                        {eligibilityResults[selectedPatient.id].status === 'inactive'
+                          ? "This patient's insurance coverage has been terminated."
+                          : "Unable to verify eligibility. Please check insurance information."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Check Eligibility Button in Modal */}
+              {selectedPatient.insuranceProvider && !eligibilityResults[selectedPatient.id] && (
+                <div className="border-t pt-4">
+                  <Button
+                    className="w-full"
+                    onClick={() => checkEligibilityMutation.mutate({
+                      patientId: selectedPatient.id,
+                    })}
+                    disabled={checkingEligibility === selectedPatient.id}
+                  >
+                    {checkingEligibility === selectedPatient.id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Checking Eligibility...
+                      </>
+                    ) : (
+                      <>
+                        <Shield className="w-4 h-4 mr-2" />
+                        Check Insurance Eligibility
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>
