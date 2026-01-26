@@ -3,6 +3,10 @@ import { createServer, type Server } from "http";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
+import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
+import insuranceDataRoutes from "./routes/insuranceDataRoutes";
+import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
+import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
@@ -30,7 +34,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       email: 'dev@example.com',
       firstName: 'Dev',
       lastName: 'User',
-      profileImageUrl: null
+      profileImageUrl: null,
+      role: 'admin' // Options: 'admin', 'therapist' - Client can override with demo switch
     });
   });
 
@@ -260,7 +265,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: 'Failed to create session' });
     }
   });
-  
+
+  // AI SOAP Note and Billing Generation
+  app.post('/api/ai/generate-soap-billing', async (req, res) => {
+    try {
+      const {
+        patientId,
+        activities,
+        mood,
+        caregiverReport,
+        duration,
+        location,
+        assessment,
+        planNextSteps,
+        nextSessionFocus,
+        homeProgram,
+        ratePerUnit
+      } = req.body;
+
+      // Validate required fields
+      if (!patientId || !activities || !Array.isArray(activities) || activities.length === 0) {
+        return res.status(400).json({
+          error: 'Missing required fields: patientId and activities array required'
+        });
+      }
+
+      if (!duration || duration < 15) {
+        return res.status(400).json({
+          error: 'Duration must be at least 15 minutes'
+        });
+      }
+
+      // Generate SOAP note and billing using AI
+      const result = await generateSoapNoteAndBilling({
+        patientId,
+        activities,
+        mood: mood || 'Cooperative',
+        caregiverReport,
+        duration,
+        location: location || 'Clinic',
+        assessment: assessment || {
+          performance: 'Stable',
+          assistance: 'Minimal Assist',
+          strength: 'Adequate',
+          motorPlanning: 'Mild Difficulty',
+          sensoryRegulation: 'Needed Minimal Supports'
+        },
+        planNextSteps: planNextSteps || 'Continue Current Goals',
+        nextSessionFocus,
+        homeProgram,
+        ratePerUnit // Manual rate override (default $289/unit)
+      });
+
+      res.json(result);
+
+    } catch (error) {
+      console.error('Error generating AI SOAP note:', error);
+      res.status(500).json({
+        error: 'Failed to generate SOAP note and billing',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Voice Transcription routes
+  app.get('/api/voice/status', (req, res) => {
+    res.json({
+      available: isVoiceTranscriptionAvailable(),
+      method: isVoiceTranscriptionAvailable() ? 'whisper' : 'browser-only'
+    });
+  });
+
+  app.post('/api/voice/transcribe', async (req, res) => {
+    try {
+      const { audio, mimeType, language } = req.body;
+
+      if (!audio) {
+        return res.status(400).json({ error: 'No audio data provided' });
+      }
+
+      const result = await transcribeAudioBase64(audio, mimeType || 'audio/webm', language || 'en');
+
+      if (result.success) {
+        res.json({
+          text: result.text,
+          method: result.method
+        });
+      } else {
+        res.status(500).json({
+          error: result.error,
+          method: result.method
+        });
+      }
+    } catch (error) {
+      console.error('Voice transcription error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Transcription failed'
+      });
+    }
+  });
+
+  // Insurance Authorization and Data routes
+  app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
+  app.use('/api', insuranceDataRoutes);
+
   const httpServer = createServer(app);
   return httpServer;
 }

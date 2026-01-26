@@ -8,9 +8,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, Send, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
+import InsuranceAuthorizationRequest from "@/components/InsuranceAuthorizationRequest";
+import PatientInsuranceData from "@/components/PatientInsuranceData";
 
 export default function Patients() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -20,6 +23,9 @@ export default function Patients() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
+  const [showAuthDialog, setShowAuthDialog] = useState(false);
+  const [authPatient, setAuthPatient] = useState<any>(null);
+  const [detailsTab, setDetailsTab] = useState("info");
 
   // Check if we have dev bypass
   const hasDevBypass = localStorage.getItem('dev-bypass') === 'true';
@@ -244,29 +250,46 @@ export default function Patients() {
                   )}
                 </div>
                 
-                <div className="mt-4 flex space-x-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="flex-1"
-                    onClick={() => setSelectedPatient(patient)}
-                  >
-                    View Details
-                  </Button>
-                  {patient.insuranceProvider && (
-                    <Button 
-                      variant="outline" 
+                <div className="mt-4 flex flex-col space-y-2">
+                  <div className="flex space-x-2">
+                    <Button
+                      variant="outline"
                       size="sm"
-                      onClick={() => checkEligibilityMutation.mutate({
-                        patientId: patient.id,
-                        insuranceId: 1 // Mock insurance ID
-                      })}
-                      disabled={checkEligibilityMutation.isPending}
+                      className="flex-1"
+                      onClick={() => {
+                        setSelectedPatient(patient);
+                        setDetailsTab("info");
+                      }}
                     >
-                      <Shield className="w-4 h-4 mr-1" />
-                      {checkEligibilityMutation.isPending ? "Checking..." : "Check Eligibility"}
+                      View Details
                     </Button>
-                  )}
+                    {patient.insuranceProvider && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => checkEligibilityMutation.mutate({
+                          patientId: patient.id,
+                          insuranceId: 1
+                        })}
+                        disabled={checkEligibilityMutation.isPending}
+                      >
+                        <Shield className="w-4 h-4 mr-1" />
+                        {checkEligibilityMutation.isPending ? "Checking..." : "Check Eligibility"}
+                      </Button>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-blue-600 border-blue-200 hover:bg-blue-50"
+                    onClick={() => {
+                      setAuthPatient(patient);
+                      setShowAuthDialog(true);
+                    }}
+                  >
+                    <Send className="w-4 h-4 mr-1" />
+                    Request Insurance Access
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -301,7 +324,7 @@ export default function Patients() {
       {/* Patient Details Modal */}
       {selectedPatient && (
         <Dialog open={!!selectedPatient} onOpenChange={() => setSelectedPatient(null)}>
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {selectedPatient.firstName} {selectedPatient.lastName}
@@ -310,59 +333,107 @@ export default function Patients() {
                 Patient details and insurance information
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Email</label>
-                  <p className="text-sm text-slate-600">{selectedPatient.email || "Not provided"}</p>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Phone</label>
-                  <p className="text-sm text-slate-600">{selectedPatient.phone || "Not provided"}</p>
-                </div>
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium text-slate-700">Date of Birth</label>
-                <p className="text-sm text-slate-600">
-                  {selectedPatient.dateOfBirth 
-                    ? new Date(selectedPatient.dateOfBirth).toLocaleDateString()
-                    : "Not provided"
-                  }
-                </p>
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium text-slate-700">Address</label>
-                <p className="text-sm text-slate-600">{selectedPatient.address || "Not provided"}</p>
-              </div>
-              
-              <div className="border-t pt-4">
-                <h4 className="font-medium text-slate-900 mb-2">Insurance Information</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Provider</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.insuranceProvider || "Not provided"}</p>
+
+            <Tabs value={detailsTab} onValueChange={setDetailsTab}>
+              <TabsList className="grid grid-cols-2 mb-4">
+                <TabsTrigger value="info">
+                  <Users className="w-4 h-4 mr-1.5" />
+                  Patient Info
+                </TabsTrigger>
+                <TabsTrigger value="insurance">
+                  <FileText className="w-4 h-4 mr-1.5" />
+                  Insurance Data
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="info">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Email</label>
+                      <p className="text-sm text-slate-600">{selectedPatient.email || "Not provided"}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Phone</label>
+                      <p className="text-sm text-slate-600">{selectedPatient.phone || "Not provided"}</p>
+                    </div>
                   </div>
+
                   <div>
-                    <label className="text-sm font-medium text-slate-700">Member ID</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.insuranceId || "Not provided"}</p>
+                    <label className="text-sm font-medium text-slate-700">Date of Birth</label>
+                    <p className="text-sm text-slate-600">
+                      {selectedPatient.dateOfBirth
+                        ? new Date(selectedPatient.dateOfBirth).toLocaleDateString()
+                        : "Not provided"
+                      }
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Address</label>
+                    <p className="text-sm text-slate-600">{selectedPatient.address || "Not provided"}</p>
+                  </div>
+
+                  <div className="border-t pt-4">
+                    <h4 className="font-medium text-slate-900 mb-2">Insurance Information</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Provider</label>
+                        <p className="text-sm text-slate-600">{selectedPatient.insuranceProvider || "Not provided"}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Member ID</label>
+                        <p className="text-sm text-slate-600">{selectedPatient.insuranceId || "Not provided"}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Policy Number</label>
+                        <p className="text-sm text-slate-600">{selectedPatient.policyNumber || "Not provided"}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Group Number</label>
+                        <p className="text-sm text-slate-600">{selectedPatient.groupNumber || "Not provided"}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t pt-4">
+                    <Button
+                      className="w-full bg-blue-600 hover:bg-blue-700"
+                      onClick={() => {
+                        setAuthPatient(selectedPatient);
+                        setShowAuthDialog(true);
+                      }}
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      Request Insurance Data Access
+                    </Button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-2">
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Policy Number</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.policyNumber || "Not provided"}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Group Number</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.groupNumber || "Not provided"}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+              </TabsContent>
+
+              <TabsContent value="insurance">
+                <PatientInsuranceData patientId={selectedPatient.id} />
+              </TabsContent>
+            </Tabs>
           </DialogContent>
         </Dialog>
+      )}
+
+      {/* Insurance Authorization Request Dialog */}
+      {authPatient && (
+        <InsuranceAuthorizationRequest
+          patient={authPatient}
+          open={showAuthDialog}
+          onOpenChange={(open) => {
+            setShowAuthDialog(open);
+            if (!open) setAuthPatient(null);
+          }}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['/api/patients'] });
+          }}
+        />
       )}
     </div>
   );

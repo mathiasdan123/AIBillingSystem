@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
 import {
   Home,
   Users,
@@ -13,21 +14,24 @@ import {
   X,
   LogOut,
   UserPlus,
-  ClipboardList
+  ClipboardList,
+  Calendar,
+  DollarSign,
+  Shield
 } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: Home },
-  { name: 'Patient Intake', href: '/intake', icon: UserPlus },
-  { name: 'Patients', href: '/patients', icon: Users },
-  { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList },
-  { name: 'Claims', href: '/claims', icon: FileText },
-  { name: 'Analytics', href: '/analytics', icon: TrendingUp },
-  { name: 'Expenses', href: '/expenses', icon: Receipt },
-  { name: 'Settings', href: '/settings', icon: Settings },
-  { name: 'Debug', href: '/debug', icon: Settings },
-  { name: 'Test', href: '/test', icon: Settings },
+  { name: 'Dashboard TEST', href: '/', icon: Home, adminOnly: false },
+  { name: 'Calendar', href: '/calendar', icon: Calendar, adminOnly: false },
+  { name: 'Patient Intake', href: '/intake', icon: UserPlus, adminOnly: false },
+  { name: 'Patients', href: '/patients', icon: Users, adminOnly: false },
+  { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
+  { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
+  { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
+  { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+  { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
+  { name: 'Settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
 
 const debugNavigation = [
@@ -37,8 +41,15 @@ const debugNavigation = [
 
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
-  const { user } = useAuth();
+  const { user, isAdmin, currentRole } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Filter navigation items based on role
+  const filteredNavigation = navigation.filter(item => !item.adminOnly || isAdmin);
+
+  const handleRoleSwitch = () => {
+    setDemoRole(currentRole === 'admin' ? 'therapist' : 'admin');
+  };
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -66,7 +77,7 @@ export default function SimpleNavigation() {
         
         <div className="flex-1 px-6 py-6">
           <nav className="space-y-2">
-            {navigation.map((item) => {
+            {filteredNavigation.map((item) => {
               const Icon = item.icon;
               const isActive = location === item.href;
               return (
@@ -117,7 +128,24 @@ export default function SimpleNavigation() {
           </nav>
         </div>
         
-        <div className="p-6 border-t border-slate-200">
+        <div className="p-6 border-t border-slate-200 space-y-4">
+          {/* Demo Role Switcher */}
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-amber-600" />
+                <span className="text-xs font-medium text-amber-800">Demo Mode</span>
+              </div>
+              <Switch
+                checked={currentRole === 'admin'}
+                onCheckedChange={handleRoleSwitch}
+              />
+            </div>
+            <p className="text-xs text-amber-700 mt-1">
+              {currentRole === 'admin' ? 'Viewing as Admin' : 'Viewing as Therapist'}
+            </p>
+          </div>
+
           <div className="flex items-center space-x-3">
             <Avatar>
               <AvatarImage src={(user as any)?.profileImageUrl} />
@@ -125,15 +153,15 @@ export default function SimpleNavigation() {
             </Avatar>
             <div className="flex-1">
               <p className="text-sm font-medium text-slate-900">
-                {(user as any)?.firstName && (user as any)?.lastName 
-                  ? `${(user as any).firstName} ${(user as any).lastName}` 
+                {(user as any)?.firstName && (user as any)?.lastName
+                  ? `${(user as any).firstName} ${(user as any).lastName}`
                   : (user as any)?.email || 'User'
                 }
               </p>
-              <p className="text-xs text-slate-500">{(user as any)?.role || 'Therapist'}</p>
+              <p className="text-xs text-slate-500 capitalize">{currentRole}</p>
             </div>
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               size="sm"
               onClick={() => window.location.href = '/api/logout'}
             >
@@ -165,7 +193,7 @@ export default function SimpleNavigation() {
         {mobileMenuOpen && (
           <div className="fixed inset-0 top-16 bg-white z-50">
             <nav className="px-4 py-6 space-y-2">
-              {navigation.map((item) => {
+              {filteredNavigation.map((item) => {
                 const Icon = item.icon;
                 const isActive = location === item.href;
                 return (

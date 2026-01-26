@@ -14,11 +14,14 @@ import DataUpload from "@/pages/data-upload";
 import Dashboard from "@/pages/dashboard";
 import Claims from "@/pages/claims";
 import Patients from "@/pages/patients";
+import PatientAuthorizePage from "@/pages/patient-authorize";
 import Analytics from "@/pages/analytics";
 import Expenses from "@/pages/expenses";
 import Settings from "@/pages/settings";
 import PatientIntake from "@/pages/intake";
 import SoapNotes from "@/pages/soap-notes";
+import CalendarPage from "@/pages/calendar";
+import AccountingPage from "@/pages/accounting";
 import DebugData from "@/pages/debug-data";
 import SimpleTest from "@/pages/simple-test";
 import SimplePatients from "@/pages/simple-patients";
@@ -26,7 +29,7 @@ import WorkingDashboard from "@/pages/working-dashboard";
 import NotFound from "@/pages/not-found";
 
 function Router() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isAdmin } = useAuth();
 
   if (isLoading) {
     return (
@@ -50,36 +53,41 @@ function Router() {
   // 3. We're in dev environment AND bypass hasn't been explicitly disabled
   const shouldShowAuthenticatedContent = isAuthenticated || hasDevBypass || (isDevEnvironment && !hasExplicitBypassDisable);
 
+  if (!shouldShowAuthenticatedContent) {
+    return (
+      <Switch>
+        <Route path="/authorize/:token" component={PatientAuthorizePage} />
+        <Route path="/" component={DebugLanding} />
+        <Route path="/direct" component={DirectLanding} />
+        <Route path="/simple" component={SimpleLanding} />
+        <Route path="/original" component={Landing} />
+        <Route path="/test-buttons" component={ButtonTest} />
+        <Route path="/intake" component={PatientIntake} />
+        <Route component={NotFound} />
+      </Switch>
+    );
+  }
+
   return (
-    <Switch>
-      {!shouldShowAuthenticatedContent ? (
-        <>
-          <Route path="/" component={DebugLanding} />
-          <Route path="/direct" component={DirectLanding} />
-          <Route path="/simple" component={SimpleLanding} />
-          <Route path="/original" component={Landing} />
-          <Route path="/test-buttons" component={ButtonTest} />
-          <Route path="/intake" component={PatientIntake} />
-        </>
-      ) : (
-        <>
-          <SimpleNavigation />
-          <Route path="/" component={WorkingDashboard} />
-          <Route path="/claims" component={Claims} />
-          <Route path="/patients" component={SimplePatients} />
-          <Route path="/intake" component={PatientIntake} />
-          <Route path="/soap-notes" component={SoapNotes} />
-          <Route path="/analytics" component={Analytics} />
-          <Route path="/expenses" component={Expenses} />
-          <Route path="/settings" component={Settings} />
-          <Route path="/debug" component={DebugData} />
-          <Route path="/test" component={SimpleTest} />
-          <Route path="/data-upload" component={DataUpload} />
-          <Route path="/debug-landing" component={DebugLanding} />
-        </>
-      )}
-      <Route component={NotFound} />
-    </Switch>
+    <>
+      <SimpleNavigation />
+      <Switch>
+        <Route path="/authorize/:token" component={PatientAuthorizePage} />
+        <Route path="/" component={WorkingDashboard} />
+        <Route path="/calendar" component={CalendarPage} />
+        <Route path="/claims" component={Claims} />
+        <Route path="/patients" component={SimplePatients} />
+        <Route path="/intake" component={PatientIntake} />
+        <Route path="/soap-notes" component={SoapNotes} />
+        {isAdmin && <Route path="/accounting" component={AccountingPage} />}
+        {isAdmin && <Route path="/analytics" component={Analytics} />}
+        <Route path="/expenses" component={Expenses} />
+        <Route path="/settings" component={Settings} />
+        <Route path="/debug" component={DebugData} />
+        <Route path="/data-upload" component={DataUpload} />
+        <Route component={NotFound} />
+      </Switch>
+    </>
   );
 }
 

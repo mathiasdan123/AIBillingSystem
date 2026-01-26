@@ -48,6 +48,14 @@ export const practices = pgTable("practices", {
   address: text("address"),
   phone: varchar("phone"),
   email: varchar("email"),
+  // White-label branding fields
+  brandLogoUrl: varchar("brand_logo_url"),
+  brandPrimaryColor: varchar("brand_primary_color").default("#2563eb"), // Blue
+  brandSecondaryColor: varchar("brand_secondary_color").default("#1e40af"),
+  brandEmailFromName: varchar("brand_email_from_name"),
+  brandEmailReplyTo: varchar("brand_email_reply_to"),
+  brandWebsiteUrl: varchar("brand_website_url"),
+  brandPrivacyPolicyUrl: varchar("brand_privacy_policy_url"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -66,6 +74,11 @@ export const patients = pgTable("patients", {
   insuranceId: varchar("insurance_id"),
   policyNumber: varchar("policy_number"),
   groupNumber: varchar("group_number"),
+  // Contact preferences
+  phoneType: varchar("phone_type").default("mobile"), // mobile, landline, work
+  preferredContactMethod: varchar("preferred_contact_method").default("email"), // email, sms, both
+  smsConsentGiven: boolean("sms_consent_given").default(false),
+  smsConsentDate: timestamp("sms_consent_date"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -189,6 +202,7 @@ export const claims = pgTable("claims", {
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  createdBy: varchar("created_by"), // User ID who created the expense
   description: text("description").notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   category: varchar("category"), // rent, supplies, equipment, etc.
@@ -385,6 +399,225 @@ export const insertCptCodeMappingSchema = createInsertSchema(cptCodeMappings).om
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
 
+// Patient Insurance Authorization Requests (Consent tracking)
+export const patientInsuranceAuthorizations = pgTable("patient_insurance_authorizations", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  requestedById: varchar("requested_by_id").references(() => users.id).notNull(),
+  // Token for secure link
+  token: varchar("token", { length: 64 }).unique().notNull(),
+  tokenExpiresAt: timestamp("token_expires_at").notNull(),
+  tokenUsedAt: timestamp("token_used_at"),
+  // Authorization status
+  status: varchar("status").default("pending").notNull(), // pending, authorized, denied, expired, revoked
+  // Scopes (what data types the patient authorized)
+  scopes: jsonb("scopes").default(['eligibility']).notNull(), // ['eligibility', 'benefits', 'claims_history', 'prior_auth']
+  // Delivery method
+  deliveryMethod: varchar("delivery_method").default("email").notNull(), // email, sms, both
+  deliveryEmail: varchar("delivery_email"),
+  deliveryPhone: varchar("delivery_phone"),
+  // Consent capture
+  consentGivenAt: timestamp("consent_given_at"),
+  consentIpAddress: varchar("consent_ip_address"),
+  consentUserAgent: text("consent_user_agent"),
+  consentSignature: text("consent_signature"), // Digital signature or checkbox acknowledgment
+  // Rate limiting
+  resendCount: integer("resend_count").default(0),
+  lastResendAt: timestamp("last_resend_at"),
+  linkAttemptCount: integer("link_attempt_count").default(0),
+  // Timestamps
+  expiresAt: timestamp("expires_at"), // Overall authorization expiry (e.g., 1 year)
+  revokedAt: timestamp("revoked_at"),
+  revokedReason: text("revoked_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Payer Integrations (API configurations for each payer)
+export const payerIntegrations = pgTable("payer_integrations", {
+  id: serial("id").primaryKey(),
+  payerName: varchar("payer_name").notNull(),
+  payerCode: varchar("payer_code").unique().notNull(), // e.g., MEDICARE, UHC, AETNA
+  // API Type
+  apiType: varchar("api_type").notNull(), // edi_270, fhir_r4, proprietary
+  apiVersion: varchar("api_version"),
+  // Endpoints
+  baseUrl: varchar("base_url").notNull(),
+  authEndpoint: varchar("auth_endpoint"),
+  eligibilityEndpoint: varchar("eligibility_endpoint"),
+  benefitsEndpoint: varchar("benefits_endpoint"),
+  claimsHistoryEndpoint: varchar("claims_history_endpoint"),
+  priorAuthEndpoint: varchar("prior_auth_endpoint"),
+  // Auth method
+  authMethod: varchar("auth_method").notNull(), // oauth2, api_key, basic, x509
+  authConfig: jsonb("auth_config"), // Additional auth config (scopes, token endpoint, etc.)
+  // Capabilities
+  supportsEligibility: boolean("supports_eligibility").default(true),
+  supportsBenefits: boolean("supports_benefits").default(false),
+  supportsClaimsHistory: boolean("supports_claims_history").default(false),
+  supportsPriorAuth: boolean("supports_prior_auth").default(false),
+  supportsRealtime: boolean("supports_realtime").default(false),
+  // Rate limits
+  rateLimitPerMinute: integer("rate_limit_per_minute").default(60),
+  rateLimitPerDay: integer("rate_limit_per_day").default(1000),
+  // Status
+  isActive: boolean("is_active").default(true),
+  lastHealthCheck: timestamp("last_health_check"),
+  healthStatus: varchar("health_status").default("unknown"), // healthy, degraded, down, unknown
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Payer Credentials (Practice-specific encrypted credentials)
+export const payerCredentials = pgTable("payer_credentials", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerIntegrationId: integer("payer_integration_id").references(() => payerIntegrations.id).notNull(),
+  // Encrypted credentials (AES-256-GCM)
+  encryptedCredentials: text("encrypted_credentials").notNull(),
+  credentialsIv: varchar("credentials_iv", { length: 32 }).notNull(), // Initialization vector
+  credentialsTag: varchar("credentials_tag", { length: 32 }).notNull(), // Auth tag
+  // Credential metadata (not encrypted)
+  credentialType: varchar("credential_type").notNull(), // oauth_client, api_key, username_password, certificate
+  lastRotated: timestamp("last_rotated"),
+  expiresAt: timestamp("expires_at"),
+  // Status
+  isActive: boolean("is_active").default(true),
+  lastUsed: timestamp("last_used"),
+  lastError: text("last_error"),
+  errorCount: integer("error_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Insurance Data Cache (Retrieved insurance data)
+export const insuranceDataCache = pgTable("insurance_data_cache", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  authorizationId: integer("authorization_id").references(() => patientInsuranceAuthorizations.id).notNull(),
+  payerIntegrationId: integer("payer_integration_id").references(() => payerIntegrations.id),
+  // Data type
+  dataType: varchar("data_type").notNull(), // eligibility, benefits, claims_history, prior_auth
+  // Raw and normalized data
+  rawResponse: jsonb("raw_response"),
+  normalizedData: jsonb("normalized_data"),
+  // Status
+  status: varchar("status").default("pending").notNull(), // pending, success, error, expired
+  errorMessage: text("error_message"),
+  errorCode: varchar("error_code"),
+  // Cache management
+  fetchedAt: timestamp("fetched_at"),
+  expiresAt: timestamp("expires_at"),
+  isStale: boolean("is_stale").default(false),
+  refreshAttempts: integer("refresh_attempts").default(0),
+  lastRefreshAttempt: timestamp("last_refresh_attempt"),
+  // Request tracking
+  requestId: varchar("request_id"), // External request ID for debugging
+  responseTimeMs: integer("response_time_ms"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Authorization Audit Log (HIPAA-compliant audit trail)
+export const authorizationAuditLog = pgTable("authorization_audit_log", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id),
+  authorizationId: integer("authorization_id").references(() => patientInsuranceAuthorizations.id),
+  // Actor information
+  actorType: varchar("actor_type").notNull(), // user, patient, system
+  actorId: varchar("actor_id"), // User ID or patient identifier
+  actorEmail: varchar("actor_email"),
+  actorIpAddress: varchar("actor_ip_address"),
+  actorUserAgent: text("actor_user_agent"),
+  // Event details
+  eventType: varchar("event_type").notNull(), // authorization_requested, authorization_sent, link_clicked, consent_given, consent_denied, data_accessed, data_refreshed, authorization_revoked, authorization_expired
+  eventDetails: jsonb("event_details"), // Additional context
+  // Data access specifics (when eventType is data_accessed)
+  dataType: varchar("data_type"), // eligibility, benefits, claims_history, prior_auth
+  dataScope: jsonb("data_scope"), // What specific data was accessed
+  // Result
+  success: boolean("success").default(true),
+  errorMessage: text("error_message"),
+  // Timestamp (immutable audit trail)
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_audit_practice_patient").on(table.practiceId, table.patientId),
+  index("idx_audit_authorization").on(table.authorizationId),
+  index("idx_audit_event_type").on(table.eventType),
+  index("idx_audit_created_at").on(table.createdAt),
+]);
+
+// Insurance authorization relations
+export const patientInsuranceAuthorizationsRelations = relations(patientInsuranceAuthorizations, ({ one, many }) => ({
+  practice: one(practices, {
+    fields: [patientInsuranceAuthorizations.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [patientInsuranceAuthorizations.patientId],
+    references: [patients.id],
+  }),
+  requestedBy: one(users, {
+    fields: [patientInsuranceAuthorizations.requestedById],
+    references: [users.id],
+  }),
+  cachedData: many(insuranceDataCache),
+  auditLogs: many(authorizationAuditLog),
+}));
+
+export const payerIntegrationsRelations = relations(payerIntegrations, ({ many }) => ({
+  credentials: many(payerCredentials),
+  cachedData: many(insuranceDataCache),
+}));
+
+export const payerCredentialsRelations = relations(payerCredentials, ({ one }) => ({
+  practice: one(practices, {
+    fields: [payerCredentials.practiceId],
+    references: [practices.id],
+  }),
+  payerIntegration: one(payerIntegrations, {
+    fields: [payerCredentials.payerIntegrationId],
+    references: [payerIntegrations.id],
+  }),
+}));
+
+export const insuranceDataCacheRelations = relations(insuranceDataCache, ({ one }) => ({
+  practice: one(practices, {
+    fields: [insuranceDataCache.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [insuranceDataCache.patientId],
+    references: [patients.id],
+  }),
+  authorization: one(patientInsuranceAuthorizations, {
+    fields: [insuranceDataCache.authorizationId],
+    references: [patientInsuranceAuthorizations.id],
+  }),
+  payerIntegration: one(payerIntegrations, {
+    fields: [insuranceDataCache.payerIntegrationId],
+    references: [payerIntegrations.id],
+  }),
+}));
+
+export const authorizationAuditLogRelations = relations(authorizationAuditLog, ({ one }) => ({
+  practice: one(practices, {
+    fields: [authorizationAuditLog.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [authorizationAuditLog.patientId],
+    references: [patients.id],
+  }),
+  authorization: one(patientInsuranceAuthorizations, {
+    fields: [authorizationAuditLog.authorizationId],
+    references: [patientInsuranceAuthorizations.id],
+  }),
+}));
+
 // Insurance reimbursement rates table
 export const insuranceRates = pgTable("insurance_rates", {
   id: serial("id").primaryKey(),
@@ -420,3 +653,111 @@ export type InsertTreatmentSession = z.infer<typeof insertTreatmentSessionSchema
 export type InsertClaim = z.infer<typeof insertClaimSchema>;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
+
+// Insurance Authorization insert schemas
+export const insertPatientInsuranceAuthorizationSchema = createInsertSchema(patientInsuranceAuthorizations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPayerIntegrationSchema = createInsertSchema(payerIntegrations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPayerCredentialSchema = createInsertSchema(payerCredentials).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertInsuranceDataCacheSchema = createInsertSchema(insuranceDataCache).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertAuthorizationAuditLogSchema = createInsertSchema(authorizationAuditLog).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Insurance Authorization types
+export type PatientInsuranceAuthorization = typeof patientInsuranceAuthorizations.$inferSelect;
+export type InsertPatientInsuranceAuthorization = z.infer<typeof insertPatientInsuranceAuthorizationSchema>;
+
+export type PayerIntegration = typeof payerIntegrations.$inferSelect;
+export type InsertPayerIntegration = z.infer<typeof insertPayerIntegrationSchema>;
+
+export type PayerCredential = typeof payerCredentials.$inferSelect;
+export type InsertPayerCredential = z.infer<typeof insertPayerCredentialSchema>;
+
+export type InsuranceDataCache = typeof insuranceDataCache.$inferSelect;
+export type InsertInsuranceDataCache = z.infer<typeof insertInsuranceDataCacheSchema>;
+
+export type AuthorizationAuditLog = typeof authorizationAuditLog.$inferSelect;
+export type InsertAuthorizationAuditLog = z.infer<typeof insertAuthorizationAuditLogSchema>;
+
+// Normalized insurance data types for frontend consumption
+export type NormalizedEligibility = {
+  isEligible: boolean;
+  effectiveDate: string;
+  terminationDate?: string;
+  planName: string;
+  planType: string;
+  memberId: string;
+  groupNumber?: string;
+  coverageLevel: string; // individual, family
+  networkStatus: string; // in_network, out_of_network
+};
+
+export type NormalizedBenefits = {
+  deductible: {
+    individual: number;
+    family: number;
+    individualMet: number;
+    familyMet: number;
+  };
+  outOfPocketMax: {
+    individual: number;
+    family: number;
+    individualMet: number;
+    familyMet: number;
+  };
+  copay: number;
+  coinsurance: number;
+  visitsAllowed?: number;
+  visitsUsed?: number;
+  priorAuthRequired: boolean;
+  referralRequired: boolean;
+  serviceLimitations?: string[];
+};
+
+export type NormalizedClaimsHistory = {
+  claims: Array<{
+    claimNumber: string;
+    dateOfService: string;
+    provider: string;
+    serviceType: string;
+    billedAmount: number;
+    allowedAmount: number;
+    paidAmount: number;
+    patientResponsibility: number;
+    status: string;
+  }>;
+  totalClaims: number;
+  totalPaid: number;
+};
+
+export type NormalizedPriorAuth = {
+  required: boolean;
+  authNumber?: string;
+  status?: string;
+  validFrom?: string;
+  validTo?: string;
+  approvedUnits?: number;
+  usedUnits?: number;
+  remainingUnits?: number;
+};

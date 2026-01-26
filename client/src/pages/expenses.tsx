@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import ExpenseTracker from "@/components/ExpenseTracker";
 
 export default function Expenses() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
   const { toast } = useToast();
   const [practiceId] = useState(1);
   const [searchTerm, setSearchTerm] = useState("");
@@ -79,21 +79,26 @@ export default function Expenses() {
     return 'text-red-600';
   };
 
-  const filteredExpenses = expenses?.filter((expense: any) => {
+  // Filter expenses: admins see all, therapists see only their own
+  const userExpenses = isAdmin
+    ? expenses
+    : expenses?.filter((expense: any) => expense.createdBy === (user as any)?.id);
+
+  const filteredExpenses = userExpenses?.filter((expense: any) => {
     const matchesSearch = expense.description?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = categoryFilter === "all" || expense.category === categoryFilter || expense.aiCategory === categoryFilter;
     return matchesSearch && matchesCategory;
   });
 
-  const totalExpenses = expenses?.reduce((sum: number, expense: any) => sum + parseFloat(expense.amount), 0) || 0;
-  const monthlyExpenses = expenses?.filter((expense: any) => {
+  const totalExpenses = userExpenses?.reduce((sum: number, expense: any) => sum + parseFloat(expense.amount), 0) || 0;
+  const monthlyExpenses = userExpenses?.filter((expense: any) => {
     const expenseDate = new Date(expense.expenseDate);
     const currentMonth = new Date();
-    return expenseDate.getMonth() === currentMonth.getMonth() && 
+    return expenseDate.getMonth() === currentMonth.getMonth() &&
            expenseDate.getFullYear() === currentMonth.getFullYear();
   }).reduce((sum: number, expense: any) => sum + parseFloat(expense.amount), 0) || 0;
 
-  const categorySummary = expenses?.reduce((acc: Record<string, number>, expense: any) => {
+  const categorySummary = userExpenses?.reduce((acc: Record<string, number>, expense: any) => {
     const category = expense.aiCategory || expense.category || 'other';
     acc[category] = (acc[category] || 0) + parseFloat(expense.amount);
     return acc;
@@ -111,8 +116,14 @@ export default function Expenses() {
     <div className="p-6 md:ml-64">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Expense Management</h1>
-          <p className="text-slate-600">Track and categorize business expenses with AI assistance</p>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {isAdmin ? "Expense Management" : "My Expenses"}
+          </h1>
+          <p className="text-slate-600">
+            {isAdmin
+              ? "Track and categorize business expenses with AI assistance"
+              : "Track and manage your personal business expenses"}
+          </p>
         </div>
         <Dialog open={showExpenseDialog} onOpenChange={setShowExpenseDialog}>
           <DialogTrigger asChild>
