@@ -17,10 +17,17 @@ export function useAuth() {
   // Use dev endpoint if bypassing, otherwise use regular auth
   const endpoint = hasDevBypass ? '/api/dev-user' : '/api/auth/user';
 
-  const { data: user, isLoading } = useQuery<User>({
+  const { data: user, isLoading, error, isFetched } = useQuery<User>({
     queryKey: [endpoint],
     retry: false,
+    staleTime: 0, // Always fetch fresh auth state
+    gcTime: 0, // Don't cache auth data
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
+
+  // Only authenticated if we have user data (not null) and no error
+  const isAuthenticated = isFetched && user != null && !error;
 
   // Check for demo role override (for switching between admin/therapist during demos)
   const demoRoleOverride = localStorage.getItem('demo-role-override') as 'admin' | 'therapist' | null;
@@ -29,7 +36,7 @@ export function useAuth() {
   return {
     user,
     isLoading,
-    isAuthenticated: !!user,
+    isAuthenticated,
     isAdmin: effectiveRole === 'admin',
     currentRole: effectiveRole || 'therapist',
   };

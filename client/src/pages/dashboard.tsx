@@ -6,7 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import DashboardStats from "@/components/DashboardStats";
-import { Plus, AlertCircle, CheckCircle, Clock, XCircle } from "lucide-react";
+import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText } from "lucide-react";
 import { Link } from "wouter";
 
 export default function Dashboard() {
@@ -14,13 +14,9 @@ export default function Dashboard() {
   const { toast } = useToast();
   const [practiceId] = useState(1); // Mock practice ID for now
 
-  // Check if we have dev bypass
-  const hasDevBypass = localStorage.getItem('dev-bypass') === 'true';
-  const shouldAllowAccess = isAuthenticated || hasDevBypass;
-
-  // Redirect to login if not authenticated and no dev bypass
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!isLoading && !shouldAllowAccess) {
+    if (!isLoading && !isAuthenticated) {
       toast({
         title: "Unauthorized",
         description: "You are logged out. Logging in again...",
@@ -31,23 +27,29 @@ export default function Dashboard() {
       }, 500);
       return;
     }
-  }, [shouldAllowAccess, isLoading, toast]);
+  }, [isAuthenticated, isLoading, toast]);
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['/api/analytics/dashboard'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
     retry: false,
   });
 
   const { data: recentClaims, isLoading: claimsLoading } = useQuery({
     queryKey: ['/api/claims'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
     retry: false,
   });
 
   const { data: recentPatients, isLoading: patientsLoading } = useQuery({
     queryKey: ['/api/patients'],
-    enabled: shouldAllowAccess,
+    enabled: isAuthenticated,
+    retry: false,
+  });
+
+  const { data: deniedClaimsReport, isLoading: deniedLoading } = useQuery({
+    queryKey: ['/api/reports/denied-claims', { period: 'today' }],
+    enabled: isAuthenticated,
     retry: false,
   });
 
@@ -59,7 +61,7 @@ export default function Dashboard() {
     );
   }
 
-  if (!shouldAllowAccess) {
+  if (!isAuthenticated) {
     return null;
   }
 
@@ -90,7 +92,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-6 md:ml-64">
+    <div className="p-6 pt-20 md:pt-6 md:ml-64">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900 mb-2">
           Welcome back, {user?.firstName || 'User'}!
@@ -102,6 +104,73 @@ export default function Dashboard() {
 
       {/* Stats Overview */}
       {stats && <DashboardStats stats={stats} />}
+
+      {/* Denied Claims Alert */}
+      {deniedClaimsReport && deniedClaimsReport.summary?.totalDenied > 0 && (
+        <Card className="mt-6 border-red-200 bg-red-50">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Ban className="w-5 h-5 text-red-600" />
+                <CardTitle className="text-red-900">Denied Claims Today</CardTitle>
+              </div>
+              <Link href="/reports">
+                <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100">
+                  View Full Report
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div className="text-center p-3 bg-white rounded-lg border border-red-100">
+                <p className="text-2xl font-bold text-red-600">{deniedClaimsReport.summary.totalDenied}</p>
+                <p className="text-xs text-slate-600">Claims Denied</p>
+              </div>
+              <div className="text-center p-3 bg-white rounded-lg border border-red-100">
+                <p className="text-2xl font-bold text-red-600">
+                  ${deniedClaimsReport.summary.totalAmountAtRisk?.toLocaleString() || '0'}
+                </p>
+                <p className="text-xs text-slate-600">Amount at Risk</p>
+              </div>
+              <div className="text-center p-3 bg-white rounded-lg border border-green-100">
+                <p className="text-2xl font-bold text-green-600">{deniedClaimsReport.summary.appealsGenerated}</p>
+                <p className="text-xs text-slate-600">Appeals Generated</p>
+              </div>
+              <div className="text-center p-3 bg-white rounded-lg border border-blue-100">
+                <p className="text-2xl font-bold text-blue-600">{deniedClaimsReport.summary.appealsSent}</p>
+                <p className="text-xs text-slate-600">Appeals Sent</p>
+              </div>
+            </div>
+
+            {deniedClaimsReport.claims?.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-red-800 mb-2">Today's Denied Claims:</p>
+                {deniedClaimsReport.claims.slice(0, 3).map((claim: any) => (
+                  <div key={claim.id} className="flex items-center justify-between p-2 bg-white rounded border border-red-100">
+                    <div className="flex items-center space-x-3">
+                      <XCircle className="w-4 h-4 text-red-500" />
+                      <div>
+                        <p className="font-medium text-slate-900 text-sm">{claim.claimNumber}</p>
+                        <p className="text-xs text-slate-600">{claim.patientName}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-medium text-red-600 text-sm">${claim.amount}</p>
+                      <p className="text-xs text-slate-500">{claim.appealStatus === 'none' ? 'No appeal' : `Appeal: ${claim.appealStatus}`}</p>
+                    </div>
+                  </div>
+                ))}
+                {deniedClaimsReport.claims.length > 3 && (
+                  <p className="text-xs text-slate-500 text-center pt-1">
+                    +{deniedClaimsReport.claims.length - 3} more denied claims
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
         {/* Recent Claims */}

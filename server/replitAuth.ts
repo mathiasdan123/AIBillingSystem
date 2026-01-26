@@ -11,6 +11,10 @@ import { storage } from "./storage";
 // Allow local development without Replit auth
 const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
 
+if (!isLocalDev && !process.env.REPLIT_DOMAINS) {
+  throw new Error("Environment variable REPLIT_DOMAINS not provided");
+}
+
 const getOidcConfig = memoize(
   async () => {
     return await client.discovery(
@@ -91,50 +95,60 @@ export async function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Local development mode - auto-login as dev user
+  // Local development mode - bypass Replit OAuth
   if (isLocalDev) {
-    console.log('Running in local development mode - Replit auth disabled');
+    console.log('Running in local development mode - using mock auth');
 
-    passport.serializeUser((user: Express.User, cb) => cb(null, user));
-    passport.deserializeUser((user: Express.User, cb) => cb(null, user));
-
-    // Create dev user on first request
-    const devUser = {
-      claims: {
-        sub: 'dev-user-123',
-        email: 'dev@localhost',
-        first_name: 'Dev',
-        last_name: 'User',
-      },
-      access_token: 'dev-token',
-      expires_at: Math.floor(Date.now() / 1000) + 86400 * 365, // 1 year
-    };
-
-    // Auto-login middleware for local dev
-    app.use(async (req, res, next) => {
-      if (!req.isAuthenticated()) {
-        // Ensure dev user exists in database
-        await storage.upsertUser({
-          id: 'dev-user-123',
-          email: 'dev@localhost',
-          firstName: 'Dev',
-          lastName: 'User',
-          profileImageUrl: null,
-        });
-        req.login(devUser, (err) => {
-          if (err) console.error('Dev login error:', err);
-          next();
-        });
-      } else {
-        next();
-      }
+    passport.serializeUser((user: Express.User, cb) => {
+      cb(null, user);
+    });
+    passport.deserializeUser((user: Express.User, cb) => {
+      cb(null, user);
     });
 
-    app.get("/api/login", (req, res) => res.redirect("/"));
-    app.get("/api/callback", (req, res) => res.redirect("/"));
+    // Mock login for local dev - automatically log in as admin
+    app.get("/api/login", async (req, res) => {
+      const devUser = {
+        claims: {
+          sub: 'dev-user-123',
+          email: 'admin@local.dev',
+          first_name: 'Dev',
+          last_name: 'Admin',
+        },
+        access_token: 'dev-token',
+        expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours
+      };
+
+      // Upsert the dev user in storage with admin role
+      await storage.upsertUser({
+        id: 'dev-user-123',
+        email: 'admin@local.dev',
+        firstName: 'Dev',
+        lastName: 'Admin',
+        profileImageUrl: null,
+      });
+      // Update role to admin for full access
+      await storage.updateUserRole('dev-user-123', 'admin');
+
+      req.login(devUser, (err) => {
+        if (err) {
+          console.error('Dev login error:', err);
+          return res.status(500).json({ error: 'Login failed' });
+        }
+        res.redirect('/');
+      });
+    });
+
+    app.get("/api/callback", (req, res) => {
+      res.redirect('/');
+    });
+
     app.get("/api/logout", (req, res) => {
-      req.logout(() => res.redirect("/"));
+      req.logout(() => {
+        res.redirect('/');
+      });
     });
+
     return;
   }
 

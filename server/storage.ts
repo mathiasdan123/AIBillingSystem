@@ -4,6 +4,7 @@ import {
   patients,
   treatmentSessions,
   claims,
+  claimLineItems,
   expenses,
   payments,
   cptCodes,
@@ -11,17 +12,16 @@ import {
   insurances,
   soapNotes,
   cptCodeMappings,
-  patientInsuranceAuthorizations,
-  payerIntegrations,
-  payerCredentials,
-  insuranceDataCache,
-  authorizationAuditLog,
+  invites,
+  eligibilityChecks,
+  reimbursementOptimizations,
   type User,
   type UpsertUser,
   type Practice,
   type Patient,
   type TreatmentSession,
   type Claim,
+  type ClaimLineItem,
   type Expense,
   type Payment,
   type CptCode,
@@ -33,28 +33,27 @@ import {
   type InsertPatient,
   type InsertTreatmentSession,
   type InsertClaim,
+  type InsertClaimLineItem,
   type InsertExpense,
   type InsertPayment,
   type InsertSoapNote,
-  type PatientInsuranceAuthorization,
-  type InsertPatientInsuranceAuthorization,
-  type PayerIntegration,
-  type InsertPayerIntegration,
-  type PayerCredential,
-  type InsertPayerCredential,
-  type InsuranceDataCache,
-  type InsertInsuranceDataCache,
-  type AuthorizationAuditLog,
-  type InsertAuthorizationAuditLog,
+  type Invite,
+  type InsertInvite,
+  type EligibilityCheck,
+  type InsertEligibilityCheck,
+  type ReimbursementOptimization,
+  type InsertReimbursementOptimization,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, count, sum, sql, lt } from "drizzle-orm";
+import { eq, desc, and, gte, lte, count, sum, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
-  
+  getAllUsers(): Promise<User[]>;
+  updateUserRole(id: string, role: string): Promise<User | undefined>;
+
   // Practice operations
   createPractice(practice: InsertPractice): Promise<Practice>;
   getPractice(id: number): Promise<Practice | undefined>;
@@ -76,7 +75,12 @@ export interface IStorage {
   getClaims(practiceId: number): Promise<Claim[]>;
   getClaim(id: number): Promise<Claim | undefined>;
   updateClaim(id: number, claim: Partial<InsertClaim>): Promise<Claim>;
-  
+
+  // Claim Line Items operations
+  createClaimLineItem(lineItem: InsertClaimLineItem): Promise<ClaimLineItem>;
+  getClaimLineItems(claimId: number): Promise<ClaimLineItem[]>;
+  deleteClaimLineItems(claimId: number): Promise<void>;
+
   // Expense operations
   createExpense(expense: InsertExpense): Promise<Expense>;
   getExpenses(practiceId: number): Promise<Expense[]>;
@@ -137,41 +141,30 @@ export interface IStorage {
     count: number;
   }[]>;
 
-  // Insurance Authorization operations
-  createInsuranceAuthorization(authorization: InsertPatientInsuranceAuthorization): Promise<PatientInsuranceAuthorization>;
-  getAuthorizationByToken(token: string): Promise<PatientInsuranceAuthorization | undefined>;
-  getAuthorizationById(id: number): Promise<PatientInsuranceAuthorization | undefined>;
-  getPatientAuthorizations(patientId: number): Promise<PatientInsuranceAuthorization[]>;
-  getPracticeAuthorizations(practiceId: number): Promise<PatientInsuranceAuthorization[]>;
-  updateAuthorizationStatus(id: number, updates: Partial<InsertPatientInsuranceAuthorization>): Promise<PatientInsuranceAuthorization>;
-  incrementAuthorizationResendCount(id: number): Promise<PatientInsuranceAuthorization>;
-  incrementAuthorizationLinkAttempts(id: number): Promise<PatientInsuranceAuthorization>;
-  expireStaleAuthorizations(): Promise<number>;
+  // Invite operations
+  createInvite(invite: InsertInvite): Promise<Invite>;
+  getInvitesByPractice(practiceId: number): Promise<Invite[]>;
+  getInviteByToken(token: string): Promise<Invite | undefined>;
+  getInviteByEmail(email: string): Promise<Invite | undefined>;
+  updateInviteStatus(id: number, status: string, acceptedAt?: Date): Promise<Invite | undefined>;
 
-  // Payer Integration operations
-  createPayerIntegration(integration: InsertPayerIntegration): Promise<PayerIntegration>;
-  getPayerIntegrations(): Promise<PayerIntegration[]>;
-  getPayerIntegrationByCode(payerCode: string): Promise<PayerIntegration | undefined>;
-  getPayerIntegrationById(id: number): Promise<PayerIntegration | undefined>;
-  updatePayerIntegration(id: number, updates: Partial<InsertPayerIntegration>): Promise<PayerIntegration>;
+  // Eligibility operations
+  createEligibilityCheck(check: InsertEligibilityCheck): Promise<EligibilityCheck>;
+  getPatientEligibility(patientId: number): Promise<EligibilityCheck | undefined>;
+  getEligibilityHistory(patientId: number): Promise<EligibilityCheck[]>;
 
-  // Payer Credentials operations
-  createPayerCredential(credential: InsertPayerCredential): Promise<PayerCredential>;
-  getPayerCredentials(practiceId: number): Promise<PayerCredential[]>;
-  getPayerCredentialForPractice(practiceId: number, payerIntegrationId: number): Promise<PayerCredential | undefined>;
-  updatePayerCredential(id: number, updates: Partial<InsertPayerCredential>): Promise<PayerCredential>;
+  // Appeal/Optimization operations
+  createReimbursementOptimization(optimization: InsertReimbursementOptimization): Promise<ReimbursementOptimization>;
+  getClaimAppeals(claimId: number): Promise<ReimbursementOptimization[]>;
+  updateAppealStatus(id: number, status: string, completedAt?: Date): Promise<ReimbursementOptimization | undefined>;
 
-  // Insurance Data Cache operations
-  cacheInsuranceData(data: InsertInsuranceDataCache): Promise<InsuranceDataCache>;
-  getCachedInsuranceData(patientId: number, dataType: string): Promise<InsuranceDataCache | undefined>;
-  getCachedInsuranceDataByAuthorization(authorizationId: number): Promise<InsuranceDataCache[]>;
-  updateCachedInsuranceData(id: number, updates: Partial<InsertInsuranceDataCache>): Promise<InsuranceDataCache>;
-  markCacheAsStale(patientId: number): Promise<void>;
-  deleteExpiredCache(): Promise<number>;
-
-  // Audit Log operations
-  createAuditLogEntry(entry: InsertAuthorizationAuditLog): Promise<AuthorizationAuditLog>;
-  getAuditLogs(filters: { practiceId?: number; patientId?: number; authorizationId?: number; eventType?: string; startDate?: Date; endDate?: Date }): Promise<AuthorizationAuditLog[]>;
+  // Denied Claims Report operations
+  getDeniedClaimsByDateRange(practiceId: number, startDate: Date, endDate: Date): Promise<Claim[]>;
+  getDeniedClaimsWithDetails(practiceId: number, startDate: Date, endDate: Date): Promise<{
+    claim: Claim;
+    patient: Patient | null;
+    appeal: ReimbursementOptimization | null;
+  }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -192,6 +185,19 @@ export class DatabaseStorage implements IStorage {
           updatedAt: new Date(),
         },
       })
+      .returning();
+    return user;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async updateUserRole(id: string, role: string): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ role, updatedAt: new Date() })
+      .where(eq(users.id, id))
       .returning();
     return user;
   }
@@ -315,6 +321,28 @@ export class DatabaseStorage implements IStorage {
       .where(eq(claims.id, id))
       .returning();
     return updatedClaim;
+  }
+
+  // Claim Line Items operations
+  async createClaimLineItem(lineItem: InsertClaimLineItem): Promise<ClaimLineItem> {
+    const [newLineItem] = await db
+      .insert(claimLineItems)
+      .values(lineItem)
+      .returning();
+    return newLineItem;
+  }
+
+  async getClaimLineItems(claimId: number): Promise<ClaimLineItem[]> {
+    return await db
+      .select()
+      .from(claimLineItems)
+      .where(eq(claimLineItems.claimId, claimId));
+  }
+
+  async deleteClaimLineItems(claimId: number): Promise<void> {
+    await db
+      .delete(claimLineItems)
+      .where(eq(claimLineItems.claimId, claimId));
   }
 
   // Expense operations
@@ -639,300 +667,137 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  // Insurance Authorization operations
-  async createInsuranceAuthorization(authorization: InsertPatientInsuranceAuthorization): Promise<PatientInsuranceAuthorization> {
+  // Invite operations
+  async createInvite(invite: InsertInvite): Promise<Invite> {
+    const [created] = await db.insert(invites).values(invite).returning();
+    return created;
+  }
+
+  async getInvitesByPractice(practiceId: number): Promise<Invite[]> {
+    return await db
+      .select()
+      .from(invites)
+      .where(eq(invites.practiceId, practiceId))
+      .orderBy(desc(invites.createdAt));
+  }
+
+  async getInviteByToken(token: string): Promise<Invite | undefined> {
+    const [invite] = await db
+      .select()
+      .from(invites)
+      .where(eq(invites.token, token));
+    return invite;
+  }
+
+  async getInviteByEmail(email: string): Promise<Invite | undefined> {
+    const [invite] = await db
+      .select()
+      .from(invites)
+      .where(and(eq(invites.email, email), eq(invites.status, "pending")));
+    return invite;
+  }
+
+  async updateInviteStatus(id: number, status: string, acceptedAt?: Date): Promise<Invite | undefined> {
+    const [updated] = await db
+      .update(invites)
+      .set({ status, acceptedAt })
+      .where(eq(invites.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Eligibility operations
+  async createEligibilityCheck(check: InsertEligibilityCheck): Promise<EligibilityCheck> {
     const [created] = await db
-      .insert(patientInsuranceAuthorizations)
-      .values(authorization)
+      .insert(eligibilityChecks)
+      .values(check)
       .returning();
     return created;
   }
 
-  async getAuthorizationByToken(token: string): Promise<PatientInsuranceAuthorization | undefined> {
-    const [auth] = await db
+  async getPatientEligibility(patientId: number): Promise<EligibilityCheck | undefined> {
+    const [check] = await db
       .select()
-      .from(patientInsuranceAuthorizations)
-      .where(eq(patientInsuranceAuthorizations.token, token));
-    return auth;
-  }
-
-  async getAuthorizationById(id: number): Promise<PatientInsuranceAuthorization | undefined> {
-    const [auth] = await db
-      .select()
-      .from(patientInsuranceAuthorizations)
-      .where(eq(patientInsuranceAuthorizations.id, id));
-    return auth;
-  }
-
-  async getPatientAuthorizations(patientId: number): Promise<PatientInsuranceAuthorization[]> {
-    return await db
-      .select()
-      .from(patientInsuranceAuthorizations)
-      .where(eq(patientInsuranceAuthorizations.patientId, patientId))
-      .orderBy(desc(patientInsuranceAuthorizations.createdAt));
-  }
-
-  async getPracticeAuthorizations(practiceId: number): Promise<PatientInsuranceAuthorization[]> {
-    return await db
-      .select()
-      .from(patientInsuranceAuthorizations)
-      .where(eq(patientInsuranceAuthorizations.practiceId, practiceId))
-      .orderBy(desc(patientInsuranceAuthorizations.createdAt));
-  }
-
-  async updateAuthorizationStatus(id: number, updates: Partial<InsertPatientInsuranceAuthorization>): Promise<PatientInsuranceAuthorization> {
-    const [updated] = await db
-      .update(patientInsuranceAuthorizations)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(patientInsuranceAuthorizations.id, id))
-      .returning();
-    return updated;
-  }
-
-  async incrementAuthorizationResendCount(id: number): Promise<PatientInsuranceAuthorization> {
-    const [auth] = await db
-      .select()
-      .from(patientInsuranceAuthorizations)
-      .where(eq(patientInsuranceAuthorizations.id, id));
-
-    const [updated] = await db
-      .update(patientInsuranceAuthorizations)
-      .set({
-        resendCount: (auth.resendCount || 0) + 1,
-        lastResendAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(patientInsuranceAuthorizations.id, id))
-      .returning();
-    return updated;
-  }
-
-  async incrementAuthorizationLinkAttempts(id: number): Promise<PatientInsuranceAuthorization> {
-    const [auth] = await db
-      .select()
-      .from(patientInsuranceAuthorizations)
-      .where(eq(patientInsuranceAuthorizations.id, id));
-
-    const [updated] = await db
-      .update(patientInsuranceAuthorizations)
-      .set({
-        linkAttemptCount: (auth.linkAttemptCount || 0) + 1,
-        updatedAt: new Date(),
-      })
-      .where(eq(patientInsuranceAuthorizations.id, id))
-      .returning();
-    return updated;
-  }
-
-  async expireStaleAuthorizations(): Promise<number> {
-    const result = await db
-      .update(patientInsuranceAuthorizations)
-      .set({ status: 'expired', updatedAt: new Date() })
-      .where(
-        and(
-          eq(patientInsuranceAuthorizations.status, 'pending'),
-          lt(patientInsuranceAuthorizations.tokenExpiresAt, new Date())
-        )
-      )
-      .returning();
-    return result.length;
-  }
-
-  // Payer Integration operations
-  async createPayerIntegration(integration: InsertPayerIntegration): Promise<PayerIntegration> {
-    const [created] = await db
-      .insert(payerIntegrations)
-      .values(integration)
-      .returning();
-    return created;
-  }
-
-  async getPayerIntegrations(): Promise<PayerIntegration[]> {
-    return await db
-      .select()
-      .from(payerIntegrations)
-      .where(eq(payerIntegrations.isActive, true))
-      .orderBy(payerIntegrations.payerName);
-  }
-
-  async getPayerIntegrationByCode(payerCode: string): Promise<PayerIntegration | undefined> {
-    const [integration] = await db
-      .select()
-      .from(payerIntegrations)
-      .where(eq(payerIntegrations.payerCode, payerCode));
-    return integration;
-  }
-
-  async getPayerIntegrationById(id: number): Promise<PayerIntegration | undefined> {
-    const [integration] = await db
-      .select()
-      .from(payerIntegrations)
-      .where(eq(payerIntegrations.id, id));
-    return integration;
-  }
-
-  async updatePayerIntegration(id: number, updates: Partial<InsertPayerIntegration>): Promise<PayerIntegration> {
-    const [updated] = await db
-      .update(payerIntegrations)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(payerIntegrations.id, id))
-      .returning();
-    return updated;
-  }
-
-  // Payer Credentials operations
-  async createPayerCredential(credential: InsertPayerCredential): Promise<PayerCredential> {
-    const [created] = await db
-      .insert(payerCredentials)
-      .values(credential)
-      .returning();
-    return created;
-  }
-
-  async getPayerCredentials(practiceId: number): Promise<PayerCredential[]> {
-    return await db
-      .select()
-      .from(payerCredentials)
-      .where(
-        and(
-          eq(payerCredentials.practiceId, practiceId),
-          eq(payerCredentials.isActive, true)
-        )
-      );
-  }
-
-  async getPayerCredentialForPractice(practiceId: number, payerIntegrationId: number): Promise<PayerCredential | undefined> {
-    const [credential] = await db
-      .select()
-      .from(payerCredentials)
-      .where(
-        and(
-          eq(payerCredentials.practiceId, practiceId),
-          eq(payerCredentials.payerIntegrationId, payerIntegrationId),
-          eq(payerCredentials.isActive, true)
-        )
-      );
-    return credential;
-  }
-
-  async updatePayerCredential(id: number, updates: Partial<InsertPayerCredential>): Promise<PayerCredential> {
-    const [updated] = await db
-      .update(payerCredentials)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(payerCredentials.id, id))
-      .returning();
-    return updated;
-  }
-
-  // Insurance Data Cache operations
-  async cacheInsuranceData(data: InsertInsuranceDataCache): Promise<InsuranceDataCache> {
-    const [created] = await db
-      .insert(insuranceDataCache)
-      .values(data)
-      .returning();
-    return created;
-  }
-
-  async getCachedInsuranceData(patientId: number, dataType: string): Promise<InsuranceDataCache | undefined> {
-    const [cached] = await db
-      .select()
-      .from(insuranceDataCache)
-      .where(
-        and(
-          eq(insuranceDataCache.patientId, patientId),
-          eq(insuranceDataCache.dataType, dataType),
-          eq(insuranceDataCache.isStale, false)
-        )
-      )
-      .orderBy(desc(insuranceDataCache.fetchedAt))
+      .from(eligibilityChecks)
+      .where(eq(eligibilityChecks.patientId, patientId))
+      .orderBy(desc(eligibilityChecks.checkDate))
       .limit(1);
-    return cached;
+    return check;
   }
 
-  async getCachedInsuranceDataByAuthorization(authorizationId: number): Promise<InsuranceDataCache[]> {
+  async getEligibilityHistory(patientId: number): Promise<EligibilityCheck[]> {
     return await db
       .select()
-      .from(insuranceDataCache)
-      .where(eq(insuranceDataCache.authorizationId, authorizationId))
-      .orderBy(desc(insuranceDataCache.fetchedAt));
+      .from(eligibilityChecks)
+      .where(eq(eligibilityChecks.patientId, patientId))
+      .orderBy(desc(eligibilityChecks.checkDate));
   }
 
-  async updateCachedInsuranceData(id: number, updates: Partial<InsertInsuranceDataCache>): Promise<InsuranceDataCache> {
-    const [updated] = await db
-      .update(insuranceDataCache)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(insuranceDataCache.id, id))
-      .returning();
-    return updated;
-  }
-
-  async markCacheAsStale(patientId: number): Promise<void> {
-    await db
-      .update(insuranceDataCache)
-      .set({ isStale: true, updatedAt: new Date() })
-      .where(eq(insuranceDataCache.patientId, patientId));
-  }
-
-  async deleteExpiredCache(): Promise<number> {
-    const result = await db
-      .delete(insuranceDataCache)
-      .where(lt(insuranceDataCache.expiresAt, new Date()))
-      .returning();
-    return result.length;
-  }
-
-  // Audit Log operations
-  async createAuditLogEntry(entry: InsertAuthorizationAuditLog): Promise<AuthorizationAuditLog> {
+  // Appeal/Optimization operations
+  async createReimbursementOptimization(optimization: InsertReimbursementOptimization): Promise<ReimbursementOptimization> {
     const [created] = await db
-      .insert(authorizationAuditLog)
-      .values(entry)
+      .insert(reimbursementOptimizations)
+      .values(optimization)
       .returning();
     return created;
   }
 
-  async getAuditLogs(filters: {
-    practiceId?: number;
-    patientId?: number;
-    authorizationId?: number;
-    eventType?: string;
-    startDate?: Date;
-    endDate?: Date;
-  }): Promise<AuthorizationAuditLog[]> {
-    const conditions = [];
-
-    if (filters.practiceId) {
-      conditions.push(eq(authorizationAuditLog.practiceId, filters.practiceId));
-    }
-    if (filters.patientId) {
-      conditions.push(eq(authorizationAuditLog.patientId, filters.patientId));
-    }
-    if (filters.authorizationId) {
-      conditions.push(eq(authorizationAuditLog.authorizationId, filters.authorizationId));
-    }
-    if (filters.eventType) {
-      conditions.push(eq(authorizationAuditLog.eventType, filters.eventType));
-    }
-    if (filters.startDate) {
-      conditions.push(gte(authorizationAuditLog.createdAt, filters.startDate));
-    }
-    if (filters.endDate) {
-      conditions.push(lte(authorizationAuditLog.createdAt, filters.endDate));
-    }
-
-    if (conditions.length === 0) {
-      return await db
-        .select()
-        .from(authorizationAuditLog)
-        .orderBy(desc(authorizationAuditLog.createdAt))
-        .limit(1000);
-    }
-
+  async getClaimAppeals(claimId: number): Promise<ReimbursementOptimization[]> {
     return await db
       .select()
-      .from(authorizationAuditLog)
-      .where(and(...conditions))
-      .orderBy(desc(authorizationAuditLog.createdAt))
-      .limit(1000);
+      .from(reimbursementOptimizations)
+      .where(and(
+        eq(reimbursementOptimizations.claimId, claimId),
+        eq(reimbursementOptimizations.optimizationType, 'appeal')
+      ))
+      .orderBy(desc(reimbursementOptimizations.createdAt));
+  }
+
+  async updateAppealStatus(id: number, status: string, completedAt?: Date): Promise<ReimbursementOptimization | undefined> {
+    const [updated] = await db
+      .update(reimbursementOptimizations)
+      .set({ status, completedAt })
+      .where(eq(reimbursementOptimizations.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Denied Claims Report operations
+  async getDeniedClaimsByDateRange(practiceId: number, startDate: Date, endDate: Date): Promise<Claim[]> {
+    return await db
+      .select()
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        eq(claims.status, "denied"),
+        gte(claims.updatedAt, startDate),
+        lte(claims.updatedAt, endDate)
+      ))
+      .orderBy(desc(claims.updatedAt));
+  }
+
+  async getDeniedClaimsWithDetails(practiceId: number, startDate: Date, endDate: Date): Promise<{
+    claim: Claim;
+    patient: Patient | null;
+    appeal: ReimbursementOptimization | null;
+  }[]> {
+    const deniedClaims = await this.getDeniedClaimsByDateRange(practiceId, startDate, endDate);
+
+    const results = await Promise.all(
+      deniedClaims.map(async (claim) => {
+        const patient = claim.patientId ? await this.getPatient(claim.patientId) : null;
+        const appeals = await this.getClaimAppeals(claim.id);
+        const appeal = appeals.length > 0 ? appeals[0] : null;
+
+        return {
+          claim,
+          patient: patient || null,
+          appeal,
+        };
+      })
+    );
+
+    return results;
   }
 }
 

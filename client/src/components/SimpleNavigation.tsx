@@ -22,21 +22,16 @@ import {
 import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
 const navigation = [
-  { name: 'Dashboard TEST', href: '/', icon: Home, adminOnly: false },
-  { name: 'Calendar', href: '/calendar', icon: Calendar, adminOnly: false },
+  { name: 'Dashboard', href: '/', icon: Home, adminOnly: false },
   { name: 'Patient Intake', href: '/intake', icon: UserPlus, adminOnly: false },
   { name: 'Patients', href: '/patients', icon: Users, adminOnly: false },
+  { name: 'Calendar', href: '/calendar', icon: Calendar, adminOnly: false },
   { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
   { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
   { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
   { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
   { name: 'Settings', href: '/settings', icon: Settings, adminOnly: false },
-];
-
-const debugNavigation = [
-  { name: 'Back to Landing', href: '/debug-landing', icon: LogOut },
-  { name: 'Data Upload', href: '/data-upload', icon: Settings },
 ];
 
 export default function SimpleNavigation() {
@@ -60,7 +55,6 @@ export default function SimpleNavigation() {
   };
 
   const handleNavClick = (href: string) => {
-    console.log("Client-side navigating to:", href);
     setLocation(href);
   };
 
@@ -74,7 +68,7 @@ export default function SimpleNavigation() {
           </div>
           <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
         </div>
-        
+
         <div className="flex-1 px-6 py-6">
           <nav className="space-y-2">
             {filteredNavigation.map((item) => {
@@ -85,8 +79,8 @@ export default function SimpleNavigation() {
                   key={item.name}
                   onClick={() => handleNavClick(item.href)}
                   className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                    isActive 
-                      ? 'bg-blue-50 text-blue-600' 
+                    isActive
+                      ? 'bg-blue-50 text-blue-600'
                       : 'text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -95,39 +89,9 @@ export default function SimpleNavigation() {
                 </div>
               );
             })}
-            
-            {/* Debug Navigation Section */}
-            <div className="pt-4 mt-4 border-t border-slate-200">
-              <p className="text-xs font-medium text-slate-500 mb-2">DEBUG</p>
-              {debugNavigation.map((item) => {
-                const Icon = item.icon;
-                const isActive = location === item.href;
-                return (
-                  <div
-                    key={item.name}
-                    onClick={() => {
-                      if (item.name === 'Back to Landing') {
-                        localStorage.removeItem('dev-bypass');
-                        window.location.reload();
-                      } else {
-                        handleNavClick(item.href);
-                      }
-                    }}
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                      isActive 
-                        ? 'bg-red-50 text-red-600' 
-                        : 'text-slate-700 hover:bg-red-50 hover:text-red-600'
-                    }`}
-                  >
-                    <Icon className="w-5 h-5 mr-3" />
-                    {item.name}
-                  </div>
-                );
-              })}
-            </div>
           </nav>
         </div>
-        
+
         <div className="p-6 border-t border-slate-200 space-y-4">
           {/* Demo Role Switcher */}
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
@@ -204,8 +168,8 @@ export default function SimpleNavigation() {
                       setMobileMenuOpen(false);
                     }}
                     className={`flex items-center px-3 py-3 rounded-lg text-base font-medium transition-colors cursor-pointer ${
-                      isActive 
-                        ? 'bg-blue-50 text-blue-600' 
+                      isActive
+                        ? 'bg-blue-50 text-blue-600'
                         : 'text-slate-700 hover:bg-slate-50'
                     }`}
                   >

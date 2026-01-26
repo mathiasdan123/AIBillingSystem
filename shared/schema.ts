@@ -56,6 +56,24 @@ export const practices = pgTable("practices", {
   brandEmailReplyTo: varchar("brand_email_reply_to"),
   brandWebsiteUrl: varchar("brand_website_url"),
   brandPrivacyPolicyUrl: varchar("brand_privacy_policy_url"),
+  // Additional practice fields
+  monthlyClaimsVolume: integer("monthly_claims_volume"),
+  professionalLicense: varchar("professional_license"),
+  licenseExpiration: date("license_expiration"),
+  businessLicense: varchar("business_license"),
+  caqhProfileId: varchar("caqh_profile_id"),
+  insuranceCertificateStatus: varchar("insurance_certificate_status"),
+  w9FormStatus: varchar("w9_form_status"),
+  itContactName: varchar("it_contact_name"),
+  itContactEmail: varchar("it_contact_email"),
+  itContactPhone: varchar("it_contact_phone"),
+  billingContactName: varchar("billing_contact_name"),
+  billingContactEmail: varchar("billing_contact_email"),
+  billingContactPhone: varchar("billing_contact_phone"),
+  ediEnrollmentStatus: varchar("edi_enrollment_status"),
+  optumSubmitterId: varchar("optum_submitter_id"),
+  optumReceiverId: varchar("optum_receiver_id"),
+  lastEnrollmentCheck: timestamp("last_enrollment_check"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -101,6 +119,7 @@ export const cptCodes = pgTable("cpt_codes", {
   description: text("description").notNull(),
   category: varchar("category"), // evaluation, treatment, etc.
   baseRate: decimal("base_rate", { precision: 10, scale: 2 }),
+  cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
   billingUnits: integer("billing_units").default(1), // 15-minute units
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
@@ -198,6 +217,21 @@ export const claims = pgTable("claims", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Claim Line Items (multiple CPT codes per claim/superbill)
+export const claimLineItems = pgTable("claim_line_items", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  cptCodeId: integer("cpt_code_id").references(() => cptCodes.id).notNull(),
+  icd10CodeId: integer("icd10_code_id").references(() => icd10Codes.id),
+  units: integer("units").default(1).notNull(),
+  rate: decimal("rate", { precision: 10, scale: 2 }).notNull(), // rate at time of billing
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(), // units × rate
+  dateOfService: date("date_of_service"),
+  modifier: varchar("modifier"), // CPT modifier (e.g., 59, GP)
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Expenses
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
@@ -258,6 +292,78 @@ export const dataCaptureEvents = pgTable("data_capture_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// SOAP Note Templates
+export const soapNoteTemplates = pgTable("soap_note_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  title: varchar("title"),
+  section: varchar("section"),
+  content: text("content"),
+  category: varchar("category"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// SOAP Note Drafts
+export const soapNoteDrafts = pgTable("soap_note_drafts", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id),
+  therapistId: varchar("therapist_id"), // No FK constraint - may have placeholder values
+  draftName: varchar("draft_name"),
+  formData: jsonb("form_data"),
+  caregiverDropdownState: jsonb("caregiver_dropdown_state"),
+  otInterventions: jsonb("ot_interventions"),
+  aiOptimization: jsonb("ai_optimization"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Appointments / Calendar
+export const appointments = pgTable("appointments", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  title: varchar("title"),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time").notNull(),
+  status: varchar("status").default("scheduled"), // scheduled, completed, cancelled, no_show
+  notes: text("notes"),
+  reminderSent: boolean("reminder_sent").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Invoices
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  invoiceNumber: varchar("invoice_number").unique(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  status: varchar("status").default("draft"), // draft, sent, paid, overdue
+  dueDate: date("due_date"),
+  paidDate: date("paid_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Invites for adding users to practices
+export const invites = pgTable("invites", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  email: varchar("email").notNull(),
+  role: varchar("role").default("therapist"), // therapist, billing, admin
+  token: varchar("token").unique().notNull(),
+  invitedById: varchar("invited_by_id").references(() => users.id).notNull(),
+  status: varchar("status").default("pending"), // pending, accepted, expired
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Payment records
 export const payments = pgTable("payments", {
   id: serial("id").primaryKey(),
@@ -266,9 +372,36 @@ export const payments = pgTable("payments", {
   claimId: integer("claim_id"),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   paymentMethod: varchar("payment_method"), // insurance, patient, cash
+  paymentType: varchar("payment_type"), // copay, coinsurance, deductible, full
   paymentDate: date("payment_date").notNull(),
   transactionId: varchar("transaction_id"),
+  referenceNumber: varchar("reference_number"),
+  notes: text("notes"),
   status: varchar("status").default("completed"), // completed, pending, failed
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Eligibility Checks - stores results from eligibility verification
+export const eligibilityChecks = pgTable("eligibility_checks", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  insuranceId: integer("insurance_id").references(() => insurances.id),
+  checkDate: timestamp("check_date").defaultNow(),
+  status: varchar("status").notNull(), // "active", "inactive", "unknown"
+  coverageType: varchar("coverage_type"), // "HMO", "PPO", "Medicare", etc.
+  effectiveDate: date("effective_date"),
+  terminationDate: date("termination_date"),
+  copay: decimal("copay", { precision: 10, scale: 2 }),
+  deductible: decimal("deductible", { precision: 10, scale: 2 }),
+  deductibleMet: decimal("deductible_met", { precision: 10, scale: 2 }),
+  outOfPocketMax: decimal("out_of_pocket_max", { precision: 10, scale: 2 }),
+  outOfPocketMet: decimal("out_of_pocket_met", { precision: 10, scale: 2 }),
+  coinsurance: integer("coinsurance"), // percentage (e.g., 20 for 20%)
+  visitsAllowed: integer("visits_allowed"), // total visits per year
+  visitsUsed: integer("visits_used"),
+  authRequired: boolean("auth_required"),
+  rawResponse: jsonb("raw_response"), // store full API response for debugging
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -322,7 +455,7 @@ export const treatmentSessionsRelations = relations(treatmentSessions, ({ one })
   }),
 }));
 
-export const claimsRelations = relations(claims, ({ one }) => ({
+export const claimsRelations = relations(claims, ({ one, many }) => ({
   practice: one(practices, {
     fields: [claims.practiceId],
     references: [practices.id],
@@ -338,6 +471,22 @@ export const claimsRelations = relations(claims, ({ one }) => ({
   insurance: one(insurances, {
     fields: [claims.insuranceId],
     references: [insurances.id],
+  }),
+  lineItems: many(claimLineItems),
+}));
+
+export const claimLineItemsRelations = relations(claimLineItems, ({ one }) => ({
+  claim: one(claims, {
+    fields: [claimLineItems.claimId],
+    references: [claims.id],
+  }),
+  cptCode: one(cptCodes, {
+    fields: [claimLineItems.cptCodeId],
+    references: [cptCodes.id],
+  }),
+  icd10Code: one(icd10Codes, {
+    fields: [claimLineItems.icd10CodeId],
+    references: [icd10Codes.id],
   }),
 }));
 
@@ -370,6 +519,11 @@ export const insertClaimSchema = createInsertSchema(claims).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+});
+
+export const insertClaimLineItemSchema = createInsertSchema(claimLineItems).omit({
+  id: true,
+  createdAt: true,
 });
 
 export const insertExpenseSchema = createInsertSchema(expenses).omit({
@@ -651,6 +805,8 @@ export type InsertPractice = z.infer<typeof insertPracticeSchema>;
 export type InsertPatient = z.infer<typeof insertPatientSchema>;
 export type InsertTreatmentSession = z.infer<typeof insertTreatmentSessionSchema>;
 export type InsertClaim = z.infer<typeof insertClaimSchema>;
+export type ClaimLineItem = typeof claimLineItems.$inferSelect;
+export type InsertClaimLineItem = z.infer<typeof insertClaimLineItemSchema>;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
 
@@ -761,3 +917,24 @@ export type NormalizedPriorAuth = {
   usedUnits?: number;
   remainingUnits?: number;
 };
+
+export const insertInviteSchema = createInsertSchema(invites).omit({
+  id: true,
+  createdAt: true,
+});
+export type Invite = typeof invites.$inferSelect;
+export type InsertInvite = z.infer<typeof insertInviteSchema>;
+
+export const insertEligibilityCheckSchema = createInsertSchema(eligibilityChecks).omit({
+  id: true,
+  createdAt: true,
+});
+export type EligibilityCheck = typeof eligibilityChecks.$inferSelect;
+export type InsertEligibilityCheck = z.infer<typeof insertEligibilityCheckSchema>;
+
+export const insertReimbursementOptimizationSchema = createInsertSchema(reimbursementOptimizations).omit({
+  id: true,
+  createdAt: true,
+});
+export type ReimbursementOptimization = typeof reimbursementOptimizations.$inferSelect;
+export type InsertReimbursementOptimization = z.infer<typeof insertReimbursementOptimizationSchema>;
