@@ -15,7 +15,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2 } from "lucide-react";
+import { getAuthHeaders } from "@/hooks/useAuth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 
@@ -208,6 +209,84 @@ export default function Settings() {
     },
   });
 
+  // MFA state
+  const [mfaSetupData, setMfaSetupData] = useState<{ uri: string; backupCodes: string[] } | null>(null);
+  const [mfaToken, setMfaToken] = useState('');
+
+  const mfaSetupMutation = useMutation({
+    mutationFn: async () => {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/mfa/setup', { method: 'POST', headers: { ...headers } });
+      if (!res.ok) throw new Error('MFA setup failed');
+      return res.json();
+    },
+    onSuccess: (data) => setMfaSetupData(data),
+    onError: () => toast({ title: 'Error', description: 'Failed to start MFA setup', variant: 'destructive' }),
+  });
+
+  const mfaVerifyMutation = useMutation({
+    mutationFn: async (token: string) => {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/mfa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) throw new Error('Verification failed');
+      return res.json();
+    },
+    onSuccess: () => {
+      setMfaSetupData(null);
+      setMfaToken('');
+      toast({ title: 'MFA Enabled', description: 'Two-factor authentication is now active.' });
+    },
+    onError: () => toast({ title: 'Error', description: 'Invalid code. Try again.', variant: 'destructive' }),
+  });
+
+  const mfaDisableMutation = useMutation({
+    mutationFn: async () => {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/mfa/disable', { method: 'POST', headers: { ...headers } });
+      if (!res.ok) throw new Error('Failed');
+      return res.json();
+    },
+    onSuccess: () => toast({ title: 'MFA Disabled', description: 'Two-factor authentication has been removed.' }),
+    onError: () => toast({ title: 'Error', description: 'Failed to disable MFA', variant: 'destructive' }),
+  });
+
+  // BAA queries
+  const { data: baaRecords, isLoading: baaLoading } = useQuery<any[]>({
+    queryKey: ['/api/baa'],
+    enabled: isAuthenticated && isAdmin,
+    retry: false,
+  });
+
+  const [newBaa, setNewBaa] = useState({ vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '' });
+
+  const createBaaMutation = useMutation({
+    mutationFn: async (data: typeof newBaa) => {
+      const response = await apiRequest('POST', '/api/baa', { ...data, status: 'active', practiceId });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/baa'] });
+      setNewBaa({ vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '' });
+      toast({ title: 'BAA Created', description: 'Business Associate Agreement recorded.' });
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create BAA record', variant: 'destructive' }),
+  });
+
+  const deleteBaaMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await apiRequest('DELETE', `/api/baa/${id}`);
+      return response;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/baa'] });
+      toast({ title: 'Deleted', description: 'BAA record removed.' });
+    },
+  });
+
   // Populate form with practice data
   useEffect(() => {
     if (practice) {
@@ -244,7 +323,10 @@ export default function Settings() {
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
     { id: "billing", label: "Billing", icon: CreditCard },
-    ...(isAdmin ? [{ id: "users", label: "User Management", icon: Users }] : []),
+    ...(isAdmin ? [
+      { id: "users", label: "User Management", icon: Users },
+      { id: "baa", label: "BAA Tracking", icon: FileText },
+    ] : []),
   ];
 
   return (
@@ -574,6 +656,66 @@ export default function Settings() {
                       <span className="text-sm text-healthcare-green-600">HIPAA Compliant</span>
                     </div>
                   </div>
+
+                  <Separator />
+
+                  <div>
+                    <h4 className="font-medium text-slate-900 mb-2">Two-Factor Authentication (MFA)</h4>
+                    <p className="text-sm text-slate-600 mb-4">
+                      Add an extra layer of security using a TOTP authenticator app.
+                    </p>
+
+                    {mfaSetupData ? (
+                      <div className="space-y-4 p-4 border rounded-lg">
+                        <p className="text-sm">Scan this URI with your authenticator app, then enter the 6-digit code to confirm:</p>
+                        <code className="block text-xs bg-slate-100 p-2 rounded break-all">{mfaSetupData.uri}</code>
+                        <div className="flex gap-2">
+                          <Input
+                            value={mfaToken}
+                            onChange={(e) => setMfaToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                            placeholder="000000"
+                            maxLength={6}
+                            className="font-mono w-32"
+                          />
+                          <Button
+                            onClick={() => mfaVerifyMutation.mutate(mfaToken)}
+                            disabled={mfaToken.length !== 6 || mfaVerifyMutation.isPending}
+                          >
+                            {mfaVerifyMutation.isPending ? 'Verifying...' : 'Verify'}
+                          </Button>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-slate-700 mb-1">Backup Codes (save these):</p>
+                          <div className="grid grid-cols-2 gap-1">
+                            {mfaSetupData.backupCodes.map((code, i) => (
+                              <code key={i} className="text-xs bg-slate-100 p-1 rounded text-center">{code}</code>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (user as any)?.mfaEnabled ? (
+                      <div className="flex items-center gap-3">
+                        <Badge className="bg-green-100 text-green-800">MFA Enabled</Badge>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => mfaDisableMutation.mutate()}
+                          disabled={mfaDisableMutation.isPending}
+                        >
+                          {mfaDisableMutation.isPending ? 'Disabling...' : 'Disable MFA'}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => mfaSetupMutation.mutate()}
+                        disabled={mfaSetupMutation.isPending}
+                      >
+                        <Key className="w-4 h-4 mr-2" />
+                        {mfaSetupMutation.isPending ? 'Setting up...' : 'Set Up MFA'}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -634,6 +776,92 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {activeTab === "baa" && isAdmin && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Add BAA Record</CardTitle>
+                  <CardDescription>Track Business Associate Agreements with vendors</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <Label>Vendor Name</Label>
+                      <Input
+                        value={newBaa.vendorName}
+                        onChange={(e) => setNewBaa({ ...newBaa, vendorName: e.target.value })}
+                        placeholder="e.g., Stedi, Supabase"
+                      />
+                    </div>
+                    <div>
+                      <Label>Vendor Type</Label>
+                      <Select value={newBaa.vendorType} onValueChange={(v) => setNewBaa({ ...newBaa, vendorType: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cloud_provider">Cloud Provider</SelectItem>
+                          <SelectItem value="clearinghouse">Clearinghouse</SelectItem>
+                          <SelectItem value="ehr">EHR</SelectItem>
+                          <SelectItem value="billing_service">Billing Service</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Signed Date</Label>
+                      <Input type="date" value={newBaa.signedDate} onChange={(e) => setNewBaa({ ...newBaa, signedDate: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label>Expiration Date</Label>
+                      <Input type="date" value={newBaa.expirationDate} onChange={(e) => setNewBaa({ ...newBaa, expirationDate: e.target.value })} />
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => createBaaMutation.mutate(newBaa)}
+                    disabled={!newBaa.vendorName || !newBaa.signedDate || !newBaa.expirationDate || createBaaMutation.isPending}
+                  >
+                    {createBaaMutation.isPending ? 'Saving...' : 'Add BAA Record'}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Active BAA Records</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {baaLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading...</p>
+                  ) : !baaRecords || baaRecords.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No BAA records yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {baaRecords.map((baa: any) => (
+                        <div key={baa.id} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div>
+                            <p className="font-medium">{baa.vendorName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {baa.vendorType} | Signed: {baa.signedDate} | Expires: {baa.expirationDate}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={baa.status === 'active' ? 'default' : 'destructive'}>{baa.status}</Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deleteBaaMutation.mutate(baa.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {activeTab === "users" && isAdmin && (

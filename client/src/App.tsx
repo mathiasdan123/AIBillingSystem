@@ -19,6 +19,9 @@ import SoapNotes from "@/pages/soap-notes";
 import Calendar from "@/pages/calendar";
 import Accounting from "@/pages/accounting";
 import InvitePage from "@/pages/invite";
+import PayerManagement from "@/pages/payer-management";
+import MfaChallenge from "@/pages/mfa-challenge";
+import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -38,6 +41,7 @@ function Router() {
         <Route path="/" component={Landing} />
         <Route path="/intake" component={PatientIntake} />
         <Route path="/invite/:token" component={InvitePage} />
+        <Route path="/mfa-challenge" component={MfaChallenge} />
         <Route component={NotFound} />
       </Switch>
     );
@@ -46,6 +50,7 @@ function Router() {
   return (
     <>
       <SimpleNavigation />
+      <IdleTimeoutWarning />
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/claims" component={Claims} />
@@ -59,7 +64,9 @@ function Router() {
         <Route path="/expenses" component={Expenses} />
         <Route path="/settings" component={Settings} />
         <Route path="/data-upload" component={DataUpload} />
+        <Route path="/payer-management" component={PayerManagement} />
         <Route path="/invite/:token" component={InvitePage} />
+        <Route path="/mfa-challenge" component={MfaChallenge} />
         <Route component={NotFound} />
       </Switch>
     </>

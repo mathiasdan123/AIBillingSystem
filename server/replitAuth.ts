@@ -26,14 +26,17 @@ const getOidcConfig = memoize(
 );
 
 export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
-  
+  const isProduction = process.env.NODE_ENV === 'production';
+  // HIPAA: 30 minute idle timeout in production, 1 week in dev
+  const sessionTtl = isProduction ? 30 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+
   // Use memory store for development to avoid PostgreSQL session store issues
   if (process.env.NODE_ENV === 'development') {
     return session({
       secret: process.env.SESSION_SECRET!,
       resave: false,
       saveUninitialized: false,
+      rolling: true, // Reset timer on activity
       name: 'therapybill.sid',
       cookie: {
         httpOnly: false,
@@ -43,13 +46,13 @@ export function getSession() {
       },
     });
   }
-  
+
   // Use PostgreSQL store for production
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
     createTableIfMissing: true,
-    ttl: sessionTtl,
+    ttl: sessionTtl / 1000, // connect-pg-simple expects seconds
     tableName: "sessions",
   });
   return session({
@@ -57,6 +60,7 @@ export function getSession() {
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
+    rolling: true, // HIPAA: Reset timer on activity
     name: 'therapybill.sid',
     cookie: {
       httpOnly: true,

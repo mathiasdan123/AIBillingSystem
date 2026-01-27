@@ -11,6 +11,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
+import BenefitsCard from "@/components/PatientInsuranceData/BenefitsCard";
+import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
 
 interface EligibilityCheck {
   id: number;
@@ -41,6 +43,12 @@ export default function Patients() {
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [eligibilityResults, setEligibilityResults] = useState<Record<number, EligibilityCheck>>({});
   const [checkingEligibility, setCheckingEligibility] = useState<number | null>(null);
+
+  const { data: insuranceData } = useQuery({
+    queryKey: [`/api/patients/${selectedPatient?.id}/insurance-data`],
+    enabled: !!selectedPatient?.id,
+    retry: false,
+  });
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -366,7 +374,7 @@ export default function Patients() {
       {/* Patient Details Modal */}
       {selectedPatient && (
         <Dialog open={!!selectedPatient} onOpenChange={() => setSelectedPatient(null)}>
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {selectedPatient.firstName} {selectedPatient.lastName}
@@ -505,6 +513,24 @@ export default function Patients() {
                       </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Stedi Insurance Benefits */}
+              {(insuranceData as any)?.eligibility && (
+                <div className="border-t pt-4 space-y-4">
+                  <BenefitsCard
+                    patientId={selectedPatient.id}
+                    eligibility={(insuranceData as any).eligibility}
+                    benefits={(insuranceData as any).benefits}
+                    verifiedAt={(insuranceData as any).verifiedAt}
+                  />
+                  <CostEstimationCard
+                    benefits={(insuranceData as any).benefits ? {
+                      ...(insuranceData as any).benefits,
+                      priorAuthStatus: (insuranceData as any).benefits?.priorAuthStatus ?? null,
+                    } : null}
+                  />
                 </div>
               )}
 

@@ -15,7 +15,8 @@ import {
   UserPlus,
   ClipboardList,
   Calendar,
-  DollarSign
+  DollarSign,
+  Shield
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -29,13 +30,23 @@ const navigation = [
   { name: 'Accounting', href: '/accounting', icon: DollarSign },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
+  { name: 'Payer Management', href: '/payer-management', icon: Shield },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      setLocation('/');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -98,10 +109,10 @@ export default function SimpleNavigation() {
               </p>
               <p className="text-xs text-slate-500">{(user as any)?.role || 'Therapist'}</p>
             </div>
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               size="sm"
-              onClick={() => window.location.href = '/api/logout'}
+              onClick={handleLogout}
             >
               <LogOut className="w-4 h-4" />
             </Button>

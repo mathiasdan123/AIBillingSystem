@@ -35,6 +35,9 @@ export const users = pgTable("users", {
   profileImageUrl: varchar("profile_image_url"),
   practiceId: integer("practice_id").references(() => practices.id),
   role: varchar("role").default("therapist"), // therapist, admin, billing
+  mfaEnabled: boolean("mfa_enabled").default(false),
+  mfaSecret: jsonb("mfa_secret"), // encrypted with PHI encryption
+  mfaBackupCodes: jsonb("mfa_backup_codes"), // encrypted, array of hashed codes
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -84,6 +87,7 @@ export const patients = pgTable("patients", {
   insuranceId: varchar("insurance_id"),
   policyNumber: varchar("policy_number"),
   groupNumber: varchar("group_number"),
+  deletedAt: timestamp("deleted_at"), // soft delete for HIPAA patient rights
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -597,3 +601,149 @@ export const insertReimbursementOptimizationSchema = createInsertSchema(reimburs
 });
 export type ReimbursementOptimization = typeof reimbursementOptimizations.$inferSelect;
 export type InsertReimbursementOptimization = z.infer<typeof insertReimbursementOptimizationSchema>;
+
+// ==================== HIPAA COMPLIANCE TABLES ====================
+
+// Audit Log - tracks all PHI access and system events
+export const auditLog = pgTable("audit_log", {
+  id: serial("id").primaryKey(),
+  eventCategory: varchar("event_category").notNull(), // auth, phi_access, admin, data_export, data_delete
+  eventType: varchar("event_type").notNull(), // login, logout, view, create, update, delete, export
+  resourceType: varchar("resource_type"), // patient, soap_note, claim, treatment_session, user
+  resourceId: varchar("resource_id"), // ID of the accessed resource
+  userId: varchar("user_id").references(() => users.id),
+  practiceId: integer("practice_id").references(() => practices.id),
+  ipAddress: varchar("ip_address"),
+  userAgent: text("user_agent"),
+  details: jsonb("details"), // Additional context (non-PHI)
+  success: boolean("success").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLog).omit({
+  id: true,
+  createdAt: true,
+});
+export type AuditLog = typeof auditLog.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+// BAA Records - Business Associate Agreement tracking
+export const baaRecords = pgTable("baa_records", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  vendorName: varchar("vendor_name").notNull(),
+  vendorType: varchar("vendor_type"), // cloud_hosting, ehr, clearinghouse, billing_service, etc.
+  signedDate: date("signed_date"),
+  expirationDate: date("expiration_date"),
+  status: varchar("status").default("active"), // active, expired, pending, terminated
+  documentUrl: text("document_url"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBaaRecordSchema = createInsertSchema(baaRecords).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type BaaRecord = typeof baaRecords.$inferSelect;
+export type InsertBaaRecord = z.infer<typeof insertBaaRecordSchema>;
+
+// Patient Insurance Authorization - consent for eligibility checks
+export const patientInsuranceAuthorizations = pgTable("patient_insurance_authorizations", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  status: varchar("status").default("pending"), // pending, authorized, revoked, expired
+  authorizationMethod: varchar("authorization_method"), // intake_form, email, sms, in_person
+  authorizedAt: timestamp("authorized_at"),
+  revokedAt: timestamp("revoked_at"),
+  token: varchar("token").unique(), // for email/SMS based authorization
+  tokenExpiresAt: timestamp("token_expires_at"),
+  ipAddress: varchar("ip_address"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientInsuranceAuthorizationSchema = createInsertSchema(patientInsuranceAuthorizations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type PatientInsuranceAuthorization = typeof patientInsuranceAuthorizations.$inferSelect;
+export type InsertPatientInsuranceAuthorization = z.infer<typeof insertPatientInsuranceAuthorizationSchema>;
+
+// Insurance Data Cache - stores Stedi/payer verification results
+export const insuranceDataCache = pgTable("insurance_data_cache", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerName: varchar("payer_name"),
+  payerId: varchar("payer_id"),
+  tradingPartnerServiceId: varchar("trading_partner_service_id"),
+  eligibilityData: jsonb("eligibility_data"), // NormalizedEligibility
+  benefitsData: jsonb("benefits_data"), // NormalizedBenefits
+  rawRequest: jsonb("raw_request"),
+  rawResponse: jsonb("raw_response"),
+  verifiedAt: timestamp("verified_at").defaultNow(),
+  expiresAt: timestamp("expires_at"),
+  status: varchar("status").default("valid"), // valid, stale, error
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertInsuranceDataCacheSchema = createInsertSchema(insuranceDataCache).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsuranceDataCache = typeof insuranceDataCache.$inferSelect;
+export type InsertInsuranceDataCache = z.infer<typeof insertInsuranceDataCacheSchema>;
+
+// Payer Integration Credentials
+export const payerIntegrationCredentials = pgTable("payer_integration_credentials", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerName: varchar("payer_name").notNull(), // stedi, availity, etc.
+  apiKey: jsonb("api_key"), // encrypted
+  additionalConfig: jsonb("additional_config"), // encrypted
+  isActive: boolean("is_active").default(true),
+  lastHealthCheck: timestamp("last_health_check"),
+  healthStatus: varchar("health_status").default("unknown"), // healthy, degraded, down, unknown
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type PayerIntegrationCredential = typeof payerIntegrationCredentials.$inferSelect;
+
+// ==================== STEDI / INSURANCE VERIFICATION TYPES ====================
+
+export interface NormalizedEligibility {
+  status: 'active' | 'inactive' | 'unknown';
+  subscriberName: string;
+  memberId: string;
+  groupNumber: string;
+  payerName: string;
+  planName: string;
+  coverageType: string; // HMO, PPO, etc.
+  effectiveDate: string;
+  terminationDate: string | null;
+  dependentStatus: string | null;
+}
+
+export interface NormalizedBenefits {
+  copay: number | null;
+  coinsurance: number | null; // percentage
+  deductible: number | null;
+  deductibleMet: number | null;
+  outOfPocketMax: number | null;
+  outOfPocketMet: number | null;
+  visitsAllowed: number | null;
+  visitsUsed: number | null;
+  authRequired: boolean;
+  priorAuthStatus: string | null;
+  serviceTypes: string[];
+  inNetwork: boolean;
+}

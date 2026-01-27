@@ -1,11 +1,15 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, FileText, Users, TrendingUp, Clock, Shield, DollarSign } from "lucide-react";
+import { AuthModal } from "@/components/AuthModal";
 
 export default function Landing() {
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
   const handleLogin = () => {
-    window.location.href = '/api/login';
+    setAuthModalOpen(true);
   };
 
   const handleIntakeForm = () => {
@@ -605,6 +609,9 @@ export default function Landing() {
           </div>
         </div>
       </footer>
+
+      {/* Auth Modal */}
+      <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
     </div>
   );
 }

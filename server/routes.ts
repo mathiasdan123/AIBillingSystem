@@ -1,12 +1,19 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated } from "./supabaseAuth";
 import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
 import { AiClaimOptimizer } from "./aiClaimOptimizer";
 import { appealGenerator } from "./aiAppealGenerator";
 import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedClaimsReportInput } from "./email";
 import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow } from "./scheduler";
+import { auditMiddleware, logAuditEvent } from "./middleware/auditMiddleware";
+import { getUserPracticeContext } from "./services/practiceContext";
+import { encryptField, decryptField } from "./services/phiEncryptionService";
+import logger from "./services/logger";
+import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
+import { registerBaaRoutes } from "./routes/baaRoutes";
+import { StediAdapter } from "./payer-integrations/adapters/payers/StediAdapter";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
@@ -133,6 +140,280 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // HIPAA: Audit all API requests
+  app.use('/api', auditMiddleware);
+
+  // Register sub-routers
+  registerPatientRightsRoutes(app);
+  registerBaaRoutes(app);
+
+  // ==================== MFA ENDPOINTS ====================
+
+  app.post('/api/mfa/setup', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub || req.user?.id;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+
+      // Dynamically import mfaService
+      const { generateSecret } = await import('./services/mfaService');
+      const { secret, uri, backupCodes } = generateSecret(user.email || '');
+
+      // Store encrypted secret temporarily (not yet enabled)
+      const encryptedSecret = encryptField(secret);
+      await storage.updateUserMfa(userId, { mfaSecret: encryptedSecret });
+
+      res.json({ uri, backupCodes });
+    } catch (error: any) {
+      logger.error('MFA setup error', { error: error.message });
+      res.status(500).json({ message: 'Failed to setup MFA' });
+    }
+  });
+
+  app.post('/api/mfa/verify', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub || req.user?.id;
+      const { token } = req.body;
+      const user = await storage.getUser(userId);
+      if (!user || !user.mfaSecret) return res.status(400).json({ message: 'MFA not configured' });
+
+      const secret = decryptField(user.mfaSecret as any);
+      if (!secret) return res.status(400).json({ message: 'MFA secret invalid' });
+
+      const { verifyToken, hashBackupCode, generateBackupCodes } = await import('./services/mfaService');
+      const valid = verifyToken(secret, token);
+
+      if (!valid) return res.status(400).json({ message: 'Invalid MFA token' });
+
+      // Enable MFA and store hashed backup codes
+      const backupCodes = generateBackupCodes();
+      const hashedCodes = backupCodes.map(hashBackupCode);
+      await storage.updateUserMfa(userId, {
+        mfaEnabled: true,
+        mfaBackupCodes: hashedCodes,
+      });
+
+      await logAuditEvent({
+        eventCategory: 'auth',
+        eventType: 'mfa_enabled',
+        userId,
+        details: { method: 'totp' },
+      });
+
+      res.json({ success: true, backupCodes });
+    } catch (error: any) {
+      logger.error('MFA verify error', { error: error.message });
+      res.status(500).json({ message: 'Failed to verify MFA' });
+    }
+  });
+
+  app.post('/api/mfa/disable', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub || req.user?.id;
+      const { token } = req.body;
+      const user = await storage.getUser(userId);
+      if (!user || !user.mfaEnabled) return res.status(400).json({ message: 'MFA not enabled' });
+
+      const secret = decryptField(user.mfaSecret as any);
+      if (!secret) return res.status(400).json({ message: 'MFA secret invalid' });
+
+      const { verifyToken } = await import('./services/mfaService');
+      if (!verifyToken(secret, token)) return res.status(400).json({ message: 'Invalid MFA token' });
+
+      await storage.updateUserMfa(userId, {
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaBackupCodes: null,
+      });
+
+      await logAuditEvent({
+        eventCategory: 'auth',
+        eventType: 'mfa_disabled',
+        userId,
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      logger.error('MFA disable error', { error: error.message });
+      res.status(500).json({ message: 'Failed to disable MFA' });
+    }
+  });
+
+  app.post('/api/mfa/challenge', async (req: any, res) => {
+    try {
+      const { userId, token, backupCode } = req.body;
+      const user = await storage.getUser(userId);
+      if (!user || !user.mfaEnabled) return res.status(400).json({ message: 'MFA not enabled' });
+
+      const secret = decryptField(user.mfaSecret as any);
+      if (!secret) return res.status(400).json({ message: 'MFA secret invalid' });
+
+      const { verifyToken, verifyBackupCode } = await import('./services/mfaService');
+
+      let valid = false;
+      if (token) {
+        valid = verifyToken(secret, token);
+      } else if (backupCode && user.mfaBackupCodes) {
+        valid = verifyBackupCode(backupCode, user.mfaBackupCodes as string[]);
+      }
+
+      if (!valid) {
+        await logAuditEvent({
+          eventCategory: 'auth',
+          eventType: 'mfa_challenge_failed',
+          userId,
+          success: false,
+        });
+        return res.status(400).json({ message: 'Invalid MFA token' });
+      }
+
+      await logAuditEvent({
+        eventCategory: 'auth',
+        eventType: 'mfa_challenge_passed',
+        userId,
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      logger.error('MFA challenge error', { error: error.message });
+      res.status(500).json({ message: 'Failed to verify MFA challenge' });
+    }
+  });
+
+  // ==================== ADMIN PAYER MANAGEMENT ====================
+
+  app.get('/api/admin/payer-integrations', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const credentials = await storage.getAllPayerCredentials(practiceId);
+      // Don't expose actual API keys
+      const safe = credentials.map((c: any) => ({
+        id: c.id,
+        payerName: c.payerName,
+        isActive: c.isActive,
+        healthStatus: c.healthStatus,
+        lastHealthCheck: c.lastHealthCheck,
+        createdAt: c.createdAt,
+      }));
+      res.json(safe);
+    } catch (error: any) {
+      logger.error('Error fetching payer integrations', { error: error.message });
+      res.status(500).json({ message: 'Failed to fetch payer integrations' });
+    }
+  });
+
+  app.post('/api/admin/payer-credentials', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { payerName, apiKey } = req.body;
+      const practiceId = 1;
+      const encryptedKey = encryptField(apiKey);
+      await storage.upsertPayerCredentials(practiceId, payerName, encryptedKey);
+      res.json({ message: 'Credentials saved successfully' });
+    } catch (error: any) {
+      logger.error('Error saving payer credentials', { error: error.message });
+      res.status(500).json({ message: 'Failed to save credentials' });
+    }
+  });
+
+  app.post('/api/admin/payer-integrations/:name/health-check', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { name } = req.params;
+      const practiceId = 1;
+      const cred = await storage.getPayerCredentials(practiceId, name);
+      if (!cred) return res.status(404).json({ message: 'Payer integration not found' });
+
+      if (name === 'stedi') {
+        const apiKey = decryptField(cred.apiKey);
+        if (!apiKey) return res.status(400).json({ message: 'No API key configured' });
+        const adapter = new StediAdapter(apiKey);
+        const result = await adapter.healthCheck();
+        await storage.updatePayerHealthStatus(cred.id, result.healthy ? 'healthy' : 'down');
+        res.json(result);
+      } else {
+        res.json({ healthy: false, message: 'Unknown payer integration' });
+      }
+    } catch (error: any) {
+      logger.error('Health check error', { error: error.message });
+      res.status(500).json({ message: 'Health check failed' });
+    }
+  });
+
+  // ==================== INSURANCE VERIFICATION (STEDI) ====================
+
+  app.post('/api/patients/:id/insurance-data/refresh', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const practiceId = 1;
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: 'Patient not found' });
+
+      // Check authorization
+      const auth = await storage.getPatientInsuranceAuth(patientId);
+      if (!auth || auth.status !== 'authorized') {
+        return res.status(403).json({ message: 'Patient has not authorized insurance verification' });
+      }
+
+      // Get Stedi credentials
+      const cred = await storage.getPayerCredentials(practiceId, 'stedi');
+      if (!cred || !cred.apiKey) {
+        // Fall back to mock eligibility if no Stedi configured
+        return res.status(400).json({ message: 'Stedi not configured. Use mock eligibility endpoint.' });
+      }
+
+      const apiKey = decryptField(cred.apiKey);
+      if (!apiKey) return res.status(400).json({ message: 'Invalid Stedi API key' });
+
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) return res.status(400).json({ message: 'Practice not found' });
+
+      const adapter = new StediAdapter(apiKey);
+      const result = await adapter.checkEligibility({
+        providerNpi: practice.npi || '',
+        providerName: practice.name,
+        memberFirstName: patient.firstName,
+        memberLastName: patient.lastName,
+        memberDob: patient.dateOfBirth || '',
+        memberId: patient.insuranceId || '',
+        groupNumber: patient.groupNumber || undefined,
+        payerName: patient.insuranceProvider || '',
+      });
+
+      // Cache the result
+      await storage.cacheInsuranceData({
+        patientId,
+        practiceId,
+        payerName: patient.insuranceProvider || null,
+        eligibilityData: result.eligibility as any,
+        benefitsData: result.benefits as any,
+        rawResponse: result.raw,
+        status: 'valid',
+        verifiedAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      });
+
+      res.json({
+        eligibility: result.eligibility,
+        benefits: result.benefits,
+        verifiedAt: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      logger.error('Insurance verification error', { error: error.message });
+      res.status(500).json({ message: error.message || 'Failed to verify insurance' });
+    }
+  });
+
+  app.get('/api/patients/:id/insurance-data', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const cached = await storage.getCachedInsuranceData(patientId);
+      res.json(cached || null);
+    } catch (error: any) {
+      logger.error('Error fetching cached insurance data', { error: error.message });
+      res.status(500).json({ message: 'Failed to fetch insurance data' });
+    }
+  });
+
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
@@ -145,17 +426,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Development user endpoint (bypass auth in dev)
-  app.get('/api/dev-user', async (req, res) => {
-    res.json({
-      id: 'dev-user-123',
-      email: 'dev@example.com',
-      firstName: 'Dev',
-      lastName: 'User',
-      profileImageUrl: null,
-      role: 'admin' // Dev user is admin for testing
+  // Development user endpoint (bypass auth in dev) - DISABLED in production
+  if (process.env.NODE_ENV !== 'production') {
+    app.get('/api/dev-user', async (req, res) => {
+      res.json({
+        id: 'dev-user-123',
+        email: 'dev@example.com',
+        firstName: 'Dev',
+        lastName: 'User',
+        profileImageUrl: null,
+        role: 'admin'
+      });
     });
-  });
+  }
 
   // User management endpoints (admin only)
   app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => {
@@ -188,7 +471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Prevent removing your own admin role
-      const currentUserId = req.user?.claims?.sub;
+      const currentUserId = (req as any).user?.claims?.sub;
       if (id === currentUserId && role !== 'admin') {
         return res.status(400).json({ message: "You cannot remove your own admin role" });
       }

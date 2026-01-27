@@ -17,6 +17,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertPatientSchema } from "@shared/schema";
+import { getAuthHeaders } from "@/hooks/useAuth";
 import {
   User,
   FileText,
@@ -29,6 +30,7 @@ import {
   Zap,
   Brain,
   Stethoscope,
+  AlertCircle,
 } from "lucide-react";
 
 // Simplified patient schema for intake
@@ -74,6 +76,9 @@ const patientIntakeSchema = z.object({
   billingAddress: z.string().min(1, "Billing address is required"),
   billingZip: z.string().min(1, "Billing ZIP code is required"),
   
+  // Insurance verification consent
+  insuranceConsentAuthorized: z.boolean().default(false),
+
   // Signature and agreement
   electronicSignature: z.string().min(1, "Electronic signature is required"),
   agreesToTerms: z.boolean().refine(val => val === true, "You must agree to the terms and conditions"),
@@ -88,8 +93,8 @@ type PatientIntakeForm = z.infer<typeof patientIntakeSchema>;
 
 const INTAKE_STEPS = [
   { id: 0, title: "Data Input Method", description: "Choose how to input patient information" },
-  { id: 1, title: "Clinical Information", description: "Known diagnosis and referral details" },
-  { id: 2, title: "Basic Information", description: "Patient's personal information" },
+  { id: 1, title: "Basic Information", description: "Patient's personal information" },
+  { id: 2, title: "Clinical Information", description: "Known diagnosis and referral details" },
   { id: 3, title: "Insurance Details", description: "Insurance provider and coverage information" },
   { id: 4, title: "Payment Information", description: "Credit card and billing details" },
   { id: 5, title: "Medical History", description: "Current medications, allergies, and medical history" },
@@ -107,9 +112,24 @@ export default function PatientIntake() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Load saved form data from localStorage
+  const getSavedFormData = () => {
+    try {
+      const saved = localStorage.getItem('patientIntakeForm');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Error loading saved form data:', e);
+    }
+    return null;
+  };
+
+  const savedData = getSavedFormData();
+
   const form = useForm<PatientIntakeForm>({
     resolver: zodResolver(patientIntakeSchema),
-    defaultValues: {
+    defaultValues: savedData || {
       practiceId: 1, // TODO: Get from user's practice
       firstName: "",
       lastName: "",
@@ -138,12 +158,38 @@ export default function PatientIntake() {
       cardholderName: "",
       billingAddress: "",
       billingZip: "",
+      insuranceConsentAuthorized: false,
       electronicSignature: "",
       agreesToTerms: false,
       agreesToPrivacy: false,
       dateOfSignature: new Date().toISOString().split('T')[0],
     },
   });
+
+  // Auto-save form data to localStorage
+  useEffect(() => {
+    const subscription = form.watch((data) => {
+      try {
+        localStorage.setItem('patientIntakeForm', JSON.stringify(data));
+      } catch (e) {
+        console.error('Error saving form data:', e);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [form]);
+
+  // Also save current step
+  useEffect(() => {
+    localStorage.setItem('patientIntakeStep', String(currentStep));
+  }, [currentStep]);
+
+  // Load saved step on mount
+  useEffect(() => {
+    const savedStep = localStorage.getItem('patientIntakeStep');
+    if (savedStep) {
+      setCurrentStep(parseInt(savedStep, 10));
+    }
+  }, []);
 
   const createPatientMutation = useMutation({
     mutationFn: async (data: PatientIntakeForm) => {
@@ -176,9 +222,35 @@ export default function PatientIntake() {
         intakeNotes: JSON.stringify(intakeNotes)
       };
       
-      return apiRequest("POST", "/api/patients", finalPatientData);
+      const response = await apiRequest("POST", "/api/patients", finalPatientData);
+      const patient = await response.json();
+
+      // If insurance consent was given, create authorization and trigger eligibility check
+      if (data.insuranceConsentAuthorized && patient.id) {
+        try {
+          const headers = await getAuthHeaders();
+          await fetch(`/api/patients/${patient.id}/insurance-authorization`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ consentSource: 'intake' }),
+          });
+          // Trigger eligibility verification
+          await fetch(`/api/patients/${patient.id}/insurance-data/refresh`, {
+            method: 'POST',
+            headers: { ...headers },
+          });
+        } catch (err) {
+          console.error('Insurance verification trigger failed:', err);
+        }
+      }
+
+      return patient;
     },
     onSuccess: () => {
+      // Clear saved form data
+      localStorage.removeItem('patientIntakeForm');
+      localStorage.removeItem('patientIntakeStep');
+
       toast({
         title: "Patient Added Successfully",
         description: "Patient information has been saved and is ready for billing.",
@@ -415,15 +487,15 @@ export default function PatientIntake() {
               </Card>
             )}
 
-            {/* Step 1: Diagnosis & Referral */}
-            {currentStep === 1 && (
+            {/* Step 2: Diagnosis & Referral */}
+            {currentStep === 2 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Stethoscope className="w-5 h-5 text-green-500" />
-                    {INTAKE_STEPS[1].title}
+                    {INTAKE_STEPS[2].title}
                   </CardTitle>
-                  <CardDescription>{INTAKE_STEPS[1].description}</CardDescription>
+                  <CardDescription>{INTAKE_STEPS[2].description}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <FormField
@@ -487,15 +559,15 @@ export default function PatientIntake() {
               </Card>
             )}
 
-            {/* Step 2: Basic Information */}
-            {currentStep === 2 && (
+            {/* Step 1: Basic Information */}
+            {currentStep === 1 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <User className="w-5 h-5 text-blue-500" />
-                    {INTAKE_STEPS[2].title}
+                    {INTAKE_STEPS[1].title}
                   </CardTitle>
-                  <CardDescription>{INTAKE_STEPS[2].description}</CardDescription>
+                  <CardDescription>{INTAKE_STEPS[1].description}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -677,6 +749,34 @@ export default function PatientIntake() {
                       </FormItem>
                     )}
                   />
+
+                  <div className="border-t pt-4 mt-4">
+                    <FormField
+                      control={form.control}
+                      name="insuranceConsentAuthorized"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                          <FormControl>
+                            <input
+                              type="checkbox"
+                              checked={field.value}
+                              onChange={field.onChange}
+                              className="mt-1"
+                              data-testid="checkbox-insurance-consent"
+                            />
+                          </FormControl>
+                          <div className="space-y-1 leading-none">
+                            <FormLabel className="text-sm">
+                              I authorize TherapyBill to verify my insurance eligibility and benefits
+                            </FormLabel>
+                            <FormDescription>
+                              This allows us to check your coverage, copay, deductible, and session limits with your insurance provider in real time.
+                            </FormDescription>
+                          </div>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
 
                 </CardContent>
               </Card>
@@ -1177,13 +1277,73 @@ export default function PatientIntake() {
                         <div>
                           <h4 className="font-medium text-blue-900">AI Data Extraction Used</h4>
                           <p className="text-sm text-blue-700 mt-1">
-                            This patient information was extracted using {inputMethod === "voice" ? "voice dictation" : "document upload"} 
+                            This patient information was extracted using {inputMethod === "voice" ? "voice dictation" : "document upload"}
                             and processed by our AI system. Please verify all information is accurate before submitting.
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
+
+                  {/* Validation Summary */}
+                  {(() => {
+                    const missingFields = [];
+                    if (!form.watch("firstName")) missingFields.push("First Name");
+                    if (!form.watch("lastName")) missingFields.push("Last Name");
+                    if (!form.watch("dateOfBirth")) missingFields.push("Date of Birth");
+                    if (!form.watch("phone")) missingFields.push("Phone Number");
+                    if (!form.watch("address")) missingFields.push("Address");
+                    if (!form.watch("insuranceProvider")) missingFields.push("Insurance Provider");
+                    if (!form.watch("insuranceId")) missingFields.push("Insurance ID");
+                    if (!form.watch("policyNumber")) missingFields.push("Policy Number");
+                    if (!form.watch("emergencyContactName")) missingFields.push("Emergency Contact Name");
+                    if (!form.watch("emergencyContactPhone")) missingFields.push("Emergency Contact Phone");
+                    if (!form.watch("emergencyContactRelation")) missingFields.push("Emergency Contact Relationship");
+                    if (!form.watch("cardNumber")) missingFields.push("Card Number");
+                    if (!form.watch("expiryDate")) missingFields.push("Card Expiry Date");
+                    if (!form.watch("cvv")) missingFields.push("CVV");
+                    if (!form.watch("cardholderName")) missingFields.push("Cardholder Name");
+                    if (!form.watch("billingAddress")) missingFields.push("Billing Address");
+                    if (!form.watch("billingZip")) missingFields.push("Billing ZIP Code");
+                    if (!form.watch("electronicSignature")) missingFields.push("Electronic Signature");
+                    if (!form.watch("agreesToTerms")) missingFields.push("Agreement to Terms");
+                    if (!form.watch("agreesToPrivacy")) missingFields.push("Agreement to Privacy Policy");
+
+                    if (missingFields.length > 0) {
+                      return (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                          <div className="flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
+                            <div>
+                              <h4 className="font-medium text-red-900">Missing Required Fields</h4>
+                              <p className="text-sm text-red-700 mt-1">
+                                Please complete the following before submitting:
+                              </p>
+                              <ul className="list-disc list-inside text-sm text-red-600 mt-2 space-y-1">
+                                {missingFields.map((field) => (
+                                  <li key={field}>{field}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="flex items-start gap-3">
+                          <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
+                          <div>
+                            <h4 className="font-medium text-green-900">All Required Fields Complete</h4>
+                            <p className="text-sm text-green-700 mt-1">
+                              You're ready to submit the patient intake form.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             )}
