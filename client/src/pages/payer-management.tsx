@@ -61,7 +61,7 @@ export default function PayerManagement() {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="p-6 pt-20 md:pt-6 md:ml-64 space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Payer Integration Management</h1>
         <p className="text-muted-foreground">Configure and monitor insurance payer connections</p>

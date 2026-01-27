@@ -210,7 +210,7 @@ export default function CalendarPage() {
     "bg-gray-100 text-gray-800";
 
   const getCalendarBlockStyle = (apt: Appointment) =>
-    apt.status === "cancelled" ? "bg-red-50 border-l-4 border-red-400 opacity-60" :
+    apt.status === "cancelled" ? "bg-red-100 border-l-4 border-red-400 opacity-75 line-through" :
     apt.status === "completed" ? "bg-green-100 border-l-4 border-green-500" :
     "bg-blue-100 border-l-4 border-blue-500";
 
