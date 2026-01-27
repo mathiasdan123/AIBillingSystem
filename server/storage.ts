@@ -54,6 +54,9 @@ import {
   type InsertAuditLog,
   type BaaRecord,
   type InsertBaaRecord,
+  type Appointment,
+  type InsertAppointment,
+  appointments,
   type PatientInsuranceAuthorization,
   type InsertPatientInsuranceAuthorization,
   type InsuranceDataCache,
@@ -850,6 +853,208 @@ export class DatabaseStorage implements IStorage {
     );
 
     return results;
+  }
+
+  // ==================== APPOINTMENT METHODS ====================
+
+  async createAppointment(data: InsertAppointment): Promise<Appointment> {
+    const [created] = await db.insert(appointments).values(data).returning();
+    return created;
+  }
+
+  async getAppointments(practiceId: number): Promise<Appointment[]> {
+    return await db
+      .select()
+      .from(appointments)
+      .where(eq(appointments.practiceId, practiceId))
+      .orderBy(desc(appointments.startTime));
+  }
+
+  async getAppointmentsByDateRange(practiceId: number, start: Date, end: Date): Promise<Appointment[]> {
+    return await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        gte(appointments.startTime, start),
+        lte(appointments.startTime, end)
+      ))
+      .orderBy(appointments.startTime);
+  }
+
+  async getAppointment(id: number): Promise<Appointment | undefined> {
+    const [appt] = await db.select().from(appointments).where(eq(appointments.id, id));
+    return appt;
+  }
+
+  async updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment> {
+    const [updated] = await db
+      .update(appointments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(appointments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async cancelAppointment(id: number, reason: string, notes?: string): Promise<Appointment> {
+    const [updated] = await db
+      .update(appointments)
+      .set({
+        status: "cancelled",
+        cancelledAt: new Date(),
+        cancellationReason: reason,
+        cancellationNotes: notes || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(appointments.id, id))
+      .returning();
+    return updated;
+  }
+
+  // ==================== CANCELLATION ANALYTICS ====================
+
+  async getCancellationStats(practiceId: number, start: Date, end: Date): Promise<{
+    totalScheduled: number;
+    totalCancelled: number;
+    totalNoShow: number;
+    cancellationRate: number;
+    noShowRate: number;
+    lateCancellations: number;
+    avgLeadTimeHours: number;
+  }> {
+    const allAppts = await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        gte(appointments.startTime, start),
+        lte(appointments.startTime, end)
+      ));
+
+    const totalScheduled = allAppts.length;
+    const cancelled = allAppts.filter((a: Appointment) => a.status === "cancelled");
+    const totalCancelled = cancelled.length;
+    const totalNoShow = allAppts.filter((a: Appointment) => a.status === "no_show" || a.cancellationReason === "no_show").length;
+
+    // Late cancellations: cancelled within 24h of startTime
+    const lateCancellations = cancelled.filter((a: Appointment) => {
+      if (!a.cancelledAt || !a.startTime) return false;
+      const leadMs = new Date(a.startTime).getTime() - new Date(a.cancelledAt).getTime();
+      return leadMs >= 0 && leadMs < 24 * 60 * 60 * 1000;
+    }).length;
+
+    // Average lead time in hours
+    const leadTimes = cancelled
+      .filter((a: Appointment) => a.cancelledAt && a.startTime)
+      .map((a: Appointment) => {
+        const leadMs = new Date(a.startTime).getTime() - new Date(a.cancelledAt!).getTime();
+        return Math.max(0, leadMs / (1000 * 60 * 60));
+      });
+    const avgLeadTimeHours = leadTimes.length > 0
+      ? leadTimes.reduce((s: number, v: number) => s + v, 0) / leadTimes.length
+      : 0;
+
+    return {
+      totalScheduled,
+      totalCancelled,
+      totalNoShow,
+      cancellationRate: totalScheduled > 0 ? (totalCancelled / totalScheduled) * 100 : 0,
+      noShowRate: totalScheduled > 0 ? (totalNoShow / totalScheduled) * 100 : 0,
+      lateCancellations,
+      avgLeadTimeHours: Math.round(avgLeadTimeHours * 10) / 10,
+    };
+  }
+
+  async getCancellationsByPatient(practiceId: number, start: Date, end: Date): Promise<{
+    patientId: number;
+    patientName: string;
+    totalAppointments: number;
+    cancellations: number;
+    noShows: number;
+    lateCancellations: number;
+  }[]> {
+    const allAppts = await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        gte(appointments.startTime, start),
+        lte(appointments.startTime, end)
+      ));
+
+    // Group by patientId
+    const byPatient: Record<number, Appointment[]> = {};
+    for (const a of allAppts) {
+      if (!a.patientId) continue;
+      if (!byPatient[a.patientId]) byPatient[a.patientId] = [];
+      byPatient[a.patientId].push(a);
+    }
+
+    const results = [];
+    for (const patientIdStr of Object.keys(byPatient)) {
+      const patientId = Number(patientIdStr);
+      const appts = byPatient[patientId];
+      const patient = await this.getPatient(patientId);
+      const cancelled = appts.filter((a: Appointment) => a.status === "cancelled");
+      const noShows = appts.filter((a: Appointment) => a.status === "no_show" || a.cancellationReason === "no_show").length;
+      const lateCancellations = cancelled.filter((a: Appointment) => {
+        if (!a.cancelledAt || !a.startTime) return false;
+        const leadMs = new Date(a.startTime).getTime() - new Date(a.cancelledAt).getTime();
+        return leadMs >= 0 && leadMs < 24 * 60 * 60 * 1000;
+      }).length;
+
+      results.push({
+        patientId,
+        patientName: patient ? `${patient.firstName} ${patient.lastName}` : "Unknown",
+        totalAppointments: appts.length,
+        cancellations: cancelled.length,
+        noShows,
+        lateCancellations,
+      });
+    }
+
+    return results.sort((a, b) => b.cancellations - a.cancellations);
+  }
+
+  async getCancellationTrend(practiceId: number, start: Date, end: Date): Promise<{
+    month: string;
+    scheduled: number;
+    cancelled: number;
+    noShows: number;
+    rate: number;
+  }[]> {
+    const allAppts = await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        gte(appointments.startTime, start),
+        lte(appointments.startTime, end)
+      ));
+
+    const byMonth: Record<string, Appointment[]> = {};
+    for (const a of allAppts) {
+      const month = new Date(a.startTime).toISOString().slice(0, 7); // YYYY-MM
+      if (!byMonth[month]) byMonth[month] = [];
+      byMonth[month].push(a);
+    }
+
+    const result = [];
+    for (const month of Object.keys(byMonth).sort()) {
+      const appts = byMonth[month];
+      const scheduled = appts.length;
+      const cancelled = appts.filter((a: Appointment) => a.status === "cancelled").length;
+      const noShows = appts.filter((a: Appointment) => a.status === "no_show" || a.cancellationReason === "no_show").length;
+      result.push({
+        month,
+        scheduled,
+        cancelled,
+        noShows,
+        rate: scheduled > 0 ? Math.round((cancelled / scheduled) * 1000) / 10 : 0,
+      });
+    }
+
+    return result;
   }
 
   // ==================== HIPAA COMPLIANCE METHODS ====================

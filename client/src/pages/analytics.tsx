@@ -4,8 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import { TrendingUp, TrendingDown, DollarSign, FileText, AlertCircle, CheckCircle } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
+import { TrendingUp, TrendingDown, DollarSign, FileText, AlertCircle, CheckCircle, CalendarX, Clock, UserX, AlertTriangle } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
 export default function Analytics() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -48,6 +50,24 @@ export default function Analytics() {
 
   const { data: denialReasons, isLoading: denialReasonsLoading } = useQuery({
     queryKey: ['/api/analytics/denial-reasons', practiceId],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: cancellationStats } = useQuery({
+    queryKey: ['/api/analytics/cancellations', `?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: cancellationTrend } = useQuery({
+    queryKey: ['/api/analytics/cancellations/trend', `?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: cancellationsByPatient } = useQuery({
+    queryKey: ['/api/analytics/cancellations/by-patient', `?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   }) as any;
@@ -275,7 +295,7 @@ export default function Analytics() {
       </Card>
 
       {/* Top Denial Reasons */}
-      <Card>
+      <Card className="mb-8">
         <CardHeader>
           <CardTitle>Top Denial Reasons</CardTitle>
           <CardDescription>Most common reasons for claim denials</CardDescription>
@@ -300,8 +320,8 @@ export default function Analytics() {
                   </div>
                   <div className="text-right">
                     <div className="w-16 h-2 bg-slate-200 rounded-full">
-                      <div 
-                        className="h-full bg-red-500 rounded-full" 
+                      <div
+                        className="h-full bg-red-500 rounded-full"
                         style={{ width: `${(reason.count / (denialReasons[0]?.count || 1)) * 100}%` }}
                       />
                     </div>
@@ -317,6 +337,207 @@ export default function Analytics() {
           )}
         </CardContent>
       </Card>
+
+      {/* ==================== CANCELLATION ANALYTICS ==================== */}
+      <div className="mb-8">
+        <h2 className="text-xl font-bold text-slate-900 mb-4">Cancellation Analytics</h2>
+
+        {/* Cancellation Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Cancellations</CardTitle>
+              <CalendarX className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{cancellationStats?.totalCancelled || 0}</div>
+              <p className="text-xs text-muted-foreground">of {cancellationStats?.totalScheduled || 0} scheduled</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Cancellation Rate</CardTitle>
+              <AlertCircle className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{cancellationStats?.cancellationRate?.toFixed(1) || 0}%</div>
+              <p className="text-xs text-muted-foreground">
+                {(cancellationStats?.cancellationRate || 0) > 15 ? (
+                  <span className="text-red-500">Above 15% threshold</span>
+                ) : (
+                  <span className="text-green-500">Within acceptable range</span>
+                )}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Late Cancels</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{cancellationStats?.lateCancellations || 0}</div>
+              <p className="text-xs text-muted-foreground">Within 24h of appointment</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">No-Shows</CardTitle>
+              <UserX className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{cancellationStats?.totalNoShow || 0}</div>
+              <p className="text-xs text-muted-foreground">{cancellationStats?.noShowRate?.toFixed(1) || 0}% no-show rate</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Avg Lead Time</CardTitle>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{cancellationStats?.avgLeadTimeHours || 0}h</div>
+              <p className="text-xs text-muted-foreground">Avg notice before appointment</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Cancellation Trend + Reason Distribution */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Cancellation Trend</CardTitle>
+              <CardDescription>Monthly cancellation and no-show rates</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={cancellationTrend || []}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="month"
+                    tickFormatter={(value) => {
+                      const d = new Date(value + "-01");
+                      return d.toLocaleDateString('en-US', { month: 'short' });
+                    }}
+                  />
+                  <YAxis />
+                  <Tooltip
+                    labelFormatter={(label) => {
+                      const d = new Date(label + "-01");
+                      return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                    }}
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="cancelled" stroke="hsl(0, 84%, 60%)" strokeWidth={2} name="Cancelled" />
+                  <Line type="monotone" dataKey="noShows" stroke="hsl(25, 95%, 53%)" strokeWidth={2} name="No-Shows" />
+                  <Line type="monotone" dataKey="scheduled" stroke="hsl(207, 90%, 54%)" strokeWidth={2} name="Scheduled" dot={false} strokeDasharray="5 5" />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Cancellation Reasons</CardTitle>
+              <CardDescription>Distribution of why appointments are cancelled</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                // Aggregate reasons from trend data or use cancellationsByPatient
+                const reasonCounts: Record<string, number> = {};
+                (cancellationsByPatient || []).forEach((p: any) => {
+                  if (p.cancellations > 0) reasonCounts["Cancellations"] = (reasonCounts["Cancellations"] || 0) + p.cancellations;
+                  if (p.noShows > 0) reasonCounts["No-Shows"] = (reasonCounts["No-Shows"] || 0) + p.noShows;
+                  if (p.lateCancellations > 0) reasonCounts["Late Cancels"] = (reasonCounts["Late Cancels"] || 0) + p.lateCancellations;
+                });
+                const pieData = Object.entries(reasonCounts).map(([name, value]) => ({ name, value }));
+                const CANCEL_COLORS = ['hsl(0, 84%, 60%)', 'hsl(25, 95%, 53%)', 'hsl(45, 93%, 47%)', 'hsl(207, 90%, 54%)', 'hsl(142, 71%, 45%)', 'hsl(280, 68%, 60%)'];
+
+                if (pieData.length === 0) {
+                  return (
+                    <div className="text-center py-8">
+                      <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                      <p className="text-slate-600">No cancellations recorded yet</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {pieData.map((_entry, index) => (
+                          <Cell key={`cell-${index}`} fill={CANCEL_COLORS[index % CANCEL_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Per-Patient Cancellation Table */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Cancellations by Patient</CardTitle>
+            <CardDescription>Patients sorted by cancellation frequency</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {cancellationsByPatient?.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Patient</TableHead>
+                    <TableHead className="text-center">Total Appts</TableHead>
+                    <TableHead className="text-center">Cancellations</TableHead>
+                    <TableHead className="text-center">No-Shows</TableHead>
+                    <TableHead className="text-center">Late Cancels</TableHead>
+                    <TableHead className="text-center">Cancel Rate</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cancellationsByPatient.map((patient: any) => {
+                    const cancelRate = patient.totalAppointments > 0
+                      ? Math.round((patient.cancellations / patient.totalAppointments) * 100)
+                      : 0;
+                    return (
+                      <TableRow key={patient.patientId}>
+                        <TableCell className="font-medium">{patient.patientName}</TableCell>
+                        <TableCell className="text-center">{patient.totalAppointments}</TableCell>
+                        <TableCell className="text-center">{patient.cancellations}</TableCell>
+                        <TableCell className="text-center">{patient.noShows}</TableCell>
+                        <TableCell className="text-center">{patient.lateCancellations}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={cancelRate > 30 ? "destructive" : "secondary"}>
+                            {cancelRate}%
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="text-center py-8">
+                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                <p className="text-slate-600">No cancellation data available yet</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

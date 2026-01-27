@@ -2184,6 +2184,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== APPOINTMENT CRUD ====================
+
+  app.post('/api/appointments', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointment = await storage.createAppointment(req.body);
+      res.json(appointment);
+    } catch (error) {
+      console.error('Error creating appointment:', error);
+      res.status(500).json({ message: 'Failed to create appointment' });
+    }
+  });
+
+  app.get('/api/appointments', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const start = req.query.start ? new Date(req.query.start as string) : undefined;
+      const end = req.query.end ? new Date(req.query.end as string) : undefined;
+
+      if (start && end) {
+        const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
+        res.json(appts);
+      } else {
+        const appts = await storage.getAppointments(practiceId);
+        res.json(appts);
+      }
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      res.status(500).json({ message: 'Failed to fetch appointments' });
+    }
+  });
+
+  app.get('/api/appointments/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const appt = await storage.getAppointment(parseInt(req.params.id));
+      if (!appt) return res.status(404).json({ message: 'Appointment not found' });
+      res.json(appt);
+    } catch (error) {
+      console.error('Error fetching appointment:', error);
+      res.status(500).json({ message: 'Failed to fetch appointment' });
+    }
+  });
+
+  app.patch('/api/appointments/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const appt = await storage.updateAppointment(parseInt(req.params.id), req.body);
+      res.json(appt);
+    } catch (error) {
+      console.error('Error updating appointment:', error);
+      res.status(500).json({ message: 'Failed to update appointment' });
+    }
+  });
+
+  app.post('/api/appointments/:id/cancel', isAuthenticated, async (req: any, res) => {
+    try {
+      const { reason, notes } = req.body;
+      if (!reason) {
+        return res.status(400).json({ message: 'Cancellation reason is required' });
+      }
+      const appt = await storage.cancelAppointment(parseInt(req.params.id), reason, notes);
+      res.json(appt);
+    } catch (error) {
+      console.error('Error cancelling appointment:', error);
+      res.status(500).json({ message: 'Failed to cancel appointment' });
+    }
+  });
+
+  // ==================== CANCELLATION ANALYTICS ====================
+
+  app.get('/api/analytics/cancellations', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const stats = await storage.getCancellationStats(practiceId, start, end);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching cancellation stats:', error);
+      res.status(500).json({ message: 'Failed to fetch cancellation stats' });
+    }
+  });
+
+  app.get('/api/analytics/cancellations/by-patient', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const data = await storage.getCancellationsByPatient(practiceId, start, end);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching cancellations by patient:', error);
+      res.status(500).json({ message: 'Failed to fetch cancellations by patient' });
+    }
+  });
+
+  app.get('/api/analytics/cancellations/trend', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 12));
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const data = await storage.getCancellationTrend(practiceId, start, end);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching cancellation trend:', error);
+      res.status(500).json({ message: 'Failed to fetch cancellation trend' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

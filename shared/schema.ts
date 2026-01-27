@@ -335,6 +335,9 @@ export const appointments = pgTable("appointments", {
   status: varchar("status").default("scheduled"), // scheduled, completed, cancelled, no_show
   notes: text("notes"),
   reminderSent: boolean("reminder_sent").default(false),
+  cancelledAt: timestamp("cancelled_at"),
+  cancellationReason: varchar("cancellation_reason"), // patient_request, sick, schedule_conflict, weather, no_show, other
+  cancellationNotes: text("cancellation_notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -813,6 +816,14 @@ export type ClaimLineItem = typeof claimLineItems.$inferSelect;
 export type InsertClaimLineItem = z.infer<typeof insertClaimLineItemSchema>;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
+
+export const insertAppointmentSchema = createInsertSchema(appointments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type Appointment = typeof appointments.$inferSelect;
+export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
 
 // Insurance Authorization insert schemas
 export const insertPatientInsuranceAuthorizationSchema = createInsertSchema(patientInsuranceAuthorizations).omit({
