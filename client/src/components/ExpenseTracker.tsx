@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
 
@@ -29,6 +30,7 @@ interface ExpenseTrackerProps {
 
 export default function ExpenseTracker({ practiceId, onSuccess }: ExpenseTrackerProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const form = useForm<ExpenseFormData>({
@@ -47,6 +49,7 @@ export default function ExpenseTracker({ practiceId, onSuccess }: ExpenseTracker
       const response = await apiRequest("POST", "/api/expenses", {
         ...data,
         practiceId,
+        createdBy: (user as any)?.id,
         amount: parseFloat(data.amount),
       });
       return response.json();

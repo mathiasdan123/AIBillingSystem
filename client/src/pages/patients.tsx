@@ -11,7 +11,6 @@ import { apiRequest } from "@/lib/queryClient";
 import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
-import BenefitsCard from "@/components/PatientInsuranceData/BenefitsCard";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
 
 interface EligibilityCheck {
@@ -516,20 +515,14 @@ export default function Patients() {
                 </div>
               )}
 
-              {/* Stedi Insurance Benefits */}
-              {(insuranceData as any)?.eligibility && (
-                <div className="border-t pt-4 space-y-4">
-                  <BenefitsCard
-                    patientId={selectedPatient.id}
-                    eligibility={(insuranceData as any).eligibility}
-                    benefits={(insuranceData as any).benefits}
-                    verifiedAt={(insuranceData as any).verifiedAt}
-                  />
+              {/* Cost Estimation from cached insurance data */}
+              {(insuranceData as any)?.benefits && (
+                <div className="border-t pt-4">
                   <CostEstimationCard
-                    benefits={(insuranceData as any).benefits ? {
+                    benefits={{
                       ...(insuranceData as any).benefits,
                       priorAuthStatus: (insuranceData as any).benefits?.priorAuthStatus ?? null,
-                    } : null}
+                    }}
                   />
                 </div>
               )}

@@ -46,13 +46,13 @@ interface AiOptimization {
 
 export default function SoapNotes() {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [selectedPatient, setSelectedPatient] = useState<number | null>(null);
   const [aiOptimization, setAiOptimization] = useState<AiOptimization | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Check if user can see financial data (admin or billing roles only)
-  const canSeeFinancialData = (user as any)?.role === 'admin' || (user as any)?.role === 'billing';
+  const canSeeFinancialData = isAdmin || (user as any)?.role === 'billing';
   const [showVoiceInput, setShowVoiceInput] = useState(false);
 
   const form = useForm<SoapNoteForm>({

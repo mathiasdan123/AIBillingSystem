@@ -325,3 +325,199 @@ export async function sendTestEmail(to: string): Promise<{ success: boolean; err
     return { success: false, error: (error as Error).message };
   }
 }
+
+// Send authorization confirmation email to patient
+export async function sendAuthorizationConfirmationEmail(
+  practice: any,
+  patient: any,
+  authorization: any
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping authorization confirmation email');
+    return { success: true }; // Return success to not block the flow
+  }
+
+  if (!patient.email) {
+    return { success: false, error: 'Patient email not available' };
+  }
+
+  try {
+    const transport = getTransporter();
+    const practiceName = practice?.name || 'Your Healthcare Provider';
+    const authDetails = authorization.authorizationDetails || {};
+
+    await transport.sendMail({
+      from: `"${practiceName}" <${fromAddress}>`,
+      to: patient.email,
+      subject: `Insurance Authorization Confirmed - ${practiceName}`,
+      text: `Your insurance authorization has been confirmed.
+
+Authorization Number: ${authorization.authorizationNumber || 'N/A'}
+Approved Units: ${authDetails.approvedUnits || 'N/A'}
+Valid From: ${authorization.startDate || 'N/A'}
+Valid Until: ${authorization.endDate || 'N/A'}
+
+If you have any questions, please contact our office.
+
+${practiceName}`,
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #2563eb;">Insurance Authorization Confirmed</h2>
+          <p>Dear ${patient.firstName || 'Patient'},</p>
+          <p>Great news! Your insurance authorization has been confirmed.</p>
+
+          <div style="background-color: #f0f9ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #1e40af;">Authorization Details</h3>
+            <p><strong>Authorization Number:</strong> ${authorization.authorizationNumber || 'N/A'}</p>
+            <p><strong>Approved Units:</strong> ${authDetails.approvedUnits || 'N/A'}</p>
+            <p><strong>Valid From:</strong> ${authorization.startDate || 'N/A'}</p>
+            <p><strong>Valid Until:</strong> ${authorization.endDate || 'N/A'}</p>
+          </div>
+
+          <p>If you have any questions about your authorization or upcoming appointments, please don't hesitate to contact our office.</p>
+
+          <p style="color: #64748b; font-size: 12px; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            This email was sent by ${practiceName}
+          </p>
+        </div>
+      `,
+    });
+
+    console.log('Authorization confirmation email sent to:', patient.email);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send authorization confirmation email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+// Send authorization request email to patient
+export async function sendAuthorizationRequestEmail(
+  practice: any,
+  patient: any,
+  authorizationLink: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping authorization request email');
+    return { success: true };
+  }
+
+  if (!patient.email) {
+    return { success: false, error: 'Patient email not available' };
+  }
+
+  try {
+    const transport = getTransporter();
+    const practiceName = practice?.name || 'Your Healthcare Provider';
+
+    await transport.sendMail({
+      from: `"${practiceName}" <${fromAddress}>`,
+      to: patient.email,
+      subject: `Insurance Authorization Request - ${practiceName}`,
+      text: `Please complete your insurance authorization by clicking the link below:
+
+${authorizationLink}
+
+This link will expire in 7 days.
+
+If you have any questions, please contact our office.
+
+${practiceName}`,
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #2563eb;">Insurance Authorization Request</h2>
+          <p>Dear ${patient.firstName || 'Patient'},</p>
+          <p>We need you to complete your insurance authorization to proceed with your treatment.</p>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${authorizationLink}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+              Complete Authorization
+            </a>
+          </div>
+
+          <p style="color: #64748b; font-size: 14px;">This link will expire in 7 days.</p>
+
+          <p style="color: #64748b; font-size: 12px; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            This email was sent by ${practiceName}
+          </p>
+        </div>
+      `,
+    });
+
+    console.log('Authorization request email sent to:', patient.email);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send authorization request email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+// Send authorization reminder email to patient
+export async function sendAuthorizationReminderEmail(
+  practice: any,
+  patient: any,
+  authorizationLink: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping authorization reminder email');
+    return { success: true };
+  }
+
+  if (!patient.email) {
+    return { success: false, error: 'Patient email not available' };
+  }
+
+  try {
+    const transport = getTransporter();
+    const practiceName = practice?.name || 'Your Healthcare Provider';
+
+    await transport.sendMail({
+      from: `"${practiceName}" <${fromAddress}>`,
+      to: patient.email,
+      subject: `Reminder: Complete Your Insurance Authorization - ${practiceName}`,
+      text: `This is a reminder to complete your insurance authorization.
+
+Please click the link below:
+${authorizationLink}
+
+If you have any questions, please contact our office.
+
+${practiceName}`,
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #f59e0b;">Reminder: Insurance Authorization</h2>
+          <p>Dear ${patient.firstName || 'Patient'},</p>
+          <p>This is a friendly reminder that we still need you to complete your insurance authorization.</p>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${authorizationLink}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+              Complete Authorization Now
+            </a>
+          </div>
+
+          <p style="color: #64748b; font-size: 12px; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            This email was sent by ${practiceName}
+          </p>
+        </div>
+      `,
+    });
+
+    console.log('Authorization reminder email sent to:', patient.email);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send authorization reminder email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+// Send authorization SMS (placeholder - would integrate with SMS service like Twilio)
+export async function sendAuthorizationSMS(
+  practice: any,
+  patient: any,
+  message: string
+): Promise<{ success: boolean; error?: string }> {
+  // SMS integration would go here (e.g., Twilio)
+  // For now, just log and return success
+  console.log(`SMS would be sent to ${patient.phone}: ${message}`);
+  return { success: true };
+}

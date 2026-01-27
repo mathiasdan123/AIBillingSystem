@@ -10,6 +10,7 @@ import DataUpload from "@/pages/data-upload";
 import Dashboard from "@/pages/dashboard";
 import Claims from "@/pages/claims";
 import Patients from "@/pages/patients";
+import PatientAuthorizePage from "@/pages/patient-authorize";
 import Analytics from "@/pages/analytics";
 import Reports from "@/pages/reports";
 import Expenses from "@/pages/expenses";
@@ -25,7 +26,7 @@ import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 
 function Router() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isAdmin } = useAuth();
 
   if (isLoading) {
     return (
@@ -58,8 +59,8 @@ function Router() {
         <Route path="/intake" component={PatientIntake} />
         <Route path="/calendar" component={Calendar} />
         <Route path="/soap-notes" component={SoapNotes} />
-        <Route path="/accounting" component={Accounting} />
-        <Route path="/analytics" component={Analytics} />
+        {isAdmin && <Route path="/accounting" component={Accounting} />}
+        {isAdmin && <Route path="/analytics" component={Analytics} />}
         <Route path="/reports" component={Reports} />
         <Route path="/expenses" component={Expenses} />
         <Route path="/settings" component={Settings} />

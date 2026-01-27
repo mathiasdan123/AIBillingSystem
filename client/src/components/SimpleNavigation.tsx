@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
 import {
   Home,
   Users,
@@ -18,34 +19,32 @@ import {
   DollarSign,
   Shield
 } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: Home },
-  { name: 'Patient Intake', href: '/intake', icon: UserPlus },
-  { name: 'Patients', href: '/patients', icon: Users },
-  { name: 'Calendar', href: '/calendar', icon: Calendar },
-  { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList },
-  { name: 'Claims', href: '/claims', icon: FileText },
-  { name: 'Accounting', href: '/accounting', icon: DollarSign },
-  { name: 'Analytics', href: '/analytics', icon: TrendingUp },
-  { name: 'Expenses', href: '/expenses', icon: Receipt },
-  { name: 'Payer Management', href: '/payer-management', icon: Shield },
-  { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Dashboard', href: '/', icon: Home, adminOnly: false },
+  { name: 'Patient Intake', href: '/intake', icon: UserPlus, adminOnly: false },
+  { name: 'Patients', href: '/patients', icon: Users, adminOnly: false },
+  { name: 'Calendar', href: '/calendar', icon: Calendar, adminOnly: false },
+  { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
+  { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
+  { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
+  { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+  { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
+  { name: 'Payer Management', href: '/payer-management', icon: Shield, adminOnly: true },
+  { name: 'Settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
 
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
-  const { user, signOut } = useAuth();
+  const { user, isAdmin, currentRole } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const handleLogout = async () => {
-    try {
-      await signOut();
-      setLocation('/');
-    } catch (error) {
-      console.error('Logout failed:', error);
-    }
+  // Filter navigation items based on role
+  const filteredNavigation = navigation.filter(item => !item.adminOnly || isAdmin);
+
+  const handleRoleSwitch = () => {
+    setDemoRole(currentRole === 'admin' ? 'therapist' : 'admin');
   };
 
   const getUserInitials = () => {
@@ -70,10 +69,10 @@ export default function SimpleNavigation() {
           </div>
           <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
         </div>
-        
+
         <div className="flex-1 px-6 py-6">
           <nav className="space-y-2">
-            {navigation.map((item) => {
+            {filteredNavigation.map((item) => {
               const Icon = item.icon;
               const isActive = location === item.href;
               return (
@@ -93,8 +92,25 @@ export default function SimpleNavigation() {
             })}
           </nav>
         </div>
-        
-        <div className="p-6 border-t border-slate-200">
+
+        <div className="p-6 border-t border-slate-200 space-y-4">
+          {/* Demo Role Switcher */}
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-amber-600" />
+                <span className="text-xs font-medium text-amber-800">Demo Mode</span>
+              </div>
+              <Switch
+                checked={currentRole === 'admin'}
+                onCheckedChange={handleRoleSwitch}
+              />
+            </div>
+            <p className="text-xs text-amber-700 mt-1">
+              {currentRole === 'admin' ? 'Viewing as Admin' : 'Viewing as Therapist'}
+            </p>
+          </div>
+
           <div className="flex items-center space-x-3">
             <Avatar>
               <AvatarImage src={(user as any)?.profileImageUrl} />
@@ -102,17 +118,17 @@ export default function SimpleNavigation() {
             </Avatar>
             <div className="flex-1">
               <p className="text-sm font-medium text-slate-900">
-                {(user as any)?.firstName && (user as any)?.lastName 
-                  ? `${(user as any).firstName} ${(user as any).lastName}` 
+                {(user as any)?.firstName && (user as any)?.lastName
+                  ? `${(user as any).firstName} ${(user as any).lastName}`
                   : (user as any)?.email || 'User'
                 }
               </p>
-              <p className="text-xs text-slate-500">{(user as any)?.role || 'Therapist'}</p>
+              <p className="text-xs text-slate-500 capitalize">{currentRole}</p>
             </div>
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleLogout}
+              onClick={() => window.location.href = '/api/logout'}
             >
               <LogOut className="w-4 h-4" />
             </Button>
@@ -142,7 +158,7 @@ export default function SimpleNavigation() {
         {mobileMenuOpen && (
           <div className="fixed inset-0 top-16 bg-white z-50">
             <nav className="px-4 py-6 space-y-2">
-              {navigation.map((item) => {
+              {filteredNavigation.map((item) => {
                 const Icon = item.icon;
                 const isActive = location === item.href;
                 return (
@@ -153,8 +169,8 @@ export default function SimpleNavigation() {
                       setMobileMenuOpen(false);
                     }}
                     className={`flex items-center px-3 py-3 rounded-lg text-base font-medium transition-colors cursor-pointer ${
-                      isActive 
-                        ? 'bg-blue-50 text-blue-600' 
+                      isActive
+                        ? 'bg-blue-50 text-blue-600'
                         : 'text-slate-700 hover:bg-slate-50'
                     }`}
                   >

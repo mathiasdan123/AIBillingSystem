@@ -1,140 +1,60 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
-import type { User, Session } from '@supabase/supabase-js';
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-interface AuthState {
-  user: User | null;
-  session: Session | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
+interface User {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  profileImageUrl?: string | null;
+  role?: 'admin' | 'therapist';
 }
 
 export function useAuth() {
-  const queryClient = useQueryClient();
-  const [authState, setAuthState] = useState<AuthState>({
-    user: null,
-    session: null,
-    isLoading: true,
-    isAuthenticated: false,
-  });
+  // Check if we're using development bypass
+  const isDevelopment = import.meta.env.DEV;
+  const hasDevBypass = isDevelopment && localStorage.getItem('dev-bypass') === 'true';
 
-  // Fetch user data from our backend (includes role, etc.)
-  const { data: dbUser, isLoading: isDbUserLoading } = useQuery({
-    queryKey: ['/api/auth/user'],
-    enabled: authState.isAuthenticated,
+  // Use dev endpoint if bypassing, otherwise use regular auth
+  const endpoint = hasDevBypass ? '/api/dev-user' : '/api/auth/user';
+
+  const { data: user, isLoading, error, isFetched } = useQuery<User>({
+    queryKey: [endpoint],
     retry: false,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 0, // Always fetch fresh auth state
+    gcTime: 0, // Don't cache auth data
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setAuthState({
-        user: session?.user ?? null,
-        session,
-        isLoading: false,
-        isAuthenticated: !!session?.user,
-      });
-    });
+  // Only authenticated if we have user data (not null) and no error
+  const isAuthenticated = isFetched && user != null && !error;
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event);
-
-        setAuthState({
-          user: session?.user ?? null,
-          session,
-          isLoading: false,
-          isAuthenticated: !!session?.user,
-        });
-
-        // Invalidate queries on auth change
-        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
-          queryClient.invalidateQueries();
-        }
-      }
-    );
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [queryClient]);
-
-  const signIn = useCallback(async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) throw error;
-    return data;
-  }, []);
-
-  const signUp = useCallback(async (email: string, password: string, metadata?: { firstName?: string; lastName?: string }) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          first_name: metadata?.firstName,
-          last_name: metadata?.lastName,
-        },
-      },
-    });
-
-    if (error) throw error;
-    return data;
-  }, []);
-
-  const signOut = useCallback(async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    queryClient.clear();
-  }, [queryClient]);
-
-  const signInWithMagicLink = useCallback(async (email: string) => {
-    const { data, error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: window.location.origin,
-      },
-    });
-
-    if (error) throw error;
-    return data;
-  }, []);
-
-  // Get the access token for API calls
-  const getAccessToken = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
-  }, []);
+  // Check for demo role override (for switching between admin/therapist during demos)
+  const demoRoleOverride = localStorage.getItem('demo-role-override') as 'admin' | 'therapist' | null;
+  const effectiveRole = demoRoleOverride || user?.role;
 
   return {
-    user: dbUser || authState.user,
-    session: authState.session,
-    isLoading: authState.isLoading || (authState.isAuthenticated && isDbUserLoading),
-    isAuthenticated: authState.isAuthenticated,
-    signIn,
-    signUp,
-    signOut,
-    signInWithMagicLink,
-    getAccessToken,
+    user,
+    isLoading,
+    isAuthenticated,
+    isAdmin: effectiveRole === 'admin',
+    currentRole: effectiveRole || 'therapist',
   };
 }
 
-// Helper to get auth token for fetch requests
+// Helper function to switch demo role
+export function setDemoRole(role: 'admin' | 'therapist') {
+  localStorage.setItem('demo-role-override', role);
+  window.location.reload();
+}
+
+// Helper function to clear demo role override
+export function clearDemoRole() {
+  localStorage.removeItem('demo-role-override');
+  window.location.reload();
+}
+
+// Helper to get auth headers for fetch requests (cookie-based auth, returns empty)
 export async function getAuthHeaders(): Promise<HeadersInit> {
-  const { data: { session } } = await supabase.auth.getSession();
-
-  if (session?.access_token) {
-    return {
-      Authorization: `Bearer ${session.access_token}`,
-    };
-  }
-
   return {};
 }
