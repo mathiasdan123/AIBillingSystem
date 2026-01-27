@@ -2188,7 +2188,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/appointments', isAuthenticated, async (req: any, res) => {
     try {
-      const appointment = await storage.createAppointment(req.body);
+      const data = { ...req.body };
+      if (data.startTime) data.startTime = new Date(data.startTime);
+      if (data.endTime) data.endTime = new Date(data.endTime);
+      const appointment = await storage.createAppointment(data);
       res.json(appointment);
     } catch (error) {
       console.error('Error creating appointment:', error);
@@ -2256,7 +2259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const practiceId = parseInt(req.query.practiceId as string) || 1;
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
-      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
       const stats = await storage.getCancellationStats(practiceId, start, end);
       res.json(stats);
     } catch (error) {
@@ -2269,7 +2272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const practiceId = parseInt(req.query.practiceId as string) || 1;
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
-      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
       const data = await storage.getCancellationsByPatient(practiceId, start, end);
       res.json(data);
     } catch (error) {
@@ -2282,7 +2285,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const practiceId = parseInt(req.query.practiceId as string) || 1;
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 12));
-      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
       const data = await storage.getCancellationTrend(practiceId, start, end);
       res.json(data);
     } catch (error) {
