@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { storage } from './storage';
-import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput } from './email';
+import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput } from './email';
 import logger from './services/logger';
 
 // Store scheduled tasks for management
@@ -95,6 +95,81 @@ async function generateAndSendDailyDeniedClaimsReport(practiceId: number = 1) {
     }
   } catch (error) {
     console.error('Error generating daily denied claims report:', error);
+  }
+}
+
+async function generateAndSendWeeklyCancellationReport(practiceId: number = 1) {
+  console.log('Running weekly cancellation report for practice:', practiceId);
+
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping weekly cancellation report');
+    return;
+  }
+
+  if (dailyReportRecipients.length === 0) {
+    console.log('No recipients configured for weekly cancellation report');
+    return;
+  }
+
+  try {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 7);
+
+    const practice = await storage.getPractice(practiceId);
+    const stats = await storage.getCancellationStats(practiceId, start, end);
+    const byPatient = await storage.getCancellationsByPatient(practiceId, start, end);
+
+    // Get cancelled appointments for reason/cancelledBy breakdown
+    const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
+    const cancelled = appts.filter((a: any) => a.status === 'cancelled');
+
+    // Group by reason
+    const reasonMap: Record<string, number> = {};
+    for (const a of cancelled) {
+      const reason = (a as any).cancellationReason || 'unknown';
+      reasonMap[reason] = (reasonMap[reason] || 0) + 1;
+    }
+    const byReason = Object.entries(reasonMap)
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Group by cancelledBy
+    const byMap: Record<string, number> = {};
+    for (const a of cancelled) {
+      const who = (a as any).cancelledBy || 'unknown';
+      byMap[who] = (byMap[who] || 0) + 1;
+    }
+    const byCancelledBy = Object.entries(byMap)
+      .map(([who, count]) => ({ who, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Repeat cancellers (2+ cancellations)
+    const repeatCancellers = byPatient
+      .filter(p => p.cancellations >= 2)
+      .map(p => ({ patientName: p.patientName, cancellations: p.cancellations, noShows: p.noShows }));
+
+    const reportData: WeeklyCancellationReportInput = {
+      practiceName: practice?.name || 'Your Practice',
+      reportDate: new Date(),
+      totalCancellations: stats.totalCancelled,
+      totalScheduled: stats.totalScheduled,
+      cancellationRate: stats.cancellationRate,
+      lateCancellations: stats.lateCancellations,
+      byReason,
+      byCancelledBy,
+      repeatCancellers,
+      reportUrl: process.env.APP_URL ? `${process.env.APP_URL}/calendar` : undefined,
+    };
+
+    const result = await sendWeeklyCancellationReport(dailyReportRecipients, reportData);
+    if (result.success) {
+      console.log('Weekly cancellation report sent successfully');
+    } else {
+      console.error('Failed to send weekly cancellation report:', result.error);
+    }
+  } catch (error) {
+    console.error('Error generating weekly cancellation report:', error);
   }
 }
 
@@ -206,8 +281,16 @@ export function startScheduler() {
   });
   scheduledTasks.set('eligibilityRefresh', eligibilityRefreshTask);
 
+  // Weekly cancellation report - Monday 8:00 AM
+  const weeklyCancellationTask = cron.schedule('0 8 * * 1', () => {
+    generateAndSendWeeklyCancellationReport();
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('weeklyCancellationReport', weeklyCancellationTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh'],
+    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport'],
   });
 }
 
@@ -226,4 +309,4 @@ export async function triggerDailyReportNow(practiceId: number = 1) {
 }
 
 // Export for route handlers
-export { generateAndSendDailyDeniedClaimsReport };
+export { generateAndSendDailyDeniedClaimsReport, generateAndSendWeeklyCancellationReport };

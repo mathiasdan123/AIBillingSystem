@@ -6,7 +6,7 @@ import AIReimbursementPredictor from "./aiReimbursementPredictor";
 import { AiClaimOptimizer } from "./aiClaimOptimizer";
 import { appealGenerator } from "./aiAppealGenerator";
 import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedClaimsReportInput } from "./email";
-import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow } from "./scheduler";
+import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
@@ -2241,11 +2241,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/appointments/:id/cancel', isAuthenticated, async (req: any, res) => {
     try {
-      const { reason, notes } = req.body;
+      const { reason, notes, cancelledBy } = req.body;
       if (!reason) {
         return res.status(400).json({ message: 'Cancellation reason is required' });
       }
-      const appt = await storage.cancelAppointment(parseInt(req.params.id), reason, notes);
+      // Determine who cancelled: use explicit value, or infer from authenticated user's role
+      let whoCancelled = cancelledBy;
+      if (!whoCancelled) {
+        const userId = req.user?.claims?.sub;
+        if (userId) {
+          const user = await storage.getUser(userId);
+          whoCancelled = user?.role || 'therapist';
+        }
+      }
+      const appt = await storage.cancelAppointment(parseInt(req.params.id), reason, notes, whoCancelled);
       res.json(appt);
     } catch (error) {
       console.error('Error cancelling appointment:', error);
@@ -2291,6 +2300,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching cancellation trend:', error);
       res.status(500).json({ message: 'Failed to fetch cancellation trend' });
+    }
+  });
+
+  // Manual trigger for weekly cancellation report
+  app.post('/api/reports/weekly-cancellation', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.body.practiceId as string) || 1;
+      await generateAndSendWeeklyCancellationReport(practiceId);
+      res.json({ message: 'Weekly cancellation report triggered successfully' });
+    } catch (error) {
+      console.error('Error triggering weekly cancellation report:', error);
+      res.status(500).json({ message: 'Failed to trigger weekly cancellation report' });
     }
   });
 

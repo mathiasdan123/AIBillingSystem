@@ -42,6 +42,7 @@ export default function CalendarPage() {
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelNotes, setCancelNotes] = useState("");
+  const [cancelledBy, setCancelledBy] = useState("");
 
   const [availability, setAvailability] = useState<AvailabilitySlot[]>([
     { dayOfWeek: 1, startTime: "09:00", endTime: "17:00" },
@@ -111,8 +112,8 @@ export default function CalendarPage() {
 
   // Cancel appointment mutation
   const cancelMutation = useMutation({
-    mutationFn: async ({ id, reason, notes }: { id: number; reason: string; notes?: string }) => {
-      const res = await apiRequest("POST", `/api/appointments/${id}/cancel`, { reason, notes });
+    mutationFn: async ({ id, reason, notes, cancelledBy }: { id: number; reason: string; notes?: string; cancelledBy?: string }) => {
+      const res = await apiRequest("POST", `/api/appointments/${id}/cancel`, { reason, notes, cancelledBy });
       return res.json();
     },
     onSuccess: () => {
@@ -121,6 +122,7 @@ export default function CalendarPage() {
       setSelectedAppointment(null);
       setCancelReason("");
       setCancelNotes("");
+      setCancelledBy("");
       toast({ title: "Appointment Cancelled", description: "The appointment has been cancelled." });
     },
     onError: (err: Error) => {
@@ -159,6 +161,7 @@ export default function CalendarPage() {
       id: selectedAppointment.id,
       reason: cancelReason,
       notes: cancelNotes || undefined,
+      cancelledBy: cancelledBy || undefined,
     });
   };
 
@@ -166,6 +169,7 @@ export default function CalendarPage() {
     setSelectedAppointment(apt);
     setCancelReason("");
     setCancelNotes("");
+    setCancelledBy("");
     setShowCancelDialog(true);
   };
 
@@ -197,7 +201,7 @@ export default function CalendarPage() {
     const sm = start.getMinutes();
     const eh = end.getHours();
     const em = end.getMinutes();
-    const top = ((sh - 8) * 60 + sm) * (64 / 60);
+    const top = ((sh - 8) * 60 + sm) * (64 / 60) - 2;
     const height = ((eh - sh) * 60 + (em - sm)) * (64 / 60);
     return { top: top + "px", height: Math.max(height, 24) + "px" };
   };
@@ -210,7 +214,7 @@ export default function CalendarPage() {
     "bg-gray-100 text-gray-800";
 
   const getCalendarBlockStyle = (apt: Appointment) =>
-    apt.status === "cancelled" ? "bg-red-100 border-l-4 border-red-400 opacity-75 line-through" :
+    apt.status === "cancelled" ? "bg-red-200 border-l-4 border-red-600 text-red-900" :
     apt.status === "completed" ? "bg-green-100 border-l-4 border-green-500" :
     "bg-blue-100 border-l-4 border-blue-500";
 
@@ -385,7 +389,7 @@ export default function CalendarPage() {
                         <div className="text-xs font-medium truncate">{apt.title || "Appointment"}</div>
                         <div className="text-xs text-slate-600 truncate">
                           {formatTime(apt.startTime)}
-                          {apt.status === "cancelled" && " (Cancelled)"}
+                          {apt.status === "cancelled" && ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})`}
                         </div>
                       </div>
                     ))}
@@ -453,6 +457,17 @@ export default function CalendarPage() {
                     {CANCELLATION_REASONS.map((r) => (
                       <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Cancelled By</Label>
+                <Select value={cancelledBy} onValueChange={setCancelledBy}>
+                  <SelectTrigger><SelectValue placeholder="Who is cancelling?" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="patient">Patient</SelectItem>
+                    <SelectItem value="therapist">Therapist</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -896,12 +896,13 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async cancelAppointment(id: number, reason: string, notes?: string): Promise<Appointment> {
+  async cancelAppointment(id: number, reason: string, notes?: string, cancelledBy?: string): Promise<Appointment> {
     const [updated] = await db
       .update(appointments)
       .set({
         status: "cancelled",
         cancelledAt: new Date(),
+        cancelledBy: cancelledBy || null,
         cancellationReason: reason,
         cancellationNotes: notes || null,
         updatedAt: new Date(),

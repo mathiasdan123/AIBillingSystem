@@ -510,6 +510,145 @@ ${practiceName}`,
   }
 }
 
+// Weekly Cancellation Report
+export interface WeeklyCancellationReportInput {
+  practiceName: string;
+  reportDate: Date;
+  totalCancellations: number;
+  totalScheduled: number;
+  cancellationRate: number;
+  lateCancellations: number;
+  byReason: { reason: string; count: number }[];
+  byCancelledBy: { who: string; count: number }[];
+  repeatCancellers: { patientName: string; cancellations: number; noShows: number }[];
+  reportUrl?: string;
+}
+
+function generateWeeklyCancellationEmailHtml(data: WeeklyCancellationReportInput): string {
+  const formatDate = (date: Date | null) =>
+    date ? new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
+
+  const reasonRows = data.byReason.map(r => `
+    <tr>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">${r.reason}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: center;">${r.count}</td>
+    </tr>
+  `).join('');
+
+  const cancelledByRows = data.byCancelledBy.map(r => `
+    <tr>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">${r.who}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: center;">${r.count}</td>
+    </tr>
+  `).join('');
+
+  const repeatRows = data.repeatCancellers.map(r => `
+    <tr>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">${r.patientName}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: center;">${r.cancellations}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: center;">${r.noShows}</td>
+    </tr>
+  `).join('');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Weekly Cancellation Report</title></head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f8fafc;">
+  <div style="max-width: 700px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+      <h1 style="margin: 0 0 10px 0; font-size: 24px;">Weekly Cancellation Report</h1>
+      <p style="margin: 0; opacity: 0.9;">${data.practiceName}</p>
+      <p style="margin: 10px 0 0 0; opacity: 0.8; font-size: 14px;">Week ending ${formatDate(data.reportDate)}</p>
+    </div>
+
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      <h2 style="margin: 0 0 20px 0; font-size: 18px; color: #1e293b;">Summary</h2>
+      <div style="display: flex; flex-wrap: wrap; gap: 15px;">
+        <div style="flex: 1; min-width: 120px; text-align: center; padding: 20px; background: #fef2f2; border-radius: 8px;">
+          <div style="font-size: 28px; font-weight: 700; color: #dc2626;">${data.totalCancellations}</div>
+          <div style="font-size: 13px; color: #64748b; margin-top: 5px;">Cancellations</div>
+        </div>
+        <div style="flex: 1; min-width: 120px; text-align: center; padding: 20px; background: #eff6ff; border-radius: 8px;">
+          <div style="font-size: 28px; font-weight: 700; color: #2563eb;">${data.totalScheduled}</div>
+          <div style="font-size: 13px; color: #64748b; margin-top: 5px;">Total Scheduled</div>
+        </div>
+        <div style="flex: 1; min-width: 120px; text-align: center; padding: 20px; background: ${data.cancellationRate > 20 ? '#fef2f2' : '#f0fdf4'}; border-radius: 8px;">
+          <div style="font-size: 28px; font-weight: 700; color: ${data.cancellationRate > 20 ? '#dc2626' : '#16a34a'};">${data.cancellationRate.toFixed(1)}%</div>
+          <div style="font-size: 13px; color: #64748b; margin-top: 5px;">Cancel Rate</div>
+        </div>
+        <div style="flex: 1; min-width: 120px; text-align: center; padding: 20px; background: #fefce8; border-radius: 8px;">
+          <div style="font-size: 28px; font-weight: 700; color: #ca8a04;">${data.lateCancellations}</div>
+          <div style="font-size: 13px; color: #64748b; margin-top: 5px;">Late (&lt;24h)</div>
+        </div>
+      </div>
+    </div>
+
+    ${data.byReason.length > 0 ? `
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1e293b;">By Reason</h2>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <thead><tr style="background: #f8fafc;"><th style="padding: 8px 12px; text-align: left;">Reason</th><th style="padding: 8px 12px; text-align: center;">Count</th></tr></thead>
+        <tbody>${reasonRows}</tbody>
+      </table>
+    </div>` : ''}
+
+    ${data.byCancelledBy.length > 0 ? `
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1e293b;">By Who Cancelled</h2>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <thead><tr style="background: #f8fafc;"><th style="padding: 8px 12px; text-align: left;">Cancelled By</th><th style="padding: 8px 12px; text-align: center;">Count</th></tr></thead>
+        <tbody>${cancelledByRows}</tbody>
+      </table>
+    </div>` : ''}
+
+    ${data.repeatCancellers.length > 0 ? `
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1e293b;">Repeat Cancellers (2+)</h2>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <thead><tr style="background: #f8fafc;"><th style="padding: 8px 12px; text-align: left;">Patient</th><th style="padding: 8px 12px; text-align: center;">Cancellations</th><th style="padding: 8px 12px; text-align: center;">No-Shows</th></tr></thead>
+        <tbody>${repeatRows}</tbody>
+      </table>
+    </div>` : ''}
+
+    <div style="background: #f1f5f9; padding: 25px; border-radius: 0 0 12px 12px; text-align: center; border: 1px solid #e2e8f0; border-top: none;">
+      ${data.reportUrl ? `<a href="${data.reportUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 8px; font-weight: 500; margin-bottom: 15px;">View Full Report</a><br>` : ''}
+      <p style="margin: 0; color: #64748b; font-size: 13px;">Automated weekly report from TherapyBill AI. Generated ${formatDate(new Date())}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export async function sendWeeklyCancellationReport(
+  to: string | string[],
+  data: WeeklyCancellationReportInput
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping weekly cancellation report');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  const recipients = Array.isArray(to) ? to : [to];
+  const subject = `Weekly Cancellation Report - ${data.practiceName} - ${new Date(data.reportDate).toLocaleDateString()}`;
+
+  try {
+    const transport = getTransporter();
+    const info = await transport.sendMail({
+      from: `"TherapyBill AI" <${fromAddress}>`,
+      to: recipients.join(', '),
+      subject,
+      html: generateWeeklyCancellationEmailHtml(data),
+    });
+
+    console.log('Weekly cancellation report email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('Failed to send weekly cancellation report email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
 // Send authorization SMS (placeholder - would integrate with SMS service like Twilio)
 export async function sendAuthorizationSMS(
   practice: any,
