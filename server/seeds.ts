@@ -4,7 +4,7 @@ import { practices, cptCodes, icd10Codes, insurances } from "@shared/schema";
 export async function seedDatabase() {
   try {
     // Check if data already exists using raw query to avoid schema mismatch issues
-    const result = await db.execute<{ count: string }>(`SELECT COUNT(*) as count FROM practices`);
+    const result = await db.execute(`SELECT COUNT(*) as count FROM practices`);
     const count = parseInt(result.rows[0]?.count || '0', 10);
     if (count > 0) {
       console.log("Database already seeded");

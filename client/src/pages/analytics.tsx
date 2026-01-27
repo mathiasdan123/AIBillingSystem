@@ -32,25 +32,25 @@ export default function Analytics() {
     queryKey: ['/api/analytics/dashboard', practiceId],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
-  });
+  }) as any;
 
   const { data: revenueData, isLoading: revenueLoading } = useQuery({
     queryKey: ['/api/analytics/revenue', practiceId, timeRange],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
-  });
+  }) as any;
 
   const { data: claimsByStatus, isLoading: claimsStatusLoading } = useQuery({
     queryKey: ['/api/analytics/claims-by-status', practiceId],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
-  });
+  }) as any;
 
   const { data: denialReasons, isLoading: denialReasonsLoading } = useQuery({
     queryKey: ['/api/analytics/denial-reasons', practiceId],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
-  });
+  }) as any;
 
   if (isLoading || statsLoading) {
     return (

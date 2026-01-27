@@ -33,25 +33,25 @@ export default function Dashboard() {
     queryKey: ['/api/analytics/dashboard'],
     enabled: isAuthenticated,
     retry: false,
-  });
+  }) as any;
 
   const { data: recentClaims, isLoading: claimsLoading } = useQuery({
     queryKey: ['/api/claims'],
     enabled: isAuthenticated,
     retry: false,
-  });
+  }) as any;
 
   const { data: recentPatients, isLoading: patientsLoading } = useQuery({
     queryKey: ['/api/patients'],
     enabled: isAuthenticated,
     retry: false,
-  });
+  }) as any;
 
   const { data: deniedClaimsReport, isLoading: deniedLoading } = useQuery({
     queryKey: ['/api/reports/denied-claims', { period: 'today' }],
     enabled: isAuthenticated,
     retry: false,
-  });
+  }) as any;
 
   if (isLoading) {
     return (

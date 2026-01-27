@@ -93,7 +93,7 @@ export default function Settings() {
     queryKey: ['/api/practices', practiceId],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
-  });
+  }) as any;
 
   const updatePracticeMutation = useMutation({
     mutationFn: async (data: PracticeFormData) => {

@@ -47,7 +47,7 @@ export default function Patients() {
     queryKey: [`/api/patients/${selectedPatient?.id}/insurance-data`],
     enabled: !!selectedPatient?.id,
     retry: false,
-  });
+  }) as any;
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -68,7 +68,7 @@ export default function Patients() {
     queryKey: ['/api/patients'],
     enabled: isAuthenticated,
     retry: false,
-  });
+  }) as any;
 
   const checkEligibilityMutation = useMutation({
     mutationFn: async (data: { patientId: number; insuranceId?: number }) => {

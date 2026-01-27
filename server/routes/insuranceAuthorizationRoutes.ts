@@ -117,7 +117,6 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
       sendResult = await sendAuthorizationRequestEmail(
         practice,
         patient,
-        authorization,
         authorizationUrl
       );
     }
@@ -126,7 +125,6 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
       const smsResult = await sendAuthorizationSMS(
         practice,
         patient,
-        authorization,
         authorizationUrl
       );
       if (deliveryMethod === 'sms') {
@@ -241,7 +239,6 @@ router.post('/:id/resend', isAuthenticated, async (req: any, res: Response) => {
     const sendResult = await sendAuthorizationReminderEmail(
       practice,
       patient,
-      { ...authorization, token },
       authorizationUrl
     );
 

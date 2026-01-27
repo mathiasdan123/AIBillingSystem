@@ -161,7 +161,7 @@ export default function PatientInsuranceData({ patientId }: PatientInsuranceData
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => refreshMutation.mutate()}
+                onClick={() => refreshMutation.mutate(undefined)}
                 disabled={refreshMutation.isPending}
               >
                 {refreshMutation.isPending ? (

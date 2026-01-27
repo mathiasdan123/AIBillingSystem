@@ -23,7 +23,7 @@ router.get('/patients/:id/insurance-data', isAuthenticated, async (req: any, res
 
     // Check for active authorization
     const authorizations = await storage.getPatientAuthorizations(patientId);
-    const activeAuth = authorizations.find((auth) => auth.status === 'authorized');
+    const activeAuth = authorizations.find((auth: any) => auth.status === 'authorized');
 
     if (!activeAuth) {
       return res.status(403).json({
@@ -59,7 +59,7 @@ router.get('/patients/:id/insurance-data', isAuthenticated, async (req: any, res
       data: {},
     };
 
-    for (const [type, data] of cachedData) {
+    for (const [type, data] of Array.from(cachedData)) {
       response.data[type] = data;
     }
 
@@ -101,7 +101,7 @@ router.post('/patients/:id/insurance-data/refresh', isAuthenticated, async (req:
 
     // Check for active authorization
     const authorizations = await storage.getPatientAuthorizations(patientId);
-    const activeAuth = authorizations.find((auth) => auth.status === 'authorized');
+    const activeAuth = authorizations.find((auth: any) => auth.status === 'authorized');
 
     if (!activeAuth) {
       return res.status(403).json({
@@ -187,7 +187,7 @@ router.get('/patients/:id/insurance-data/:type', isAuthenticated, async (req: an
 
     // Check for active authorization
     const authorizations = await storage.getPatientAuthorizations(patientId);
-    const activeAuth = authorizations.find((auth) => auth.status === 'authorized');
+    const activeAuth = authorizations.find((auth: any) => auth.status === 'authorized');
 
     if (!activeAuth) {
       return res.status(403).json({
@@ -301,7 +301,7 @@ router.get('/payer-integrations/health', isAuthenticated, async (req: any, res: 
     const healthResults = await payerIntegrationService.checkAllPayerHealth();
 
     const response: Record<string, any> = {};
-    for (const [payerCode, health] of healthResults) {
+    for (const [payerCode, health] of Array.from(healthResults)) {
       response[payerCode] = health;
     }
 

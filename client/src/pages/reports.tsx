@@ -52,9 +52,9 @@ export default function Reports() {
 
   const { data: report, isLoading: reportLoading, refetch } = useQuery({
     queryKey: ['/api/reports/denied-claims', queryParams],
-    enabled: isAuthenticated && (period !== 'custom' || (customStartDate && customEndDate)),
+    enabled: isAuthenticated && (period !== 'custom' || !!(customStartDate && customEndDate)),
     retry: false,
-  });
+  }) as any;
 
   const handleExport = () => {
     const params = new URLSearchParams({ period });

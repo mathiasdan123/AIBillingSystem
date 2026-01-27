@@ -140,7 +140,7 @@ export class AiClaimOptimizer {
     const fullNotes = `${soapNote.subjective} ${soapNote.objective} ${soapNote.assessment} ${soapNote.plan}`;
     
     // Analyze therapy content to determine best CPT codes
-    const suggestedCodes = this.analyzeTreatmentContent(fullNotes, soapNote.sessionType);
+    const suggestedCodes = this.analyzeTreatmentContent(fullNotes, soapNote.sessionType ?? undefined);
     
     // Apply insurance-specific optimizations
     const optimizedCodes = this.applyInsuranceOptimization(
@@ -259,12 +259,12 @@ export class AiClaimOptimizer {
       }
 
       // Avoid codes that insurance doesn't favor
-      if (insurancePrefs.avoided.includes(optimizedCode)) {
+      if ((insurancePrefs.avoided as string[]).includes(optimizedCode)) {
         // Find alternative in same category
         const alternative = Object.keys(this.CPT_CODES).find(altCode => {
           const altInfo = this.CPT_CODES[altCode as keyof typeof this.CPT_CODES];
-          return altInfo.category === cptInfo.category && 
-                 !insurancePrefs.avoided.includes(altCode) &&
+          return altInfo.category === cptInfo.category &&
+                 !(insurancePrefs.avoided as string[]).includes(altCode) &&
                  altCode !== optimizedCode;
         });
 

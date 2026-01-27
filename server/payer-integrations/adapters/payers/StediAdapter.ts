@@ -173,82 +173,87 @@ export class StediAdapter {
     }
 
     return {
-      status,
-      subscriberName: `${subscriber.firstName || params.memberFirstName} ${subscriber.lastName || params.memberLastName}`,
-      memberId: subscriber.memberId || params.memberId,
-      groupNumber: subscriber.groupNumber || params.groupNumber || '',
-      payerName: params.payerName,
-      planName: planInfo.planDescription || planInfo.insuranceType || '',
-      coverageType: planInfo.insuranceType || '',
+      isEligible: status === 'active',
       effectiveDate: this.parseDateField(planInfo.planDate || planInfo.effectiveDate) || '',
-      terminationDate: this.parseDateField(planInfo.terminationDate),
-      dependentStatus: subscriber.relationshipCode || null,
+      terminationDate: this.parseDateField(planInfo.terminationDate) || undefined,
+      planName: planInfo.planDescription || planInfo.insuranceType || '',
+      planType: planInfo.insuranceType || '',
+      memberId: subscriber.memberId || params.memberId,
+      groupNumber: subscriber.groupNumber || params.groupNumber || undefined,
+      coverageLevel: 'individual',
+      networkStatus: 'in_network',
     };
   }
 
   private parseBenefits(response: StediEligibilityResponse): NormalizedBenefits {
     const benefits = response.benefitsInformation || [];
-    const result: NormalizedBenefits = {
-      copay: null,
-      coinsurance: null,
-      deductible: null,
-      deductibleMet: null,
-      outOfPocketMax: null,
-      outOfPocketMet: null,
-      visitsAllowed: null,
-      visitsUsed: null,
-      authRequired: false,
-      priorAuthStatus: null,
-      serviceTypes: [],
-      inNetwork: true,
-    };
+    let copay = 0;
+    let coinsurance = 0;
+    let deductibleIndividual = 0;
+    let deductibleFamily = 0;
+    let deductibleIndividualMet = 0;
+    let deductibleFamilyMet = 0;
+    let oopIndividual = 0;
+    let oopFamily = 0;
+    let oopIndividualMet = 0;
+    let oopFamilyMet = 0;
+    let visitsAllowed: number | undefined;
+    let visitsUsed: number | undefined;
+    let priorAuthRequired = false;
+    let referralRequired = false;
 
     for (const benefit of benefits) {
       const code = benefit.code;
       const amount = parseFloat(benefit.benefitAmount || '0');
       const percent = parseFloat(benefit.benefitPercent || '0');
-      const inPlan = benefit.inPlanNetworkIndicator === 'Y' ||
-                     benefit.inPlanNetworkIndicatorCode === 'Y';
-      const serviceTypes = benefit.serviceTypeCodes || [];
 
       // Only process in-network benefits by default
       if (benefit.inPlanNetworkIndicator === 'N') continue;
 
       switch (code) {
         case 'B': // Co-Payment
-          if (amount > 0) result.copay = amount;
+          if (amount > 0) copay = amount;
           break;
         case 'A': // Co-Insurance
-          if (percent > 0) result.coinsurance = percent;
+          if (percent > 0) coinsurance = percent;
           break;
         case 'C': // Deductible
-          if (amount > 0) result.deductible = amount;
-          break;
-        case 'CB': // Deductible (amount remaining)
-          // Inverse: deductibleMet = deductible - remaining
+          if (amount > 0) deductibleIndividual = amount;
           break;
         case 'G': // Out of Pocket Maximum
-          if (amount > 0) result.outOfPocketMax = amount;
+          if (amount > 0) oopIndividual = amount;
           break;
         case 'F': // Limitations
           if (benefit.quantityQualifier === 'VS') {
-            result.visitsAllowed = parseInt(benefit.quantity || '0');
+            visitsAllowed = parseInt(benefit.quantity || '0');
           }
           break;
         case 'CB': // Authorization Required
-          result.authRequired = true;
+          priorAuthRequired = true;
           break;
-      }
-
-      if (serviceTypes.length > 0) {
-        result.serviceTypes.push(...serviceTypes);
       }
     }
 
-    // Deduplicate service types
-    result.serviceTypes = Array.from(new Set(result.serviceTypes));
-
-    return result;
+    return {
+      deductible: {
+        individual: deductibleIndividual,
+        family: deductibleFamily,
+        individualMet: deductibleIndividualMet,
+        familyMet: deductibleFamilyMet,
+      },
+      outOfPocketMax: {
+        individual: oopIndividual,
+        family: oopFamily,
+        individualMet: oopIndividualMet,
+        familyMet: oopFamilyMet,
+      },
+      copay,
+      coinsurance,
+      visitsAllowed,
+      visitsUsed,
+      priorAuthRequired,
+      referralRequired,
+    };
   }
 
   private resolveTradingPartnerId(payerName: string): string | null {

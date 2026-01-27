@@ -146,11 +146,12 @@ export default function DataUpload() {
       });
       setUploadProgress(100);
       
-      setUploadResult(response);
-      
+      const responseData = await response.json();
+      setUploadResult(responseData);
+
       toast({
         title: "Upload Successful",
-        description: `Imported ${response.importedRecords} reimbursement records`,
+        description: `Imported ${responseData.importedRecords} reimbursement records`,
       });
       
     } catch (error: any) {

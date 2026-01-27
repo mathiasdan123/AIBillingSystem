@@ -333,7 +333,7 @@ export class PayerIntegrationService {
   > {
     const results = new Map();
 
-    for (const [payerCode, adapter] of adapterRegistry) {
+    for (const [payerCode, adapter] of Array.from(adapterRegistry)) {
       try {
         const health = await adapter.healthCheck();
         results.set(payerCode, health);

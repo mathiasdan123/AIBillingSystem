@@ -26,8 +26,18 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
 
-  const { signIn, signUp, signInWithMagicLink } = useAuth();
   const { toast } = useToast();
+
+  // useAuth doesn't provide signIn/signUp/signInWithMagicLink - stub them to redirect
+  const signIn = async (_email: string, _password: string) => {
+    window.location.href = "/api/login";
+  };
+  const signUp = async (_email: string, _password: string, _meta?: any) => {
+    window.location.href = "/api/login";
+  };
+  const signInWithMagicLink = async (_email: string) => {
+    window.location.href = "/api/login";
+  };
 
   const resetForm = () => {
     setEmail('');

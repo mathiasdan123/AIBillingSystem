@@ -200,8 +200,8 @@ export class PayerCredentialManager {
    * Record credential error
    */
   async recordError(credentialId: number, error: string): Promise<void> {
-    const credential = await storage.getPayerCredentials(0).then((creds) =>
-      creds.find((c) => c.id === credentialId)
+    const credential = await storage.getAllPayerCredentialsList().then((creds: any[]) =>
+      creds.find((c: any) => c.id === credentialId)
     );
 
     const errorCount = (credential?.errorCount || 0) + 1;

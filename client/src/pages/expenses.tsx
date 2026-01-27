@@ -38,7 +38,7 @@ export default function Expenses() {
     queryKey: ['/api/expenses', practiceId],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
-  });
+  }) as any;
 
   if (isLoading || expensesLoading) {
     return (

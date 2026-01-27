@@ -164,8 +164,8 @@ export function startScheduler() {
 
           // Compare with cached data for coverage change detection
           const previousCache = await storage.getCachedInsuranceData(patient.id);
-          const previousStatus = (previousCache?.eligibilityData as any)?.status;
-          const newStatus = result.eligibility.status;
+          const previousStatus = (previousCache?.rawResponse as any)?.status;
+          const newStatus = result.eligibility.isEligible ? 'active' : 'inactive';
 
           if (previousStatus && previousStatus !== newStatus) {
             logger.warn('Coverage change detected', {
@@ -177,15 +177,16 @@ export function startScheduler() {
           }
 
           // Cache the new result
+          const auth = await storage.getPatientInsuranceAuth(patient.id);
           await storage.cacheInsuranceData({
             patientId: patient.id,
             practiceId,
-            payerName: patient.insuranceProvider || null,
-            eligibilityData: result.eligibility as any,
-            benefitsData: result.benefits as any,
+            authorizationId: auth?.id || 0,
+            dataType: 'eligibility',
+            normalizedData: result.eligibility as any,
             rawResponse: result.raw,
-            status: 'valid',
-            verifiedAt: new Date(),
+            status: 'success',
+            fetchedAt: new Date(),
             expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           });
 

@@ -193,7 +193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/users/:id/role', isAuthenticated, isAdmin, async (req, res) => {
+  app.patch('/api/users/:id/role', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { role } = req.body;
@@ -2097,7 +2097,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Admin payer management endpoints
   app.get('/api/admin/payer-integrations', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
-      const creds = await storage.getAllPayerCredentials();
+      const creds = await storage.getAllPayerCredentialsList();
       res.json(creds);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch payer integrations' });
@@ -2106,8 +2106,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/admin/payer-credentials', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
-      const { payerName, apiKey } = req.body;
-      await storage.upsertPayerCredentials(payerName, { apiKey });
+      const { payerName, apiKey, practiceId = 1 } = req.body;
+      await storage.upsertPayerCredentials(practiceId, { payerName, apiKey });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: 'Failed to save credentials' });
@@ -2118,11 +2118,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { name } = req.params;
       if (name === 'stedi') {
-        const creds = await storage.getPayerCredentials('stedi');
+        const creds = await storage.getPayerCredentials(1, 'stedi');
         if (!creds) return res.status(404).json({ message: 'No Stedi credentials found' });
         const adapter = new StediAdapter((creds.credentials as any).apiKey);
         const result = await adapter.healthCheck();
-        await storage.updatePayerHealthStatus(name, result.healthy ? 'healthy' : 'down');
+        await storage.updatePayerHealthStatus(creds.id, result.healthy ? 'healthy' : 'down');
         res.json(result);
       } else {
         res.status(404).json({ message: 'Unknown payer' });
@@ -2139,20 +2139,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patient = await storage.getPatient(patientId);
       if (!patient) return res.status(404).json({ message: 'Patient not found' });
 
-      const creds = await storage.getPayerCredentials('stedi');
+      const creds = await storage.getPayerCredentials(patient.practiceId, 'stedi');
       if (!creds) return res.status(400).json({ message: 'Stedi not configured' });
 
       const adapter = new StediAdapter((creds.credentials as any).apiKey);
+      const practice = await storage.getPractice(patient.practiceId);
       const result = await adapter.checkEligibility({
+        providerNpi: practice?.npi || '',
+        providerName: practice?.name || '',
+        memberFirstName: patient.firstName,
+        memberLastName: patient.lastName,
+        memberDob: patient.dateOfBirth || '',
         memberId: patient.insuranceId || '',
-        firstName: patient.firstName,
-        lastName: patient.lastName,
-        dateOfBirth: patient.dateOfBirth || '',
         payerName: patient.insuranceProvider || '',
-        serviceType: 'occupational_therapy',
       });
 
-      await storage.cacheInsuranceData(patientId, result.eligibility, result.benefits);
+      const auth = await storage.getPatientInsuranceAuth(patientId);
+      await storage.cacheInsuranceData({
+        patientId,
+        practiceId: patient.practiceId,
+        authorizationId: auth?.id || 0,
+        dataType: 'eligibility',
+        normalizedData: result.eligibility as any,
+        rawResponse: result.raw || null,
+        status: 'success',
+        fetchedAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
       res.json({ eligibility: result.eligibility, benefits: result.benefits, verifiedAt: new Date().toISOString() });
     } catch (error) {
       logger.error('Insurance data refresh failed', { error });
