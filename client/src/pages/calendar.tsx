@@ -187,21 +187,21 @@ export default function CalendarPage() {
   const formatDateFull = (date: Date) => date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
   const getAppointmentsForDate = (date: Date) => {
-    const dateStr = date.toISOString().split("T")[0];
+    const y = date.getFullYear(), m = date.getMonth(), d = date.getDate();
     return appointments.filter(apt => {
-      const aptDate = new Date(apt.startTime).toISOString().split("T")[0];
-      return aptDate === dateStr;
+      const s = new Date(apt.startTime);
+      return s.getUTCFullYear() === y && s.getUTCMonth() === m && s.getUTCDate() === d;
     });
   };
 
   const getAppointmentStyle = (apt: Appointment) => {
     const start = new Date(apt.startTime);
     const end = new Date(apt.endTime);
-    const sh = start.getHours();
-    const sm = start.getMinutes();
-    const eh = end.getHours();
-    const em = end.getMinutes();
-    const top = ((sh - 8) * 60 + sm) * (64 / 60) - 2;
+    const sh = start.getUTCHours();
+    const sm = start.getUTCMinutes();
+    const eh = end.getUTCHours();
+    const em = end.getUTCMinutes();
+    const top = Math.max(0, ((sh - 8) * 60 + sm) * (64 / 60));
     const height = ((eh - sh) * 60 + (em - sm)) * (64 / 60);
     return { top: top + "px", height: Math.max(height, 24) + "px" };
   };
@@ -220,8 +220,8 @@ export default function CalendarPage() {
 
   const formatTime = (dt: string | Date) => {
     const d = new Date(dt);
-    const h = d.getHours();
-    const m = d.getMinutes();
+    const h = d.getUTCHours();
+    const m = d.getUTCMinutes();
     const ampm = h >= 12 ? "PM" : "AM";
     const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
     return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
@@ -310,7 +310,7 @@ export default function CalendarPage() {
         </div>
 
         {/* Weekly cancellation summary */}
-        <Card className="mb-4">
+        <Card className="mb-4 relative z-10">
           <CardContent className="py-3">
             <div className="flex items-center gap-6 text-sm">
               <div className="flex items-center gap-2">
@@ -328,7 +328,7 @@ export default function CalendarPage() {
         </Card>
 
         {/* Navigation */}
-        <Card className="mb-6">
+        <Card className="mb-6 relative z-10">
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
