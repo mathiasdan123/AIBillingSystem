@@ -21,6 +21,7 @@ import Calendar from "@/pages/calendar";
 import Accounting from "@/pages/accounting";
 import InvitePage from "@/pages/invite";
 import PayerManagement from "@/pages/payer-management";
+import BreachIncidents from "@/pages/breach-incidents";
 import MfaChallenge from "@/pages/mfa-challenge";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -66,6 +67,7 @@ function Router() {
         <Route path="/settings" component={Settings} />
         <Route path="/data-upload" component={DataUpload} />
         <Route path="/payer-management" component={PayerManagement} />
+        {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
         <Route path="/invite/:token" component={InvitePage} />
         <Route path="/mfa-challenge" component={MfaChallenge} />
         <Route component={NotFound} />

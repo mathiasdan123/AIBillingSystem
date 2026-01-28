@@ -17,7 +17,8 @@ import {
   ClipboardList,
   Calendar,
   DollarSign,
-  Shield
+  Shield,
+  ShieldAlert
 } from "lucide-react";
 import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
@@ -32,6 +33,7 @@ const navigation = [
   { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
   { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
   { name: 'Payer Management', href: '/payer-management', icon: Shield, adminOnly: true },
+  { name: 'Breach Incidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
   { name: 'Settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
 
