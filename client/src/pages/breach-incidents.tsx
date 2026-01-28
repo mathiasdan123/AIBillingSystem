@@ -63,9 +63,11 @@ export default function BreachIncidentsPage() {
     remediationSteps: "",
   });
 
-  const { data: incidents = [] } = useQuery<BreachIncident[]>({
+  const { data: rawIncidents } = useQuery<BreachIncident[]>({
     queryKey: ["/api/admin/breach-incidents?practiceId=1"],
   });
+
+  const incidents = rawIncidents ?? [];
 
   const createMutation = useMutation({
     mutationFn: (data: typeof form) => apiRequest("POST", "/api/admin/breach-incidents", data),
