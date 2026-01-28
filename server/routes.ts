@@ -6,7 +6,7 @@ import AIReimbursementPredictor from "./aiReimbursementPredictor";
 import { AiClaimOptimizer } from "./aiClaimOptimizer";
 import { appealGenerator } from "./aiAppealGenerator";
 import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedClaimsReportInput } from "./email";
-import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport } from "./scheduler";
+import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport, triggerHardDeletionNow } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
@@ -2312,6 +2312,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error triggering weekly cancellation report:', error);
       res.status(500).json({ message: 'Failed to trigger weekly cancellation report' });
+    }
+  });
+
+  // ==================== HARD DELETION OF EXPIRED PATIENTS ====================
+
+  app.post('/api/admin/hard-delete-expired', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      logger.info('Manual hard deletion triggered', { userId: req.user?.claims?.sub });
+      const result = await triggerHardDeletionNow();
+
+      await storage.createAuditLog({
+        userId: req.user?.claims?.sub || 'unknown',
+        eventType: 'delete',
+        eventCategory: 'data_retention',
+        resourceType: 'system',
+        resourceId: 'hard-deletion',
+        details: { deletedCount: result.deletedCount, errors: result.errors },
+        ipAddress: req.ip || '0.0.0.0',
+      });
+
+      res.json({
+        message: `Hard deletion completed. ${result.deletedCount} patient(s) permanently removed.`,
+        deletedCount: result.deletedCount,
+        errors: result.errors,
+      });
+    } catch (error: any) {
+      logger.error('Manual hard deletion failed', { error: error.message });
+      res.status(500).json({ message: 'Hard deletion failed', error: error.message });
     }
   });
 

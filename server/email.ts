@@ -649,6 +649,167 @@ export async function sendWeeklyCancellationReport(
   }
 }
 
+// BAA Expiration Alert Email
+export interface BaaExpirationAlertData {
+  practiceName: string;
+  records: {
+    vendorName: string;
+    baaType: string;
+    expirationDate: string;
+    daysRemaining: number;
+  }[];
+}
+
+export async function sendBaaExpirationAlert(
+  to: string | string[],
+  data: BaaExpirationAlertData
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping BAA expiration alert');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  const recipients = Array.isArray(to) ? to : [to];
+
+  const rowsHtml = data.records.map(r => `
+    <tr>
+      <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">${r.vendorName}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">${r.baaType}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">${r.expirationDate}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: ${r.daysRemaining <= 7 ? '#dc2626' : r.daysRemaining <= 14 ? '#f59e0b' : '#64748b'};">
+        ${r.daysRemaining} days
+      </td>
+    </tr>
+  `).join('');
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>BAA Expiration Alert</title></head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f8fafc;">
+  <div style="max-width: 700px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+      <h1 style="margin: 0 0 10px 0; font-size: 24px;">BAA Expiration Alert</h1>
+      <p style="margin: 0; opacity: 0.9;">${data.practiceName}</p>
+    </div>
+    <div style="background: white; padding: 30px; border: 1px solid #e2e8f0; border-top: none;">
+      <p style="color: #1e293b;">The following Business Associate Agreements are expiring within 30 days and require immediate attention:</p>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <thead>
+          <tr style="background: #f8fafc;">
+            <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0;">Vendor</th>
+            <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0;">Type</th>
+            <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0;">Expiration Date</th>
+            <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0;">Days Remaining</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+    <div style="background: #f1f5f9; padding: 20px; border-radius: 0 0 12px 12px; text-align: center; border: 1px solid #e2e8f0; border-top: none;">
+      <p style="margin: 0; color: #64748b; font-size: 13px;">Please renew these agreements promptly to maintain HIPAA compliance.<br>This is an automated alert from TherapyBill AI.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const text = `BAA EXPIRATION ALERT - ${data.practiceName}\n\nThe following BAAs are expiring within 30 days:\n\n` +
+    data.records.map(r => `- ${r.vendorName} (${r.baaType}): Expires ${r.expirationDate} (${r.daysRemaining} days remaining)`).join('\n') +
+    '\n\nPlease renew these agreements promptly to maintain HIPAA compliance.';
+
+  try {
+    const transport = getTransporter();
+    const info = await transport.sendMail({
+      from: `"TherapyBill AI" <${fromAddress}>`,
+      to: recipients.join(', '),
+      subject: `BAA Expiration Alert - ${data.records.length} agreement(s) expiring soon`,
+      text,
+      html,
+    });
+    console.log('BAA expiration alert sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('Failed to send BAA expiration alert:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+// Coverage Change Alert Email
+export interface CoverageChangeAlertData {
+  practiceName: string;
+  patientName: string;
+  previousStatus: string;
+  newStatus: string;
+  recommendedAction: string;
+}
+
+export async function sendCoverageChangeAlert(
+  to: string | string[],
+  data: CoverageChangeAlertData
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping coverage change alert');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  const recipients = Array.isArray(to) ? to : [to];
+
+  const statusColor = (s: string) => s === 'active' ? '#22c55e' : s === 'inactive' ? '#dc2626' : '#f59e0b';
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Coverage Change Alert</title></head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f8fafc;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+      <h1 style="margin: 0 0 10px 0; font-size: 24px;">Coverage Change Detected</h1>
+      <p style="margin: 0; opacity: 0.9;">${data.practiceName}</p>
+    </div>
+    <div style="background: white; padding: 30px; border: 1px solid #e2e8f0; border-top: none;">
+      <h2 style="margin: 0 0 20px 0; font-size: 18px; color: #1e293b;">Patient: ${data.patientName}</h2>
+      <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
+        <div style="flex: 1; text-align: center; padding: 15px; background: #fef2f2; border-radius: 8px;">
+          <div style="font-size: 12px; color: #64748b; margin-bottom: 5px;">Previous Status</div>
+          <div style="font-size: 18px; font-weight: 700; color: ${statusColor(data.previousStatus)};">${data.previousStatus.toUpperCase()}</div>
+        </div>
+        <div style="font-size: 24px; color: #94a3b8;">&#8594;</div>
+        <div style="flex: 1; text-align: center; padding: 15px; background: #fef2f2; border-radius: 8px;">
+          <div style="font-size: 12px; color: #64748b; margin-bottom: 5px;">New Status</div>
+          <div style="font-size: 18px; font-weight: 700; color: ${statusColor(data.newStatus)};">${data.newStatus.toUpperCase()}</div>
+        </div>
+      </div>
+      <div style="background: #fffbeb; border: 1px solid #fef08a; border-radius: 8px; padding: 15px;">
+        <strong style="color: #92400e;">Recommended Action:</strong>
+        <p style="margin: 5px 0 0 0; color: #78350f;">${data.recommendedAction}</p>
+      </div>
+    </div>
+    <div style="background: #f1f5f9; padding: 20px; border-radius: 0 0 12px 12px; text-align: center; border: 1px solid #e2e8f0; border-top: none;">
+      <p style="margin: 0; color: #64748b; font-size: 13px;">This is an automated alert from TherapyBill AI.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const text = `COVERAGE CHANGE ALERT - ${data.practiceName}\n\nPatient: ${data.patientName}\nPrevious Status: ${data.previousStatus}\nNew Status: ${data.newStatus}\n\nRecommended Action: ${data.recommendedAction}`;
+
+  try {
+    const transport = getTransporter();
+    const info = await transport.sendMail({
+      from: `"TherapyBill AI" <${fromAddress}>`,
+      to: recipients.join(', '),
+      subject: `Coverage Change Alert - ${data.patientName}`,
+      text,
+      html,
+    });
+    console.log('Coverage change alert sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('Failed to send coverage change alert:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
 // Send authorization SMS (placeholder - would integrate with SMS service like Twilio)
 export async function sendAuthorizationSMS(
   practice: any,

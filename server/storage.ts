@@ -1358,6 +1358,72 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // Get admin users for a practice (for email alerts)
+  async getAdminsByPractice(practiceId: number): Promise<{ id: string; email: string }[]> {
+    const admins = await db
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(and(eq(users.role, 'admin'), eq(users.practiceId, practiceId)));
+    return admins.filter((a: any): a is { id: string; email: string } => !!a.email);
+  }
+
+  // Hard delete a patient and all related records
+  async hardDeletePatient(id: number): Promise<void> {
+    // Delete related records first (order matters for FK constraints)
+    // 1. SOAP notes via sessions
+    const patientSessions = await db
+      .select({ id: treatmentSessions.id })
+      .from(treatmentSessions)
+      .where(eq(treatmentSessions.patientId, id));
+    for (const session of patientSessions) {
+      await db.delete(soapNotes).where(eq(soapNotes.sessionId, session.id));
+    }
+
+    // 2. Claim line items via claims
+    const patientClaims = await db
+      .select({ id: claims.id })
+      .from(claims)
+      .where(eq(claims.patientId, id));
+    for (const claim of patientClaims) {
+      await db.delete(claimLineItems).where(eq(claimLineItems.claimId, claim.id));
+    }
+
+    // 3. Claims
+    await db.delete(claims).where(eq(claims.patientId, id));
+
+    // 4. Treatment sessions
+    await db.delete(treatmentSessions).where(eq(treatmentSessions.patientId, id));
+
+    // 5. Appointments
+    await db.delete(appointments).where(eq(appointments.patientId, id));
+
+    // 6. Eligibility checks
+    await db.delete(eligibilityChecks).where(eq(eligibilityChecks.patientId, id));
+
+    // 7. Insurance authorizations
+    await db.delete(patientInsuranceAuthorizations).where(eq(patientInsuranceAuthorizations.patientId, id));
+
+    // 8. Insurance data cache
+    await db.delete(insuranceDataCache).where(eq(insuranceDataCache.patientId, id));
+
+    // 9. Finally, the patient record itself
+    await db.delete(patients).where(eq(patients.id, id));
+  }
+
+  // Get soft-deleted patients whose retention period has expired
+  async getExpiredSoftDeletedPatients(retentionDays: number): Promise<Patient[]> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+    const rows = await db
+      .select()
+      .from(patients)
+      .where(and(
+        sql`${patients.deletedAt} IS NOT NULL`,
+        lt(patients.deletedAt, cutoffDate)
+      ));
+    return rows as Patient[];
+  }
+
   async getAllPayerCredentialsList(practiceId?: number): Promise<any[]> {
     if (practiceId) {
       return this.getAllPayerCredentials(practiceId);

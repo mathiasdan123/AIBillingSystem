@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { storage } from './storage';
-import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput } from './email';
+import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput, sendBaaExpirationAlert, sendCoverageChangeAlert } from './email';
 import logger from './services/logger';
 
 // Store scheduled tasks for management
@@ -193,7 +193,38 @@ export function startScheduler() {
           count: expiringRecords.length,
           vendors: expiringRecords.map(r => r.vendorName),
         });
-        // TODO: Send email notification to admin about expiring BAAs
+
+        // Group expiring records by practiceId and send alerts
+        const byPractice: Record<number, typeof expiringRecords> = {};
+        for (const record of expiringRecords) {
+          const pid = record.practiceId;
+          if (!byPractice[pid]) byPractice[pid] = [];
+          byPractice[pid].push(record);
+        }
+
+        for (const [practiceIdStr, records] of Object.entries(byPractice)) {
+          const practiceId = Number(practiceIdStr);
+          const admins = await storage.getAdminsByPractice(practiceId);
+          if (admins.length === 0) continue;
+
+          const practice = await storage.getPractice(practiceId);
+          const emails = admins.map(a => a.email);
+          const now = new Date();
+
+          await sendBaaExpirationAlert(emails, {
+            practiceName: practice?.name || 'Your Practice',
+            records: records.map(r => ({
+              vendorName: r.vendorName,
+              baaType: r.vendorType || 'Standard',
+              expirationDate: r.expirationDate || 'Unknown',
+              daysRemaining: r.expirationDate
+                ? Math.max(0, Math.ceil((new Date(r.expirationDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+                : 0,
+            })),
+          });
+
+          logger.info('BAA expiration alert sent', { practiceId, adminCount: admins.length, recordCount: records.length });
+        }
       }
     } catch (error: any) {
       logger.error('BAA expiration check failed', { error: error.message });
@@ -248,7 +279,29 @@ export function startScheduler() {
               previousStatus,
               newStatus,
             });
-            // TODO: Send alert to therapist about coverage change
+
+            // Send coverage change alert to practice admins
+            const admins = await storage.getAdminsByPractice(patient.practiceId);
+            if (admins.length > 0) {
+              const practiceName = practice?.name || 'Your Practice';
+              const patientName = `${patient.firstName} ${patient.lastName}`;
+              let recommendedAction = 'Review the patient\'s insurance information and update records accordingly.';
+              if (newStatus === 'inactive') {
+                recommendedAction = 'Coverage has been terminated. Contact the patient to obtain updated insurance information before the next session. Consider pausing scheduled appointments until coverage is confirmed.';
+              } else if (newStatus === 'active' && previousStatus === 'inactive') {
+                recommendedAction = 'Coverage has been reinstated. Verify benefits and any changes to copay, deductible, or authorized visits before the next session.';
+              }
+
+              await sendCoverageChangeAlert(admins.map(a => a.email), {
+                practiceName,
+                patientName,
+                previousStatus,
+                newStatus,
+                recommendedAction,
+              });
+
+              logger.info('Coverage change alert sent', { patientId: patient.id, practiceId: patient.practiceId });
+            }
           }
 
           // Cache the new result
@@ -289,8 +342,43 @@ export function startScheduler() {
   });
   scheduledTasks.set('weeklyCancellationReport', weeklyCancellationTask);
 
+  // Hard deletion of expired soft-deleted patients - daily at 3:00 AM
+  const hardDeletionTask = cron.schedule('0 3 * * *', async () => {
+    try {
+      logger.info('Starting hard deletion of expired soft-deleted patients');
+      const retentionDays = 365;
+      const expiredPatients = await storage.getExpiredSoftDeletedPatients(retentionDays);
+      logger.info('Found expired soft-deleted patients', { count: expiredPatients.length });
+
+      for (const patient of expiredPatients) {
+        try {
+          await storage.hardDeletePatient(patient.id);
+          await storage.createAuditLog({
+            userId: 'system',
+            eventType: 'delete',
+            eventCategory: 'data_retention',
+            resourceType: 'patient',
+            resourceId: patient.id.toString(),
+            details: { reason: `Retention period of ${retentionDays} days exceeded`, deletedAt: patient.deletedAt },
+            ipAddress: '0.0.0.0',
+          });
+          logger.info('Hard deleted patient', { patientId: patient.id });
+        } catch (err: any) {
+          logger.error('Failed to hard delete patient', { patientId: patient.id, error: err.message });
+        }
+      }
+
+      logger.info('Hard deletion job completed', { deletedCount: expiredPatients.length });
+    } catch (error: any) {
+      logger.error('Hard deletion job failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('hardDeletion', hardDeletionTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport'],
+    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion'],
   });
 }
 
@@ -306,6 +394,32 @@ export function stopScheduler() {
 export async function triggerDailyReportNow(practiceId: number = 1) {
   console.log('Manually triggering daily denied claims report');
   await generateAndSendDailyDeniedClaimsReport(practiceId);
+}
+
+// Manual trigger for hard deletion of expired patients
+export async function triggerHardDeletionNow(): Promise<{ deletedCount: number; errors: string[] }> {
+  const retentionDays = 365;
+  const errors: string[] = [];
+  const expiredPatients = await storage.getExpiredSoftDeletedPatients(retentionDays);
+
+  for (const patient of expiredPatients) {
+    try {
+      await storage.hardDeletePatient(patient.id);
+      await storage.createAuditLog({
+        userId: 'system-manual',
+        eventType: 'delete',
+        eventCategory: 'data_retention',
+        resourceType: 'patient',
+        resourceId: patient.id.toString(),
+        details: { reason: `Manual trigger - retention period of ${retentionDays} days exceeded`, deletedAt: patient.deletedAt },
+        ipAddress: '0.0.0.0',
+      });
+    } catch (err: any) {
+      errors.push(`Patient ${patient.id}: ${err.message}`);
+    }
+  }
+
+  return { deletedCount: expiredPatients.length - errors.length, errors };
 }
 
 // Export for route handlers
