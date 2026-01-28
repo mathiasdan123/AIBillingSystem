@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
 import { logAuditEvent } from '../middleware/auditMiddleware';
-import { isAuthenticated } from '../supabaseAuth';
+import { isAuthenticated } from '../replitAuth';
 import { sendBreachNotificationAlert } from '../email';
 
 async function isAdmin(req: Request, res: Response, next: NextFunction) {
