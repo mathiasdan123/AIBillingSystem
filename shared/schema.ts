@@ -958,7 +958,7 @@ export type InsertReimbursementOptimization = z.infer<typeof insertReimbursement
 // HIPAA Audit Log
 export const auditLog = pgTable("audit_log", {
   id: serial("id").primaryKey(),
-  eventCategory: varchar("event_category").notNull(), // auth, phi_access, admin, data_export
+  eventCategory: varchar("event_category").notNull(), // auth, phi_access, admin, data_export, breach
   eventType: varchar("event_type").notNull(), // read, write, delete, login, logout
   resourceType: varchar("resource_type"), // patient, claim, soap_note, etc.
   resourceId: varchar("resource_id"),
@@ -968,7 +968,49 @@ export const auditLog = pgTable("audit_log", {
   userAgent: text("user_agent"),
   details: jsonb("details"),
   success: boolean("success").default(true),
+  integrityHash: varchar("integrity_hash"),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Breach Incidents (45 CFR §§ 164.400-414)
+export const breachIncidents = pgTable("breach_incidents", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  discoveredAt: timestamp("discovered_at").notNull(),
+  description: text("description").notNull(),
+  affectedIndividualsCount: integer("affected_individuals_count").default(0),
+  breachType: varchar("breach_type").notNull(), // unauthorized_access, theft, loss, improper_disposal, hacking, other
+  phiInvolved: text("phi_involved"),
+  riskAssessment: varchar("risk_assessment").default("low"), // low, medium, high
+  notificationStatus: varchar("notification_status").default("pending"), // pending, individuals_notified, hhs_notified, complete
+  notifiedIndividualsAt: timestamp("notified_individuals_at"),
+  notifiedHhsAt: timestamp("notified_hhs_at"),
+  notifiedMediaAt: timestamp("notified_media_at"),
+  remediationSteps: text("remediation_steps"),
+  status: varchar("status").default("open"), // open, under_review, closed
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Amendment Requests (Right to Amendment)
+export const amendmentRequests = pgTable("amendment_requests", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  requestedBy: varchar("requested_by").references(() => users.id),
+  requestDate: timestamp("request_date").defaultNow().notNull(),
+  fieldToAmend: varchar("field_to_amend").notNull(),
+  currentValue: text("current_value"),
+  requestedValue: text("requested_value").notNull(),
+  reason: text("reason"),
+  status: varchar("status").default("pending"), // pending, approved, denied, extended
+  reviewedBy: varchar("reviewed_by").references(() => users.id),
+  reviewDate: timestamp("review_date"),
+  denialReason: text("denial_reason"),
+  responseDeadline: timestamp("response_deadline").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const insertAuditLogSchema = createInsertSchema(auditLog).omit({ id: true, createdAt: true });
@@ -991,4 +1033,14 @@ export const baaRecords = pgTable("baa_records", {
 export const insertBaaRecordSchema = createInsertSchema(baaRecords).omit({ id: true, createdAt: true, updatedAt: true });
 export type BaaRecord = typeof baaRecords.$inferSelect;
 export type InsertBaaRecord = z.infer<typeof insertBaaRecordSchema>;
+
+// Breach Incident insert schema + types
+export const insertBreachIncidentSchema = createInsertSchema(breachIncidents).omit({ id: true, createdAt: true, updatedAt: true });
+export type BreachIncident = typeof breachIncidents.$inferSelect;
+export type InsertBreachIncident = z.infer<typeof insertBreachIncidentSchema>;
+
+// Amendment Request insert schema + types
+export const insertAmendmentRequestSchema = createInsertSchema(amendmentRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export type AmendmentRequest = typeof amendmentRequests.$inferSelect;
+export type InsertAmendmentRequest = z.infer<typeof insertAmendmentRequestSchema>;
 

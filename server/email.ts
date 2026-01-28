@@ -810,6 +810,145 @@ export async function sendCoverageChangeAlert(
   }
 }
 
+// ==================== HIPAA COMPLIANCE EMAIL TEMPLATES ====================
+
+// Breach Notification Alert
+export async function sendBreachNotificationAlert(
+  to: string | string[],
+  data: {
+    practiceName: string;
+    breachDescription: string;
+    discoveredAt: Date;
+    phiInvolved: string;
+    remediationSteps: string;
+    affectedCount: number;
+    breachType: string;
+  }
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping breach notification alert');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  const recipients = Array.isArray(to) ? to : [to];
+  const formatDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  try {
+    const transport = getTransporter();
+    const info = await transport.sendMail({
+      from: `"TherapyBill AI - URGENT" <${fromAddress}>`,
+      to: recipients.join(', '),
+      subject: `[URGENT] HIPAA Breach Notification - ${data.practiceName}`,
+      html: `
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f8fafc;">
+  <div style="max-width:650px;margin:0 auto;padding:20px;">
+    <div style="background:linear-gradient(135deg,#dc2626 0%,#991b1b 100%);color:white;padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+      <h1 style="margin:0 0 10px 0;font-size:24px;">HIPAA Breach Incident Report</h1>
+      <p style="margin:0;opacity:0.9;">${data.practiceName}</p>
+    </div>
+    <div style="background:white;padding:30px;border:1px solid #e2e8f0;">
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <h3 style="margin:0 0 10px;color:#991b1b;">Breach Details</h3>
+        <p><strong>Discovery Date:</strong> ${formatDate(data.discoveredAt)}</p>
+        <p><strong>Type:</strong> ${data.breachType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</p>
+        <p><strong>Affected Individuals:</strong> ${data.affectedCount}</p>
+      </div>
+      <h3 style="color:#1e293b;">Description</h3>
+      <p style="color:#475569;">${data.breachDescription}</p>
+      <h3 style="color:#1e293b;">PHI Involved</h3>
+      <p style="color:#475569;">${data.phiInvolved}</p>
+      <h3 style="color:#1e293b;">Remediation Steps</h3>
+      <p style="color:#475569;">${data.remediationSteps}</p>
+      <div style="background:#fefce8;border:1px solid #fef08a;border-radius:8px;padding:15px;margin-top:20px;">
+        <strong style="color:#854d0e;">Reminder:</strong> HIPAA requires notification to affected individuals within 60 days of discovery. If 500+ individuals are affected, HHS and media must also be notified.
+      </div>
+    </div>
+    <div style="background:#f1f5f9;padding:20px;border-radius:0 0 12px 12px;text-align:center;border:1px solid #e2e8f0;border-top:none;">
+      <p style="margin:0;color:#64748b;font-size:13px;">Automated breach alert from TherapyBill AI</p>
+    </div>
+  </div>
+</body></html>`,
+    });
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('Failed to send breach notification alert:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+// Amendment Request Notification
+export async function sendAmendmentRequestNotification(
+  to: string | string[],
+  data: { patientName: string; fieldToAmend: string; requestDate: Date; deadline: Date; practiceName: string }
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) return { success: false, error: 'Email not configured' };
+
+  const recipients = Array.isArray(to) ? to : [to];
+  const formatDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  try {
+    const transport = getTransporter();
+    await transport.sendMail({
+      from: `"TherapyBill AI" <${fromAddress}>`,
+      to: recipients.join(', '),
+      subject: `New Amendment Request - ${data.patientName}`,
+      html: `
+<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <h2 style="color:#2563eb;">New Patient Amendment Request</h2>
+  <p>A patient has submitted an amendment request for their medical records.</p>
+  <div style="background:#f0f9ff;padding:15px;border-radius:8px;margin:20px 0;">
+    <p><strong>Patient:</strong> ${data.patientName}</p>
+    <p><strong>Field:</strong> ${data.fieldToAmend}</p>
+    <p><strong>Request Date:</strong> ${formatDate(data.requestDate)}</p>
+    <p><strong>Response Deadline:</strong> ${formatDate(data.deadline)}</p>
+  </div>
+  <p>Please review and respond to this request within the HIPAA-required timeframe (60 days).</p>
+  <p style="color:#64748b;font-size:12px;margin-top:30px;">This email was sent by TherapyBill AI for ${data.practiceName}</p>
+</div>`,
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+// Amendment Deadline Alert
+export async function sendAmendmentDeadlineAlert(
+  to: string | string[],
+  data: { patientName: string; fieldToAmend: string; deadline: Date; daysRemaining: number; practiceName: string }
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) return { success: false, error: 'Email not configured' };
+
+  const recipients = Array.isArray(to) ? to : [to];
+  const formatDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  try {
+    const transport = getTransporter();
+    await transport.sendMail({
+      from: `"TherapyBill AI - URGENT" <${fromAddress}>`,
+      to: recipients.join(', '),
+      subject: `[URGENT] Amendment Request Deadline Approaching - ${data.daysRemaining} days remaining`,
+      html: `
+<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <h2 style="color:#f59e0b;">Amendment Request Deadline Approaching</h2>
+  <div style="background:#fefce8;border:1px solid #fef08a;padding:15px;border-radius:8px;margin:20px 0;">
+    <p><strong style="color:#854d0e;">Only ${data.daysRemaining} days remaining to respond!</strong></p>
+    <p><strong>Patient:</strong> ${data.patientName}</p>
+    <p><strong>Field:</strong> ${data.fieldToAmend}</p>
+    <p><strong>Deadline:</strong> ${formatDate(data.deadline)}</p>
+  </div>
+  <p>HIPAA requires a response within 60 days of the request. Please review and approve or deny this request promptly.</p>
+  <p style="color:#64748b;font-size:12px;margin-top:30px;">This email was sent by TherapyBill AI for ${data.practiceName}</p>
+</div>`,
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+}
+
 // Send authorization SMS (placeholder - would integrate with SMS service like Twilio)
 export async function sendAuthorizationSMS(
   practice: any,

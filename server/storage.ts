@@ -61,9 +61,16 @@ import {
   type InsertPatientInsuranceAuthorization,
   type InsuranceDataCache,
   type InsertInsuranceDataCache,
+  breachIncidents,
+  amendmentRequests,
+  type BreachIncident,
+  type InsertBreachIncident,
+  type AmendmentRequest,
+  type InsertAmendmentRequest,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt } from "drizzle-orm";
+import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
+import { createHash } from "crypto";
 import {
   encryptPatientRecord,
   decryptPatientRecord,
@@ -1060,10 +1067,54 @@ export class DatabaseStorage implements IStorage {
 
   // ==================== HIPAA COMPLIANCE METHODS ====================
 
-  // Audit Log
+  // Audit Log (with integrity hash chain)
   async createAuditLog(entry: InsertAuditLog): Promise<AuditLog> {
-    const [created] = await db.insert(auditLog).values(entry).returning();
+    // Get the last entry's integrity hash to chain
+    const [lastEntry] = await db
+      .select({ integrityHash: auditLog.integrityHash })
+      .from(auditLog)
+      .orderBy(desc(auditLog.id))
+      .limit(1);
+
+    const previousHash = lastEntry?.integrityHash || "GENESIS";
+    const entryData = JSON.stringify(entry);
+    const hash = createHash("sha256")
+      .update(previousHash + entryData)
+      .digest("hex");
+
+    const [created] = await db
+      .insert(auditLog)
+      .values({ ...entry, integrityHash: hash })
+      .returning();
     return created;
+  }
+
+  async verifyAuditLogIntegrity(limit?: number): Promise<{ valid: boolean; checkedCount: number; brokenAtId?: number }> {
+    const entries = await db
+      .select()
+      .from(auditLog)
+      .orderBy(auditLog.id)
+      .limit(limit || 1000);
+
+    let previousHash = "GENESIS";
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!entry.integrityHash) {
+        // Skip entries created before hash chain was introduced
+        continue;
+      }
+      const { integrityHash, id, createdAt, ...entryFields } = entry;
+      const entryData = JSON.stringify(entryFields);
+      const expectedHash = createHash("sha256")
+        .update(previousHash + entryData)
+        .digest("hex");
+
+      if (integrityHash !== expectedHash) {
+        return { valid: false, checkedCount: i + 1, brokenAtId: entry.id };
+      }
+      previousHash = integrityHash;
+    }
+    return { valid: true, checkedCount: entries.length };
   }
 
   async getAuditLogsForResource(resourceType: string, resourceId: string): Promise<AuditLog[]> {
@@ -1429,6 +1480,93 @@ export class DatabaseStorage implements IStorage {
       return this.getAllPayerCredentials(practiceId);
     }
     return await db.select().from(payerCredentials);
+  }
+
+  // ==================== BREACH INCIDENT METHODS ====================
+
+  async createBreachIncident(data: InsertBreachIncident): Promise<BreachIncident> {
+    const [created] = await db.insert(breachIncidents).values(data).returning();
+    return created;
+  }
+
+  async getBreachIncident(id: number): Promise<BreachIncident | undefined> {
+    const [incident] = await db.select().from(breachIncidents).where(eq(breachIncidents.id, id));
+    return incident;
+  }
+
+  async updateBreachIncident(id: number, data: Partial<InsertBreachIncident>): Promise<BreachIncident> {
+    const [updated] = await db
+      .update(breachIncidents)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(breachIncidents.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getBreachIncidentsByPractice(practiceId: number): Promise<BreachIncident[]> {
+    return await db
+      .select()
+      .from(breachIncidents)
+      .where(eq(breachIncidents.practiceId, practiceId))
+      .orderBy(desc(breachIncidents.createdAt));
+  }
+
+  async getBreachesRequiringNotification(): Promise<BreachIncident[]> {
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    return await db
+      .select()
+      .from(breachIncidents)
+      .where(
+        and(
+          ne(breachIncidents.notificationStatus, "complete"),
+          ne(breachIncidents.status, "closed"),
+          gte(breachIncidents.discoveredAt, sixtyDaysAgo)
+        )
+      )
+      .orderBy(breachIncidents.discoveredAt);
+  }
+
+  // ==================== AMENDMENT REQUEST METHODS ====================
+
+  async createAmendmentRequest(data: InsertAmendmentRequest): Promise<AmendmentRequest> {
+    const [created] = await db.insert(amendmentRequests).values(data).returning();
+    return created;
+  }
+
+  async getAmendmentRequest(id: number): Promise<AmendmentRequest | undefined> {
+    const [request] = await db.select().from(amendmentRequests).where(eq(amendmentRequests.id, id));
+    return request;
+  }
+
+  async updateAmendmentRequest(id: number, data: Partial<InsertAmendmentRequest>): Promise<AmendmentRequest> {
+    const [updated] = await db
+      .update(amendmentRequests)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(amendmentRequests.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getAmendmentRequestsByPatient(patientId: number): Promise<AmendmentRequest[]> {
+    return await db
+      .select()
+      .from(amendmentRequests)
+      .where(eq(amendmentRequests.patientId, patientId))
+      .orderBy(desc(amendmentRequests.createdAt));
+  }
+
+  async getPendingAmendmentRequests(practiceId: number): Promise<AmendmentRequest[]> {
+    return await db
+      .select()
+      .from(amendmentRequests)
+      .where(
+        and(
+          eq(amendmentRequests.practiceId, practiceId),
+          inArray(amendmentRequests.status, ["pending", "extended"])
+        )
+      )
+      .orderBy(amendmentRequests.responseDeadline);
   }
 }
 

@@ -15,6 +15,7 @@ import { auditMiddleware } from "./middleware/auditMiddleware";
 import logger from "./services/logger";
 import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
 import { registerBaaRoutes } from "./routes/baaRoutes";
+import { registerBreachNotificationRoutes } from "./routes/breachNotificationRoutes";
 import { StediAdapter } from "./payer-integrations/adapters/payers/StediAdapter";
 
 // Initialize AI predictor (in production, this would load from database)
@@ -148,6 +149,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Register HIPAA compliance routes
   registerPatientRightsRoutes(app);
   registerBaaRoutes(app);
+  registerBreachNotificationRoutes(app);
 
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {

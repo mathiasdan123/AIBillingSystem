@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { storage } from './storage';
-import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput, sendBaaExpirationAlert, sendCoverageChangeAlert } from './email';
+import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput, sendBaaExpirationAlert, sendCoverageChangeAlert, sendBreachNotificationAlert, sendAmendmentDeadlineAlert } from './email';
 import logger from './services/logger';
 
 // Store scheduled tasks for management
@@ -377,8 +377,83 @@ export function startScheduler() {
   });
   scheduledTasks.set('hardDeletion', hardDeletionTask);
 
+  // Breach notification deadline check - daily at 8:30 AM
+  const breachDeadlineTask = cron.schedule('30 8 * * *', async () => {
+    try {
+      const breaches = await storage.getBreachesRequiringNotification();
+      for (const breach of breaches) {
+        const daysSinceDiscovery = Math.floor(
+          (Date.now() - new Date(breach.discoveredAt).getTime()) / (1000 * 60 * 60 * 24)
+        );
+        if (daysSinceDiscovery >= 50) {
+          const practice = await storage.getPractice(breach.practiceId);
+          const adminEmail = practice?.email;
+          if (adminEmail) {
+            await sendBreachNotificationAlert(adminEmail, {
+              practiceName: practice?.name || 'Practice',
+              breachDescription: `[DEADLINE ALERT - ${60 - daysSinceDiscovery} days remaining] ${breach.description}`,
+              discoveredAt: breach.discoveredAt,
+              phiInvolved: breach.phiInvolved || 'Not specified',
+              remediationSteps: breach.remediationSteps || 'Not specified',
+              affectedCount: breach.affectedIndividualsCount || 0,
+              breachType: breach.breachType,
+            });
+          }
+          logger.warn('Breach approaching 60-day notification deadline', {
+            breachId: breach.id,
+            daysSinceDiscovery,
+            daysRemaining: 60 - daysSinceDiscovery,
+          });
+        }
+      }
+    } catch (error: any) {
+      logger.error('Breach deadline check failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('breachDeadlineCheck', breachDeadlineTask);
+
+  // Amendment request deadline check - daily at 8:45 AM
+  const amendmentDeadlineTask = cron.schedule('45 8 * * *', async () => {
+    try {
+      const practices = [1];
+      for (const practiceId of practices) {
+        const pending = await storage.getPendingAmendmentRequests(practiceId);
+        for (const request of pending) {
+          const daysUntilDeadline = Math.floor(
+            (new Date(request.responseDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+          );
+          if (daysUntilDeadline <= 7 && daysUntilDeadline >= 0) {
+            const practice = await storage.getPractice(practiceId);
+            const patient = await storage.getPatient(request.patientId);
+            const adminEmail = practice?.email;
+            if (adminEmail && patient) {
+              await sendAmendmentDeadlineAlert(adminEmail, {
+                patientName: `${patient.firstName} ${patient.lastName}`,
+                fieldToAmend: request.fieldToAmend,
+                deadline: request.responseDeadline,
+                daysRemaining: daysUntilDeadline,
+                practiceName: practice?.name || 'Practice',
+              });
+            }
+            logger.warn('Amendment request deadline approaching', {
+              requestId: request.id,
+              daysRemaining: daysUntilDeadline,
+            });
+          }
+        }
+      }
+    } catch (error: any) {
+      logger.error('Amendment deadline check failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('amendmentDeadlineCheck', amendmentDeadlineTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion'],
+    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck'],
   });
 }
 
