@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -139,7 +139,7 @@ const PLAN_OPTIONS = [
 
 export default function SoapNotes() {
   const { toast } = useToast();
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
 
   // Voice input toggle
   const [showVoiceInput, setShowVoiceInput] = useState(false);
@@ -201,6 +201,50 @@ export default function SoapNotes() {
     auditNotes?: string[];
     totalReimbursement?: number;
   } | null>(null);
+
+  // Persist form data to localStorage
+  const STORAGE_KEY = "soap-notes-draft";
+
+  // Restore form data from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        if (data.selectedPatient) setSelectedPatient(data.selectedPatient);
+        if (data.sessionDate) setSessionDate(data.sessionDate);
+        if (data.duration) setDuration(data.duration);
+        if (data.location) setLocation(data.location);
+        if (data.mood) setMood(data.mood);
+        if (data.caregiverReport) setCaregiverReport(data.caregiverReport);
+        if (data.selectedActivities) setSelectedActivities(data.selectedActivities);
+        if (data.assessment) setAssessment(data.assessment);
+        if (data.planNextSteps) setPlanNextSteps(data.planNextSteps);
+        if (data.nextSessionFocus) setNextSessionFocus(data.nextSessionFocus);
+        if (data.homeProgram) setHomeProgram(data.homeProgram);
+      } catch (e) {
+        // Invalid saved data, ignore
+      }
+    }
+  }, []);
+
+  // Save form data to localStorage when it changes
+  useEffect(() => {
+    const data = {
+      selectedPatient,
+      sessionDate,
+      duration,
+      location,
+      mood,
+      caregiverReport,
+      selectedActivities,
+      assessment,
+      planNextSteps,
+      nextSessionFocus,
+      homeProgram,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }, [selectedPatient, sessionDate, duration, location, mood, caregiverReport, selectedActivities, assessment, planNextSteps, nextSessionFocus, homeProgram]);
 
   const { data: patients, isLoading: patientsLoading } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
@@ -392,7 +436,7 @@ export default function SoapNotes() {
       const sessionData = {
         practiceId: 1,
         patientId: selectedPatient,
-        therapistId: "current-user-id",
+        therapistId: user?.id || "",
         sessionDate,
         duration,
         cptCodeId: cptCodes?.find(c => c.code === primaryCode)?.id || 1,
@@ -403,11 +447,12 @@ export default function SoapNotes() {
         dataSource: "ai_generated",
       };
 
-      const session = await apiRequest("POST", "/api/sessions", sessionData);
+      const sessionResponse = await apiRequest("POST", "/api/sessions", sessionData);
+      const session = await sessionResponse.json();
 
       const soapNoteData = {
         patientId: selectedPatient,
-        sessionId: (session as any).id,
+        sessionId: session.id,
         subjective: generatedNote.subjective,
         objective: generatedNote.objective,
         assessment: generatedNote.assessment,
@@ -427,6 +472,8 @@ export default function SoapNotes() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      // Clear saved draft
+      localStorage.removeItem(STORAGE_KEY);
       // Reset form
       setSelectedPatient(null);
       setMood("");

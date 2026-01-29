@@ -661,6 +661,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/sessions', async (req, res) => {
     try {
+      // Ensure therapist user exists before creating session (foreign key constraint)
+      if (req.body.therapistId) {
+        const existingUser = await storage.getUser(req.body.therapistId);
+        if (!existingUser) {
+          // Create a placeholder user record for the therapist
+          await storage.upsertUser({
+            id: req.body.therapistId,
+            email: `${req.body.therapistId}@placeholder.local`,
+            firstName: 'Therapist',
+            lastName: 'User',
+          });
+        }
+      }
       const session = await storage.createSession(req.body);
       res.json(session);
     } catch (error) {
