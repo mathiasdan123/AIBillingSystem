@@ -325,7 +325,7 @@ export default function SoapNotes() {
         ratePerUnit: ratePerUnit // Manual rate override
       });
 
-      const aiResponse = response as {
+      const aiResponse = await response.json() as {
         subjective: string;
         objective: string;
         assessment: string;
@@ -353,22 +353,22 @@ export default function SoapNotes() {
       };
 
       setGeneratedNote({
-        subjective: aiResponse.subjective,
-        objective: aiResponse.objective,
-        assessment: aiResponse.assessment,
-        plan: aiResponse.plan,
-        cptCodes: aiResponse.cptCodes,
-        timeBlocks: aiResponse.timeBlocks,
-        totalReimbursement: aiResponse.totalReimbursement,
-        billingRationale: aiResponse.billingRationale,
-        auditNotes: aiResponse.auditNotes
+        subjective: aiResponse.subjective || "",
+        objective: aiResponse.objective || "",
+        assessment: aiResponse.assessment || "",
+        plan: aiResponse.plan || "",
+        cptCodes: aiResponse.cptCodes || [],
+        timeBlocks: aiResponse.timeBlocks || [],
+        totalReimbursement: aiResponse.totalReimbursement || 0,
+        billingRationale: aiResponse.billingRationale || "",
+        auditNotes: aiResponse.auditNotes || []
       });
 
       toast({
         title: "AI Generated Note & Codes",
         description: isAdmin
-          ? `Generated SOAP note with ${aiResponse.cptCodes.length} optimized CPT codes. Est. reimbursement: $${aiResponse.totalReimbursement.toFixed(2)}`
-          : `Generated SOAP note with ${aiResponse.cptCodes.length} optimized CPT codes.`,
+          ? `Generated SOAP note with ${(aiResponse.cptCodes || []).length} optimized CPT codes. Est. reimbursement: $${(aiResponse.totalReimbursement || 0).toFixed(2)}`
+          : `Generated SOAP note with ${(aiResponse.cptCodes || []).length} optimized CPT codes.`,
       });
 
     } catch (error) {
@@ -397,7 +397,7 @@ export default function SoapNotes() {
         duration,
         cptCodeId: cptCodes?.find(c => c.code === primaryCode)?.id || 1,
         icd10CodeId: 1,
-        units: generatedNote.cptCodes.reduce((sum, c) => sum + c.units, 0),
+        units: (generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0),
         notes: `SUBJECTIVE:\n${generatedNote.subjective}\n\nOBJECTIVE:\n${generatedNote.objective}\n\nASSESSMENT:\n${generatedNote.assessment}\n\nPLAN:\n${generatedNote.plan}`,
         status: "completed",
         dataSource: "ai_generated",
@@ -415,7 +415,7 @@ export default function SoapNotes() {
         location,
         sessionType: "individual",
         dataSource: "ai_generated",
-        aiSuggestedCptCodes: generatedNote.cptCodes,
+        aiSuggestedCptCodes: generatedNote.cptCodes || [],
       };
 
       return apiRequest("POST", "/api/soap-notes", soapNoteData);
@@ -905,7 +905,7 @@ export default function SoapNotes() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    {generatedNote.cptCodes.map((code, index) => (
+                    {(generatedNote.cptCodes || []).map((code, index) => (
                       <div key={code.code} className={`p-3 rounded-lg border ${index === 0 ? 'bg-green-100 border-green-300' : 'bg-white'}`}>
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
@@ -932,7 +932,7 @@ export default function SoapNotes() {
                       </div>
                     )}
                     <p className="text-xs text-slate-500">
-                      {generatedNote.cptCodes.reduce((sum, c) => sum + c.units, 0)} units × {duration} min session
+                      {(generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0)} units × {duration} min session
                     </p>
 
                     {/* AI Billing Rationale */}
