@@ -4509,6 +4509,470 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== PATIENT PORTAL ====================
+
+  // Admin: Create or get portal access for a patient
+  app.post('/api/patients/:id/portal-access', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      // Check if access already exists
+      let access = await storage.getPatientPortalAccess(patientId);
+      if (!access) {
+        access = await storage.createPatientPortalAccess(patientId, patient.practiceId || 1);
+      }
+
+      res.json(access);
+    } catch (error) {
+      console.error('Error creating portal access:', error);
+      res.status(500).json({ message: 'Failed to create portal access' });
+    }
+  });
+
+  // Admin: Send magic link to patient
+  app.post('/api/patients/:id/send-portal-link', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      // Ensure portal access exists
+      let access = await storage.getPatientPortalAccess(patientId);
+      if (!access) {
+        access = await storage.createPatientPortalAccess(patientId, patient.practiceId || 1);
+      }
+
+      // Create magic link
+      const magicLink = await storage.createMagicLink(patientId);
+      const portalUrl = `${req.protocol}://${req.get('host')}/portal/login/${magicLink.token}`;
+
+      // Send email with magic link
+      if (patient.email) {
+        try {
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port: parseInt(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+              user: process.env.SMTP_USER || '',
+              pass: process.env.SMTP_PASS || '',
+            },
+          });
+
+          const practice = await storage.getPractice(patient.practiceId || 1);
+          const practiceName = practice?.name || 'Your Healthcare Provider';
+
+          await transporter.sendMail({
+            from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+            to: patient.email,
+            subject: `Access Your Patient Portal - ${practiceName}`,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>Hello ${patient.firstName},</h2>
+                <p>You've been invited to access your patient portal at ${practiceName}.</p>
+                <p>Click the button below to securely access your portal:</p>
+                <p style="text-align: center; margin: 30px 0;">
+                  <a href="${portalUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+                    Access Patient Portal
+                  </a>
+                </p>
+                <p style="color: #666; font-size: 14px;">This link expires in 15 minutes for security purposes.</p>
+                <p style="color: #666; font-size: 14px;">If you didn't request this link, please ignore this email.</p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                <p style="color: #999; font-size: 12px;">${practiceName}</p>
+              </div>
+            `,
+          });
+
+          res.json({ message: 'Portal access link sent', email: patient.email });
+        } catch (emailError) {
+          console.error('Error sending portal email:', emailError);
+          res.json({
+            message: 'Portal link created but email failed',
+            portalUrl,
+            token: magicLink.token,
+          });
+        }
+      } else {
+        res.json({
+          message: 'No email on file. Share this link with the patient:',
+          portalUrl,
+          token: magicLink.token,
+        });
+      }
+    } catch (error) {
+      console.error('Error sending portal link:', error);
+      res.status(500).json({ message: 'Failed to send portal link' });
+    }
+  });
+
+  // Admin: Get patient documents
+  app.get('/api/patients/:id/documents', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const documents = await storage.getPatientDocuments(patientId);
+      res.json(documents);
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+      res.status(500).json({ message: 'Failed to fetch documents' });
+    }
+  });
+
+  // Admin: Upload document for patient
+  app.post('/api/patients/:id/documents', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const { name, description, category, fileUrl, fileType, fileSize, visibleToPatient, requiresSignature } = req.body;
+
+      if (!name || !fileUrl) {
+        return res.status(400).json({ message: 'Name and file URL are required' });
+      }
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const document = await storage.createPatientDocument({
+        patientId,
+        practiceId: patient.practiceId || 1,
+        uploadedById: req.user?.claims?.sub,
+        name,
+        description,
+        category: category || 'general',
+        fileUrl,
+        fileType,
+        fileSize,
+        visibleToPatient: visibleToPatient !== false,
+        requiresSignature: requiresSignature || false,
+      });
+
+      res.status(201).json(document);
+    } catch (error) {
+      console.error('Error creating document:', error);
+      res.status(500).json({ message: 'Failed to create document' });
+    }
+  });
+
+  // Admin: Get patient statements
+  app.get('/api/patients/:id/statements', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const statements = await storage.getPatientStatements(patientId);
+      res.json(statements);
+    } catch (error) {
+      console.error('Error fetching statements:', error);
+      res.status(500).json({ message: 'Failed to fetch statements' });
+    }
+  });
+
+  // Admin: Create statement for patient
+  app.post('/api/patients/:id/statements', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const { totalAmount, dueDate, lineItems } = req.body;
+
+      if (!totalAmount) {
+        return res.status(400).json({ message: 'Total amount is required' });
+      }
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const statement = await storage.createPatientStatement({
+        patientId,
+        practiceId: patient.practiceId || 1,
+        totalAmount,
+        balanceDue: totalAmount,
+        dueDate: dueDate ? new Date(dueDate) : undefined,
+        lineItems: lineItems || [],
+      });
+
+      res.status(201).json(statement);
+    } catch (error) {
+      console.error('Error creating statement:', error);
+      res.status(500).json({ message: 'Failed to create statement' });
+    }
+  });
+
+  // ==================== PUBLIC PATIENT PORTAL ENDPOINTS ====================
+
+  // Login via magic link
+  app.get('/api/public/portal/login/:token', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.useMagicLink(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired login link' });
+      }
+
+      // Return the portal token for subsequent requests
+      res.json({
+        portalToken: access.portalToken,
+        expiresAt: access.portalTokenExpiresAt,
+      });
+    } catch (error) {
+      console.error('Error logging in:', error);
+      res.status(500).json({ message: 'Login failed' });
+    }
+  });
+
+  // Get portal dashboard
+  app.get('/api/public/portal/:token/dashboard', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      await storage.updatePortalAccess(access.patientId);
+      const dashboard = await storage.getPatientPortalDashboard(access.patientId);
+
+      res.json({
+        ...dashboard,
+        permissions: {
+          canViewAppointments: access.canViewAppointments,
+          canViewStatements: access.canViewStatements,
+          canViewDocuments: access.canViewDocuments,
+          canSendMessages: access.canSendMessages,
+          canUpdateProfile: access.canUpdateProfile,
+          canCompleteIntake: access.canCompleteIntake,
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching dashboard:', error);
+      res.status(500).json({ message: 'Failed to fetch dashboard' });
+    }
+  });
+
+  // Get patient profile
+  app.get('/api/public/portal/:token/profile', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const patient = await storage.getPatient(access.patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      // Return safe patient info (exclude sensitive fields)
+      res.json({
+        id: patient.id,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        email: patient.email,
+        phone: patient.phone,
+        dateOfBirth: patient.dateOfBirth,
+        address: patient.address,
+      });
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      res.status(500).json({ message: 'Failed to fetch profile' });
+    }
+  });
+
+  // Update patient profile
+  app.patch('/api/public/portal/:token/profile', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      if (!access.canUpdateProfile) {
+        return res.status(403).json({ message: 'Profile updates not allowed' });
+      }
+
+      const { phone, email, address } = req.body;
+      const updates: Record<string, unknown> = {};
+      if (phone !== undefined) updates.phone = phone;
+      if (email !== undefined) updates.email = email;
+      if (address !== undefined) updates.address = address;
+
+      const patient = await storage.updatePatient(access.patientId, updates);
+      res.json(patient);
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      res.status(500).json({ message: 'Failed to update profile' });
+    }
+  });
+
+  // Get appointments
+  app.get('/api/public/portal/:token/appointments', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      if (!access.canViewAppointments) {
+        return res.status(403).json({ message: 'Appointment viewing not allowed' });
+      }
+
+      const patient = await storage.getPatient(access.patientId);
+      if (!patient || !patient.practiceId) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const allAppointments = await storage.getAppointments(patient.practiceId);
+      const patientAppointments = allAppointments.filter((apt: any) => apt.patientId === access.patientId);
+
+      res.json(patientAppointments);
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      res.status(500).json({ message: 'Failed to fetch appointments' });
+    }
+  });
+
+  // Get statements
+  app.get('/api/public/portal/:token/statements', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      if (!access.canViewStatements) {
+        return res.status(403).json({ message: 'Statement viewing not allowed' });
+      }
+
+      const statements = await storage.getPatientStatements(access.patientId);
+      res.json(statements);
+    } catch (error) {
+      console.error('Error fetching statements:', error);
+      res.status(500).json({ message: 'Failed to fetch statements' });
+    }
+  });
+
+  // View statement (marks as viewed)
+  app.get('/api/public/portal/:token/statements/:id', async (req, res) => {
+    try {
+      const { token, id } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const statement = await storage.getPatientStatement(parseInt(id));
+      if (!statement || statement.patientId !== access.patientId) {
+        return res.status(404).json({ message: 'Statement not found' });
+      }
+
+      // Mark as viewed if not already
+      if (!statement.viewedAt) {
+        await storage.markStatementViewed(statement.id);
+      }
+
+      res.json(statement);
+    } catch (error) {
+      console.error('Error fetching statement:', error);
+      res.status(500).json({ message: 'Failed to fetch statement' });
+    }
+  });
+
+  // Get documents
+  app.get('/api/public/portal/:token/documents', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      if (!access.canViewDocuments) {
+        return res.status(403).json({ message: 'Document viewing not allowed' });
+      }
+
+      const documents = await storage.getPatientDocuments(access.patientId, true);
+      res.json(documents);
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+      res.status(500).json({ message: 'Failed to fetch documents' });
+    }
+  });
+
+  // View document (marks as viewed)
+  app.get('/api/public/portal/:token/documents/:id', async (req, res) => {
+    try {
+      const { token, id } = req.params;
+      const access = await storage.getPatientPortalByToken(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const document = await storage.getPatientDocument(parseInt(id));
+      if (!document || document.patientId !== access.patientId || !document.visibleToPatient) {
+        return res.status(404).json({ message: 'Document not found' });
+      }
+
+      // Mark as viewed
+      await storage.markDocumentViewed(document.id);
+
+      res.json(document);
+    } catch (error) {
+      console.error('Error fetching document:', error);
+      res.status(500).json({ message: 'Failed to fetch document' });
+    }
+  });
+
+  // Sign document
+  app.post('/api/public/portal/:token/documents/:id/sign', async (req, res) => {
+    try {
+      const { token, id } = req.params;
+      const { signatureData } = req.body;
+
+      const access = await storage.getPatientPortalByToken(token);
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const document = await storage.getPatientDocument(parseInt(id));
+      if (!document || document.patientId !== access.patientId) {
+        return res.status(404).json({ message: 'Document not found' });
+      }
+
+      if (!document.requiresSignature) {
+        return res.status(400).json({ message: 'Document does not require signature' });
+      }
+
+      if (document.signedAt) {
+        return res.status(400).json({ message: 'Document already signed' });
+      }
+
+      const signed = await storage.signDocument(document.id, signatureData);
+      res.json(signed);
+    } catch (error) {
+      console.error('Error signing document:', error);
+      res.status(500).json({ message: 'Failed to sign document' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

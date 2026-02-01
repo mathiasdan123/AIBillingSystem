@@ -30,6 +30,7 @@ import BookingSettings from "@/pages/booking-settings";
 import Telehealth from "@/pages/telehealth";
 import TelehealthJoin from "@/pages/telehealth-join";
 import Messages from "@/pages/messages";
+import PatientPortal from "@/pages/patient-portal";
 import MfaChallenge from "@/pages/mfa-challenge";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -54,6 +55,8 @@ function Router() {
         <Route path="/mfa-challenge" component={MfaChallenge} />
         <Route path="/book/:slug" component={PublicBooking} />
         <Route path="/join/:code" component={TelehealthJoin} />
+        <Route path="/portal" component={PatientPortal} />
+        <Route path="/portal/login/:token" component={PatientPortal} />
         <Route component={NotFound} />
       </Switch>
     );

@@ -1449,3 +1449,100 @@ export const insertMessageNotificationSchema = createInsertSchema(messageNotific
 export type MessageNotification = typeof messageNotifications.$inferSelect;
 export type InsertMessageNotification = z.infer<typeof insertMessageNotificationSchema>;
 
+// ==================== PATIENT PORTAL ====================
+
+// Patient Portal Access (magic link authentication)
+export const patientPortalAccess = pgTable("patient_portal_access", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // Portal access token (long-lived, 90 days)
+  portalToken: varchar("portal_token", { length: 64 }).unique().notNull(),
+  portalTokenExpiresAt: timestamp("portal_token_expires_at").notNull(),
+  // Magic link token (short-lived, 15 minutes)
+  magicLinkToken: varchar("magic_link_token", { length: 64 }).unique(),
+  magicLinkExpiresAt: timestamp("magic_link_expires_at"),
+  magicLinkUsedAt: timestamp("magic_link_used_at"),
+  // Access settings
+  isActive: boolean("is_active").default(true),
+  lastAccessedAt: timestamp("last_accessed_at"),
+  accessCount: integer("access_count").default(0),
+  // Permissions
+  canViewAppointments: boolean("can_view_appointments").default(true),
+  canViewStatements: boolean("can_view_statements").default(true),
+  canViewDocuments: boolean("can_view_documents").default(true),
+  canSendMessages: boolean("can_send_messages").default(true),
+  canUpdateProfile: boolean("can_update_profile").default(true),
+  canCompleteIntake: boolean("can_complete_intake").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Patient Documents (files shared with patients)
+export const patientDocuments = pgTable("patient_documents", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  uploadedById: varchar("uploaded_by_id").references(() => users.id),
+  // Document details
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  category: varchar("category").default("general"), // general, intake, consent, treatment, insurance, other
+  fileUrl: varchar("file_url").notNull(),
+  fileType: varchar("file_type"), // pdf, image, etc.
+  fileSize: integer("file_size"), // bytes
+  // Visibility
+  visibleToPatient: boolean("visible_to_patient").default(true),
+  requiresSignature: boolean("requires_signature").default(false),
+  signedAt: timestamp("signed_at"),
+  signatureData: text("signature_data"), // base64 signature image or JSON
+  // Tracking
+  viewedAt: timestamp("viewed_at"),
+  downloadedAt: timestamp("downloaded_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Patient Statements (invoices/superbills)
+export const patientStatements = pgTable("patient_statements", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // Statement details
+  statementNumber: varchar("statement_number").unique().notNull(),
+  statementDate: timestamp("statement_date").defaultNow().notNull(),
+  dueDate: timestamp("due_date"),
+  // Amounts
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }).default("0"),
+  balanceDue: decimal("balance_due", { precision: 10, scale: 2 }).notNull(),
+  // Line items stored as JSON
+  lineItems: jsonb("line_items").default([]), // [{date, description, cptCode, amount, insurance, patientResponsibility}]
+  // Status
+  status: varchar("status").default("pending"), // pending, sent, viewed, paid, overdue, cancelled
+  // Delivery tracking
+  sentVia: varchar("sent_via"), // email, mail, portal
+  sentAt: timestamp("sent_at"),
+  viewedAt: timestamp("viewed_at"),
+  // Payment info
+  paymentMethod: varchar("payment_method"), // card, check, cash, insurance
+  paymentDate: timestamp("payment_date"),
+  paymentReference: varchar("payment_reference"),
+  // PDF generation
+  pdfUrl: varchar("pdf_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientPortalAccessSchema = createInsertSchema(patientPortalAccess).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientPortalAccess = typeof patientPortalAccess.$inferSelect;
+export type InsertPatientPortalAccess = z.infer<typeof insertPatientPortalAccessSchema>;
+
+export const insertPatientDocumentSchema = createInsertSchema(patientDocuments).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientDocument = typeof patientDocuments.$inferSelect;
+export type InsertPatientDocument = z.infer<typeof insertPatientDocumentSchema>;
+
+export const insertPatientStatementSchema = createInsertSchema(patientStatements).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientStatement = typeof patientStatements.$inferSelect;
+export type InsertPatientStatement = z.infer<typeof insertPatientStatementSchema>;
+

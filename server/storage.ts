@@ -109,6 +109,15 @@ import {
   type InsertMessage,
   type MessageNotification,
   type InsertMessageNotification,
+  patientPortalAccess,
+  patientDocuments,
+  patientStatements,
+  type PatientPortalAccess,
+  type InsertPatientPortalAccess,
+  type PatientDocument,
+  type InsertPatientDocument,
+  type PatientStatement,
+  type InsertPatientStatement,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -3054,6 +3063,353 @@ export class DatabaseStorage implements IStorage {
       conversation,
       messages: msgs.reverse(), // Return in chronological order
       patient: patient || null,
+    };
+  }
+
+  // ==================== PATIENT PORTAL ====================
+
+  // Generate secure tokens
+  generatePortalToken(): string {
+    return createHash('sha256')
+      .update(Math.random().toString() + Date.now().toString() + 'portal')
+      .digest('hex')
+      .substring(0, 64);
+  }
+
+  generateMagicLinkToken(): string {
+    return createHash('sha256')
+      .update(Math.random().toString() + Date.now().toString() + 'magic')
+      .digest('hex')
+      .substring(0, 64);
+  }
+
+  generateStatementNumber(): string {
+    const date = new Date();
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    return `STM-${date.getFullYear()}${(date.getMonth() + 1).toString().padStart(2, '0')}-${random}`;
+  }
+
+  // Patient Portal Access
+  async createPatientPortalAccess(patientId: number, practiceId: number): Promise<PatientPortalAccess> {
+    const portalToken = this.generatePortalToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 90); // 90 days
+
+    const [result] = await db.insert(patientPortalAccess).values({
+      patientId,
+      practiceId,
+      portalToken,
+      portalTokenExpiresAt: expiresAt,
+    }).returning();
+    return result;
+  }
+
+  async getPatientPortalAccess(patientId: number): Promise<PatientPortalAccess | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientPortalAccess)
+      .where(and(
+        eq(patientPortalAccess.patientId, patientId),
+        eq(patientPortalAccess.isActive, true)
+      ));
+    return result;
+  }
+
+  async getPatientPortalByToken(token: string): Promise<PatientPortalAccess | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientPortalAccess)
+      .where(and(
+        eq(patientPortalAccess.portalToken, token),
+        eq(patientPortalAccess.isActive, true),
+        gte(patientPortalAccess.portalTokenExpiresAt, new Date())
+      ));
+    return result;
+  }
+
+  async getPatientPortalByMagicLink(token: string): Promise<PatientPortalAccess | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientPortalAccess)
+      .where(and(
+        eq(patientPortalAccess.magicLinkToken, token),
+        eq(patientPortalAccess.isActive, true),
+        gte(patientPortalAccess.magicLinkExpiresAt, new Date()),
+        isNull(patientPortalAccess.magicLinkUsedAt)
+      ));
+    return result;
+  }
+
+  async createMagicLink(patientId: number): Promise<{ token: string; expiresAt: Date }> {
+    const token = this.generateMagicLinkToken();
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 15); // 15 minutes
+
+    await db
+      .update(patientPortalAccess)
+      .set({
+        magicLinkToken: token,
+        magicLinkExpiresAt: expiresAt,
+        magicLinkUsedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientPortalAccess.patientId, patientId));
+
+    return { token, expiresAt };
+  }
+
+  async useMagicLink(token: string): Promise<PatientPortalAccess | null> {
+    const access = await this.getPatientPortalByMagicLink(token);
+    if (!access) return null;
+
+    // Mark magic link as used and update last accessed
+    const [result] = await db
+      .update(patientPortalAccess)
+      .set({
+        magicLinkUsedAt: new Date(),
+        lastAccessedAt: new Date(),
+        accessCount: (access.accessCount || 0) + 1,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientPortalAccess.id, access.id))
+      .returning();
+
+    return result;
+  }
+
+  async updatePortalAccess(patientId: number): Promise<void> {
+    await db
+      .update(patientPortalAccess)
+      .set({
+        lastAccessedAt: new Date(),
+        accessCount: sql`${patientPortalAccess.accessCount} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientPortalAccess.patientId, patientId));
+  }
+
+  async refreshPortalToken(patientId: number): Promise<PatientPortalAccess> {
+    const newToken = this.generatePortalToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 90);
+
+    const [result] = await db
+      .update(patientPortalAccess)
+      .set({
+        portalToken: newToken,
+        portalTokenExpiresAt: expiresAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientPortalAccess.patientId, patientId))
+      .returning();
+
+    return result;
+  }
+
+  // Patient Documents
+  async createPatientDocument(document: InsertPatientDocument): Promise<PatientDocument> {
+    const [result] = await db.insert(patientDocuments).values(document).returning();
+    return result;
+  }
+
+  async getPatientDocuments(patientId: number, visibleToPatient?: boolean): Promise<PatientDocument[]> {
+    const conditions = [eq(patientDocuments.patientId, patientId)];
+    if (visibleToPatient !== undefined) {
+      conditions.push(eq(patientDocuments.visibleToPatient, visibleToPatient));
+    }
+
+    return await db
+      .select()
+      .from(patientDocuments)
+      .where(and(...conditions))
+      .orderBy(desc(patientDocuments.createdAt));
+  }
+
+  async getPatientDocument(id: number): Promise<PatientDocument | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientDocuments)
+      .where(eq(patientDocuments.id, id));
+    return result;
+  }
+
+  async updatePatientDocument(id: number, updates: Partial<InsertPatientDocument>): Promise<PatientDocument> {
+    const [result] = await db
+      .update(patientDocuments)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(patientDocuments.id, id))
+      .returning();
+    return result;
+  }
+
+  async markDocumentViewed(id: number): Promise<PatientDocument> {
+    const [result] = await db
+      .update(patientDocuments)
+      .set({ viewedAt: new Date(), updatedAt: new Date() })
+      .where(eq(patientDocuments.id, id))
+      .returning();
+    return result;
+  }
+
+  async markDocumentDownloaded(id: number): Promise<PatientDocument> {
+    const [result] = await db
+      .update(patientDocuments)
+      .set({ downloadedAt: new Date(), updatedAt: new Date() })
+      .where(eq(patientDocuments.id, id))
+      .returning();
+    return result;
+  }
+
+  async signDocument(id: number, signatureData: string): Promise<PatientDocument> {
+    const [result] = await db
+      .update(patientDocuments)
+      .set({
+        signedAt: new Date(),
+        signatureData,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientDocuments.id, id))
+      .returning();
+    return result;
+  }
+
+  // Patient Statements
+  async createPatientStatement(statement: Omit<InsertPatientStatement, 'statementNumber'>): Promise<PatientStatement> {
+    const statementNumber = this.generateStatementNumber();
+    const [result] = await db.insert(patientStatements).values({
+      ...statement,
+      statementNumber,
+    }).returning();
+    return result;
+  }
+
+  async getPatientStatements(patientId: number): Promise<PatientStatement[]> {
+    return await db
+      .select()
+      .from(patientStatements)
+      .where(eq(patientStatements.patientId, patientId))
+      .orderBy(desc(patientStatements.statementDate));
+  }
+
+  async getPatientStatement(id: number): Promise<PatientStatement | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientStatements)
+      .where(eq(patientStatements.id, id));
+    return result;
+  }
+
+  async updatePatientStatement(id: number, updates: Partial<InsertPatientStatement>): Promise<PatientStatement> {
+    const [result] = await db
+      .update(patientStatements)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(patientStatements.id, id))
+      .returning();
+    return result;
+  }
+
+  async markStatementViewed(id: number): Promise<PatientStatement> {
+    const [result] = await db
+      .update(patientStatements)
+      .set({
+        viewedAt: new Date(),
+        status: 'viewed',
+        updatedAt: new Date(),
+      })
+      .where(eq(patientStatements.id, id))
+      .returning();
+    return result;
+  }
+
+  async markStatementPaid(id: number, paymentInfo: {
+    paymentMethod: string;
+    paymentReference?: string;
+    amount: string;
+  }): Promise<PatientStatement> {
+    const statement = await this.getPatientStatement(id);
+    if (!statement) throw new Error('Statement not found');
+
+    const newPaidAmount = (parseFloat(statement.paidAmount || '0') + parseFloat(paymentInfo.amount)).toFixed(2);
+    const newBalance = (parseFloat(statement.totalAmount) - parseFloat(newPaidAmount)).toFixed(2);
+    const isPaid = parseFloat(newBalance) <= 0;
+
+    const [result] = await db
+      .update(patientStatements)
+      .set({
+        paidAmount: newPaidAmount,
+        balanceDue: newBalance,
+        status: isPaid ? 'paid' : 'pending',
+        paymentMethod: paymentInfo.paymentMethod,
+        paymentReference: paymentInfo.paymentReference,
+        paymentDate: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(patientStatements.id, id))
+      .returning();
+
+    return result;
+  }
+
+  async getPracticeStatements(practiceId: number, filters?: {
+    status?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<PatientStatement[]> {
+    const conditions = [eq(patientStatements.practiceId, practiceId)];
+
+    if (filters?.status) {
+      conditions.push(eq(patientStatements.status, filters.status));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(patientStatements.statementDate, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(patientStatements.statementDate, filters.endDate));
+    }
+
+    return await db
+      .select()
+      .from(patientStatements)
+      .where(and(...conditions))
+      .orderBy(desc(patientStatements.statementDate));
+  }
+
+  // Get patient portal dashboard data
+  async getPatientPortalDashboard(patientId: number): Promise<{
+    patient: Patient | null;
+    upcomingAppointments: Appointment[];
+    recentStatements: PatientStatement[];
+    unreadMessages: number;
+    documents: PatientDocument[];
+  }> {
+    const patient = await this.getPatient(patientId);
+
+    // Get upcoming appointments
+    const now = new Date();
+    const allAppointments = patient?.practiceId
+      ? await this.getAppointments(patient.practiceId)
+      : [];
+    const upcomingAppointments = allAppointments
+      .filter((apt: Appointment) => apt.patientId === patientId && new Date(apt.startTime) >= now && apt.status !== 'cancelled')
+      .sort((a: Appointment, b: Appointment) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+      .slice(0, 5);
+
+    // Get recent statements
+    const statements = await this.getPatientStatements(patientId);
+    const recentStatements = statements.slice(0, 5);
+
+    // Get unread message count
+    const unreadMessages = await this.getPatientUnreadCount(patientId);
+
+    // Get visible documents
+    const documents = await this.getPatientDocuments(patientId, true);
+
+    return {
+      patient: patient || null,
+      upcomingAppointments,
+      recentStatements,
+      unreadMessages,
+      documents,
     };
   }
 }
