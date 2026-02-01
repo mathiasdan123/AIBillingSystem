@@ -31,6 +31,8 @@ import {
   therapistTimeOff,
   bookingSettings,
   onlineBookings,
+  telehealthSessions,
+  telehealthSettings,
   type User,
   type UpsertUser,
   type Practice,
@@ -94,6 +96,10 @@ import {
   type InsertBookingSettings,
   type OnlineBooking,
   type InsertOnlineBooking,
+  type TelehealthSession,
+  type InsertTelehealthSession,
+  type TelehealthSettings,
+  type InsertTelehealthSettings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -1065,7 +1071,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(waitlist.priority), waitlist.createdAt);
 
     // Filter by preferred days and times
-    return entries.filter(entry => {
+    return entries.filter((entry: WaitlistEntry) => {
       // Check if therapist matches (if preferred)
       if (entry.therapistId && therapistId && entry.therapistId !== therapistId) {
         return false;
@@ -1139,7 +1145,7 @@ export class DatabaseStorage implements IStorage {
     let totalWaitMs = 0;
     let waitingCount = 0;
 
-    const stats = entries.reduce((acc, entry) => {
+    const stats = entries.reduce((acc: { totalWaiting: number; notified: number; scheduled: number; expired: number; highPriority: number }, entry: WaitlistEntry) => {
       if (entry.status === 'waiting') {
         acc.totalWaiting++;
         if (entry.priority && entry.priority >= 2) acc.highPriority++;
@@ -1244,7 +1250,7 @@ export class DatabaseStorage implements IStorage {
       .from(reviewRequests)
       .where(eq(reviewRequests.practiceId, practiceId));
 
-    const stats = requests.reduce((acc, req) => {
+    const stats = requests.reduce((acc: { totalSent: number; pending: number; clicked: number; reviewed: number; declined: number }, req: ReviewRequest) => {
       if (req.status === 'sent') acc.totalSent++;
       if (req.status === 'pending') acc.pending++;
       if (req.status === 'clicked') acc.clicked++;
@@ -1287,7 +1293,7 @@ export class DatabaseStorage implements IStorage {
         isNull(reviewRequests.id)
       ));
 
-    return eligibleAppointments.filter(a => a.patientId !== null) as {
+    return eligibleAppointments.filter((a: { patientId: number | null; appointmentId: number; appointmentDate: Date }) => a.patientId !== null) as {
       patientId: number;
       appointmentId: number;
       appointmentDate: Date;
@@ -1689,7 +1695,7 @@ export class DatabaseStorage implements IStorage {
         slotStart.setHours(slotHour, slotMin, 0, 0);
         const slotEnd = new Date(slotStart.getTime() + duration * 60000);
 
-        const hasConflict = existingAppointments.some(apt => {
+        const hasConflict = existingAppointments.some((apt: { startTime: Date; endTime: Date }) => {
           const aptStart = new Date(apt.startTime);
           const aptEnd = new Date(apt.endTime);
           return (slotStart < aptEnd && slotEnd > aptStart);
@@ -1703,7 +1709,215 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    return [...new Set(slots)].sort();
+    return Array.from(new Set(slots)).sort();
+  }
+
+  // ==================== TELEHEALTH ====================
+
+  // Telehealth Sessions
+  async createTelehealthSession(session: InsertTelehealthSession): Promise<TelehealthSession> {
+    const [result] = await db.insert(telehealthSessions).values(session).returning();
+    return result;
+  }
+
+  async getTelehealthSessions(practiceId: number, filters?: {
+    status?: string;
+    therapistId?: string;
+    patientId?: number;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<TelehealthSession[]> {
+    const conditions = [eq(telehealthSessions.practiceId, practiceId)];
+
+    if (filters?.status) {
+      conditions.push(eq(telehealthSessions.status, filters.status));
+    }
+    if (filters?.therapistId) {
+      conditions.push(eq(telehealthSessions.therapistId, filters.therapistId));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(telehealthSessions.patientId, filters.patientId));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(telehealthSessions.scheduledStart, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(telehealthSessions.scheduledStart, filters.endDate));
+    }
+
+    return await db
+      .select()
+      .from(telehealthSessions)
+      .where(and(...conditions))
+      .orderBy(desc(telehealthSessions.scheduledStart));
+  }
+
+  async getTelehealthSession(id: number): Promise<TelehealthSession | undefined> {
+    const [result] = await db
+      .select()
+      .from(telehealthSessions)
+      .where(eq(telehealthSessions.id, id));
+    return result;
+  }
+
+  async getTelehealthSessionByRoom(roomName: string): Promise<TelehealthSession | undefined> {
+    const [result] = await db
+      .select()
+      .from(telehealthSessions)
+      .where(eq(telehealthSessions.roomName, roomName));
+    return result;
+  }
+
+  async getTelehealthSessionByAppointment(appointmentId: number): Promise<TelehealthSession | undefined> {
+    const [result] = await db
+      .select()
+      .from(telehealthSessions)
+      .where(eq(telehealthSessions.appointmentId, appointmentId));
+    return result;
+  }
+
+  async getTelehealthSessionByAccessCode(code: string): Promise<TelehealthSession | undefined> {
+    const [result] = await db
+      .select()
+      .from(telehealthSessions)
+      .where(eq(telehealthSessions.patientAccessCode, code));
+    return result;
+  }
+
+  async updateTelehealthSession(id: number, updates: Partial<InsertTelehealthSession>): Promise<TelehealthSession> {
+    const [result] = await db
+      .update(telehealthSessions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(telehealthSessions.id, id))
+      .returning();
+    return result;
+  }
+
+  async startTelehealthSession(id: number, isTherapist: boolean): Promise<TelehealthSession> {
+    const session = await this.getTelehealthSession(id);
+    if (!session) throw new Error('Session not found');
+
+    const updates: Record<string, unknown> = {};
+
+    if (isTherapist) {
+      updates.therapistJoinedAt = new Date();
+      if (session.status === 'waiting' || session.status === 'scheduled') {
+        updates.status = 'in_progress';
+        updates.actualStart = new Date();
+      }
+    } else {
+      updates.patientJoinedAt = new Date();
+      if (session.status === 'scheduled') {
+        updates.status = 'waiting';
+      }
+    }
+
+    const [result] = await db
+      .update(telehealthSessions)
+      .set(updates)
+      .where(eq(telehealthSessions.id, id))
+      .returning();
+    return result;
+  }
+
+  async endTelehealthSession(id: number): Promise<TelehealthSession> {
+    const session = await this.getTelehealthSession(id);
+    if (!session) throw new Error('Session not found');
+
+    const actualEnd = new Date();
+    const actualStart = session.actualStart ? new Date(session.actualStart) : actualEnd;
+    const duration = Math.round((actualEnd.getTime() - actualStart.getTime()) / 60000);
+
+    const [result] = await db
+      .update(telehealthSessions)
+      .set({
+        status: 'completed',
+        actualEnd,
+        duration,
+        updatedAt: new Date(),
+      })
+      .where(eq(telehealthSessions.id, id))
+      .returning();
+    return result;
+  }
+
+  async getUpcomingTelehealthSessions(practiceId: number, hoursAhead: number = 24): Promise<TelehealthSession[]> {
+    const now = new Date();
+    const future = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
+
+    return await db
+      .select()
+      .from(telehealthSessions)
+      .where(and(
+        eq(telehealthSessions.practiceId, practiceId),
+        eq(telehealthSessions.status, 'scheduled'),
+        gte(telehealthSessions.scheduledStart, now),
+        lte(telehealthSessions.scheduledStart, future)
+      ))
+      .orderBy(telehealthSessions.scheduledStart);
+  }
+
+  async getTodaysTelehealthSessions(practiceId: number, therapistId?: string): Promise<TelehealthSession[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const conditions = [
+      eq(telehealthSessions.practiceId, practiceId),
+      gte(telehealthSessions.scheduledStart, today),
+      lt(telehealthSessions.scheduledStart, tomorrow),
+    ];
+
+    if (therapistId) {
+      conditions.push(eq(telehealthSessions.therapistId, therapistId));
+    }
+
+    return await db
+      .select()
+      .from(telehealthSessions)
+      .where(and(...conditions))
+      .orderBy(telehealthSessions.scheduledStart);
+  }
+
+  // Telehealth Settings
+  async getTelehealthSettings(practiceId: number): Promise<TelehealthSettings | undefined> {
+    const [result] = await db
+      .select()
+      .from(telehealthSettings)
+      .where(eq(telehealthSettings.practiceId, practiceId));
+    return result;
+  }
+
+  async upsertTelehealthSettings(settings: InsertTelehealthSettings): Promise<TelehealthSettings> {
+    const existing = await this.getTelehealthSettings(settings.practiceId);
+    if (existing) {
+      const [result] = await db
+        .update(telehealthSettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(telehealthSettings.id, existing.id))
+        .returning();
+      return result;
+    }
+    const [result] = await db.insert(telehealthSettings).values(settings).returning();
+    return result;
+  }
+
+  // Generate unique room name
+  generateTelehealthRoomName(): string {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).substring(2, 8);
+    return `session-${timestamp}-${random}`;
+  }
+
+  // Generate patient access code (6 characters, easy to type)
+  generatePatientAccessCode(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // removed confusing chars
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
   }
 
   // ==================== CANCELLATION ANALYTICS ====================

@@ -1770,10 +1770,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Generate AI appeal letter
       let appealResult = null;
       try {
+        // Get line items for the claim
+        const lineItems = await storage.getClaimLineItems(claimId);
+        const formattedLineItems = lineItems.map((item: any) => ({
+          cptCode: item.cptCodeId ? { code: String(item.cptCodeId), description: '' } : undefined,
+          icd10Code: item.diagnosisCodeId ? { code: String(item.diagnosisCodeId), description: '' } : undefined,
+          units: item.units || 1,
+          amount: item.amount || '0',
+        }));
+        const practice = { name: 'Practice', npi: null, address: null, phone: null };
+        const patientData = patient ? {
+          firstName: patient.firstName,
+          lastName: patient.lastName,
+          dateOfBirth: patient.dateOfBirth,
+          insuranceProvider: patient.insuranceProvider,
+          insuranceId: patient.insuranceId,
+        } : { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null, insuranceProvider: null, insuranceId: null };
+
         appealResult = await appealGenerator.generateAppeal(
           { ...claim, denialReason: claim.denialReason || 'No reason provided' },
-          patient,
-          {} // Additional clinical context if available
+          formattedLineItems,
+          patientData,
+          practice
         );
       } catch (aiError) {
         console.error('Error generating AI appeal:', aiError);
@@ -1992,10 +2010,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
 
       // Generate new AI appeal letter
+      const lineItems = await storage.getClaimLineItems(appeal.claimId);
+      const formattedLineItems = lineItems.map((item: any) => ({
+        cptCode: item.cptCodeId ? { code: String(item.cptCodeId), description: '' } : undefined,
+        icd10Code: item.diagnosisCodeId ? { code: String(item.diagnosisCodeId), description: '' } : undefined,
+        units: item.units || 1,
+        amount: item.amount || '0',
+      }));
+      const practice = { name: 'Practice', npi: null, address: null, phone: null };
+      const patientData = patient ? {
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        dateOfBirth: patient.dateOfBirth,
+        insuranceProvider: patient.insuranceProvider,
+        insuranceId: patient.insuranceId,
+      } : { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null, insuranceProvider: null, insuranceId: null };
+
       const appealResult = await appealGenerator.generateAppeal(
         { ...claim, denialReason: claim.denialReason || 'No reason provided' },
-        patient,
-        additionalContext || {}
+        formattedLineItems,
+        patientData,
+        practice
       );
 
       // Update appeal with new letter
@@ -3793,6 +3828,274 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error checking booking status:', error);
       res.status(500).json({ message: 'Failed to check booking status' });
+    }
+  });
+
+  // ==================== TELEHEALTH ====================
+
+  // Get telehealth settings
+  app.get('/api/telehealth/settings', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const settings = await storage.getTelehealthSettings(practiceId);
+      res.json(settings || { isEnabled: true, practiceId });
+    } catch (error) {
+      console.error('Error fetching telehealth settings:', error);
+      res.status(500).json({ message: 'Failed to fetch telehealth settings' });
+    }
+  });
+
+  // Save telehealth settings
+  app.post('/api/telehealth/settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const settings = await storage.upsertTelehealthSettings(data);
+      res.json(settings);
+    } catch (error) {
+      console.error('Error saving telehealth settings:', error);
+      res.status(500).json({ message: 'Failed to save telehealth settings' });
+    }
+  });
+
+  // Get telehealth sessions
+  app.get('/api/telehealth/sessions', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        status: req.query.status as string | undefined,
+        therapistId: req.query.therapistId as string | undefined,
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+        endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+      };
+      const sessions = await storage.getTelehealthSessions(practiceId, filters);
+      res.json(sessions);
+    } catch (error) {
+      console.error('Error fetching telehealth sessions:', error);
+      res.status(500).json({ message: 'Failed to fetch telehealth sessions' });
+    }
+  });
+
+  // Get today's telehealth sessions
+  app.get('/api/telehealth/sessions/today', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const therapistId = req.query.therapistId as string | undefined;
+      const sessions = await storage.getTodaysTelehealthSessions(practiceId, therapistId);
+
+      // Enrich with patient info
+      const enrichedSessions = await Promise.all(sessions.map(async (session) => {
+        let patientName = 'Unknown Patient';
+        if (session.patientId) {
+          const patient = await storage.getPatient(session.patientId);
+          if (patient) {
+            patientName = `${patient.firstName} ${patient.lastName}`;
+          }
+        }
+        return { ...session, patientName };
+      }));
+
+      res.json(enrichedSessions);
+    } catch (error) {
+      console.error('Error fetching today\'s sessions:', error);
+      res.status(500).json({ message: 'Failed to fetch sessions' });
+    }
+  });
+
+  // Get a single telehealth session
+  app.get('/api/telehealth/sessions/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const session = await storage.getTelehealthSession(parseInt(req.params.id));
+      if (!session) {
+        return res.status(404).json({ message: 'Session not found' });
+      }
+      res.json(session);
+    } catch (error) {
+      console.error('Error fetching telehealth session:', error);
+      res.status(500).json({ message: 'Failed to fetch telehealth session' });
+    }
+  });
+
+  // Create a telehealth session for an appointment
+  app.post('/api/telehealth/sessions', isAuthenticated, async (req: any, res) => {
+    try {
+      const { appointmentId } = req.body;
+
+      // Check if session already exists for this appointment
+      const existing = await storage.getTelehealthSessionByAppointment(appointmentId);
+      if (existing) {
+        return res.json(existing);
+      }
+
+      // Get the appointment
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+
+      // Generate room name and access code
+      const roomName = storage.generateTelehealthRoomName();
+      const patientAccessCode = storage.generatePatientAccessCode();
+
+      // Create the session
+      const session = await storage.createTelehealthSession({
+        practiceId: appointment.practiceId || 1,
+        appointmentId,
+        patientId: appointment.patientId || undefined,
+        therapistId: appointment.therapistId || undefined,
+        roomName,
+        roomUrl: `/telehealth/room/${roomName}`,
+        hostUrl: `/telehealth/room/${roomName}?host=true`,
+        patientAccessCode,
+        scheduledStart: appointment.startTime,
+        scheduledEnd: appointment.endTime,
+        status: 'scheduled',
+        waitingRoomEnabled: true,
+      });
+
+      res.status(201).json(session);
+    } catch (error) {
+      console.error('Error creating telehealth session:', error);
+      res.status(500).json({ message: 'Failed to create telehealth session' });
+    }
+  });
+
+  // Update telehealth session
+  app.patch('/api/telehealth/sessions/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const session = await storage.updateTelehealthSession(parseInt(req.params.id), req.body);
+      res.json(session);
+    } catch (error) {
+      console.error('Error updating telehealth session:', error);
+      res.status(500).json({ message: 'Failed to update telehealth session' });
+    }
+  });
+
+  // Join a telehealth session (updates status)
+  app.post('/api/telehealth/sessions/:id/join', isAuthenticated, async (req: any, res) => {
+    try {
+      const { isTherapist } = req.body;
+      const session = await storage.startTelehealthSession(parseInt(req.params.id), isTherapist);
+      res.json(session);
+    } catch (error) {
+      console.error('Error joining telehealth session:', error);
+      res.status(500).json({ message: 'Failed to join session' });
+    }
+  });
+
+  // End a telehealth session
+  app.post('/api/telehealth/sessions/:id/end', isAuthenticated, async (req: any, res) => {
+    try {
+      const session = await storage.endTelehealthSession(parseInt(req.params.id));
+      res.json(session);
+    } catch (error) {
+      console.error('Error ending telehealth session:', error);
+      res.status(500).json({ message: 'Failed to end session' });
+    }
+  });
+
+  // --- Public Telehealth Endpoints (for patients) ---
+
+  // Join by access code (patient)
+  app.get('/api/public/telehealth/join/:code', async (req: any, res) => {
+    try {
+      const session = await storage.getTelehealthSessionByAccessCode(req.params.code.toUpperCase());
+      if (!session) {
+        return res.status(404).json({ message: 'Session not found. Please check your access code.' });
+      }
+
+      // Check if session is still valid
+      const now = new Date();
+      const scheduledStart = new Date(session.scheduledStart);
+      const scheduledEnd = new Date(session.scheduledEnd);
+
+      // Allow joining 15 minutes before and up to session end
+      const earliestJoin = new Date(scheduledStart.getTime() - 15 * 60 * 1000);
+      if (now < earliestJoin) {
+        return res.status(400).json({
+          message: 'Session not yet available',
+          availableAt: earliestJoin,
+        });
+      }
+
+      if (now > scheduledEnd && session.status !== 'in_progress') {
+        return res.status(400).json({ message: 'This session has ended' });
+      }
+
+      if (session.status === 'cancelled') {
+        return res.status(400).json({ message: 'This session has been cancelled' });
+      }
+
+      if (session.status === 'completed') {
+        return res.status(400).json({ message: 'This session has already completed' });
+      }
+
+      // Get patient and practice info
+      let patientName = 'Patient';
+      if (session.patientId) {
+        const patient = await storage.getPatient(session.patientId);
+        if (patient) {
+          patientName = patient.firstName;
+        }
+      }
+
+      const practice = await storage.getPractice(session.practiceId);
+
+      res.json({
+        sessionId: session.id,
+        roomName: session.roomName,
+        roomUrl: session.roomUrl,
+        patientName,
+        practiceName: practice?.name || 'Your Practice',
+        scheduledStart: session.scheduledStart,
+        scheduledEnd: session.scheduledEnd,
+        status: session.status,
+        waitingRoomEnabled: session.waitingRoomEnabled,
+      });
+    } catch (error) {
+      console.error('Error joining by access code:', error);
+      res.status(500).json({ message: 'Failed to join session' });
+    }
+  });
+
+  // Patient marks themselves as joined (waiting room)
+  app.post('/api/public/telehealth/waiting/:code', async (req: any, res) => {
+    try {
+      const session = await storage.getTelehealthSessionByAccessCode(req.params.code.toUpperCase());
+      if (!session) {
+        return res.status(404).json({ message: 'Session not found' });
+      }
+
+      // Update patient joined time if not already set
+      if (!session.patientJoinedAt) {
+        await storage.updateTelehealthSession(session.id, {
+          patientJoinedAt: new Date(),
+          status: session.status === 'scheduled' ? 'waiting' : session.status,
+        });
+      }
+
+      res.json({ message: 'Joined waiting room', status: 'waiting' });
+    } catch (error) {
+      console.error('Error joining waiting room:', error);
+      res.status(500).json({ message: 'Failed to join waiting room' });
+    }
+  });
+
+  // Check session status (for polling)
+  app.get('/api/public/telehealth/status/:code', async (req: any, res) => {
+    try {
+      const session = await storage.getTelehealthSessionByAccessCode(req.params.code.toUpperCase());
+      if (!session) {
+        return res.status(404).json({ message: 'Session not found' });
+      }
+
+      res.json({
+        status: session.status,
+        therapistJoined: !!session.therapistJoinedAt,
+      });
+    } catch (error) {
+      console.error('Error checking session status:', error);
+      res.status(500).json({ message: 'Failed to check status' });
     }
   });
 

@@ -278,7 +278,7 @@ export default function SoapNotes() {
       lowerText.includes(activity.toLowerCase().split(' – ')[0].toLowerCase())
     );
     if (matchedActivities.length > 0) {
-      setSelectedActivities(prev => [...new Set([...prev, ...matchedActivities])]);
+      setSelectedActivities(prev => Array.from(new Set([...prev, ...matchedActivities])));
     }
 
     // Try to detect assessment keywords

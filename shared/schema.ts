@@ -494,6 +494,56 @@ export const onlineBookings = pgTable("online_bookings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Telehealth Sessions - video call sessions for appointments
+export const telehealthSessions = pgTable("telehealth_sessions", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  appointmentId: integer("appointment_id").references(() => appointments.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  roomName: varchar("room_name").unique().notNull(), // unique room identifier
+  roomUrl: varchar("room_url"), // full URL to join
+  hostUrl: varchar("host_url"), // URL for therapist (may have extra controls)
+  patientAccessCode: varchar("patient_access_code"), // simple code for patient to join
+  status: varchar("status").default("scheduled"), // scheduled, waiting, in_progress, completed, cancelled, no_show
+  scheduledStart: timestamp("scheduled_start").notNull(),
+  scheduledEnd: timestamp("scheduled_end").notNull(),
+  actualStart: timestamp("actual_start"),
+  actualEnd: timestamp("actual_end"),
+  patientJoinedAt: timestamp("patient_joined_at"),
+  therapistJoinedAt: timestamp("therapist_joined_at"),
+  duration: integer("duration"), // actual duration in minutes
+  recordingEnabled: boolean("recording_enabled").default(false),
+  recordingUrl: varchar("recording_url"),
+  recordingConsent: boolean("recording_consent").default(false),
+  waitingRoomEnabled: boolean("waiting_room_enabled").default(true),
+  notes: text("notes"),
+  technicalIssues: text("technical_issues"), // log any issues
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Telehealth Settings - practice-level configuration
+export const telehealthSettings = pgTable("telehealth_settings", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull().unique(),
+  isEnabled: boolean("is_enabled").default(true),
+  provider: varchar("provider").default("built_in"), // built_in, daily, zoom, twilio
+  providerApiKey: varchar("provider_api_key"),
+  providerApiSecret: varchar("provider_api_secret"),
+  defaultWaitingRoomEnabled: boolean("default_waiting_room_enabled").default(true),
+  defaultRecordingEnabled: boolean("default_recording_enabled").default(false),
+  requireRecordingConsent: boolean("require_recording_consent").default(true),
+  autoCreateRooms: boolean("auto_create_rooms").default(true), // auto-create room when appointment scheduled
+  sendJoinReminder: boolean("send_join_reminder").default(true), // send reminder before session
+  joinReminderMinutes: integer("join_reminder_minutes").default(15),
+  maxSessionDuration: integer("max_session_duration").default(120), // minutes
+  welcomeMessage: text("welcome_message"),
+  waitingRoomMessage: text("waiting_room_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Invoices
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
@@ -1084,6 +1134,24 @@ export const insertOnlineBookingSchema = createInsertSchema(onlineBookings).omit
 });
 export type OnlineBooking = typeof onlineBookings.$inferSelect;
 export type InsertOnlineBooking = z.infer<typeof insertOnlineBookingSchema>;
+
+// Telehealth Session insert schema
+export const insertTelehealthSessionSchema = createInsertSchema(telehealthSessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type TelehealthSession = typeof telehealthSessions.$inferSelect;
+export type InsertTelehealthSession = z.infer<typeof insertTelehealthSessionSchema>;
+
+// Telehealth Settings insert schema
+export const insertTelehealthSettingsSchema = createInsertSchema(telehealthSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type TelehealthSettings = typeof telehealthSettings.$inferSelect;
+export type InsertTelehealthSettings = z.infer<typeof insertTelehealthSettingsSchema>;
 
 // Insurance Authorization insert schemas
 export const insertPatientInsuranceAuthorizationSchema = createInsertSchema(patientInsuranceAuthorizations).omit({

@@ -27,6 +27,8 @@ import Waitlist from "@/pages/waitlist";
 import Reviews from "@/pages/reviews";
 import PublicBooking from "@/pages/public-booking";
 import BookingSettings from "@/pages/booking-settings";
+import Telehealth from "@/pages/telehealth";
+import TelehealthJoin from "@/pages/telehealth-join";
 import MfaChallenge from "@/pages/mfa-challenge";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -50,6 +52,7 @@ function Router() {
         <Route path="/invite/:token" component={InvitePage} />
         <Route path="/mfa-challenge" component={MfaChallenge} />
         <Route path="/book/:slug" component={PublicBooking} />
+        <Route path="/join/:code" component={TelehealthJoin} />
         <Route component={NotFound} />
       </Switch>
     );
@@ -66,6 +69,8 @@ function Router() {
         <Route path="/waitlist" component={Waitlist} />
         <Route path="/reviews" component={Reviews} />
         <Route path="/online-booking" component={BookingSettings} />
+        <Route path="/telehealth" component={Telehealth} />
+        <Route path="/join/:code" component={TelehealthJoin} />
         <Route path="/book/:slug" component={PublicBooking} />
         <Route path="/patients" component={Patients} />
         <Route path="/intake" component={PatientIntake} />
