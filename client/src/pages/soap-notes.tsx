@@ -463,15 +463,30 @@ export default function SoapNotes() {
         aiSuggestedCptCodes: generatedNote.cptCodes || [],
       };
 
-      return apiRequest("POST", "/api/soap-notes", soapNoteData);
+      await apiRequest("POST", "/api/soap-notes", soapNoteData);
+
+      // Auto-generate claim for the session
+      try {
+        const claimResponse = await apiRequest("POST", `/api/sessions/${session.id}/generate-claim`, {});
+        const claim = await claimResponse.json();
+        return { session, claim };
+      } catch (claimError) {
+        // Claim generation failed but SOAP note saved - return session only
+        console.error("Auto-claim generation failed:", claimError);
+        return { session, claim: null };
+      }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const hasClaim = result?.claim && !result.claim.error;
       toast({
-        title: "SOAP Note Saved",
-        description: "Session documented and ready for billing.",
+        title: hasClaim ? "SOAP Note Saved & Claim Created" : "SOAP Note Saved",
+        description: hasClaim
+          ? `Claim ${result.claim.claimNumber} created for $${result.claim.totalAmount}. Ready for submission.`
+          : "Session documented. Claim can be generated from the Claims page.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/claims"] });
       // Clear saved draft
       localStorage.removeItem(STORAGE_KEY);
       // Reset form
