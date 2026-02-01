@@ -780,6 +780,43 @@ export const authorizationAuditLogRelations = relations(authorizationAuditLog, (
   }),
 }));
 
+// Appeals tracking table
+export const appeals = pgTable("appeals", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  appealLevel: varchar("appeal_level").default("initial").notNull(), // initial, first_appeal, second_appeal, external_review
+  status: varchar("status").default("draft").notNull(), // draft, ready, submitted, in_review, won, lost, partial
+  denialCategory: varchar("denial_category"), // medical_necessity, authorization, coding, timely_filing, etc.
+  deadlineDate: date("deadline_date"), // Filing deadline (usually 60-180 days from denial)
+  submittedDate: timestamp("submitted_date"),
+  resolvedDate: timestamp("resolved_date"),
+  appealedAmount: decimal("appealed_amount", { precision: 10, scale: 2 }),
+  recoveredAmount: decimal("recovered_amount", { precision: 10, scale: 2 }),
+  appealLetter: text("appeal_letter"),
+  supportingDocs: jsonb("supporting_docs"), // [{name, url, type}]
+  insurerResponse: text("insurer_response"),
+  notes: text("notes"),
+  assignedTo: varchar("assigned_to").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const appealsRelations = relations(appeals, ({ one }) => ({
+  claim: one(claims, {
+    fields: [appeals.claimId],
+    references: [claims.id],
+  }),
+  practice: one(practices, {
+    fields: [appeals.practiceId],
+    references: [practices.id],
+  }),
+  assignedUser: one(users, {
+    fields: [appeals.assignedTo],
+    references: [users.id],
+  }),
+}));
+
 // Insurance reimbursement rates table
 export const insuranceRates = pgTable("insurance_rates", {
   id: serial("id").primaryKey(),
@@ -954,6 +991,14 @@ export const insertReimbursementOptimizationSchema = createInsertSchema(reimburs
 });
 export type ReimbursementOptimization = typeof reimbursementOptimizations.$inferSelect;
 export type InsertReimbursementOptimization = z.infer<typeof insertReimbursementOptimizationSchema>;
+
+export const insertAppealSchema = createInsertSchema(appeals).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type Appeal = typeof appeals.$inferSelect;
+export type InsertAppeal = z.infer<typeof insertAppealSchema>;
 
 // HIPAA Audit Log
 export const auditLog = pgTable("audit_log", {

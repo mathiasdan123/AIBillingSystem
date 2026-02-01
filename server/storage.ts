@@ -22,6 +22,7 @@ import {
   payerCredentials,
   payerIntegrations,
   authorizationAuditLog,
+  appeals,
   type User,
   type UpsertUser,
   type Practice,
@@ -67,6 +68,8 @@ import {
   type InsertBreachIncident,
   type AmendmentRequest,
   type InsertAmendmentRequest,
+  type Appeal,
+  type InsertAppeal,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -1567,6 +1570,175 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(amendmentRequests.responseDeadline);
+  }
+
+  // ==================== APPEALS MANAGEMENT METHODS ====================
+
+  async createAppeal(data: InsertAppeal): Promise<Appeal> {
+    const [created] = await db.insert(appeals).values(data).returning();
+    return created;
+  }
+
+  async getAppeals(practiceId: number, filters?: {
+    status?: string;
+    appealLevel?: string;
+    deadlineWithinDays?: number;
+  }): Promise<Appeal[]> {
+    const conditions = [eq(appeals.practiceId, practiceId)];
+
+    if (filters?.status) {
+      conditions.push(eq(appeals.status, filters.status));
+    }
+
+    if (filters?.appealLevel) {
+      conditions.push(eq(appeals.appealLevel, filters.appealLevel));
+    }
+
+    if (filters?.deadlineWithinDays) {
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + filters.deadlineWithinDays);
+      conditions.push(lte(appeals.deadlineDate, futureDate.toISOString().split('T')[0]));
+    }
+
+    return await db
+      .select()
+      .from(appeals)
+      .where(and(...conditions))
+      .orderBy(appeals.deadlineDate);
+  }
+
+  async getAppealById(id: number): Promise<Appeal | undefined> {
+    const [appeal] = await db.select().from(appeals).where(eq(appeals.id, id));
+    return appeal;
+  }
+
+  async getAppealsByClaimId(claimId: number): Promise<Appeal[]> {
+    return await db
+      .select()
+      .from(appeals)
+      .where(eq(appeals.claimId, claimId))
+      .orderBy(desc(appeals.createdAt));
+  }
+
+  async updateAppealRecord(id: number, data: Partial<InsertAppeal>): Promise<Appeal> {
+    const [updated] = await db
+      .update(appeals)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(appeals.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getAppealsDashboard(practiceId: number): Promise<{
+    totalDeniedAwaitingAppeal: number;
+    appealsPendingSubmission: number;
+    appealsPastDeadline: number;
+    successRate: number;
+    totalRecovered: number;
+    last90DaysWon: number;
+    last90DaysTotal: number;
+  }> {
+    const now = new Date();
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+    // Get all appeals for practice
+    const allAppeals = await db
+      .select()
+      .from(appeals)
+      .where(eq(appeals.practiceId, practiceId));
+
+    // Get denied claims without appeals
+    const deniedClaims = await db
+      .select()
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        eq(claims.status, 'denied')
+      ));
+
+    const appealedClaimIds = new Set(allAppeals.map((a: Appeal) => a.claimId));
+    const deniedWithoutAppeal = deniedClaims.filter((c: Claim) => !appealedClaimIds.has(c.id));
+    const totalDeniedAwaitingAppeal = deniedWithoutAppeal.reduce(
+      (sum: number, c: Claim) => sum + Number(c.totalAmount || 0), 0
+    );
+
+    // Appeals pending submission (draft or ready status)
+    const pendingSubmission = allAppeals.filter((a: Appeal) =>
+      a.status === 'draft' || a.status === 'ready'
+    ).length;
+
+    // Appeals past deadline
+    const pastDeadline = allAppeals.filter((a: Appeal) =>
+      a.deadlineDate && new Date(a.deadlineDate) < now &&
+      !['won', 'lost', 'partial'].includes(a.status)
+    ).length;
+
+    // Success rate and recovered amount (last 90 days)
+    const recentAppeals = allAppeals.filter((a: Appeal) =>
+      a.resolvedDate && new Date(a.resolvedDate) >= ninetyDaysAgo
+    );
+    const wonAppeals = recentAppeals.filter((a: Appeal) =>
+      a.status === 'won' || a.status === 'partial'
+    );
+
+    const last90DaysWon = wonAppeals.length;
+    const last90DaysTotal = recentAppeals.length;
+    const successRate = last90DaysTotal > 0 ? (last90DaysWon / last90DaysTotal) * 100 : 0;
+
+    // Total recovered amount
+    const totalRecovered = allAppeals
+      .filter((a: Appeal) => a.status === 'won' || a.status === 'partial')
+      .reduce((sum: number, a: Appeal) => sum + Number(a.recoveredAmount || 0), 0);
+
+    return {
+      totalDeniedAwaitingAppeal,
+      appealsPendingSubmission: pendingSubmission,
+      appealsPastDeadline: pastDeadline,
+      successRate: Math.round(successRate * 10) / 10,
+      totalRecovered,
+      last90DaysWon,
+      last90DaysTotal,
+    };
+  }
+
+  async getUpcomingDeadlines(practiceId: number, days: number): Promise<Appeal[]> {
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + days);
+
+    return await db
+      .select()
+      .from(appeals)
+      .where(and(
+        eq(appeals.practiceId, practiceId),
+        lte(appeals.deadlineDate, futureDate.toISOString().split('T')[0]),
+        sql`${appeals.status} NOT IN ('won', 'lost', 'partial')`
+      ))
+      .orderBy(appeals.deadlineDate);
+  }
+
+  async getDeniedClaimsForAppeals(practiceId: number): Promise<Claim[]> {
+    // Get claims that are denied and don't have an active appeal
+    const deniedClaims = await db
+      .select()
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        eq(claims.status, 'denied')
+      ))
+      .orderBy(desc(claims.updatedAt));
+
+    // Filter out claims that already have an active appeal
+    const existingAppeals = await db
+      .select({ claimId: appeals.claimId })
+      .from(appeals)
+      .where(and(
+        eq(appeals.practiceId, practiceId),
+        sql`${appeals.status} NOT IN ('lost')`
+      ));
+
+    const appealedClaimIds = new Set(existingAppeals.map((a: { claimId: number }) => a.claimId));
+    return deniedClaims.filter((c: Claim) => !appealedClaimIds.has(c.id));
   }
 }
 

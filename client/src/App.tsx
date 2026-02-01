@@ -22,6 +22,7 @@ import Accounting from "@/pages/accounting";
 import InvitePage from "@/pages/invite";
 import PayerManagement from "@/pages/payer-management";
 import BreachIncidents from "@/pages/breach-incidents";
+import Appeals from "@/pages/appeals";
 import MfaChallenge from "@/pages/mfa-challenge";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -56,6 +57,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/claims" component={Claims} />
+        <Route path="/appeals" component={Appeals} />
         <Route path="/patients" component={Patients} />
         <Route path="/intake" component={PatientIntake} />
         <Route path="/calendar" component={Calendar} />

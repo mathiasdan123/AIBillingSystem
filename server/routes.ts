@@ -1622,6 +1622,400 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== NEW APPEALS MANAGEMENT ENDPOINTS ====================
+
+  // Get appeals dashboard metrics
+  app.get('/api/appeals/dashboard', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const dashboard = await storage.getAppealsDashboard(practiceId);
+      res.json(dashboard);
+    } catch (error) {
+      console.error('Error fetching appeals dashboard:', error);
+      res.status(500).json({ message: 'Failed to fetch appeals dashboard' });
+    }
+  });
+
+  // Get upcoming deadlines
+  app.get('/api/appeals/deadlines', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const days = parseInt(req.query.days as string) || 30;
+      const deadlines = await storage.getUpcomingDeadlines(practiceId, days);
+      res.json(deadlines);
+    } catch (error) {
+      console.error('Error fetching appeal deadlines:', error);
+      res.status(500).json({ message: 'Failed to fetch appeal deadlines' });
+    }
+  });
+
+  // Get denied claims available for appeal
+  app.get('/api/appeals/denied-claims', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const deniedClaims = await storage.getDeniedClaimsForAppeals(practiceId);
+
+      // Enrich with patient info
+      const enrichedClaims = await Promise.all(deniedClaims.map(async (claim: any) => {
+        const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
+        return {
+          ...claim,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
+        };
+      }));
+
+      res.json(enrichedClaims);
+    } catch (error) {
+      console.error('Error fetching denied claims:', error);
+      res.status(500).json({ message: 'Failed to fetch denied claims' });
+    }
+  });
+
+  // Get all appeals with filters
+  app.get('/api/appeals', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const filters: any = {};
+
+      if (req.query.status) filters.status = req.query.status;
+      if (req.query.appealLevel) filters.appealLevel = req.query.appealLevel;
+      if (req.query.deadlineWithinDays) filters.deadlineWithinDays = parseInt(req.query.deadlineWithinDays);
+
+      const appeals = await storage.getAppeals(practiceId, filters);
+
+      // Enrich with claim and patient info
+      const enrichedAppeals = await Promise.all(appeals.map(async (appeal: any) => {
+        const claim = await storage.getClaim(appeal.claimId);
+        const patient = claim?.patientId ? await storage.getPatient(claim.patientId) : null;
+        return {
+          ...appeal,
+          claim: claim ? {
+            id: claim.id,
+            claimNumber: claim.claimNumber,
+            totalAmount: claim.totalAmount,
+            denialReason: claim.denialReason,
+          } : null,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
+        };
+      }));
+
+      res.json(enrichedAppeals);
+    } catch (error) {
+      console.error('Error fetching appeals:', error);
+      res.status(500).json({ message: 'Failed to fetch appeals' });
+    }
+  });
+
+  // Get single appeal by ID
+  app.get('/api/appeals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.id);
+      const appeal = await storage.getAppealById(appealId);
+
+      if (!appeal) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      // Enrich with claim and patient info
+      const claim = await storage.getClaim(appeal.claimId);
+      const patient = claim?.patientId ? await storage.getPatient(claim.patientId) : null;
+
+      res.json({
+        ...appeal,
+        claim: claim ? {
+          id: claim.id,
+          claimNumber: claim.claimNumber,
+          totalAmount: claim.totalAmount,
+          denialReason: claim.denialReason,
+          submittedAt: claim.submittedAt,
+          paidAmount: claim.paidAmount,
+        } : null,
+        patient: patient ? {
+          id: patient.id,
+          firstName: patient.firstName,
+          lastName: patient.lastName,
+          insuranceProvider: patient.insuranceProvider,
+        } : null,
+      });
+    } catch (error) {
+      console.error('Error fetching appeal:', error);
+      res.status(500).json({ message: 'Failed to fetch appeal' });
+    }
+  });
+
+  // Create new appeal from denied claim
+  app.post('/api/appeals', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = 1;
+      const { claimId, deadlineDate, notes } = req.body;
+
+      if (!claimId) {
+        return res.status(400).json({ message: 'claimId is required' });
+      }
+
+      // Get the claim
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      if (claim.status !== 'denied') {
+        return res.status(400).json({ message: 'Can only create appeal for denied claims' });
+      }
+
+      // Get patient info for AI appeal generation
+      const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
+
+      // Generate AI appeal letter
+      let appealResult = null;
+      try {
+        appealResult = await appealGenerator.generateAppeal(
+          { ...claim, denialReason: claim.denialReason || 'No reason provided' },
+          patient,
+          {} // Additional clinical context if available
+        );
+      } catch (aiError) {
+        console.error('Error generating AI appeal:', aiError);
+      }
+
+      // Calculate deadline (default: 60 days from now if not specified)
+      const calculatedDeadline = deadlineDate ||
+        new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+      const appeal = await storage.createAppeal({
+        claimId,
+        practiceId,
+        appealLevel: 'initial',
+        status: appealResult ? 'ready' : 'draft',
+        denialCategory: appealResult?.denialCategory || null,
+        deadlineDate: calculatedDeadline,
+        appealedAmount: claim.totalAmount,
+        appealLetter: appealResult?.appealLetter || null,
+        notes,
+        supportingDocs: [],
+      });
+
+      // Update claim status to appeal
+      await storage.updateClaim(claimId, { status: 'appeal' });
+
+      res.json({
+        message: 'Appeal created successfully',
+        appeal: {
+          ...appeal,
+          aiGenerated: !!appealResult,
+          successProbability: appealResult?.successProbability,
+          suggestedActions: appealResult?.suggestedActions,
+        },
+      });
+    } catch (error) {
+      console.error('Error creating appeal:', error);
+      res.status(500).json({ message: 'Failed to create appeal' });
+    }
+  });
+
+  // Update appeal
+  app.patch('/api/appeals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.id);
+      const updates = req.body;
+
+      const existingAppeal = await storage.getAppealById(appealId);
+      if (!existingAppeal) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      // Don't allow updates to resolved appeals
+      if (['won', 'lost', 'partial'].includes(existingAppeal.status) &&
+          !['notes', 'supportingDocs'].includes(Object.keys(updates)[0])) {
+        return res.status(400).json({ message: 'Cannot modify resolved appeals' });
+      }
+
+      const updatedAppeal = await storage.updateAppealRecord(appealId, updates);
+      res.json(updatedAppeal);
+    } catch (error) {
+      console.error('Error updating appeal:', error);
+      res.status(500).json({ message: 'Failed to update appeal' });
+    }
+  });
+
+  // Submit appeal to payer
+  app.post('/api/appeals/:id/submit', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.id);
+
+      const appeal = await storage.getAppealById(appealId);
+      if (!appeal) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      if (!appeal.appealLetter) {
+        return res.status(400).json({ message: 'Appeal letter is required before submission' });
+      }
+
+      const updatedAppeal = await storage.updateAppealRecord(appealId, {
+        status: 'submitted',
+        submittedDate: new Date(),
+      });
+
+      res.json({
+        message: 'Appeal marked as submitted',
+        appeal: updatedAppeal,
+      });
+    } catch (error) {
+      console.error('Error submitting appeal:', error);
+      res.status(500).json({ message: 'Failed to submit appeal' });
+    }
+  });
+
+  // Resolve appeal (won/lost/partial)
+  app.post('/api/appeals/:id/resolve', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.id);
+      const { outcome, recoveredAmount, insurerResponse } = req.body;
+
+      if (!['won', 'lost', 'partial'].includes(outcome)) {
+        return res.status(400).json({ message: 'Invalid outcome. Must be won, lost, or partial' });
+      }
+
+      const appeal = await storage.getAppealById(appealId);
+      if (!appeal) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      const updatedAppeal = await storage.updateAppealRecord(appealId, {
+        status: outcome,
+        resolvedDate: new Date(),
+        recoveredAmount: recoveredAmount || (outcome === 'won' ? appeal.appealedAmount : '0'),
+        insurerResponse,
+      });
+
+      // Update claim status based on outcome
+      if (outcome === 'won') {
+        await storage.updateClaim(appeal.claimId, {
+          status: 'paid',
+          paidAmount: recoveredAmount || appeal.appealedAmount,
+          paidAt: new Date(),
+        });
+      } else if (outcome === 'partial') {
+        await storage.updateClaim(appeal.claimId, {
+          status: 'paid',
+          paidAmount: recoveredAmount,
+          paidAt: new Date(),
+        });
+      }
+
+      res.json({
+        message: `Appeal resolved as ${outcome}`,
+        appeal: updatedAppeal,
+      });
+    } catch (error) {
+      console.error('Error resolving appeal:', error);
+      res.status(500).json({ message: 'Failed to resolve appeal' });
+    }
+  });
+
+  // Escalate appeal to next level
+  app.post('/api/appeals/:id/escalate', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.id);
+      const { newDeadlineDate, notes } = req.body;
+
+      const appeal = await storage.getAppealById(appealId);
+      if (!appeal) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      // Determine next level
+      const levelProgression: Record<string, string> = {
+        'initial': 'first_appeal',
+        'first_appeal': 'second_appeal',
+        'second_appeal': 'external_review',
+      };
+
+      const nextLevel = levelProgression[appeal.appealLevel];
+      if (!nextLevel) {
+        return res.status(400).json({ message: 'Cannot escalate further. Already at external review level.' });
+      }
+
+      // Mark current appeal as lost (since we're escalating)
+      await storage.updateAppealRecord(appealId, {
+        status: 'lost',
+        resolvedDate: new Date(),
+        notes: (appeal.notes || '') + '\n\nEscalated to ' + nextLevel,
+      });
+
+      // Get claim for new appeal
+      const claim = await storage.getClaim(appeal.claimId);
+
+      // Create new appeal at next level
+      const newAppeal = await storage.createAppeal({
+        claimId: appeal.claimId,
+        practiceId: appeal.practiceId,
+        appealLevel: nextLevel,
+        status: 'draft',
+        denialCategory: appeal.denialCategory,
+        deadlineDate: newDeadlineDate ||
+          new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        appealedAmount: appeal.appealedAmount,
+        notes: notes || `Escalated from ${appeal.appealLevel}`,
+        supportingDocs: appeal.supportingDocs as any,
+      });
+
+      res.json({
+        message: `Appeal escalated to ${nextLevel}`,
+        previousAppeal: { id: appealId, status: 'lost' },
+        newAppeal,
+      });
+    } catch (error) {
+      console.error('Error escalating appeal:', error);
+      res.status(500).json({ message: 'Failed to escalate appeal' });
+    }
+  });
+
+  // Regenerate AI appeal letter for existing appeal
+  app.post('/api/appeals/:id/regenerate-letter', isAuthenticated, async (req: any, res) => {
+    try {
+      const appealId = parseInt(req.params.id);
+      const { additionalContext } = req.body;
+
+      const appeal = await storage.getAppealById(appealId);
+      if (!appeal) {
+        return res.status(404).json({ message: 'Appeal not found' });
+      }
+
+      const claim = await storage.getClaim(appeal.claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Associated claim not found' });
+      }
+
+      const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
+
+      // Generate new AI appeal letter
+      const appealResult = await appealGenerator.generateAppeal(
+        { ...claim, denialReason: claim.denialReason || 'No reason provided' },
+        patient,
+        additionalContext || {}
+      );
+
+      // Update appeal with new letter
+      const updatedAppeal = await storage.updateAppealRecord(appealId, {
+        appealLetter: appealResult.appealLetter,
+        denialCategory: appealResult.denialCategory,
+        status: 'ready',
+      });
+
+      res.json({
+        message: 'Appeal letter regenerated',
+        appeal: updatedAppeal,
+        successProbability: appealResult.successProbability,
+        suggestedActions: appealResult.suggestedActions,
+      });
+    } catch (error) {
+      console.error('Error regenerating appeal letter:', error);
+      res.status(500).json({ message: 'Failed to regenerate appeal letter' });
+    }
+  });
+
   // Claims analytics
   app.get('/api/claims/analytics/by-status', isAuthenticated, async (req: any, res) => {
     try {

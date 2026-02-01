@@ -18,7 +18,8 @@ import {
   Calendar,
   DollarSign,
   Shield,
-  ShieldAlert
+  ShieldAlert,
+  Scale
 } from "lucide-react";
 import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
@@ -29,6 +30,7 @@ const navigation = [
   { name: 'Calendar', href: '/calendar', icon: Calendar, adminOnly: false },
   { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
   { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
+  { name: 'Appeals', href: '/appeals', icon: Scale, adminOnly: false },
   { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
   { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
