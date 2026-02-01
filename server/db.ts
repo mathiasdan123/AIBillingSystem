@@ -11,8 +11,10 @@ const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT
 
 let pool: any;
 let db: any;
+let dbReady: Promise<void>;
 
-(async () => {
+// Initialize database connection
+dbReady = (async () => {
   if (isLocalDev) {
     // Use regular pg driver for local PostgreSQL
     const pg = await import('pg');
@@ -30,4 +32,15 @@ let db: any;
   }
 })();
 
-export { pool, db };
+// Helper to ensure db is ready before use
+async function getDb() {
+  await dbReady;
+  return db;
+}
+
+async function getPool() {
+  await dbReady;
+  return pool;
+}
+
+export { pool, db, dbReady, getDb, getPool };

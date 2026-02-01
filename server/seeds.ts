@@ -1,10 +1,14 @@
-import { db } from "./db";
+import { getDb } from "./db";
 import { practices, cptCodes, icd10Codes, insurances } from "@shared/schema";
+import { sql } from "drizzle-orm";
 
 export async function seedDatabase() {
   try {
-    // Check if data already exists using raw query to avoid schema mismatch issues
-    const result = await db.execute(`SELECT COUNT(*) as count FROM practices`);
+    // Wait for database to be ready
+    const db = await getDb();
+
+    // Check if data already exists
+    const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
     const count = parseInt(result.rows[0]?.count || '0', 10);
     if (count > 0) {
       console.log("Database already seeded");
