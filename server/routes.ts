@@ -11,6 +11,7 @@ import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes"
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
+import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import logger from "./services/logger";
 import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
@@ -2426,6 +2427,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Voice transcription error:', error);
       res.status(500).json({
         error: error instanceof Error ? error.message : 'Transcription failed'
+      });
+    }
+  });
+
+  // ==================== TEXT-TO-SPEECH (Eleven Labs) ====================
+
+  // Get TTS status and available voices
+  app.get('/api/tts/status', (req, res) => {
+    res.json({
+      available: isTextToSpeechAvailable(),
+      voicePresets: VOICE_PRESETS,
+    });
+  });
+
+  // Get available voices from Eleven Labs
+  app.get('/api/tts/voices', async (req, res) => {
+    try {
+      const voices = await getAvailableVoices();
+      res.json({ voices });
+    } catch (error) {
+      console.error('Error fetching voices:', error);
+      res.status(500).json({ error: 'Failed to fetch voices' });
+    }
+  });
+
+  // Convert text to speech
+  app.post('/api/tts/speak', async (req, res) => {
+    try {
+      const { text, voiceId, stability, similarityBoost } = req.body;
+
+      if (!text) {
+        return res.status(400).json({ error: 'Text is required' });
+      }
+
+      const result = await textToSpeech(text, {
+        voiceId,
+        stability,
+        similarityBoost,
+      });
+
+      if (result.success) {
+        res.json({
+          audioBase64: result.audioBase64,
+          contentType: result.contentType,
+        });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error('TTS error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Text-to-speech failed',
+      });
+    }
+  });
+
+  // Convert SOAP note to speech
+  app.post('/api/tts/soap-note', async (req, res) => {
+    try {
+      const { subjective, objective, assessment, plan, voiceId } = req.body;
+
+      const result = await soapNoteToSpeech(
+        { subjective, objective, assessment, plan },
+        voiceId
+      );
+
+      if (result.success) {
+        res.json({
+          audioBase64: result.audioBase64,
+          contentType: result.contentType,
+        });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error('SOAP note TTS error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Text-to-speech failed',
+      });
+    }
+  });
+
+  // Convert appeal letter to speech
+  app.post('/api/tts/appeal', async (req, res) => {
+    try {
+      const { appealLetter, voiceId } = req.body;
+
+      if (!appealLetter) {
+        return res.status(400).json({ error: 'Appeal letter text is required' });
+      }
+
+      const result = await appealLetterToSpeech(appealLetter, voiceId);
+
+      if (result.success) {
+        res.json({
+          audioBase64: result.audioBase64,
+          contentType: result.contentType,
+        });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error('Appeal TTS error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Text-to-speech failed',
       });
     }
   });

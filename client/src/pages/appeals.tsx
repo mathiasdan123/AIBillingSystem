@@ -22,6 +22,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { TextToSpeech } from "@/components/TextToSpeech";
 import {
   Dialog,
   DialogContent,
@@ -792,7 +793,16 @@ export default function Appeals() {
                 <Card>
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-center">
-                      <CardTitle className="text-sm">Appeal Letter</CardTitle>
+                      <div className="flex items-center gap-2">
+                        <CardTitle className="text-sm">Appeal Letter</CardTitle>
+                        {editedLetter && (
+                          <TextToSpeech
+                            text={editedLetter}
+                            label="Listen"
+                            size="sm"
+                          />
+                        )}
+                      </div>
                       <Button
                         variant="ghost"
                         size="sm"

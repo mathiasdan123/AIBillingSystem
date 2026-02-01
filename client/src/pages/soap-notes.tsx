@@ -16,6 +16,7 @@ import {
   Plus, X, ChevronDown, ChevronUp, Loader2, Mic
 } from "lucide-react";
 import { VoiceInput } from "@/components/VoiceInput";
+import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -1106,10 +1107,17 @@ export default function SoapNotes() {
                 {/* Generated SOAP Note */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-blue-600" />
-                      Generated SOAP Note
-                    </CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-blue-600" />
+                        Generated SOAP Note
+                      </CardTitle>
+                      <TextToSpeech
+                        text={`Subjective: ${generatedNote.subjective}\n\nObjective: ${generatedNote.objective}\n\nAssessment: ${generatedNote.assessment}\n\nPlan: ${generatedNote.plan}`}
+                        label="Listen"
+                        showVoiceSelector
+                      />
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
                     <div>
