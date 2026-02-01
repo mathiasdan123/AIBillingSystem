@@ -1379,3 +1379,73 @@ export const insertAmendmentRequestSchema = createInsertSchema(amendmentRequests
 export type AmendmentRequest = typeof amendmentRequests.$inferSelect;
 export type InsertAmendmentRequest = z.infer<typeof insertAmendmentRequestSchema>;
 
+// ==================== SECURE MESSAGING ====================
+
+// Conversations (message threads between therapist and patient)
+export const conversations = pgTable("conversations", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  subject: varchar("subject", { length: 255 }),
+  status: varchar("status").default("active"), // active, archived, closed
+  // For patient portal access
+  patientAccessToken: varchar("patient_access_token", { length: 64 }).unique(),
+  patientTokenExpiresAt: timestamp("patient_token_expires_at"),
+  // Tracking
+  lastMessageAt: timestamp("last_message_at"),
+  unreadByTherapist: integer("unread_by_therapist").default(0),
+  unreadByPatient: integer("unread_by_patient").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Messages
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversation_id").references(() => conversations.id).notNull(),
+  senderId: varchar("sender_id"), // user ID for therapist, null for patient
+  senderType: varchar("sender_type").notNull(), // 'therapist' | 'patient'
+  senderName: varchar("sender_name"), // display name
+  content: text("content").notNull(),
+  // Attachments stored as JSON array [{name, url, type, size}]
+  attachments: jsonb("attachments").default([]),
+  // Read tracking
+  readAt: timestamp("read_at"),
+  readByRecipient: boolean("read_by_recipient").default(false),
+  // Delivery tracking
+  deliveredAt: timestamp("delivered_at"),
+  // For HIPAA compliance - track if message contains PHI
+  containsPhi: boolean("contains_phi").default(true),
+  // Soft delete
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: varchar("deleted_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Message notifications (for email/SMS alerts)
+export const messageNotifications = pgTable("message_notifications", {
+  id: serial("id").primaryKey(),
+  messageId: integer("message_id").references(() => messages.id).notNull(),
+  recipientType: varchar("recipient_type").notNull(), // 'therapist' | 'patient'
+  recipientId: varchar("recipient_id"), // user ID or patient ID as string
+  notificationType: varchar("notification_type").notNull(), // 'email' | 'sms' | 'push'
+  status: varchar("status").default("pending"), // pending, sent, failed, delivered
+  sentAt: timestamp("sent_at"),
+  deliveredAt: timestamp("delivered_at"),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertConversationSchema = createInsertSchema(conversations).omit({ id: true, createdAt: true, updatedAt: true });
+export type Conversation = typeof conversations.$inferSelect;
+export type InsertConversation = z.infer<typeof insertConversationSchema>;
+
+export const insertMessageSchema = createInsertSchema(messages).omit({ id: true, createdAt: true });
+export type Message = typeof messages.$inferSelect;
+export type InsertMessage = z.infer<typeof insertMessageSchema>;
+
+export const insertMessageNotificationSchema = createInsertSchema(messageNotifications).omit({ id: true, createdAt: true });
+export type MessageNotification = typeof messageNotifications.$inferSelect;
+export type InsertMessageNotification = z.infer<typeof insertMessageNotificationSchema>;
+

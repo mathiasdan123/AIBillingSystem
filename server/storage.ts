@@ -100,6 +100,15 @@ import {
   type InsertTelehealthSession,
   type TelehealthSettings,
   type InsertTelehealthSettings,
+  conversations,
+  messages,
+  messageNotifications,
+  type Conversation,
+  type InsertConversation,
+  type Message,
+  type InsertMessage,
+  type MessageNotification,
+  type InsertMessageNotification,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -2737,6 +2746,315 @@ export class DatabaseStorage implements IStorage {
 
     const appealedClaimIds = new Set(existingAppeals.map((a: { claimId: number }) => a.claimId));
     return deniedClaims.filter((c: Claim) => !appealedClaimIds.has(c.id));
+  }
+
+  // ==================== SECURE MESSAGING ====================
+
+  // Generate a secure access token for patient portal
+  generatePatientAccessToken(): string {
+    return createHash('sha256')
+      .update(Math.random().toString() + Date.now().toString())
+      .digest('hex')
+      .substring(0, 64);
+  }
+
+  // Conversations
+  async createConversation(conversation: InsertConversation): Promise<Conversation> {
+    const patientAccessToken = this.generatePatientAccessToken();
+    const tokenExpiry = new Date();
+    tokenExpiry.setDate(tokenExpiry.getDate() + 30); // Token valid for 30 days
+
+    const [result] = await db.insert(conversations).values({
+      ...conversation,
+      patientAccessToken,
+      patientTokenExpiresAt: tokenExpiry,
+    }).returning();
+    return result;
+  }
+
+  async getConversation(id: number): Promise<Conversation | undefined> {
+    const [result] = await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, id));
+    return result;
+  }
+
+  async getConversationByToken(token: string): Promise<Conversation | undefined> {
+    const [result] = await db
+      .select()
+      .from(conversations)
+      .where(and(
+        eq(conversations.patientAccessToken, token),
+        gte(conversations.patientTokenExpiresAt, new Date())
+      ));
+    return result;
+  }
+
+  async getConversations(practiceId: number, filters?: {
+    therapistId?: string;
+    patientId?: number;
+    status?: string;
+  }): Promise<(Conversation & { patient: Patient | null })[]> {
+    let query = db
+      .select({
+        conversation: conversations,
+        patient: patients,
+      })
+      .from(conversations)
+      .leftJoin(patients, eq(conversations.patientId, patients.id))
+      .where(eq(conversations.practiceId, practiceId))
+      .$dynamic();
+
+    const conditions: any[] = [eq(conversations.practiceId, practiceId)];
+
+    if (filters?.therapistId) {
+      conditions.push(eq(conversations.therapistId, filters.therapistId));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(conversations.patientId, filters.patientId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(conversations.status, filters.status));
+    }
+
+    const results = await db
+      .select({
+        conversation: conversations,
+        patient: patients,
+      })
+      .from(conversations)
+      .leftJoin(patients, eq(conversations.patientId, patients.id))
+      .where(and(...conditions))
+      .orderBy(desc(conversations.lastMessageAt));
+
+    return results.map((r: { conversation: Conversation; patient: Patient | null }) => ({
+      ...r.conversation,
+      patient: r.patient,
+    }));
+  }
+
+  async getPatientConversations(patientId: number): Promise<Conversation[]> {
+    return await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.patientId, patientId))
+      .orderBy(desc(conversations.lastMessageAt));
+  }
+
+  async updateConversation(id: number, updates: Partial<InsertConversation>): Promise<Conversation> {
+    const [result] = await db
+      .update(conversations)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(conversations.id, id))
+      .returning();
+    return result;
+  }
+
+  async archiveConversation(id: number): Promise<Conversation> {
+    return this.updateConversation(id, { status: 'archived' });
+  }
+
+  // Messages
+  async createMessage(message: InsertMessage): Promise<Message> {
+    const [result] = await db.insert(messages).values({
+      ...message,
+      deliveredAt: new Date(),
+    }).returning();
+
+    // Update conversation's last message time and unread count
+    const conversation = await this.getConversation(message.conversationId);
+    if (conversation) {
+      const updates: Record<string, unknown> = {
+        lastMessageAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      if (message.senderType === 'therapist') {
+        updates.unreadByPatient = (conversation.unreadByPatient || 0) + 1;
+      } else {
+        updates.unreadByTherapist = (conversation.unreadByTherapist || 0) + 1;
+      }
+
+      await db
+        .update(conversations)
+        .set(updates)
+        .where(eq(conversations.id, message.conversationId));
+    }
+
+    return result;
+  }
+
+  async getMessage(id: number): Promise<Message | undefined> {
+    const [result] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, id));
+    return result;
+  }
+
+  async getMessages(conversationId: number, limit: number = 50, offset: number = 0): Promise<Message[]> {
+    return await db
+      .select()
+      .from(messages)
+      .where(and(
+        eq(messages.conversationId, conversationId),
+        isNull(messages.deletedAt)
+      ))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async markMessageRead(id: number): Promise<Message> {
+    const [result] = await db
+      .update(messages)
+      .set({
+        readAt: new Date(),
+        readByRecipient: true,
+      })
+      .where(eq(messages.id, id))
+      .returning();
+    return result;
+  }
+
+  async markConversationReadByTherapist(conversationId: number): Promise<void> {
+    // Mark all unread messages from patient as read
+    await db
+      .update(messages)
+      .set({
+        readAt: new Date(),
+        readByRecipient: true,
+      })
+      .where(and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.senderType, 'patient'),
+        isNull(messages.readAt)
+      ));
+
+    // Reset unread count
+    await db
+      .update(conversations)
+      .set({ unreadByTherapist: 0, updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+  }
+
+  async markConversationReadByPatient(conversationId: number): Promise<void> {
+    // Mark all unread messages from therapist as read
+    await db
+      .update(messages)
+      .set({
+        readAt: new Date(),
+        readByRecipient: true,
+      })
+      .where(and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.senderType, 'therapist'),
+        isNull(messages.readAt)
+      ));
+
+    // Reset unread count
+    await db
+      .update(conversations)
+      .set({ unreadByPatient: 0, updatedAt: new Date() })
+      .where(eq(conversations.id, conversationId));
+  }
+
+  async softDeleteMessage(id: number, deletedBy: string): Promise<Message> {
+    const [result] = await db
+      .update(messages)
+      .set({
+        deletedAt: new Date(),
+        deletedBy,
+      })
+      .where(eq(messages.id, id))
+      .returning();
+    return result;
+  }
+
+  async getUnreadCount(practiceId: number, therapistId?: string): Promise<number> {
+    const conditions = [eq(conversations.practiceId, practiceId)];
+    if (therapistId) {
+      conditions.push(eq(conversations.therapistId, therapistId));
+    }
+
+    const [result] = await db
+      .select({ total: sum(conversations.unreadByTherapist) })
+      .from(conversations)
+      .where(and(...conditions));
+
+    return Number(result?.total || 0);
+  }
+
+  async getPatientUnreadCount(patientId: number): Promise<number> {
+    const [result] = await db
+      .select({ total: sum(conversations.unreadByPatient) })
+      .from(conversations)
+      .where(eq(conversations.patientId, patientId));
+
+    return Number(result?.total || 0);
+  }
+
+  // Message notifications
+  async createMessageNotification(notification: InsertMessageNotification): Promise<MessageNotification> {
+    const [result] = await db.insert(messageNotifications).values(notification).returning();
+    return result;
+  }
+
+  async updateMessageNotification(id: number, updates: Partial<InsertMessageNotification>): Promise<MessageNotification> {
+    const [result] = await db
+      .update(messageNotifications)
+      .set(updates)
+      .where(eq(messageNotifications.id, id))
+      .returning();
+    return result;
+  }
+
+  async getPendingNotifications(): Promise<MessageNotification[]> {
+    return await db
+      .select()
+      .from(messageNotifications)
+      .where(eq(messageNotifications.status, 'pending'))
+      .orderBy(messageNotifications.createdAt);
+  }
+
+  // Refresh patient access token
+  async refreshPatientAccessToken(conversationId: number): Promise<Conversation> {
+    const newToken = this.generatePatientAccessToken();
+    const tokenExpiry = new Date();
+    tokenExpiry.setDate(tokenExpiry.getDate() + 30);
+
+    const [result] = await db
+      .update(conversations)
+      .set({
+        patientAccessToken: newToken,
+        patientTokenExpiresAt: tokenExpiry,
+        updatedAt: new Date(),
+      })
+      .where(eq(conversations.id, conversationId))
+      .returning();
+    return result;
+  }
+
+  // Get conversation with messages for a specific conversation
+  async getConversationWithMessages(id: number): Promise<{
+    conversation: Conversation;
+    messages: Message[];
+    patient: Patient | null;
+  } | null> {
+    const conversation = await this.getConversation(id);
+    if (!conversation) return null;
+
+    const msgs = await this.getMessages(id, 100);
+    const patient = conversation.patientId
+      ? await this.getPatient(conversation.patientId)
+      : null;
+
+    return {
+      conversation,
+      messages: msgs.reverse(), // Return in chronological order
+      patient: patient || null,
+    };
   }
 }
 

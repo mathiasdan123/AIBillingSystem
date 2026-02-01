@@ -29,6 +29,7 @@ import PublicBooking from "@/pages/public-booking";
 import BookingSettings from "@/pages/booking-settings";
 import Telehealth from "@/pages/telehealth";
 import TelehealthJoin from "@/pages/telehealth-join";
+import Messages from "@/pages/messages";
 import MfaChallenge from "@/pages/mfa-challenge";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -70,6 +71,7 @@ function Router() {
         <Route path="/reviews" component={Reviews} />
         <Route path="/online-booking" component={BookingSettings} />
         <Route path="/telehealth" component={Telehealth} />
+        <Route path="/messages" component={Messages} />
         <Route path="/join/:code" component={TelehealthJoin} />
         <Route path="/book/:slug" component={PublicBooking} />
         <Route path="/patients" component={Patients} />
