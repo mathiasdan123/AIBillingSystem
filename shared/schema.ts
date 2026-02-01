@@ -1578,3 +1578,131 @@ export const insertEligibilityAlertSchema = createInsertSchema(eligibilityAlerts
 export type EligibilityAlert = typeof eligibilityAlerts.$inferSelect;
 export type InsertEligibilityAlert = z.infer<typeof insertEligibilityAlertSchema>;
 
+// Treatment Plans
+export const treatmentPlans = pgTable("treatment_plans", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  // Plan details
+  title: varchar("title", { length: 255 }).notNull(),
+  diagnosis: text("diagnosis"), // Primary diagnosis/presenting problem
+  diagnosisCodes: jsonb("diagnosis_codes"), // ICD-10 codes [{code, description}]
+  clinicalSummary: text("clinical_summary"), // Current clinical presentation
+  // Treatment approach
+  treatmentModality: varchar("treatment_modality"), // CBT, DBT, EMDR, psychodynamic, etc.
+  frequency: varchar("frequency"), // weekly, bi-weekly, monthly
+  estimatedDuration: varchar("estimated_duration"), // 3 months, 6 months, ongoing
+  // Status tracking
+  status: varchar("status").default("active"), // draft, active, completed, discontinued
+  startDate: date("start_date"),
+  targetEndDate: date("target_end_date"),
+  actualEndDate: date("actual_end_date"),
+  // Review schedule
+  nextReviewDate: date("next_review_date"),
+  lastReviewedAt: timestamp("last_reviewed_at"),
+  lastReviewedBy: varchar("last_reviewed_by").references(() => users.id),
+  // Signatures
+  patientSignature: text("patient_signature"), // Base64 or signature data
+  patientSignedAt: timestamp("patient_signed_at"),
+  therapistSignature: text("therapist_signature"),
+  therapistSignedAt: timestamp("therapist_signed_at"),
+  // Notes
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTreatmentPlanSchema = createInsertSchema(treatmentPlans).omit({ id: true, createdAt: true, updatedAt: true });
+export type TreatmentPlan = typeof treatmentPlans.$inferSelect;
+export type InsertTreatmentPlan = z.infer<typeof insertTreatmentPlanSchema>;
+
+// Treatment Goals
+export const treatmentGoals = pgTable("treatment_goals", {
+  id: serial("id").primaryKey(),
+  treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // Goal details
+  goalNumber: integer("goal_number").notNull(), // Order within the plan
+  category: varchar("category"), // symptom_reduction, skill_building, behavioral, relational, etc.
+  description: text("description").notNull(), // Long-term goal description
+  targetDate: date("target_date"),
+  // Progress tracking
+  status: varchar("status").default("in_progress"), // not_started, in_progress, achieved, modified, discontinued
+  progressPercentage: integer("progress_percentage").default(0), // 0-100
+  // Measurable criteria
+  baselineMeasure: text("baseline_measure"), // Starting point
+  targetMeasure: text("target_measure"), // Goal criteria for achievement
+  currentMeasure: text("current_measure"), // Current status
+  // Timestamps
+  achievedAt: timestamp("achieved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTreatmentGoalSchema = createInsertSchema(treatmentGoals).omit({ id: true, createdAt: true, updatedAt: true });
+export type TreatmentGoal = typeof treatmentGoals.$inferSelect;
+export type InsertTreatmentGoal = z.infer<typeof insertTreatmentGoalSchema>;
+
+// Treatment Objectives (SMART objectives under goals)
+export const treatmentObjectives = pgTable("treatment_objectives", {
+  id: serial("id").primaryKey(),
+  goalId: integer("goal_id").references(() => treatmentGoals.id).notNull(),
+  treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id).notNull(),
+  // Objective details (SMART: Specific, Measurable, Achievable, Relevant, Time-bound)
+  objectiveNumber: integer("objective_number").notNull(), // Order within the goal
+  description: text("description").notNull(),
+  measurementMethod: text("measurement_method"), // How progress is measured
+  targetDate: date("target_date"),
+  // Progress
+  status: varchar("status").default("in_progress"), // not_started, in_progress, achieved, modified, discontinued
+  progressNotes: text("progress_notes"),
+  achievedAt: timestamp("achieved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTreatmentObjectiveSchema = createInsertSchema(treatmentObjectives).omit({ id: true, createdAt: true, updatedAt: true });
+export type TreatmentObjective = typeof treatmentObjectives.$inferSelect;
+export type InsertTreatmentObjective = z.infer<typeof insertTreatmentObjectiveSchema>;
+
+// Treatment Interventions (therapeutic techniques used)
+export const treatmentInterventions = pgTable("treatment_interventions", {
+  id: serial("id").primaryKey(),
+  treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id).notNull(),
+  goalId: integer("goal_id").references(() => treatmentGoals.id), // Optional link to specific goal
+  // Intervention details
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  frequency: varchar("frequency"), // per session, weekly, as needed
+  // Tracking
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTreatmentInterventionSchema = createInsertSchema(treatmentInterventions).omit({ id: true, createdAt: true, updatedAt: true });
+export type TreatmentIntervention = typeof treatmentInterventions.$inferSelect;
+export type InsertTreatmentIntervention = z.infer<typeof insertTreatmentInterventionSchema>;
+
+// Goal Progress Notes (session-by-session progress updates)
+export const goalProgressNotes = pgTable("goal_progress_notes", {
+  id: serial("id").primaryKey(),
+  goalId: integer("goal_id").references(() => treatmentGoals.id).notNull(),
+  sessionId: integer("session_id").references(() => treatmentSessions.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  // Progress update
+  progressRating: integer("progress_rating"), // 1-5 scale or percentage
+  notes: text("notes").notNull(),
+  interventionsUsed: jsonb("interventions_used"), // [{id, name, effective: boolean}]
+  // Next steps
+  homeworkAssigned: text("homework_assigned"),
+  nextSessionFocus: text("next_session_focus"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGoalProgressNoteSchema = createInsertSchema(goalProgressNotes).omit({ id: true, createdAt: true });
+export type GoalProgressNote = typeof goalProgressNotes.$inferSelect;
+export type InsertGoalProgressNote = z.infer<typeof insertGoalProgressNoteSchema>;
+

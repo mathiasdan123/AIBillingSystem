@@ -121,6 +121,21 @@ import {
   eligibilityAlerts,
   type EligibilityAlert,
   type InsertEligibilityAlert,
+  treatmentPlans,
+  treatmentGoals,
+  treatmentObjectives,
+  treatmentInterventions,
+  goalProgressNotes,
+  type TreatmentPlan,
+  type InsertTreatmentPlan,
+  type TreatmentGoal,
+  type InsertTreatmentGoal,
+  type TreatmentObjective,
+  type InsertTreatmentObjective,
+  type TreatmentIntervention,
+  type InsertTreatmentIntervention,
+  type GoalProgressNote,
+  type InsertGoalProgressNote,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -3614,6 +3629,264 @@ export class DatabaseStorage implements IStorage {
   async createEligibilityAlertsBatch(alerts: InsertEligibilityAlert[]): Promise<EligibilityAlert[]> {
     if (alerts.length === 0) return [];
     return db.insert(eligibilityAlerts).values(alerts).returning();
+  }
+
+  // ==================== Treatment Plans ====================
+
+  async createTreatmentPlan(plan: InsertTreatmentPlan): Promise<TreatmentPlan> {
+    const [newPlan] = await db.insert(treatmentPlans).values(plan).returning();
+    return newPlan;
+  }
+
+  async getTreatmentPlans(practiceId: number, filters?: {
+    patientId?: number;
+    therapistId?: string;
+    status?: string;
+  }): Promise<TreatmentPlan[]> {
+    const conditions = [eq(treatmentPlans.practiceId, practiceId)];
+
+    if (filters?.patientId) {
+      conditions.push(eq(treatmentPlans.patientId, filters.patientId));
+    }
+    if (filters?.therapistId) {
+      conditions.push(eq(treatmentPlans.therapistId, filters.therapistId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(treatmentPlans.status, filters.status));
+    }
+
+    return db.select()
+      .from(treatmentPlans)
+      .where(and(...conditions))
+      .orderBy(desc(treatmentPlans.createdAt));
+  }
+
+  async getTreatmentPlan(id: number): Promise<TreatmentPlan | undefined> {
+    const [plan] = await db.select()
+      .from(treatmentPlans)
+      .where(eq(treatmentPlans.id, id));
+    return plan;
+  }
+
+  async updateTreatmentPlan(id: number, updates: Partial<InsertTreatmentPlan>): Promise<TreatmentPlan | undefined> {
+    const [updated] = await db.update(treatmentPlans)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(treatmentPlans.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getTreatmentPlanWithDetails(id: number): Promise<{
+    plan: TreatmentPlan;
+    goals: (TreatmentGoal & { objectives: TreatmentObjective[] })[];
+    interventions: TreatmentIntervention[];
+  } | null> {
+    const plan = await this.getTreatmentPlan(id);
+    if (!plan) return null;
+
+    const goals = await this.getTreatmentGoals(id);
+    const goalsWithObjectives = await Promise.all(
+      goals.map(async (goal) => ({
+        ...goal,
+        objectives: await this.getTreatmentObjectives(goal.id),
+      }))
+    );
+
+    const interventions = await this.getTreatmentInterventions(id);
+
+    return { plan, goals: goalsWithObjectives, interventions };
+  }
+
+  async getPatientTreatmentPlans(patientId: number): Promise<TreatmentPlan[]> {
+    return db.select()
+      .from(treatmentPlans)
+      .where(eq(treatmentPlans.patientId, patientId))
+      .orderBy(desc(treatmentPlans.createdAt));
+  }
+
+  async getActiveTreatmentPlan(patientId: number): Promise<TreatmentPlan | undefined> {
+    const [plan] = await db.select()
+      .from(treatmentPlans)
+      .where(and(
+        eq(treatmentPlans.patientId, patientId),
+        eq(treatmentPlans.status, 'active')
+      ))
+      .orderBy(desc(treatmentPlans.createdAt))
+      .limit(1);
+    return plan;
+  }
+
+  // ==================== Treatment Goals ====================
+
+  async createTreatmentGoal(goal: InsertTreatmentGoal): Promise<TreatmentGoal> {
+    const [newGoal] = await db.insert(treatmentGoals).values(goal).returning();
+    return newGoal;
+  }
+
+  async getTreatmentGoals(treatmentPlanId: number): Promise<TreatmentGoal[]> {
+    return db.select()
+      .from(treatmentGoals)
+      .where(eq(treatmentGoals.treatmentPlanId, treatmentPlanId))
+      .orderBy(treatmentGoals.goalNumber);
+  }
+
+  async getTreatmentGoal(id: number): Promise<TreatmentGoal | undefined> {
+    const [goal] = await db.select()
+      .from(treatmentGoals)
+      .where(eq(treatmentGoals.id, id));
+    return goal;
+  }
+
+  async updateTreatmentGoal(id: number, updates: Partial<InsertTreatmentGoal> & {
+    achievedAt?: Date;
+  }): Promise<TreatmentGoal | undefined> {
+    const [updated] = await db.update(treatmentGoals)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(treatmentGoals.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTreatmentGoal(id: number): Promise<void> {
+    // Delete objectives first
+    await db.delete(treatmentObjectives).where(eq(treatmentObjectives.goalId, id));
+    // Delete progress notes
+    await db.delete(goalProgressNotes).where(eq(goalProgressNotes.goalId, id));
+    // Delete the goal
+    await db.delete(treatmentGoals).where(eq(treatmentGoals.id, id));
+  }
+
+  // ==================== Treatment Objectives ====================
+
+  async createTreatmentObjective(objective: InsertTreatmentObjective): Promise<TreatmentObjective> {
+    const [newObjective] = await db.insert(treatmentObjectives).values(objective).returning();
+    return newObjective;
+  }
+
+  async getTreatmentObjectives(goalId: number): Promise<TreatmentObjective[]> {
+    return db.select()
+      .from(treatmentObjectives)
+      .where(eq(treatmentObjectives.goalId, goalId))
+      .orderBy(treatmentObjectives.objectiveNumber);
+  }
+
+  async getTreatmentObjective(id: number): Promise<TreatmentObjective | undefined> {
+    const [objective] = await db.select()
+      .from(treatmentObjectives)
+      .where(eq(treatmentObjectives.id, id));
+    return objective;
+  }
+
+  async updateTreatmentObjective(id: number, updates: Partial<InsertTreatmentObjective> & {
+    achievedAt?: Date;
+  }): Promise<TreatmentObjective | undefined> {
+    const [updated] = await db.update(treatmentObjectives)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(treatmentObjectives.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTreatmentObjective(id: number): Promise<void> {
+    await db.delete(treatmentObjectives).where(eq(treatmentObjectives.id, id));
+  }
+
+  // ==================== Treatment Interventions ====================
+
+  async createTreatmentIntervention(intervention: InsertTreatmentIntervention): Promise<TreatmentIntervention> {
+    const [newIntervention] = await db.insert(treatmentInterventions).values(intervention).returning();
+    return newIntervention;
+  }
+
+  async getTreatmentInterventions(treatmentPlanId: number): Promise<TreatmentIntervention[]> {
+    return db.select()
+      .from(treatmentInterventions)
+      .where(eq(treatmentInterventions.treatmentPlanId, treatmentPlanId))
+      .orderBy(treatmentInterventions.name);
+  }
+
+  async updateTreatmentIntervention(id: number, updates: Partial<InsertTreatmentIntervention>): Promise<TreatmentIntervention | undefined> {
+    const [updated] = await db.update(treatmentInterventions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(treatmentInterventions.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTreatmentIntervention(id: number): Promise<void> {
+    await db.delete(treatmentInterventions).where(eq(treatmentInterventions.id, id));
+  }
+
+  // ==================== Goal Progress Notes ====================
+
+  async createGoalProgressNote(note: InsertGoalProgressNote): Promise<GoalProgressNote> {
+    const [newNote] = await db.insert(goalProgressNotes).values(note).returning();
+
+    // Update goal progress if rating provided
+    if (note.progressRating && note.goalId) {
+      await this.updateTreatmentGoal(note.goalId, {
+        progressPercentage: note.progressRating * 20, // Convert 1-5 to percentage
+      });
+    }
+
+    return newNote;
+  }
+
+  async getGoalProgressNotes(goalId: number): Promise<GoalProgressNote[]> {
+    return db.select()
+      .from(goalProgressNotes)
+      .where(eq(goalProgressNotes.goalId, goalId))
+      .orderBy(desc(goalProgressNotes.createdAt));
+  }
+
+  async getSessionProgressNotes(sessionId: number): Promise<GoalProgressNote[]> {
+    return db.select()
+      .from(goalProgressNotes)
+      .where(eq(goalProgressNotes.sessionId, sessionId));
+  }
+
+  // ==================== Treatment Plan Analytics ====================
+
+  async getTreatmentPlanStats(practiceId: number): Promise<{
+    totalPlans: number;
+    activePlans: number;
+    completedPlans: number;
+    averageGoalsPerPlan: number;
+    goalCompletionRate: number;
+  }> {
+    const plans = await this.getTreatmentPlans(practiceId);
+    const activePlans = plans.filter((p) => p.status === 'active').length;
+    const completedPlans = plans.filter((p) => p.status === 'completed').length;
+
+    // Get all goals for this practice
+    const allGoals = await db.select()
+      .from(treatmentGoals)
+      .where(eq(treatmentGoals.practiceId, practiceId));
+
+    const totalGoals = allGoals.length;
+    const achievedGoals = allGoals.filter((g: TreatmentGoal) => g.status === 'achieved').length;
+
+    return {
+      totalPlans: plans.length,
+      activePlans,
+      completedPlans,
+      averageGoalsPerPlan: plans.length > 0 ? totalGoals / plans.length : 0,
+      goalCompletionRate: totalGoals > 0 ? (achievedGoals / totalGoals) * 100 : 0,
+    };
+  }
+
+  async getPlansNeedingReview(practiceId: number, daysAhead: number = 7): Promise<TreatmentPlan[]> {
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + daysAhead);
+
+    return db.select()
+      .from(treatmentPlans)
+      .where(and(
+        eq(treatmentPlans.practiceId, practiceId),
+        eq(treatmentPlans.status, 'active'),
+        lte(treatmentPlans.nextReviewDate, futureDate.toISOString().split('T')[0])
+      ))
+      .orderBy(treatmentPlans.nextReviewDate);
   }
 }
 

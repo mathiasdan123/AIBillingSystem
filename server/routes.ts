@@ -5329,6 +5329,404 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== TREATMENT PLANS ====================
+
+  // Get treatment plans for practice
+  app.get('/api/treatment-plans', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        therapistId: req.query.therapistId as string | undefined,
+        status: req.query.status as string | undefined,
+      };
+      const plans = await storage.getTreatmentPlans(practiceId, filters);
+      res.json(plans);
+    } catch (error) {
+      console.error('Error fetching treatment plans:', error);
+      res.status(500).json({ message: 'Failed to fetch treatment plans' });
+    }
+  });
+
+  // Get treatment plan stats
+  app.get('/api/treatment-plans/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const stats = await storage.getTreatmentPlanStats(practiceId);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching treatment plan stats:', error);
+      res.status(500).json({ message: 'Failed to fetch treatment plan stats' });
+    }
+  });
+
+  // Get plans needing review
+  app.get('/api/treatment-plans/needs-review', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const daysAhead = parseInt(req.query.daysAhead as string) || 7;
+      const plans = await storage.getPlansNeedingReview(practiceId, daysAhead);
+      res.json(plans);
+    } catch (error) {
+      console.error('Error fetching plans needing review:', error);
+      res.status(500).json({ message: 'Failed to fetch plans needing review' });
+    }
+  });
+
+  // Get single treatment plan with all details
+  app.get('/api/treatment-plans/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const planDetails = await storage.getTreatmentPlanWithDetails(id);
+      if (!planDetails) {
+        return res.status(404).json({ message: 'Treatment plan not found' });
+      }
+      res.json(planDetails);
+    } catch (error) {
+      console.error('Error fetching treatment plan:', error);
+      res.status(500).json({ message: 'Failed to fetch treatment plan' });
+    }
+  });
+
+  // Create treatment plan
+  app.post('/api/treatment-plans', isAuthenticated, async (req: any, res) => {
+    try {
+      const plan = await storage.createTreatmentPlan(req.body);
+      res.status(201).json(plan);
+    } catch (error) {
+      console.error('Error creating treatment plan:', error);
+      res.status(500).json({ message: 'Failed to create treatment plan' });
+    }
+  });
+
+  // Update treatment plan
+  app.patch('/api/treatment-plans/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const plan = await storage.updateTreatmentPlan(id, req.body);
+      if (!plan) {
+        return res.status(404).json({ message: 'Treatment plan not found' });
+      }
+      res.json(plan);
+    } catch (error) {
+      console.error('Error updating treatment plan:', error);
+      res.status(500).json({ message: 'Failed to update treatment plan' });
+    }
+  });
+
+  // Sign treatment plan (patient)
+  app.post('/api/treatment-plans/:id/patient-sign', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { signature } = req.body;
+      const plan = await storage.updateTreatmentPlan(id, {
+        patientSignature: signature,
+        patientSignedAt: new Date(),
+      });
+      if (!plan) {
+        return res.status(404).json({ message: 'Treatment plan not found' });
+      }
+      res.json(plan);
+    } catch (error) {
+      console.error('Error signing treatment plan:', error);
+      res.status(500).json({ message: 'Failed to sign treatment plan' });
+    }
+  });
+
+  // Sign treatment plan (therapist)
+  app.post('/api/treatment-plans/:id/therapist-sign', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { signature } = req.body;
+      const plan = await storage.updateTreatmentPlan(id, {
+        therapistSignature: signature,
+        therapistSignedAt: new Date(),
+      });
+      if (!plan) {
+        return res.status(404).json({ message: 'Treatment plan not found' });
+      }
+      res.json(plan);
+    } catch (error) {
+      console.error('Error signing treatment plan:', error);
+      res.status(500).json({ message: 'Failed to sign treatment plan' });
+    }
+  });
+
+  // Get patient's treatment plans
+  app.get('/api/patients/:id/treatment-plans', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const plans = await storage.getPatientTreatmentPlans(patientId);
+      res.json(plans);
+    } catch (error) {
+      console.error('Error fetching patient treatment plans:', error);
+      res.status(500).json({ message: 'Failed to fetch patient treatment plans' });
+    }
+  });
+
+  // Get patient's active treatment plan
+  app.get('/api/patients/:id/active-treatment-plan', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const plan = await storage.getActiveTreatmentPlan(patientId);
+      if (!plan) {
+        return res.json(null);
+      }
+      const planDetails = await storage.getTreatmentPlanWithDetails(plan.id);
+      res.json(planDetails);
+    } catch (error) {
+      console.error('Error fetching active treatment plan:', error);
+      res.status(500).json({ message: 'Failed to fetch active treatment plan' });
+    }
+  });
+
+  // ==================== TREATMENT GOALS ====================
+
+  // Get goals for a treatment plan
+  app.get('/api/treatment-plans/:planId/goals', isAuthenticated, async (req: any, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const goals = await storage.getTreatmentGoals(planId);
+      res.json(goals);
+    } catch (error) {
+      console.error('Error fetching treatment goals:', error);
+      res.status(500).json({ message: 'Failed to fetch treatment goals' });
+    }
+  });
+
+  // Create treatment goal
+  app.post('/api/treatment-plans/:planId/goals', isAuthenticated, async (req: any, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const goal = await storage.createTreatmentGoal({
+        ...req.body,
+        treatmentPlanId: planId,
+      });
+      res.status(201).json(goal);
+    } catch (error) {
+      console.error('Error creating treatment goal:', error);
+      res.status(500).json({ message: 'Failed to create treatment goal' });
+    }
+  });
+
+  // Get single goal
+  app.get('/api/goals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const goal = await storage.getTreatmentGoal(id);
+      if (!goal) {
+        return res.status(404).json({ message: 'Goal not found' });
+      }
+      const objectives = await storage.getTreatmentObjectives(id);
+      const progressNotes = await storage.getGoalProgressNotes(id);
+      res.json({ ...goal, objectives, progressNotes });
+    } catch (error) {
+      console.error('Error fetching goal:', error);
+      res.status(500).json({ message: 'Failed to fetch goal' });
+    }
+  });
+
+  // Update goal
+  app.patch('/api/goals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const updates = { ...req.body };
+
+      // If marking as achieved, set achievedAt
+      if (updates.status === 'achieved' && !updates.achievedAt) {
+        updates.achievedAt = new Date();
+      }
+
+      const goal = await storage.updateTreatmentGoal(id, updates);
+      if (!goal) {
+        return res.status(404).json({ message: 'Goal not found' });
+      }
+      res.json(goal);
+    } catch (error) {
+      console.error('Error updating goal:', error);
+      res.status(500).json({ message: 'Failed to update goal' });
+    }
+  });
+
+  // Delete goal
+  app.delete('/api/goals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTreatmentGoal(id);
+      res.json({ message: 'Goal deleted' });
+    } catch (error) {
+      console.error('Error deleting goal:', error);
+      res.status(500).json({ message: 'Failed to delete goal' });
+    }
+  });
+
+  // ==================== TREATMENT OBJECTIVES ====================
+
+  // Get objectives for a goal
+  app.get('/api/goals/:goalId/objectives', isAuthenticated, async (req: any, res) => {
+    try {
+      const goalId = parseInt(req.params.goalId);
+      const objectives = await storage.getTreatmentObjectives(goalId);
+      res.json(objectives);
+    } catch (error) {
+      console.error('Error fetching objectives:', error);
+      res.status(500).json({ message: 'Failed to fetch objectives' });
+    }
+  });
+
+  // Create objective
+  app.post('/api/goals/:goalId/objectives', isAuthenticated, async (req: any, res) => {
+    try {
+      const goalId = parseInt(req.params.goalId);
+      const goal = await storage.getTreatmentGoal(goalId);
+      if (!goal) {
+        return res.status(404).json({ message: 'Goal not found' });
+      }
+      const objective = await storage.createTreatmentObjective({
+        ...req.body,
+        goalId,
+        treatmentPlanId: goal.treatmentPlanId,
+      });
+      res.status(201).json(objective);
+    } catch (error) {
+      console.error('Error creating objective:', error);
+      res.status(500).json({ message: 'Failed to create objective' });
+    }
+  });
+
+  // Update objective
+  app.patch('/api/objectives/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const updates = { ...req.body };
+
+      // If marking as achieved, set achievedAt
+      if (updates.status === 'achieved' && !updates.achievedAt) {
+        updates.achievedAt = new Date();
+      }
+
+      const objective = await storage.updateTreatmentObjective(id, updates);
+      if (!objective) {
+        return res.status(404).json({ message: 'Objective not found' });
+      }
+      res.json(objective);
+    } catch (error) {
+      console.error('Error updating objective:', error);
+      res.status(500).json({ message: 'Failed to update objective' });
+    }
+  });
+
+  // Delete objective
+  app.delete('/api/objectives/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTreatmentObjective(id);
+      res.json({ message: 'Objective deleted' });
+    } catch (error) {
+      console.error('Error deleting objective:', error);
+      res.status(500).json({ message: 'Failed to delete objective' });
+    }
+  });
+
+  // ==================== TREATMENT INTERVENTIONS ====================
+
+  // Get interventions for a plan
+  app.get('/api/treatment-plans/:planId/interventions', isAuthenticated, async (req: any, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const interventions = await storage.getTreatmentInterventions(planId);
+      res.json(interventions);
+    } catch (error) {
+      console.error('Error fetching interventions:', error);
+      res.status(500).json({ message: 'Failed to fetch interventions' });
+    }
+  });
+
+  // Create intervention
+  app.post('/api/treatment-plans/:planId/interventions', isAuthenticated, async (req: any, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const intervention = await storage.createTreatmentIntervention({
+        ...req.body,
+        treatmentPlanId: planId,
+      });
+      res.status(201).json(intervention);
+    } catch (error) {
+      console.error('Error creating intervention:', error);
+      res.status(500).json({ message: 'Failed to create intervention' });
+    }
+  });
+
+  // Update intervention
+  app.patch('/api/interventions/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const intervention = await storage.updateTreatmentIntervention(id, req.body);
+      if (!intervention) {
+        return res.status(404).json({ message: 'Intervention not found' });
+      }
+      res.json(intervention);
+    } catch (error) {
+      console.error('Error updating intervention:', error);
+      res.status(500).json({ message: 'Failed to update intervention' });
+    }
+  });
+
+  // Delete intervention
+  app.delete('/api/interventions/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTreatmentIntervention(id);
+      res.json({ message: 'Intervention deleted' });
+    } catch (error) {
+      console.error('Error deleting intervention:', error);
+      res.status(500).json({ message: 'Failed to delete intervention' });
+    }
+  });
+
+  // ==================== GOAL PROGRESS NOTES ====================
+
+  // Get progress notes for a goal
+  app.get('/api/goals/:goalId/progress', isAuthenticated, async (req: any, res) => {
+    try {
+      const goalId = parseInt(req.params.goalId);
+      const notes = await storage.getGoalProgressNotes(goalId);
+      res.json(notes);
+    } catch (error) {
+      console.error('Error fetching progress notes:', error);
+      res.status(500).json({ message: 'Failed to fetch progress notes' });
+    }
+  });
+
+  // Create progress note
+  app.post('/api/goals/:goalId/progress', isAuthenticated, async (req: any, res) => {
+    try {
+      const goalId = parseInt(req.params.goalId);
+      const therapistId = req.user?.id;
+      const note = await storage.createGoalProgressNote({
+        ...req.body,
+        goalId,
+        therapistId,
+      });
+      res.status(201).json(note);
+    } catch (error) {
+      console.error('Error creating progress note:', error);
+      res.status(500).json({ message: 'Failed to create progress note' });
+    }
+  });
+
+  // Get progress notes for a session
+  app.get('/api/sessions/:sessionId/progress-notes', isAuthenticated, async (req: any, res) => {
+    try {
+      const sessionId = parseInt(req.params.sessionId);
+      const notes = await storage.getSessionProgressNotes(sessionId);
+      res.json(notes);
+    } catch (error) {
+      console.error('Error fetching session progress notes:', error);
+      res.status(500).json({ message: 'Failed to fetch session progress notes' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
