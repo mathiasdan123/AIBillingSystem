@@ -118,6 +118,9 @@ import {
   type InsertPatientDocument,
   type PatientStatement,
   type InsertPatientStatement,
+  eligibilityAlerts,
+  type EligibilityAlert,
+  type InsertEligibilityAlert,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -543,6 +546,14 @@ export class DatabaseStorage implements IStorage {
       .from(insurances)
       .where(eq(insurances.isActive, true))
       .orderBy(insurances.name);
+  }
+
+  async getInsurance(id: number): Promise<Insurance | undefined> {
+    const [insurance] = await db
+      .select()
+      .from(insurances)
+      .where(eq(insurances.id, id));
+    return insurance;
   }
 
   // SOAP Notes operations (with PHI encryption)
@@ -3411,6 +3422,198 @@ export class DatabaseStorage implements IStorage {
       unreadMessages,
       documents,
     };
+  }
+
+  // ==================== Eligibility Alerts ====================
+
+  async createEligibilityAlert(alert: InsertEligibilityAlert): Promise<EligibilityAlert> {
+    const [newAlert] = await db.insert(eligibilityAlerts).values(alert).returning();
+    return newAlert;
+  }
+
+  async getEligibilityAlerts(practiceId: number, filters?: {
+    status?: string;
+    severity?: string;
+    alertType?: string;
+    patientId?: number;
+    limit?: number;
+  }): Promise<EligibilityAlert[]> {
+    const conditions = [eq(eligibilityAlerts.practiceId, practiceId)];
+
+    if (filters?.status) {
+      conditions.push(eq(eligibilityAlerts.status, filters.status));
+    }
+    if (filters?.severity) {
+      conditions.push(eq(eligibilityAlerts.severity, filters.severity));
+    }
+    if (filters?.alertType) {
+      conditions.push(eq(eligibilityAlerts.alertType, filters.alertType));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(eligibilityAlerts.patientId, filters.patientId));
+    }
+
+    let query = db.select()
+      .from(eligibilityAlerts)
+      .where(and(...conditions))
+      .orderBy(desc(eligibilityAlerts.createdAt));
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as typeof query;
+    }
+
+    return query;
+  }
+
+  async getEligibilityAlert(id: number): Promise<EligibilityAlert | undefined> {
+    const [alert] = await db.select()
+      .from(eligibilityAlerts)
+      .where(eq(eligibilityAlerts.id, id));
+    return alert;
+  }
+
+  async updateEligibilityAlert(id: number, updates: Partial<InsertEligibilityAlert> & {
+    status?: string;
+    acknowledgedAt?: Date;
+    acknowledgedBy?: string;
+    resolvedAt?: Date;
+    resolvedBy?: string;
+    resolutionNotes?: string;
+  }): Promise<EligibilityAlert | undefined> {
+    const [updated] = await db.update(eligibilityAlerts)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(eligibilityAlerts.id, id))
+      .returning();
+    return updated;
+  }
+
+  async acknowledgeEligibilityAlert(id: number, userId: string): Promise<EligibilityAlert | undefined> {
+    return this.updateEligibilityAlert(id, {
+      status: 'acknowledged',
+      acknowledgedAt: new Date(),
+      acknowledgedBy: userId,
+    });
+  }
+
+  async resolveEligibilityAlert(id: number, userId: string, notes?: string): Promise<EligibilityAlert | undefined> {
+    return this.updateEligibilityAlert(id, {
+      status: 'resolved',
+      resolvedAt: new Date(),
+      resolvedBy: userId,
+      resolutionNotes: notes,
+    });
+  }
+
+  async dismissEligibilityAlert(id: number, userId: string, notes?: string): Promise<EligibilityAlert | undefined> {
+    return this.updateEligibilityAlert(id, {
+      status: 'dismissed',
+      resolvedAt: new Date(),
+      resolvedBy: userId,
+      resolutionNotes: notes,
+    });
+  }
+
+  async getOpenAlertsForAppointment(appointmentId: number): Promise<EligibilityAlert[]> {
+    return db.select()
+      .from(eligibilityAlerts)
+      .where(and(
+        eq(eligibilityAlerts.appointmentId, appointmentId),
+        eq(eligibilityAlerts.status, 'open')
+      ));
+  }
+
+  async getEligibilityAlertStats(practiceId: number): Promise<{
+    totalOpen: number;
+    bySeverity: { severity: string; count: number }[];
+    byType: { alertType: string; count: number }[];
+    resolvedLast30Days: number;
+  }> {
+    // Get total open alerts
+    const [{ totalOpen }] = await db.select({ totalOpen: count() })
+      .from(eligibilityAlerts)
+      .where(and(
+        eq(eligibilityAlerts.practiceId, practiceId),
+        eq(eligibilityAlerts.status, 'open')
+      ));
+
+    // Get by severity
+    const bySeverity = await db.select({
+      severity: eligibilityAlerts.severity,
+      count: count(),
+    })
+      .from(eligibilityAlerts)
+      .where(and(
+        eq(eligibilityAlerts.practiceId, practiceId),
+        eq(eligibilityAlerts.status, 'open')
+      ))
+      .groupBy(eligibilityAlerts.severity);
+
+    // Get by type
+    const byType = await db.select({
+      alertType: eligibilityAlerts.alertType,
+      count: count(),
+    })
+      .from(eligibilityAlerts)
+      .where(and(
+        eq(eligibilityAlerts.practiceId, practiceId),
+        eq(eligibilityAlerts.status, 'open')
+      ))
+      .groupBy(eligibilityAlerts.alertType);
+
+    // Get resolved in last 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [{ resolvedLast30Days }] = await db.select({ resolvedLast30Days: count() })
+      .from(eligibilityAlerts)
+      .where(and(
+        eq(eligibilityAlerts.practiceId, practiceId),
+        eq(eligibilityAlerts.status, 'resolved'),
+        gte(eligibilityAlerts.resolvedAt, thirtyDaysAgo)
+      ));
+
+    return {
+      totalOpen: totalOpen || 0,
+      bySeverity: bySeverity.map((s: { severity: string | null; count: number }) => ({ severity: s.severity || 'unknown', count: Number(s.count) })),
+      byType: byType.map((t: { alertType: string; count: number }) => ({ alertType: t.alertType, count: Number(t.count) })),
+      resolvedLast30Days: resolvedLast30Days || 0,
+    };
+  }
+
+  // Get upcoming appointments that need eligibility verification
+  async getAppointmentsNeedingEligibilityCheck(practiceId: number, hoursAhead: number = 24): Promise<Appointment[]> {
+    const now = new Date();
+    const futureDate = new Date();
+    futureDate.setHours(futureDate.getHours() + hoursAhead);
+
+    // Get all upcoming appointments within the time window
+    const upcomingAppointments = await db.select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        gte(appointments.startTime, now),
+        lte(appointments.startTime, futureDate),
+        ne(appointments.status, 'cancelled')
+      ));
+
+    // Filter to only those with patients who have insurance
+    const appointmentsWithInsurance: Appointment[] = [];
+    for (const apt of upcomingAppointments) {
+      if (apt.patientId) {
+        const patient = await this.getPatient(apt.patientId);
+        if (patient?.insuranceId) {
+          appointmentsWithInsurance.push(apt);
+        }
+      }
+    }
+
+    return appointmentsWithInsurance;
+  }
+
+  // Batch create eligibility alerts
+  async createEligibilityAlertsBatch(alerts: InsertEligibilityAlert[]): Promise<EligibilityAlert[]> {
+    if (alerts.length === 0) return [];
+    return db.insert(eligibilityAlerts).values(alerts).returning();
   }
 }
 

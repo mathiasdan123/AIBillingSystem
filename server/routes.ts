@@ -797,6 +797,362 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== ELIGIBILITY ALERTS ====================
+
+  // Get eligibility alerts for practice
+  app.get('/api/eligibility-alerts', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        status: req.query.status as string | undefined,
+        severity: req.query.severity as string | undefined,
+        alertType: req.query.alertType as string | undefined,
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
+      };
+      const alerts = await storage.getEligibilityAlerts(practiceId, filters);
+      res.json(alerts);
+    } catch (error) {
+      console.error('Error fetching eligibility alerts:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility alerts' });
+    }
+  });
+
+  // Get eligibility alert stats
+  app.get('/api/eligibility-alerts/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const stats = await storage.getEligibilityAlertStats(practiceId);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching eligibility alert stats:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility alert stats' });
+    }
+  });
+
+  // Get single eligibility alert
+  app.get('/api/eligibility-alerts/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const alert = await storage.getEligibilityAlert(id);
+      if (!alert) {
+        return res.status(404).json({ message: 'Alert not found' });
+      }
+      res.json(alert);
+    } catch (error) {
+      console.error('Error fetching eligibility alert:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility alert' });
+    }
+  });
+
+  // Create eligibility alert
+  app.post('/api/eligibility-alerts', isAuthenticated, async (req: any, res) => {
+    try {
+      const alert = await storage.createEligibilityAlert(req.body);
+      res.status(201).json(alert);
+    } catch (error) {
+      console.error('Error creating eligibility alert:', error);
+      res.status(500).json({ message: 'Failed to create eligibility alert' });
+    }
+  });
+
+  // Update eligibility alert
+  app.patch('/api/eligibility-alerts/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const alert = await storage.updateEligibilityAlert(id, req.body);
+      if (!alert) {
+        return res.status(404).json({ message: 'Alert not found' });
+      }
+      res.json(alert);
+    } catch (error) {
+      console.error('Error updating eligibility alert:', error);
+      res.status(500).json({ message: 'Failed to update eligibility alert' });
+    }
+  });
+
+  // Acknowledge eligibility alert
+  app.post('/api/eligibility-alerts/:id/acknowledge', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const userId = req.user?.id || 'system';
+      const alert = await storage.acknowledgeEligibilityAlert(id, userId);
+      if (!alert) {
+        return res.status(404).json({ message: 'Alert not found' });
+      }
+      res.json(alert);
+    } catch (error) {
+      console.error('Error acknowledging eligibility alert:', error);
+      res.status(500).json({ message: 'Failed to acknowledge eligibility alert' });
+    }
+  });
+
+  // Resolve eligibility alert
+  app.post('/api/eligibility-alerts/:id/resolve', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const userId = req.user?.id || 'system';
+      const { notes } = req.body;
+      const alert = await storage.resolveEligibilityAlert(id, userId, notes);
+      if (!alert) {
+        return res.status(404).json({ message: 'Alert not found' });
+      }
+      res.json(alert);
+    } catch (error) {
+      console.error('Error resolving eligibility alert:', error);
+      res.status(500).json({ message: 'Failed to resolve eligibility alert' });
+    }
+  });
+
+  // Dismiss eligibility alert
+  app.post('/api/eligibility-alerts/:id/dismiss', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const userId = req.user?.id || 'system';
+      const { notes } = req.body;
+      const alert = await storage.dismissEligibilityAlert(id, userId, notes);
+      if (!alert) {
+        return res.status(404).json({ message: 'Alert not found' });
+      }
+      res.json(alert);
+    } catch (error) {
+      console.error('Error dismissing eligibility alert:', error);
+      res.status(500).json({ message: 'Failed to dismiss eligibility alert' });
+    }
+  });
+
+  // Batch eligibility verification for upcoming appointments
+  app.post('/api/eligibility/batch-verify', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.body.practiceId) || 1;
+      const hoursAhead = parseInt(req.body.hoursAhead) || 24;
+
+      // Get appointments needing eligibility check
+      const appointmentsToCheck = await storage.getAppointmentsNeedingEligibilityCheck(practiceId, hoursAhead);
+
+      const results = [];
+      const alertsToCreate = [];
+
+      // Get all insurances for lookup
+      const allInsurances = await storage.getInsurances();
+
+      for (const appointment of appointmentsToCheck) {
+        if (!appointment.patientId) continue;
+
+        const patient = await storage.getPatient(appointment.patientId);
+        if (!patient?.insuranceId && !patient?.insuranceProvider) continue;
+
+        // Find insurance by provider name if available
+        const insurance = patient.insuranceProvider
+          ? allInsurances.find((i: any) => i.name.toLowerCase() === patient.insuranceProvider?.toLowerCase())
+          : null;
+
+        // Generate eligibility check (mock for now)
+        const eligibilityResult = generateMockEligibility(patient, insurance);
+
+        // Save eligibility check
+        const savedCheck = await storage.createEligibilityCheck({
+          patientId: patient.id,
+          insuranceId: insurance?.id || null,
+          status: eligibilityResult.status,
+          coverageType: eligibilityResult.coverageType,
+          effectiveDate: eligibilityResult.effectiveDate,
+          terminationDate: eligibilityResult.terminationDate,
+          copay: eligibilityResult.copay?.toString(),
+          deductible: eligibilityResult.deductible?.toString(),
+          deductibleMet: eligibilityResult.deductibleMet?.toString(),
+          outOfPocketMax: eligibilityResult.outOfPocketMax?.toString(),
+          outOfPocketMet: eligibilityResult.outOfPocketMet?.toString(),
+          coinsurance: eligibilityResult.coinsurance,
+          visitsAllowed: eligibilityResult.visitsAllowed,
+          visitsUsed: eligibilityResult.visitsUsed,
+          authRequired: eligibilityResult.authRequired,
+          rawResponse: eligibilityResult,
+        });
+
+        // Check for alerts
+        if (eligibilityResult.status === 'inactive') {
+          alertsToCreate.push({
+            patientId: patient.id,
+            practiceId,
+            appointmentId: appointment.id,
+            alertType: 'coverage_inactive',
+            severity: 'critical',
+            title: 'Coverage Inactive',
+            message: `${patient.firstName} ${patient.lastName}'s insurance coverage is inactive. Appointment on ${new Date(appointment.startTime).toLocaleDateString()}.`,
+            currentStatus: eligibilityResult,
+          });
+        } else if (eligibilityResult.authRequired) {
+          alertsToCreate.push({
+            patientId: patient.id,
+            practiceId,
+            appointmentId: appointment.id,
+            alertType: 'auth_required',
+            severity: 'warning',
+            title: 'Authorization Required',
+            message: `Prior authorization may be required for ${patient.firstName} ${patient.lastName}'s appointment on ${new Date(appointment.startTime).toLocaleDateString()}.`,
+            currentStatus: eligibilityResult,
+          });
+        } else if (eligibilityResult.deductibleMet === 0) {
+          alertsToCreate.push({
+            patientId: patient.id,
+            practiceId,
+            appointmentId: appointment.id,
+            alertType: 'deductible_not_met',
+            severity: 'info',
+            title: 'Deductible Not Met',
+            message: `${patient.firstName} ${patient.lastName} has not met their deductible ($${eligibilityResult.deductible}). Patient responsibility may be higher.`,
+            currentStatus: eligibilityResult,
+          });
+        } else if (eligibilityResult.copay && eligibilityResult.copay >= 50) {
+          alertsToCreate.push({
+            patientId: patient.id,
+            practiceId,
+            appointmentId: appointment.id,
+            alertType: 'high_copay',
+            severity: 'info',
+            title: 'High Copay',
+            message: `${patient.firstName} ${patient.lastName} has a $${eligibilityResult.copay} copay for this visit.`,
+            currentStatus: eligibilityResult,
+          });
+        }
+
+        results.push({
+          appointmentId: appointment.id,
+          patientId: patient.id,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          eligibility: savedCheck,
+          status: eligibilityResult.status,
+        });
+      }
+
+      // Create alerts in batch
+      if (alertsToCreate.length > 0) {
+        await storage.createEligibilityAlertsBatch(alertsToCreate);
+      }
+
+      res.json({
+        verified: results.length,
+        alertsCreated: alertsToCreate.length,
+        results,
+      });
+    } catch (error) {
+      console.error('Error in batch eligibility verification:', error);
+      res.status(500).json({ message: 'Failed to perform batch eligibility verification' });
+    }
+  });
+
+  // Run pre-appointment eligibility check for a specific appointment
+  app.post('/api/appointments/:id/check-eligibility', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointmentId = parseInt(req.params.id);
+      const appointment = await storage.getAppointment(appointmentId);
+
+      if (!appointment) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+
+      if (!appointment.patientId) {
+        return res.status(400).json({ message: 'Appointment has no patient assigned' });
+      }
+
+      const patient = await storage.getPatient(appointment.patientId);
+      if (!patient?.insuranceId && !patient?.insuranceProvider) {
+        return res.status(400).json({ message: 'Patient has no insurance on file' });
+      }
+
+      // Find insurance by provider name if available
+      const allInsurances = await storage.getInsurances();
+      const insurance = patient.insuranceProvider
+        ? allInsurances.find((i: any) => i.name.toLowerCase() === patient.insuranceProvider?.toLowerCase())
+        : null;
+
+      // Generate eligibility check
+      const eligibilityResult = generateMockEligibility(patient, insurance);
+
+      // Save eligibility check
+      const savedCheck = await storage.createEligibilityCheck({
+        patientId: patient.id,
+        insuranceId: insurance?.id || null,
+        status: eligibilityResult.status,
+        coverageType: eligibilityResult.coverageType,
+        effectiveDate: eligibilityResult.effectiveDate,
+        terminationDate: eligibilityResult.terminationDate,
+        copay: eligibilityResult.copay?.toString(),
+        deductible: eligibilityResult.deductible?.toString(),
+        deductibleMet: eligibilityResult.deductibleMet?.toString(),
+        outOfPocketMax: eligibilityResult.outOfPocketMax?.toString(),
+        outOfPocketMet: eligibilityResult.outOfPocketMet?.toString(),
+        coinsurance: eligibilityResult.coinsurance,
+        visitsAllowed: eligibilityResult.visitsAllowed,
+        visitsUsed: eligibilityResult.visitsUsed,
+        authRequired: eligibilityResult.authRequired,
+        rawResponse: eligibilityResult,
+      });
+
+      // Check for issues and create alerts
+      const alerts = [];
+      if (eligibilityResult.status === 'inactive') {
+        const alert = await storage.createEligibilityAlert({
+          patientId: patient.id,
+          practiceId: appointment.practiceId!,
+          appointmentId: appointment.id ?? undefined,
+          alertType: 'coverage_inactive',
+          severity: 'critical',
+          title: 'Coverage Inactive',
+          message: `Insurance coverage is inactive for this patient.`,
+          currentStatus: eligibilityResult,
+        });
+        alerts.push(alert);
+      }
+
+      if (eligibilityResult.authRequired) {
+        const alert = await storage.createEligibilityAlert({
+          patientId: patient.id,
+          practiceId: appointment.practiceId!,
+          appointmentId: appointment.id ?? undefined,
+          alertType: 'auth_required',
+          severity: 'warning',
+          title: 'Authorization Required',
+          message: `Prior authorization may be required for this visit.`,
+          currentStatus: eligibilityResult,
+        });
+        alerts.push(alert);
+      }
+
+      res.json({
+        eligibility: savedCheck,
+        alerts,
+        patient: {
+          id: patient.id,
+          name: `${patient.firstName} ${patient.lastName}`,
+        },
+        insurance: insurance ? {
+          id: insurance.id,
+          name: insurance.name,
+        } : {
+          id: null,
+          name: patient.insuranceProvider || 'Unknown',
+        },
+      });
+    } catch (error) {
+      console.error('Error checking appointment eligibility:', error);
+      res.status(500).json({ message: 'Failed to check eligibility' });
+    }
+  });
+
+  // Get alerts for a specific appointment
+  app.get('/api/appointments/:id/eligibility-alerts', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointmentId = parseInt(req.params.id);
+      const alerts = await storage.getOpenAlertsForAppointment(appointmentId);
+      res.json(alerts);
+    } catch (error) {
+      console.error('Error fetching appointment eligibility alerts:', error);
+      res.status(500).json({ message: 'Failed to fetch eligibility alerts' });
+    }
+  });
+
   // ==================== SESSIONS ENDPOINTS ====================
 
   // Get all sessions for practice

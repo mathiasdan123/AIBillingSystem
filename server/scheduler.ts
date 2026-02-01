@@ -484,8 +484,142 @@ export function startScheduler() {
   });
   scheduledTasks.set('appointmentReminders', appointmentReminderTask);
 
+  // Pre-appointment eligibility check - runs every 6 hours
+  const preAppointmentEligibilityTask = cron.schedule('0 */6 * * *', async () => {
+    try {
+      logger.info('Starting pre-appointment eligibility verification');
+
+      // Check for all practices (TODO: iterate through actual practices)
+      const practiceIds = [1];
+
+      for (const practiceId of practiceIds) {
+        const appointmentsToCheck = await storage.getAppointmentsNeedingEligibilityCheck(practiceId, 24);
+        logger.info('Found appointments needing eligibility check', {
+          practiceId,
+          count: appointmentsToCheck.length
+        });
+
+        const alertsToCreate = [];
+
+        for (const appointment of appointmentsToCheck) {
+          if (!appointment.patientId) continue;
+
+          const patient = await storage.getPatient(appointment.patientId);
+          if (!patient?.insuranceId) continue;
+
+          // Check if we already have a recent eligibility check (within 24 hours)
+          const recentCheck = await storage.getPatientEligibility(patient.id);
+          if (recentCheck?.checkDate) {
+            const hoursSinceCheck = (Date.now() - new Date(recentCheck.checkDate).getTime()) / (1000 * 60 * 60);
+            if (hoursSinceCheck < 24) {
+              // Still have a recent check, just verify the status
+              if (recentCheck.status === 'inactive') {
+                alertsToCreate.push({
+                  patientId: patient.id,
+                  practiceId,
+                  appointmentId: appointment.id ?? undefined,
+                  alertType: 'coverage_inactive',
+                  severity: 'critical',
+                  title: 'Coverage Inactive',
+                  message: `${patient.firstName} ${patient.lastName}'s insurance coverage is inactive. Appointment scheduled for ${new Date(appointment.startTime).toLocaleString()}.`,
+                  currentStatus: recentCheck,
+                });
+              }
+              continue;
+            }
+          }
+
+          // Need to perform a new eligibility check - find insurance by provider name
+          const allInsurances = await storage.getInsurances();
+          const insurance = patient.insuranceProvider
+            ? allInsurances.find((i: any) => i.name.toLowerCase() === patient.insuranceProvider?.toLowerCase())
+            : null;
+
+          try {
+            // Get Stedi credentials for real API call
+            const cred = await storage.getPayerCredentials(practiceId, 'stedi');
+            if (cred?.apiKey) {
+              const { decryptField } = await import('./services/phiEncryptionService');
+              const apiKey = decryptField(cred.apiKey);
+              if (apiKey) {
+                const practice = await storage.getPractice(practiceId);
+                if (practice) {
+                  const { StediAdapter } = await import('./payer-integrations/adapters/payers/StediAdapter');
+                  const adapter = new StediAdapter(apiKey);
+                  const result = await adapter.checkEligibility({
+                    providerNpi: practice.npi || '',
+                    providerName: practice.name,
+                    memberFirstName: patient.firstName,
+                    memberLastName: patient.lastName,
+                    memberDob: patient.dateOfBirth || '',
+                    memberId: patient.insuranceId || '',
+                    groupNumber: patient.groupNumber || undefined,
+                    payerName: insurance?.name || patient.insuranceProvider || '',
+                  });
+
+                  // Save the eligibility check
+                  await storage.createEligibilityCheck({
+                    patientId: patient.id,
+                    insuranceId: insurance?.id || null,
+                    status: result.eligibility.isEligible ? 'active' : 'inactive',
+                    coverageType: result.eligibility.planName || 'Unknown',
+                    effectiveDate: result.eligibility.effectiveDate,
+                    terminationDate: result.eligibility.terminationDate,
+                    rawResponse: result.raw,
+                  });
+
+                  // Create alert if coverage is inactive
+                  if (!result.eligibility.isEligible) {
+                    alertsToCreate.push({
+                      patientId: patient.id,
+                      practiceId,
+                      appointmentId: appointment.id ?? undefined,
+                      alertType: 'coverage_inactive',
+                      severity: 'critical',
+                      title: 'Coverage Inactive',
+                      message: `${patient.firstName} ${patient.lastName}'s insurance coverage is inactive. Appointment scheduled for ${new Date(appointment.startTime).toLocaleString()}.`,
+                      currentStatus: result.eligibility,
+                    });
+                  }
+
+                  logger.info('Pre-appointment eligibility checked', {
+                    patientId: patient.id,
+                    appointmentId: appointment.id,
+                    eligible: result.eligibility.isEligible,
+                  });
+                }
+              }
+            }
+          } catch (err: any) {
+            logger.error('Failed pre-appointment eligibility check', {
+              patientId: patient.id,
+              appointmentId: appointment.id,
+              error: err.message,
+            });
+          }
+        }
+
+        // Create alerts in batch
+        if (alertsToCreate.length > 0) {
+          await storage.createEligibilityAlertsBatch(alertsToCreate);
+          logger.info('Created eligibility alerts', {
+            practiceId,
+            alertCount: alertsToCreate.length
+          });
+        }
+      }
+
+      logger.info('Pre-appointment eligibility verification completed');
+    } catch (error: any) {
+      logger.error('Pre-appointment eligibility task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('preAppointmentEligibility', preAppointmentEligibilityTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders'],
+    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility'],
   });
 }
 

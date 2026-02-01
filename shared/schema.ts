@@ -1546,3 +1546,35 @@ export const insertPatientStatementSchema = createInsertSchema(patientStatements
 export type PatientStatement = typeof patientStatements.$inferSelect;
 export type InsertPatientStatement = z.infer<typeof insertPatientStatementSchema>;
 
+// ==================== ELIGIBILITY ALERTS ====================
+
+// Eligibility Alerts (coverage issues that need attention)
+export const eligibilityAlerts = pgTable("eligibility_alerts", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  // Alert details
+  alertType: varchar("alert_type").notNull(), // coverage_inactive, coverage_changed, benefits_exhausted, auth_required, deductible_not_met, high_copay
+  severity: varchar("severity").default("warning"), // info, warning, critical
+  title: varchar("title", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+  // Previous vs current status
+  previousStatus: jsonb("previous_status"),
+  currentStatus: jsonb("current_status"),
+  // Resolution
+  status: varchar("status").default("open"), // open, acknowledged, resolved, dismissed
+  acknowledgedAt: timestamp("acknowledged_at"),
+  acknowledgedBy: varchar("acknowledged_by").references(() => users.id),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by").references(() => users.id),
+  resolutionNotes: text("resolution_notes"),
+  // Tracking
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertEligibilityAlertSchema = createInsertSchema(eligibilityAlerts).omit({ id: true, createdAt: true, updatedAt: true });
+export type EligibilityAlert = typeof eligibilityAlerts.$inferSelect;
+export type InsertEligibilityAlert = z.infer<typeof insertEligibilityAlertSchema>;
+
