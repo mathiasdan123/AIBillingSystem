@@ -452,8 +452,40 @@ export function startScheduler() {
   });
   scheduledTasks.set('amendmentDeadlineCheck', amendmentDeadlineTask);
 
+  // Appointment reminders - runs every 15 minutes
+  const appointmentReminderTask = cron.schedule('*/15 * * * *', async () => {
+    try {
+      const { processAppointmentReminders } = await import('./services/appointmentReminderService');
+
+      // Process 24-hour reminders
+      const results24h = await processAppointmentReminders(1, 24);
+      if (results24h.length > 0) {
+        logger.info('24-hour appointment reminders processed', {
+          count: results24h.length,
+          emailsSent: results24h.filter(r => r.emailSent).length,
+          smsSent: results24h.filter(r => r.smsSent).length,
+        });
+      }
+
+      // Process 2-hour reminders
+      const results2h = await processAppointmentReminders(1, 2);
+      if (results2h.length > 0) {
+        logger.info('2-hour appointment reminders processed', {
+          count: results2h.length,
+          emailsSent: results2h.filter(r => r.emailSent).length,
+          smsSent: results2h.filter(r => r.smsSent).length,
+        });
+      }
+    } catch (error: any) {
+      logger.error('Appointment reminder task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('appointmentReminders', appointmentReminderTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck'],
+    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders'],
   });
 }
 

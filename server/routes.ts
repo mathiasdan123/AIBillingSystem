@@ -2777,6 +2777,1025 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== APPOINTMENT REMINDERS ====================
+
+  // Get reminder configuration status
+  app.get('/api/reminders/status', isAuthenticated, async (req: any, res) => {
+    try {
+      const { getReminderStatus } = await import('./services/appointmentReminderService');
+      const status = getReminderStatus();
+      res.json(status);
+    } catch (error) {
+      console.error('Error getting reminder status:', error);
+      res.status(500).json({ message: 'Failed to get reminder status' });
+    }
+  });
+
+  // Get upcoming appointments that need reminders
+  app.get('/api/reminders/upcoming', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const hours = parseInt(req.query.hours as string) || 48;
+      const appointments = await storage.getUpcomingAppointments(practiceId, hours);
+      res.json(appointments);
+    } catch (error) {
+      console.error('Error fetching upcoming appointments:', error);
+      res.status(500).json({ message: 'Failed to fetch upcoming appointments' });
+    }
+  });
+
+  // Manually trigger reminder processing
+  app.post('/api/reminders/trigger', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const { processAppointmentReminders } = await import('./services/appointmentReminderService');
+      const practiceId = parseInt(req.body.practiceId as string) || 1;
+      const hoursBeforeAppointment = parseInt(req.body.hours as string) || 24;
+
+      const results = await processAppointmentReminders(practiceId, hoursBeforeAppointment);
+      res.json({
+        message: `Processed ${results.length} appointment reminders`,
+        results,
+      });
+    } catch (error) {
+      console.error('Error triggering reminders:', error);
+      res.status(500).json({ message: 'Failed to trigger reminders' });
+    }
+  });
+
+  // Send a test reminder (for testing configuration)
+  app.post('/api/reminders/test', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const { email, phone, patientName, practiceName } = req.body;
+      const testDate = new Date(Date.now() + 24 * 60 * 60 * 1000); // Tomorrow
+
+      const results: { emailSent?: boolean; smsSent?: boolean; errors: string[] } = { errors: [] };
+
+      // Test email if provided
+      if (email) {
+        const { isEmailConfigured } = await import('./email');
+        if (isEmailConfigured()) {
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port: parseInt(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+              user: process.env.SMTP_USER || '',
+              pass: process.env.SMTP_PASS || '',
+            },
+          });
+
+          try {
+            await transporter.sendMail({
+              from: `"${practiceName || 'Test Practice'}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: email,
+              subject: 'Test Appointment Reminder',
+              text: `This is a test reminder from ${practiceName || 'Your Practice'}. If you received this, email reminders are working!`,
+            });
+            results.emailSent = true;
+          } catch (err) {
+            results.errors.push(`Email failed: ${(err as Error).message}`);
+          }
+        } else {
+          results.errors.push('Email not configured');
+        }
+      }
+
+      // Test SMS if provided
+      if (phone) {
+        const { sendSMS, isSMSConfigured } = await import('./services/smsService');
+        if (isSMSConfigured()) {
+          const smsResult = await sendSMS(phone, `Test reminder from ${practiceName || 'Your Practice'}. If you received this, SMS reminders are working!`);
+          results.smsSent = smsResult.success;
+          if (!smsResult.success) {
+            results.errors.push(`SMS failed: ${smsResult.error}`);
+          }
+        } else {
+          results.errors.push('SMS not configured (Twilio credentials missing)');
+        }
+      }
+
+      res.json(results);
+    } catch (error) {
+      console.error('Error sending test reminder:', error);
+      res.status(500).json({ message: 'Failed to send test reminder' });
+    }
+  });
+
+  // ==================== WAITLIST MANAGEMENT ====================
+
+  // Get all waitlist entries
+  app.get('/api/waitlist', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        status: req.query.status as string | undefined,
+        therapistId: req.query.therapistId as string | undefined,
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        priority: req.query.priority ? parseInt(req.query.priority as string) : undefined,
+      };
+      const entries = await storage.getWaitlist(practiceId, filters);
+      res.json(entries);
+    } catch (error) {
+      console.error('Error fetching waitlist:', error);
+      res.status(500).json({ message: 'Failed to fetch waitlist' });
+    }
+  });
+
+  // Get waitlist statistics
+  app.get('/api/waitlist/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const stats = await storage.getWaitlistStats(practiceId);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching waitlist stats:', error);
+      res.status(500).json({ message: 'Failed to fetch waitlist stats' });
+    }
+  });
+
+  // Get a single waitlist entry
+  app.get('/api/waitlist/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const entry = await storage.getWaitlistEntry(parseInt(req.params.id));
+      if (!entry) {
+        return res.status(404).json({ message: 'Waitlist entry not found' });
+      }
+      res.json(entry);
+    } catch (error) {
+      console.error('Error fetching waitlist entry:', error);
+      res.status(500).json({ message: 'Failed to fetch waitlist entry' });
+    }
+  });
+
+  // Create a new waitlist entry
+  app.post('/api/waitlist', isAuthenticated, async (req: any, res) => {
+    try {
+      const data = {
+        ...req.body,
+        practiceId: req.body.practiceId || 1,
+      };
+      const entry = await storage.createWaitlistEntry(data);
+      res.status(201).json(entry);
+    } catch (error) {
+      console.error('Error creating waitlist entry:', error);
+      res.status(500).json({ message: 'Failed to create waitlist entry' });
+    }
+  });
+
+  // Update a waitlist entry
+  app.patch('/api/waitlist/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const entry = await storage.updateWaitlistEntry(parseInt(req.params.id), req.body);
+      res.json(entry);
+    } catch (error) {
+      console.error('Error updating waitlist entry:', error);
+      res.status(500).json({ message: 'Failed to update waitlist entry' });
+    }
+  });
+
+  // Delete a waitlist entry
+  app.delete('/api/waitlist/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.deleteWaitlistEntry(parseInt(req.params.id));
+      res.json({ message: 'Waitlist entry deleted' });
+    } catch (error) {
+      console.error('Error deleting waitlist entry:', error);
+      res.status(500).json({ message: 'Failed to delete waitlist entry' });
+    }
+  });
+
+  // Find matching waitlist entries for a cancellation slot
+  app.post('/api/waitlist/find-matches', isAuthenticated, async (req: any, res) => {
+    try {
+      const { practiceId, therapistId, date, time } = req.body;
+      const matches = await storage.getWaitlistForSlot(
+        practiceId || 1,
+        therapistId,
+        new Date(date),
+        time
+      );
+      res.json(matches);
+    } catch (error) {
+      console.error('Error finding waitlist matches:', error);
+      res.status(500).json({ message: 'Failed to find waitlist matches' });
+    }
+  });
+
+  // Notify a waitlist patient about an opening
+  app.post('/api/waitlist/:id/notify', isAuthenticated, async (req: any, res) => {
+    try {
+      const { date, time, therapistId } = req.body;
+      const entryId = parseInt(req.params.id);
+
+      // Get the entry and patient info
+      const entry = await storage.getWaitlistEntry(entryId);
+      if (!entry) {
+        return res.status(404).json({ message: 'Waitlist entry not found' });
+      }
+
+      const patient = await storage.getPatient(entry.patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const practice = await storage.getPractice(entry.practiceId);
+      const practiceName = practice?.name || 'Your Practice';
+
+      const slotDate = new Date(date);
+      const formattedDate = slotDate.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      });
+
+      const results: { emailSent?: boolean; smsSent?: boolean; errors: string[] } = { errors: [] };
+
+      // Send email notification
+      if (patient.email) {
+        try {
+          const { isEmailConfigured } = await import('./email');
+          if (isEmailConfigured()) {
+            const nodemailer = await import('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: {
+                user: process.env.SMTP_USER || '',
+                pass: process.env.SMTP_PASS || '',
+              },
+            });
+
+            await transporter.sendMail({
+              from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: patient.email,
+              subject: `Appointment Opening Available - ${formattedDate}`,
+              html: `
+                <p>Hi ${patient.firstName},</p>
+                <p>Great news! An appointment slot has opened up that matches your preferences:</p>
+                <p><strong>Date:</strong> ${formattedDate}<br>
+                <strong>Time:</strong> ${time}</p>
+                <p>If you'd like to book this appointment, please contact us as soon as possible as slots fill up quickly.</p>
+                <p>Best regards,<br>${practiceName}</p>
+              `,
+            });
+            results.emailSent = true;
+          }
+        } catch (err) {
+          results.errors.push(`Email failed: ${(err as Error).message}`);
+        }
+      }
+
+      // Send SMS notification
+      if (patient.phone) {
+        try {
+          const { sendSMS, isSMSConfigured } = await import('./services/smsService');
+          if (isSMSConfigured()) {
+            const smsResult = await sendSMS(
+              patient.phone,
+              `Hi ${patient.firstName}! An appointment slot opened at ${practiceName} on ${formattedDate} at ${time}. Reply YES to book or call us ASAP!`
+            );
+            results.smsSent = smsResult.success;
+            if (!smsResult.success) {
+              results.errors.push(`SMS failed: ${smsResult.error}`);
+            }
+          }
+        } catch (err) {
+          results.errors.push(`SMS error: ${(err as Error).message}`);
+        }
+      }
+
+      // Update the waitlist entry status
+      if (results.emailSent || results.smsSent) {
+        await storage.markWaitlistNotified(entryId, { date, time, therapistId });
+      }
+
+      res.json({
+        message: 'Patient notified',
+        ...results,
+      });
+    } catch (error) {
+      console.error('Error notifying waitlist patient:', error);
+      res.status(500).json({ message: 'Failed to notify patient' });
+    }
+  });
+
+  // Mark waitlist entry as scheduled
+  app.post('/api/waitlist/:id/schedule', isAuthenticated, async (req: any, res) => {
+    try {
+      const { appointmentId } = req.body;
+      const entry = await storage.markWaitlistScheduled(
+        parseInt(req.params.id),
+        appointmentId
+      );
+      res.json(entry);
+    } catch (error) {
+      console.error('Error scheduling waitlist entry:', error);
+      res.status(500).json({ message: 'Failed to schedule waitlist entry' });
+    }
+  });
+
+  // Expire old waitlist entries
+  app.post('/api/waitlist/expire', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.body.practiceId as string) || 1;
+      const count = await storage.expireOldWaitlistEntries(practiceId);
+      res.json({ message: `Expired ${count} waitlist entries` });
+    } catch (error) {
+      console.error('Error expiring waitlist entries:', error);
+      res.status(500).json({ message: 'Failed to expire waitlist entries' });
+    }
+  });
+
+  // ==================== REVIEW MANAGEMENT ====================
+
+  // Get review request statistics
+  app.get('/api/reviews/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const requestStats = await storage.getReviewRequestStats(practiceId);
+      const reviewStats = await storage.getReviewStats(practiceId);
+      res.json({ requests: requestStats, reviews: reviewStats });
+    } catch (error) {
+      console.error('Error fetching review stats:', error);
+      res.status(500).json({ message: 'Failed to fetch review stats' });
+    }
+  });
+
+  // Get all review requests
+  app.get('/api/reviews/requests', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        status: req.query.status as string | undefined,
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+      };
+      const requests = await storage.getReviewRequests(practiceId, filters);
+      res.json(requests);
+    } catch (error) {
+      console.error('Error fetching review requests:', error);
+      res.status(500).json({ message: 'Failed to fetch review requests' });
+    }
+  });
+
+  // Get patients eligible for review requests
+  app.get('/api/reviews/eligible-patients', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const days = parseInt(req.query.days as string) || 1;
+      const eligible = await storage.getPatientsEligibleForReview(practiceId, days);
+      res.json(eligible);
+    } catch (error) {
+      console.error('Error fetching eligible patients:', error);
+      res.status(500).json({ message: 'Failed to fetch eligible patients' });
+    }
+  });
+
+  // Create a review request
+  app.post('/api/reviews/requests', isAuthenticated, async (req: any, res) => {
+    try {
+      const data = {
+        ...req.body,
+        practiceId: req.body.practiceId || 1,
+      };
+      const request = await storage.createReviewRequest(data);
+      res.status(201).json(request);
+    } catch (error) {
+      console.error('Error creating review request:', error);
+      res.status(500).json({ message: 'Failed to create review request' });
+    }
+  });
+
+  // Send a review request to patient
+  app.post('/api/reviews/requests/:id/send', isAuthenticated, async (req: any, res) => {
+    try {
+      const requestId = parseInt(req.params.id);
+      const { googleReviewUrl, sendVia } = req.body;
+
+      const request = await storage.getReviewRequest(requestId);
+      if (!request) {
+        return res.status(404).json({ message: 'Review request not found' });
+      }
+
+      const patient = await storage.getPatient(request.patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const practice = await storage.getPractice(request.practiceId);
+      const practiceName = practice?.name || 'Your Practice';
+
+      const { generateReviewRequestMessage } = await import('./services/reviewResponseService');
+      const results: { emailSent?: boolean; smsSent?: boolean; errors: string[] } = { errors: [] };
+
+      // Send email
+      if ((sendVia === 'email' || sendVia === 'both') && patient.email) {
+        try {
+          const { isEmailConfigured } = await import('./email');
+          if (isEmailConfigured()) {
+            const message = generateReviewRequestMessage(patient.firstName, practiceName, googleReviewUrl, 'email');
+            const nodemailer = await import('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: {
+                user: process.env.SMTP_USER || '',
+                pass: process.env.SMTP_PASS || '',
+              },
+            });
+
+            await transporter.sendMail({
+              from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: patient.email,
+              subject: message.subject,
+              html: message.body,
+            });
+            results.emailSent = true;
+          }
+        } catch (err) {
+          results.errors.push(`Email failed: ${(err as Error).message}`);
+        }
+      }
+
+      // Send SMS
+      if ((sendVia === 'sms' || sendVia === 'both') && patient.phone) {
+        try {
+          const { sendSMS, isSMSConfigured } = await import('./services/smsService');
+          if (isSMSConfigured()) {
+            const message = generateReviewRequestMessage(patient.firstName, practiceName, googleReviewUrl, 'sms');
+            const smsResult = await sendSMS(patient.phone, message.body);
+            results.smsSent = smsResult.success;
+            if (!smsResult.success) {
+              results.errors.push(`SMS failed: ${smsResult.error}`);
+            }
+          }
+        } catch (err) {
+          results.errors.push(`SMS error: ${(err as Error).message}`);
+        }
+      }
+
+      // Update the request status
+      if (results.emailSent || results.smsSent) {
+        await storage.updateReviewRequest(requestId, {
+          status: 'sent',
+          sentVia: sendVia,
+          emailSent: results.emailSent,
+          smsSent: results.smsSent,
+          sentAt: new Date(),
+        });
+      }
+
+      res.json({
+        message: 'Review request sent',
+        ...results,
+      });
+    } catch (error) {
+      console.error('Error sending review request:', error);
+      res.status(500).json({ message: 'Failed to send review request' });
+    }
+  });
+
+  // Update review request status
+  app.patch('/api/reviews/requests/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const request = await storage.updateReviewRequest(parseInt(req.params.id), req.body);
+      res.json(request);
+    } catch (error) {
+      console.error('Error updating review request:', error);
+      res.status(500).json({ message: 'Failed to update review request' });
+    }
+  });
+
+  // Get all Google reviews
+  app.get('/api/reviews/google', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        responseStatus: req.query.responseStatus as string | undefined,
+        sentiment: req.query.sentiment as string | undefined,
+        minRating: req.query.minRating ? parseInt(req.query.minRating as string) : undefined,
+        maxRating: req.query.maxRating ? parseInt(req.query.maxRating as string) : undefined,
+      };
+      const reviews = await storage.getGoogleReviews(practiceId, filters);
+      res.json(reviews);
+    } catch (error) {
+      console.error('Error fetching Google reviews:', error);
+      res.status(500).json({ message: 'Failed to fetch Google reviews' });
+    }
+  });
+
+  // Get a single Google review
+  app.get('/api/reviews/google/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const review = await storage.getGoogleReview(parseInt(req.params.id));
+      if (!review) {
+        return res.status(404).json({ message: 'Review not found' });
+      }
+      res.json(review);
+    } catch (error) {
+      console.error('Error fetching Google review:', error);
+      res.status(500).json({ message: 'Failed to fetch Google review' });
+    }
+  });
+
+  // Add a Google review manually
+  app.post('/api/reviews/google', isAuthenticated, async (req: any, res) => {
+    try {
+      const { analyzeReview } = await import('./services/reviewResponseService');
+
+      // Analyze the review
+      const analysisResult = await analyzeReview(req.body.reviewText || '', req.body.rating || 3);
+
+      const data = {
+        ...req.body,
+        practiceId: req.body.practiceId || 1,
+        sentiment: analysisResult.analysis?.sentiment,
+        tags: analysisResult.analysis?.tags,
+      };
+
+      const review = await storage.createGoogleReview(data);
+      res.status(201).json(review);
+    } catch (error) {
+      console.error('Error creating Google review:', error);
+      res.status(500).json({ message: 'Failed to create Google review' });
+    }
+  });
+
+  // Update a Google review
+  app.patch('/api/reviews/google/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const review = await storage.updateGoogleReview(parseInt(req.params.id), req.body);
+      res.json(review);
+    } catch (error) {
+      console.error('Error updating Google review:', error);
+      res.status(500).json({ message: 'Failed to update Google review' });
+    }
+  });
+
+  // Generate AI response for a review
+  app.post('/api/reviews/google/:id/generate-response', isAuthenticated, async (req: any, res) => {
+    try {
+      const review = await storage.getGoogleReview(parseInt(req.params.id));
+      if (!review) {
+        return res.status(404).json({ message: 'Review not found' });
+      }
+
+      const practice = await storage.getPractice(review.practiceId);
+      const { generateReviewResponse } = await import('./services/reviewResponseService');
+
+      const result = await generateReviewResponse({
+        reviewerName: review.reviewerName || 'Valued Patient',
+        rating: review.rating || 3,
+        reviewText: review.reviewText || '',
+        practiceName: practice?.name || 'Your Practice',
+        practicePhone: practice?.phone || undefined,
+        tone: req.body.tone || 'professional',
+        includeCallToAction: req.body.includeCallToAction !== false,
+      });
+
+      if (!result.success) {
+        return res.status(500).json({ message: result.error });
+      }
+
+      // Save the draft response
+      await storage.updateGoogleReview(review.id, {
+        aiDraftResponse: result.response,
+        responseStatus: 'draft',
+      });
+
+      res.json({ response: result.response });
+    } catch (error) {
+      console.error('Error generating review response:', error);
+      res.status(500).json({ message: 'Failed to generate response' });
+    }
+  });
+
+  // Mark a review as responded
+  app.post('/api/reviews/google/:id/respond', isAuthenticated, async (req: any, res) => {
+    try {
+      const { finalResponse } = req.body;
+      const userId = req.user?.id;
+
+      const review = await storage.updateGoogleReview(parseInt(req.params.id), {
+        finalResponse,
+        responseStatus: 'published',
+        respondedAt: new Date(),
+        respondedBy: userId,
+      });
+
+      res.json(review);
+    } catch (error) {
+      console.error('Error marking review as responded:', error);
+      res.status(500).json({ message: 'Failed to update review' });
+    }
+  });
+
+  // ==================== ONLINE BOOKING ====================
+
+  // --- Appointment Types ---
+  app.get('/api/booking/appointment-types', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const activeOnly = req.query.activeOnly === 'true';
+      const types = await storage.getAppointmentTypes(practiceId, activeOnly);
+      res.json(types);
+    } catch (error) {
+      console.error('Error fetching appointment types:', error);
+      res.status(500).json({ message: 'Failed to fetch appointment types' });
+    }
+  });
+
+  app.post('/api/booking/appointment-types', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const type = await storage.createAppointmentType(data);
+      res.status(201).json(type);
+    } catch (error) {
+      console.error('Error creating appointment type:', error);
+      res.status(500).json({ message: 'Failed to create appointment type' });
+    }
+  });
+
+  app.patch('/api/booking/appointment-types/:id', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const type = await storage.updateAppointmentType(parseInt(req.params.id), req.body);
+      res.json(type);
+    } catch (error) {
+      console.error('Error updating appointment type:', error);
+      res.status(500).json({ message: 'Failed to update appointment type' });
+    }
+  });
+
+  app.delete('/api/booking/appointment-types/:id', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      await storage.deleteAppointmentType(parseInt(req.params.id));
+      res.json({ message: 'Appointment type deleted' });
+    } catch (error) {
+      console.error('Error deleting appointment type:', error);
+      res.status(500).json({ message: 'Failed to delete appointment type' });
+    }
+  });
+
+  // --- Therapist Availability ---
+  app.get('/api/booking/availability', isAuthenticated, async (req: any, res) => {
+    try {
+      const therapistId = req.query.therapistId as string;
+      if (therapistId) {
+        const availability = await storage.getTherapistAvailability(therapistId);
+        res.json(availability);
+      } else {
+        const practiceId = parseInt(req.query.practiceId as string) || 1;
+        const availability = await storage.getPracticeAvailability(practiceId);
+        res.json(availability);
+      }
+    } catch (error) {
+      console.error('Error fetching availability:', error);
+      res.status(500).json({ message: 'Failed to fetch availability' });
+    }
+  });
+
+  app.post('/api/booking/availability', isAuthenticated, async (req: any, res) => {
+    try {
+      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const availability = await storage.setTherapistAvailability(data);
+      res.json(availability);
+    } catch (error) {
+      console.error('Error setting availability:', error);
+      res.status(500).json({ message: 'Failed to set availability' });
+    }
+  });
+
+  app.delete('/api/booking/availability/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.deleteTherapistAvailability(parseInt(req.params.id));
+      res.json({ message: 'Availability deleted' });
+    } catch (error) {
+      console.error('Error deleting availability:', error);
+      res.status(500).json({ message: 'Failed to delete availability' });
+    }
+  });
+
+  // --- Therapist Time Off ---
+  app.get('/api/booking/time-off', isAuthenticated, async (req: any, res) => {
+    try {
+      const therapistId = req.query.therapistId as string;
+      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+      const timeOff = await storage.getTherapistTimeOff(therapistId, startDate, endDate);
+      res.json(timeOff);
+    } catch (error) {
+      console.error('Error fetching time off:', error);
+      res.status(500).json({ message: 'Failed to fetch time off' });
+    }
+  });
+
+  app.post('/api/booking/time-off', isAuthenticated, async (req: any, res) => {
+    try {
+      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const timeOff = await storage.addTherapistTimeOff(data);
+      res.json(timeOff);
+    } catch (error) {
+      console.error('Error adding time off:', error);
+      res.status(500).json({ message: 'Failed to add time off' });
+    }
+  });
+
+  app.delete('/api/booking/time-off/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.deleteTherapistTimeOff(parseInt(req.params.id));
+      res.json({ message: 'Time off deleted' });
+    } catch (error) {
+      console.error('Error deleting time off:', error);
+      res.status(500).json({ message: 'Failed to delete time off' });
+    }
+  });
+
+  // --- Booking Settings ---
+  app.get('/api/booking/settings', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const settings = await storage.getBookingSettings(practiceId);
+      res.json(settings || {});
+    } catch (error) {
+      console.error('Error fetching booking settings:', error);
+      res.status(500).json({ message: 'Failed to fetch booking settings' });
+    }
+  });
+
+  app.post('/api/booking/settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const settings = await storage.upsertBookingSettings(data);
+      res.json(settings);
+    } catch (error) {
+      console.error('Error saving booking settings:', error);
+      res.status(500).json({ message: 'Failed to save booking settings' });
+    }
+  });
+
+  // --- Online Bookings (Admin) ---
+  app.get('/api/booking/bookings', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        status: req.query.status as string | undefined,
+        therapistId: req.query.therapistId as string | undefined,
+        startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+        endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+      };
+      const bookings = await storage.getOnlineBookings(practiceId, filters);
+      res.json(bookings);
+    } catch (error) {
+      console.error('Error fetching bookings:', error);
+      res.status(500).json({ message: 'Failed to fetch bookings' });
+    }
+  });
+
+  app.post('/api/booking/bookings/:id/confirm', isAuthenticated, async (req: any, res) => {
+    try {
+      const bookingId = parseInt(req.params.id);
+      const booking = await storage.getOnlineBooking(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Booking not found' });
+      }
+
+      // Create the actual appointment
+      const appointmentType = booking.appointmentTypeId
+        ? await storage.getAppointmentType(booking.appointmentTypeId)
+        : null;
+
+      const startTime = new Date(`${booking.requestedDate}T${booking.requestedTime}`);
+      const endTime = new Date(startTime.getTime() + (appointmentType?.duration || 60) * 60000);
+
+      const appointment = await storage.createAppointment({
+        practiceId: booking.practiceId,
+        patientId: booking.patientId || undefined,
+        therapistId: booking.therapistId || undefined,
+        title: appointmentType?.name || 'Online Booking',
+        startTime,
+        endTime,
+        status: 'scheduled',
+        notes: booking.notes || undefined,
+      });
+
+      // Update the booking
+      const confirmedBooking = await storage.confirmOnlineBooking(bookingId, appointment.id);
+
+      // Send confirmation email/SMS
+      if (booking.patientId) {
+        const patient = await storage.getPatient(booking.patientId);
+        if (patient?.email) {
+          // TODO: Send confirmation email
+        }
+      } else if (booking.guestEmail) {
+        // TODO: Send confirmation email to guest
+      }
+
+      res.json({ booking: confirmedBooking, appointment });
+    } catch (error) {
+      console.error('Error confirming booking:', error);
+      res.status(500).json({ message: 'Failed to confirm booking' });
+    }
+  });
+
+  app.post('/api/booking/bookings/:id/cancel', isAuthenticated, async (req: any, res) => {
+    try {
+      const { reason } = req.body;
+      const booking = await storage.cancelOnlineBooking(parseInt(req.params.id), reason);
+      res.json(booking);
+    } catch (error) {
+      console.error('Error cancelling booking:', error);
+      res.status(500).json({ message: 'Failed to cancel booking' });
+    }
+  });
+
+  // --- Public Booking Endpoints (No Auth Required) ---
+
+  // Get booking page by slug
+  app.get('/api/public/book/:slug', async (req: any, res) => {
+    try {
+      const settings = await storage.getBookingSettingsBySlug(req.params.slug);
+      if (!settings || !settings.isOnlineBookingEnabled) {
+        return res.status(404).json({ message: 'Booking page not found' });
+      }
+
+      const practice = await storage.getPractice(settings.practiceId);
+      const appointmentTypes = await storage.getAppointmentTypes(settings.practiceId, true);
+      const activeTypes = appointmentTypes.filter(t => t.allowOnlineBooking);
+
+      // Get therapists for this practice
+      const therapists = await storage.getTherapistsByPractice(settings.practiceId);
+
+      res.json({
+        practice: {
+          id: practice?.id,
+          name: practice?.name,
+          address: practice?.address,
+          phone: practice?.phone,
+        },
+        settings: {
+          welcomeMessage: settings.welcomeMessage,
+          allowNewPatients: settings.allowNewPatients,
+          newPatientMessage: settings.newPatientMessage,
+          cancellationPolicy: settings.cancellationPolicy,
+          requirePhoneNumber: settings.requirePhoneNumber,
+          requireInsuranceInfo: settings.requireInsuranceInfo,
+        },
+        appointmentTypes: activeTypes,
+        therapists: therapists.map(t => ({
+          id: t.id,
+          name: `${t.firstName || ''} ${t.lastName || ''}`.trim() || t.email,
+        })),
+      });
+    } catch (error) {
+      console.error('Error fetching booking page:', error);
+      res.status(500).json({ message: 'Failed to load booking page' });
+    }
+  });
+
+  // Get available slots (public)
+  app.get('/api/public/book/:slug/slots', async (req: any, res) => {
+    try {
+      const settings = await storage.getBookingSettingsBySlug(req.params.slug);
+      if (!settings || !settings.isOnlineBookingEnabled) {
+        return res.status(404).json({ message: 'Booking page not found' });
+      }
+
+      const { appointmentTypeId, therapistId, date } = req.query;
+      if (!appointmentTypeId || !date) {
+        return res.status(400).json({ message: 'appointmentTypeId and date are required' });
+      }
+
+      const slots = await storage.getAvailableSlots(
+        settings.practiceId,
+        therapistId as string || null,
+        parseInt(appointmentTypeId as string),
+        new Date(date as string)
+      );
+
+      res.json(slots);
+    } catch (error) {
+      console.error('Error fetching available slots:', error);
+      res.status(500).json({ message: 'Failed to fetch available slots' });
+    }
+  });
+
+  // Create booking (public)
+  app.post('/api/public/book/:slug', async (req: any, res) => {
+    try {
+      const settings = await storage.getBookingSettingsBySlug(req.params.slug);
+      if (!settings || !settings.isOnlineBookingEnabled) {
+        return res.status(404).json({ message: 'Booking page not found' });
+      }
+
+      const {
+        appointmentTypeId,
+        therapistId,
+        date,
+        time,
+        firstName,
+        lastName,
+        email,
+        phone,
+        notes,
+        isNewPatient,
+      } = req.body;
+
+      // Validate required fields
+      if (!appointmentTypeId || !date || !time || !firstName || !lastName || !email) {
+        return res.status(400).json({ message: 'Missing required fields' });
+      }
+
+      // Check if slot is still available
+      const slots = await storage.getAvailableSlots(
+        settings.practiceId,
+        therapistId || null,
+        parseInt(appointmentTypeId),
+        new Date(date)
+      );
+
+      if (!slots.includes(time)) {
+        return res.status(400).json({ message: 'Selected time slot is no longer available' });
+      }
+
+      // Check if this is an existing patient by email
+      let patientId: number | undefined;
+      const patients = await storage.getPatients(settings.practiceId);
+      const existingPatient = patients.find(p => p.email?.toLowerCase() === email.toLowerCase());
+      if (existingPatient) {
+        patientId = existingPatient.id;
+      }
+
+      // Create the booking
+      const booking = await storage.createOnlineBooking({
+        practiceId: settings.practiceId,
+        appointmentTypeId: parseInt(appointmentTypeId),
+        therapistId: therapistId || undefined,
+        patientId,
+        guestFirstName: !patientId ? firstName : undefined,
+        guestLastName: !patientId ? lastName : undefined,
+        guestEmail: !patientId ? email : undefined,
+        guestPhone: !patientId ? phone : undefined,
+        requestedDate: date,
+        requestedTime: time,
+        isNewPatient: isNewPatient || !patientId,
+        notes,
+        status: settings.requireInsuranceInfo ? 'pending' : 'pending',
+      });
+
+      // Send confirmation email
+      const practice = await storage.getPractice(settings.practiceId);
+      const appointmentType = await storage.getAppointmentType(parseInt(appointmentTypeId));
+
+      // TODO: Send booking confirmation email
+
+      res.status(201).json({
+        success: true,
+        confirmationCode: booking.confirmationCode,
+        message: 'Booking request submitted successfully',
+        booking: {
+          id: booking.id,
+          date: booking.requestedDate,
+          time: booking.requestedTime,
+          appointmentType: appointmentType?.name,
+          status: booking.status,
+        },
+      });
+    } catch (error) {
+      console.error('Error creating booking:', error);
+      res.status(500).json({ message: 'Failed to create booking' });
+    }
+  });
+
+  // Check booking status (public)
+  app.get('/api/public/booking/:code', async (req: any, res) => {
+    try {
+      const booking = await storage.getOnlineBookingByCode(req.params.code);
+      if (!booking) {
+        return res.status(404).json({ message: 'Booking not found' });
+      }
+
+      const appointmentType = booking.appointmentTypeId
+        ? await storage.getAppointmentType(booking.appointmentTypeId)
+        : null;
+
+      res.json({
+        confirmationCode: booking.confirmationCode,
+        status: booking.status,
+        date: booking.requestedDate,
+        time: booking.requestedTime,
+        appointmentType: appointmentType?.name,
+        confirmedAt: booking.confirmedAt,
+        cancelledAt: booking.cancelledAt,
+      });
+    } catch (error) {
+      console.error('Error checking booking status:', error);
+      res.status(500).json({ message: 'Failed to check booking status' });
+    }
+  });
+
   // ==================== CANCELLATION ANALYTICS ====================
 
   app.get('/api/analytics/cancellations', isAuthenticated, async (req: any, res) => {

@@ -23,6 +23,14 @@ import {
   payerIntegrations,
   authorizationAuditLog,
   appeals,
+  waitlist,
+  reviewRequests,
+  googleReviews,
+  appointmentTypes,
+  therapistAvailability,
+  therapistTimeOff,
+  bookingSettings,
+  onlineBookings,
   type User,
   type UpsertUser,
   type Practice,
@@ -70,6 +78,22 @@ import {
   type InsertAmendmentRequest,
   type Appeal,
   type InsertAppeal,
+  type WaitlistEntry,
+  type InsertWaitlistEntry,
+  type ReviewRequest,
+  type InsertReviewRequest,
+  type GoogleReview,
+  type InsertGoogleReview,
+  type AppointmentType,
+  type InsertAppointmentType,
+  type TherapistAvailability,
+  type InsertTherapistAvailability,
+  type TherapistTimeOff,
+  type InsertTherapistTimeOff,
+  type BookingSettings,
+  type InsertBookingSettings,
+  type OnlineBooking,
+  type InsertOnlineBooking,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -236,6 +260,16 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  async getTherapistsByPractice(practiceId: number): Promise<User[]> {
+    return await db
+      .select()
+      .from(users)
+      .where(and(
+        eq(users.practiceId, practiceId),
+        eq(users.role, 'therapist')
+      ));
   }
 
   // Practice operations
@@ -920,6 +954,756 @@ export class DatabaseStorage implements IStorage {
       .where(eq(appointments.id, id))
       .returning();
     return updated;
+  }
+
+  async getAppointmentsForReminder(
+    practiceId: number,
+    windowStart: Date,
+    windowEnd: Date
+  ): Promise<Appointment[]> {
+    return await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        eq(appointments.status, 'scheduled'),
+        eq(appointments.reminderSent, false),
+        gte(appointments.startTime, windowStart),
+        lte(appointments.startTime, windowEnd)
+      ))
+      .orderBy(appointments.startTime);
+  }
+
+  async getUpcomingAppointments(practiceId: number, hoursAhead: number = 48): Promise<Appointment[]> {
+    const now = new Date();
+    const future = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
+
+    return await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        eq(appointments.status, 'scheduled'),
+        gte(appointments.startTime, now),
+        lte(appointments.startTime, future)
+      ))
+      .orderBy(appointments.startTime);
+  }
+
+  // ==================== WAITLIST MANAGEMENT ====================
+
+  async createWaitlistEntry(entry: InsertWaitlistEntry): Promise<WaitlistEntry> {
+    const [result] = await db.insert(waitlist).values(entry).returning();
+    return result;
+  }
+
+  async getWaitlist(practiceId: number, filters?: {
+    status?: string;
+    therapistId?: string;
+    patientId?: number;
+    priority?: number;
+  }): Promise<WaitlistEntry[]> {
+    const conditions = [eq(waitlist.practiceId, practiceId)];
+
+    if (filters?.status) {
+      conditions.push(eq(waitlist.status, filters.status));
+    }
+    if (filters?.therapistId) {
+      conditions.push(eq(waitlist.therapistId, filters.therapistId));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(waitlist.patientId, filters.patientId));
+    }
+    if (filters?.priority) {
+      conditions.push(eq(waitlist.priority, filters.priority));
+    }
+
+    return await db
+      .select()
+      .from(waitlist)
+      .where(and(...conditions))
+      .orderBy(desc(waitlist.priority), waitlist.createdAt);
+  }
+
+  async getWaitlistEntry(id: number): Promise<WaitlistEntry | undefined> {
+    const [result] = await db
+      .select()
+      .from(waitlist)
+      .where(eq(waitlist.id, id));
+    return result;
+  }
+
+  async updateWaitlistEntry(id: number, updates: Partial<InsertWaitlistEntry>): Promise<WaitlistEntry> {
+    const [result] = await db
+      .update(waitlist)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(waitlist.id, id))
+      .returning();
+    return result;
+  }
+
+  async deleteWaitlistEntry(id: number): Promise<void> {
+    await db.delete(waitlist).where(eq(waitlist.id, id));
+  }
+
+  async getWaitlistForSlot(
+    practiceId: number,
+    therapistId: string | null,
+    slotDate: Date,
+    slotTimeStart: string
+  ): Promise<WaitlistEntry[]> {
+    // Get waiting entries that match the slot
+    const dayOfWeek = slotDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+
+    const entries = await db
+      .select()
+      .from(waitlist)
+      .where(and(
+        eq(waitlist.practiceId, practiceId),
+        eq(waitlist.status, 'waiting')
+      ))
+      .orderBy(desc(waitlist.priority), waitlist.createdAt);
+
+    // Filter by preferred days and times
+    return entries.filter(entry => {
+      // Check if therapist matches (if preferred)
+      if (entry.therapistId && therapistId && entry.therapistId !== therapistId) {
+        return false;
+      }
+
+      // Check preferred days
+      const preferredDays = entry.preferredDays as string[] | null;
+      if (preferredDays && preferredDays.length > 0) {
+        if (!preferredDays.includes(dayOfWeek)) {
+          return false;
+        }
+      }
+
+      // Check preferred time range
+      if (entry.preferredTimeStart && entry.preferredTimeEnd) {
+        if (slotTimeStart < entry.preferredTimeStart || slotTimeStart > entry.preferredTimeEnd) {
+          return false;
+        }
+      }
+
+      // Check expiration
+      if (entry.expiresAt && new Date(entry.expiresAt) < new Date()) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async markWaitlistNotified(id: number, slot: { date: string; time: string; therapistId?: string }): Promise<WaitlistEntry> {
+    const [result] = await db
+      .update(waitlist)
+      .set({
+        status: 'notified',
+        notifiedAt: new Date(),
+        notifiedSlot: slot,
+        updatedAt: new Date(),
+      })
+      .where(eq(waitlist.id, id))
+      .returning();
+    return result;
+  }
+
+  async markWaitlistScheduled(id: number, appointmentId: number): Promise<WaitlistEntry> {
+    const [result] = await db
+      .update(waitlist)
+      .set({
+        status: 'scheduled',
+        scheduledAppointmentId: appointmentId,
+        updatedAt: new Date(),
+      })
+      .where(eq(waitlist.id, id))
+      .returning();
+    return result;
+  }
+
+  async getWaitlistStats(practiceId: number): Promise<{
+    totalWaiting: number;
+    notified: number;
+    scheduled: number;
+    expired: number;
+    highPriority: number;
+    averageWaitDays: number;
+  }> {
+    const entries = await db
+      .select()
+      .from(waitlist)
+      .where(eq(waitlist.practiceId, practiceId));
+
+    const now = new Date();
+    let totalWaitMs = 0;
+    let waitingCount = 0;
+
+    const stats = entries.reduce((acc, entry) => {
+      if (entry.status === 'waiting') {
+        acc.totalWaiting++;
+        if (entry.priority && entry.priority >= 2) acc.highPriority++;
+        if (entry.createdAt) {
+          totalWaitMs += now.getTime() - new Date(entry.createdAt).getTime();
+          waitingCount++;
+        }
+      } else if (entry.status === 'notified') {
+        acc.notified++;
+      } else if (entry.status === 'scheduled') {
+        acc.scheduled++;
+      } else if (entry.status === 'expired') {
+        acc.expired++;
+      }
+      return acc;
+    }, { totalWaiting: 0, notified: 0, scheduled: 0, expired: 0, highPriority: 0 });
+
+    const averageWaitDays = waitingCount > 0
+      ? Math.round((totalWaitMs / waitingCount) / (1000 * 60 * 60 * 24))
+      : 0;
+
+    return { ...stats, averageWaitDays };
+  }
+
+  async expireOldWaitlistEntries(practiceId: number): Promise<number> {
+    const now = new Date();
+    const result = await db
+      .update(waitlist)
+      .set({ status: 'expired', updatedAt: now })
+      .where(and(
+        eq(waitlist.practiceId, practiceId),
+        eq(waitlist.status, 'waiting'),
+        lt(waitlist.expiresAt, now)
+      ))
+      .returning();
+    return result.length;
+  }
+
+  // ==================== REVIEW MANAGEMENT ====================
+
+  async createReviewRequest(request: InsertReviewRequest): Promise<ReviewRequest> {
+    const [result] = await db.insert(reviewRequests).values(request).returning();
+    return result;
+  }
+
+  async getReviewRequests(practiceId: number, filters?: {
+    status?: string;
+    patientId?: number;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<ReviewRequest[]> {
+    const conditions = [eq(reviewRequests.practiceId, practiceId)];
+
+    if (filters?.status) {
+      conditions.push(eq(reviewRequests.status, filters.status));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(reviewRequests.patientId, filters.patientId));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(reviewRequests.createdAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(reviewRequests.createdAt, filters.endDate));
+    }
+
+    return await db
+      .select()
+      .from(reviewRequests)
+      .where(and(...conditions))
+      .orderBy(desc(reviewRequests.createdAt));
+  }
+
+  async getReviewRequest(id: number): Promise<ReviewRequest | undefined> {
+    const [result] = await db
+      .select()
+      .from(reviewRequests)
+      .where(eq(reviewRequests.id, id));
+    return result;
+  }
+
+  async updateReviewRequest(id: number, updates: Partial<InsertReviewRequest>): Promise<ReviewRequest> {
+    const [result] = await db
+      .update(reviewRequests)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(reviewRequests.id, id))
+      .returning();
+    return result;
+  }
+
+  async getReviewRequestStats(practiceId: number): Promise<{
+    totalSent: number;
+    pending: number;
+    clicked: number;
+    reviewed: number;
+    declined: number;
+    clickRate: number;
+    reviewRate: number;
+  }> {
+    const requests = await db
+      .select()
+      .from(reviewRequests)
+      .where(eq(reviewRequests.practiceId, practiceId));
+
+    const stats = requests.reduce((acc, req) => {
+      if (req.status === 'sent') acc.totalSent++;
+      if (req.status === 'pending') acc.pending++;
+      if (req.status === 'clicked') acc.clicked++;
+      if (req.status === 'reviewed') acc.reviewed++;
+      if (req.status === 'declined') acc.declined++;
+      return acc;
+    }, { totalSent: 0, pending: 0, clicked: 0, reviewed: 0, declined: 0 });
+
+    const sentCount = stats.totalSent + stats.clicked + stats.reviewed;
+    const clickRate = sentCount > 0 ? Math.round((stats.clicked + stats.reviewed) / sentCount * 100) : 0;
+    const reviewRate = sentCount > 0 ? Math.round(stats.reviewed / sentCount * 100) : 0;
+
+    return { ...stats, clickRate, reviewRate };
+  }
+
+  async getPatientsEligibleForReview(practiceId: number, daysSinceAppointment: number = 1): Promise<{
+    patientId: number;
+    appointmentId: number;
+    appointmentDate: Date;
+  }[]> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysSinceAppointment);
+    const cutoffEnd = new Date(cutoffDate);
+    cutoffEnd.setDate(cutoffEnd.getDate() - 1);
+
+    // Get completed appointments from the target day that haven't had review requests
+    const eligibleAppointments = await db
+      .select({
+        patientId: appointments.patientId,
+        appointmentId: appointments.id,
+        appointmentDate: appointments.startTime,
+      })
+      .from(appointments)
+      .leftJoin(reviewRequests, eq(appointments.id, reviewRequests.appointmentId))
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        eq(appointments.status, 'completed'),
+        lte(appointments.startTime, cutoffDate),
+        gte(appointments.startTime, cutoffEnd),
+        isNull(reviewRequests.id)
+      ));
+
+    return eligibleAppointments.filter(a => a.patientId !== null) as {
+      patientId: number;
+      appointmentId: number;
+      appointmentDate: Date;
+    }[];
+  }
+
+  // Google Reviews CRUD
+  async createGoogleReview(review: InsertGoogleReview): Promise<GoogleReview> {
+    const [result] = await db.insert(googleReviews).values(review).returning();
+    return result;
+  }
+
+  async getGoogleReviews(practiceId: number, filters?: {
+    responseStatus?: string;
+    sentiment?: string;
+    minRating?: number;
+    maxRating?: number;
+  }): Promise<GoogleReview[]> {
+    const conditions = [eq(googleReviews.practiceId, practiceId)];
+
+    if (filters?.responseStatus) {
+      conditions.push(eq(googleReviews.responseStatus, filters.responseStatus));
+    }
+    if (filters?.sentiment) {
+      conditions.push(eq(googleReviews.sentiment, filters.sentiment));
+    }
+    if (filters?.minRating) {
+      conditions.push(gte(googleReviews.rating, filters.minRating));
+    }
+    if (filters?.maxRating) {
+      conditions.push(lte(googleReviews.rating, filters.maxRating));
+    }
+
+    return await db
+      .select()
+      .from(googleReviews)
+      .where(and(...conditions))
+      .orderBy(desc(googleReviews.reviewDate));
+  }
+
+  async getGoogleReview(id: number): Promise<GoogleReview | undefined> {
+    const [result] = await db
+      .select()
+      .from(googleReviews)
+      .where(eq(googleReviews.id, id));
+    return result;
+  }
+
+  async updateGoogleReview(id: number, updates: Partial<InsertGoogleReview>): Promise<GoogleReview> {
+    const [result] = await db
+      .update(googleReviews)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(googleReviews.id, id))
+      .returning();
+    return result;
+  }
+
+  async getReviewStats(practiceId: number): Promise<{
+    totalReviews: number;
+    averageRating: number;
+    pendingResponses: number;
+    positiveCount: number;
+    neutralCount: number;
+    negativeCount: number;
+    ratingDistribution: Record<number, number>;
+  }> {
+    const reviews = await db
+      .select()
+      .from(googleReviews)
+      .where(eq(googleReviews.practiceId, practiceId));
+
+    const stats = {
+      totalReviews: reviews.length,
+      averageRating: 0,
+      pendingResponses: 0,
+      positiveCount: 0,
+      neutralCount: 0,
+      negativeCount: 0,
+      ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } as Record<number, number>,
+    };
+
+    if (reviews.length === 0) return stats;
+
+    let totalRating = 0;
+    for (const review of reviews) {
+      if (review.rating) {
+        totalRating += review.rating;
+        stats.ratingDistribution[review.rating] = (stats.ratingDistribution[review.rating] || 0) + 1;
+      }
+      if (review.responseStatus === 'pending') stats.pendingResponses++;
+      if (review.sentiment === 'positive') stats.positiveCount++;
+      if (review.sentiment === 'neutral') stats.neutralCount++;
+      if (review.sentiment === 'negative') stats.negativeCount++;
+    }
+
+    stats.averageRating = Math.round((totalRating / reviews.length) * 10) / 10;
+    return stats;
+  }
+
+  // ==================== ONLINE BOOKING ====================
+
+  // Appointment Types
+  async createAppointmentType(type: InsertAppointmentType): Promise<AppointmentType> {
+    const [result] = await db.insert(appointmentTypes).values(type).returning();
+    return result;
+  }
+
+  async getAppointmentTypes(practiceId: number, activeOnly: boolean = false): Promise<AppointmentType[]> {
+    const conditions = [eq(appointmentTypes.practiceId, practiceId)];
+    if (activeOnly) {
+      conditions.push(eq(appointmentTypes.isActive, true));
+    }
+    return await db.select().from(appointmentTypes).where(and(...conditions));
+  }
+
+  async getAppointmentType(id: number): Promise<AppointmentType | undefined> {
+    const [result] = await db.select().from(appointmentTypes).where(eq(appointmentTypes.id, id));
+    return result;
+  }
+
+  async updateAppointmentType(id: number, updates: Partial<InsertAppointmentType>): Promise<AppointmentType> {
+    const [result] = await db
+      .update(appointmentTypes)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(appointmentTypes.id, id))
+      .returning();
+    return result;
+  }
+
+  async deleteAppointmentType(id: number): Promise<void> {
+    await db.delete(appointmentTypes).where(eq(appointmentTypes.id, id));
+  }
+
+  // Therapist Availability
+  async setTherapistAvailability(availability: InsertTherapistAvailability): Promise<TherapistAvailability> {
+    // Upsert - update if exists for same therapist/day, insert otherwise
+    const existing = await db
+      .select()
+      .from(therapistAvailability)
+      .where(and(
+        eq(therapistAvailability.therapistId, availability.therapistId),
+        eq(therapistAvailability.dayOfWeek, availability.dayOfWeek)
+      ));
+
+    if (existing.length > 0) {
+      const [result] = await db
+        .update(therapistAvailability)
+        .set({ ...availability, updatedAt: new Date() })
+        .where(eq(therapistAvailability.id, existing[0].id))
+        .returning();
+      return result;
+    }
+
+    const [result] = await db.insert(therapistAvailability).values(availability).returning();
+    return result;
+  }
+
+  async getTherapistAvailability(therapistId: string): Promise<TherapistAvailability[]> {
+    return await db
+      .select()
+      .from(therapistAvailability)
+      .where(eq(therapistAvailability.therapistId, therapistId))
+      .orderBy(therapistAvailability.dayOfWeek);
+  }
+
+  async getPracticeAvailability(practiceId: number): Promise<TherapistAvailability[]> {
+    return await db
+      .select()
+      .from(therapistAvailability)
+      .where(eq(therapistAvailability.practiceId, practiceId))
+      .orderBy(therapistAvailability.therapistId, therapistAvailability.dayOfWeek);
+  }
+
+  async deleteTherapistAvailability(id: number): Promise<void> {
+    await db.delete(therapistAvailability).where(eq(therapistAvailability.id, id));
+  }
+
+  // Therapist Time Off
+  async addTherapistTimeOff(timeOff: InsertTherapistTimeOff): Promise<TherapistTimeOff> {
+    const [result] = await db.insert(therapistTimeOff).values(timeOff).returning();
+    return result;
+  }
+
+  async getTherapistTimeOff(therapistId: string, startDate?: Date, endDate?: Date): Promise<TherapistTimeOff[]> {
+    const conditions = [eq(therapistTimeOff.therapistId, therapistId)];
+    if (startDate) {
+      conditions.push(gte(therapistTimeOff.endDate, startDate.toISOString().split('T')[0]));
+    }
+    if (endDate) {
+      conditions.push(lte(therapistTimeOff.startDate, endDate.toISOString().split('T')[0]));
+    }
+    return await db.select().from(therapistTimeOff).where(and(...conditions));
+  }
+
+  async deleteTherapistTimeOff(id: number): Promise<void> {
+    await db.delete(therapistTimeOff).where(eq(therapistTimeOff.id, id));
+  }
+
+  // Booking Settings
+  async getBookingSettings(practiceId: number): Promise<BookingSettings | undefined> {
+    const [result] = await db
+      .select()
+      .from(bookingSettings)
+      .where(eq(bookingSettings.practiceId, practiceId));
+    return result;
+  }
+
+  async getBookingSettingsBySlug(slug: string): Promise<BookingSettings | undefined> {
+    const [result] = await db
+      .select()
+      .from(bookingSettings)
+      .where(eq(bookingSettings.bookingPageSlug, slug));
+    return result;
+  }
+
+  async upsertBookingSettings(settings: InsertBookingSettings): Promise<BookingSettings> {
+    const existing = await this.getBookingSettings(settings.practiceId);
+    if (existing) {
+      const [result] = await db
+        .update(bookingSettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(bookingSettings.id, existing.id))
+        .returning();
+      return result;
+    }
+    const [result] = await db.insert(bookingSettings).values(settings).returning();
+    return result;
+  }
+
+  // Online Bookings
+  async createOnlineBooking(booking: InsertOnlineBooking): Promise<OnlineBooking> {
+    // Generate confirmation code
+    const confirmationCode = `BK${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const [result] = await db
+      .insert(onlineBookings)
+      .values({ ...booking, confirmationCode })
+      .returning();
+    return result;
+  }
+
+  async getOnlineBookings(practiceId: number, filters?: {
+    status?: string;
+    therapistId?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<OnlineBooking[]> {
+    const conditions = [eq(onlineBookings.practiceId, practiceId)];
+    if (filters?.status) {
+      conditions.push(eq(onlineBookings.status, filters.status));
+    }
+    if (filters?.therapistId) {
+      conditions.push(eq(onlineBookings.therapistId, filters.therapistId));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(onlineBookings.requestedDate, filters.startDate.toISOString().split('T')[0]));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(onlineBookings.requestedDate, filters.endDate.toISOString().split('T')[0]));
+    }
+    return await db
+      .select()
+      .from(onlineBookings)
+      .where(and(...conditions))
+      .orderBy(desc(onlineBookings.createdAt));
+  }
+
+  async getOnlineBooking(id: number): Promise<OnlineBooking | undefined> {
+    const [result] = await db.select().from(onlineBookings).where(eq(onlineBookings.id, id));
+    return result;
+  }
+
+  async getOnlineBookingByCode(code: string): Promise<OnlineBooking | undefined> {
+    const [result] = await db
+      .select()
+      .from(onlineBookings)
+      .where(eq(onlineBookings.confirmationCode, code));
+    return result;
+  }
+
+  async updateOnlineBooking(id: number, updates: Partial<InsertOnlineBooking>): Promise<OnlineBooking> {
+    const [result] = await db
+      .update(onlineBookings)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(onlineBookings.id, id))
+      .returning();
+    return result;
+  }
+
+  async confirmOnlineBooking(id: number, appointmentId: number): Promise<OnlineBooking> {
+    const [result] = await db
+      .update(onlineBookings)
+      .set({
+        status: 'confirmed',
+        appointmentId,
+        confirmedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(onlineBookings.id, id))
+      .returning();
+    return result;
+  }
+
+  async cancelOnlineBooking(id: number, reason?: string): Promise<OnlineBooking> {
+    const [result] = await db
+      .update(onlineBookings)
+      .set({
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        cancellationReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(onlineBookings.id, id))
+      .returning();
+    return result;
+  }
+
+  async getAvailableSlots(
+    practiceId: number,
+    therapistId: string | null,
+    appointmentTypeId: number,
+    date: Date
+  ): Promise<string[]> {
+    // Get the appointment type for duration
+    const appointmentType = await this.getAppointmentType(appointmentTypeId);
+    if (!appointmentType) return [];
+
+    const dayOfWeek = date.getDay();
+    const dateStr = date.toISOString().split('T')[0];
+
+    // Get therapist availability for this day
+    let availabilities: TherapistAvailability[];
+    if (therapistId) {
+      availabilities = await db
+        .select()
+        .from(therapistAvailability)
+        .where(and(
+          eq(therapistAvailability.practiceId, practiceId),
+          eq(therapistAvailability.therapistId, therapistId),
+          eq(therapistAvailability.dayOfWeek, dayOfWeek),
+          eq(therapistAvailability.isAvailable, true)
+        ));
+    } else {
+      availabilities = await db
+        .select()
+        .from(therapistAvailability)
+        .where(and(
+          eq(therapistAvailability.practiceId, practiceId),
+          eq(therapistAvailability.dayOfWeek, dayOfWeek),
+          eq(therapistAvailability.isAvailable, true)
+        ));
+    }
+
+    if (availabilities.length === 0) return [];
+
+    // Get existing appointments for this date
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const existingAppointments = await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.practiceId, practiceId),
+        gte(appointments.startTime, startOfDay),
+        lte(appointments.startTime, endOfDay),
+        ne(appointments.status, 'cancelled')
+      ));
+
+    // Check time off
+    const timeOffs = therapistId
+      ? await this.getTherapistTimeOff(therapistId, date, date)
+      : [];
+
+    if (timeOffs.length > 0) return [];
+
+    // Generate available slots
+    const slots: string[] = [];
+    const duration = appointmentType.duration;
+    const bufferBefore = appointmentType.bufferBefore || 0;
+    const bufferAfter = appointmentType.bufferAfter || 0;
+    const totalDuration = duration + bufferBefore + bufferAfter;
+
+    for (const avail of availabilities) {
+      const [startHour, startMin] = avail.startTime.split(':').map(Number);
+      const [endHour, endMin] = avail.endTime.split(':').map(Number);
+
+      let currentTime = startHour * 60 + startMin;
+      const endTime = endHour * 60 + endMin;
+
+      while (currentTime + duration <= endTime) {
+        const slotHour = Math.floor(currentTime / 60);
+        const slotMin = currentTime % 60;
+        const slotTime = `${slotHour.toString().padStart(2, '0')}:${slotMin.toString().padStart(2, '0')}`;
+
+        // Check if slot conflicts with existing appointments
+        const slotStart = new Date(date);
+        slotStart.setHours(slotHour, slotMin, 0, 0);
+        const slotEnd = new Date(slotStart.getTime() + duration * 60000);
+
+        const hasConflict = existingAppointments.some(apt => {
+          const aptStart = new Date(apt.startTime);
+          const aptEnd = new Date(apt.endTime);
+          return (slotStart < aptEnd && slotEnd > aptStart);
+        });
+
+        if (!hasConflict) {
+          slots.push(slotTime);
+        }
+
+        currentTime += 30; // 30 minute intervals
+      }
+    }
+
+    return [...new Set(slots)].sort();
   }
 
   // ==================== CANCELLATION ANALYTICS ====================

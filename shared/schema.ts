@@ -343,6 +343,157 @@ export const appointments = pgTable("appointments", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Waitlist - for patients wanting earlier/different appointment times
+export const waitlist = pgTable("waitlist", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  therapistId: varchar("therapist_id").references(() => users.id), // preferred therapist (optional)
+  preferredDays: jsonb("preferred_days"), // ['monday', 'wednesday', 'friday']
+  preferredTimeStart: varchar("preferred_time_start"), // '09:00'
+  preferredTimeEnd: varchar("preferred_time_end"), // '17:00'
+  priority: integer("priority").default(1), // 1 = normal, 2 = high, 3 = urgent
+  status: varchar("status").default("waiting"), // waiting, notified, scheduled, expired, cancelled
+  reason: text("reason"), // why they need an earlier appointment
+  notes: text("notes"),
+  notifiedAt: timestamp("notified_at"), // when they were notified of an opening
+  notifiedSlot: jsonb("notified_slot"), // {date, time, therapist} - the slot they were notified about
+  scheduledAppointmentId: integer("scheduled_appointment_id").references(() => appointments.id), // if scheduled
+  expiresAt: timestamp("expires_at"), // optional expiration date for the waitlist request
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Review Requests - track requests sent to patients for Google reviews
+export const reviewRequests = pgTable("review_requests", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  status: varchar("status").default("pending"), // pending, sent, clicked, reviewed, declined
+  sentVia: varchar("sent_via"), // email, sms, both
+  emailSent: boolean("email_sent").default(false),
+  smsSent: boolean("sms_sent").default(false),
+  sentAt: timestamp("sent_at"),
+  clickedAt: timestamp("clicked_at"), // when they clicked the review link
+  reviewedAt: timestamp("reviewed_at"), // when we detected they left a review
+  declinedAt: timestamp("declined_at"),
+  declineReason: varchar("decline_reason"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Google Reviews - store reviews for response management
+export const googleReviews = pgTable("google_reviews", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  googleReviewId: varchar("google_review_id"), // ID from Google if available
+  reviewerName: varchar("reviewer_name"),
+  rating: integer("rating"), // 1-5 stars
+  reviewText: text("review_text"),
+  reviewDate: timestamp("review_date"),
+  responseStatus: varchar("response_status").default("pending"), // pending, draft, published, skipped
+  aiDraftResponse: text("ai_draft_response"),
+  finalResponse: text("final_response"),
+  respondedAt: timestamp("responded_at"),
+  respondedBy: varchar("responded_by").references(() => users.id),
+  sentiment: varchar("sentiment"), // positive, neutral, negative
+  tags: jsonb("tags"), // ['service', 'staff', 'wait_time', etc.]
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Appointment Types - configurable session types for online booking
+export const appointmentTypes = pgTable("appointment_types", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  name: varchar("name").notNull(), // "Initial Consultation", "Follow-up Session"
+  description: text("description"),
+  duration: integer("duration").notNull(), // in minutes
+  price: decimal("price", { precision: 10, scale: 2 }),
+  color: varchar("color"), // for calendar display
+  isActive: boolean("is_active").default(true),
+  allowOnlineBooking: boolean("allow_online_booking").default(true),
+  requiresApproval: boolean("requires_approval").default(false), // admin approval needed
+  bufferBefore: integer("buffer_before").default(0), // minutes before appointment
+  bufferAfter: integer("buffer_after").default(0), // minutes after appointment
+  maxAdvanceBooking: integer("max_advance_booking").default(60), // days in advance
+  minAdvanceBooking: integer("min_advance_booking").default(1), // minimum hours before
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Therapist Availability - weekly schedule for each therapist
+export const therapistAvailability = pgTable("therapist_availability", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  therapistId: varchar("therapist_id").references(() => users.id).notNull(),
+  dayOfWeek: integer("day_of_week").notNull(), // 0=Sunday, 1=Monday, etc.
+  startTime: varchar("start_time").notNull(), // "09:00"
+  endTime: varchar("end_time").notNull(), // "17:00"
+  isAvailable: boolean("is_available").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Therapist Time Off - specific dates when therapist is unavailable
+export const therapistTimeOff = pgTable("therapist_time_off", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  therapistId: varchar("therapist_id").references(() => users.id).notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  reason: varchar("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Booking Settings - practice-level configuration
+export const bookingSettings = pgTable("booking_settings", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull().unique(),
+  isOnlineBookingEnabled: boolean("is_online_booking_enabled").default(true),
+  bookingPageSlug: varchar("booking_page_slug").unique(), // for URL: /book/slug
+  welcomeMessage: text("welcome_message"),
+  confirmationMessage: text("confirmation_message"),
+  requirePhoneNumber: boolean("require_phone_number").default(true),
+  requireInsuranceInfo: boolean("require_insurance_info").default(false),
+  allowNewPatients: boolean("allow_new_patients").default(true),
+  newPatientMessage: text("new_patient_message"),
+  cancellationPolicy: text("cancellation_policy"),
+  defaultTimezone: varchar("default_timezone").default("America/New_York"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Online Bookings - track bookings made through online portal
+export const onlineBookings = pgTable("online_bookings", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  appointmentTypeId: integer("appointment_type_id").references(() => appointmentTypes.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  // For new patients who don't have a patient record yet
+  guestFirstName: varchar("guest_first_name"),
+  guestLastName: varchar("guest_last_name"),
+  guestEmail: varchar("guest_email"),
+  guestPhone: varchar("guest_phone"),
+  requestedDate: date("requested_date").notNull(),
+  requestedTime: varchar("requested_time").notNull(),
+  status: varchar("status").default("pending"), // pending, confirmed, cancelled, completed
+  isNewPatient: boolean("is_new_patient").default(false),
+  notes: text("notes"),
+  confirmationCode: varchar("confirmation_code").unique(),
+  confirmedAt: timestamp("confirmed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancellationReason: text("cancellation_reason"),
+  reminderSent: boolean("reminder_sent").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Invoices
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
@@ -862,6 +1013,77 @@ export const insertAppointmentSchema = createInsertSchema(appointments).omit({
 });
 export type Appointment = typeof appointments.$inferSelect;
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
+
+// Waitlist insert schema
+export const insertWaitlistSchema = createInsertSchema(waitlist).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type WaitlistEntry = typeof waitlist.$inferSelect;
+export type InsertWaitlistEntry = z.infer<typeof insertWaitlistSchema>;
+
+// Review Request insert schema
+export const insertReviewRequestSchema = createInsertSchema(reviewRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type ReviewRequest = typeof reviewRequests.$inferSelect;
+export type InsertReviewRequest = z.infer<typeof insertReviewRequestSchema>;
+
+// Google Review insert schema
+export const insertGoogleReviewSchema = createInsertSchema(googleReviews).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type GoogleReview = typeof googleReviews.$inferSelect;
+export type InsertGoogleReview = z.infer<typeof insertGoogleReviewSchema>;
+
+// Appointment Type insert schema
+export const insertAppointmentTypeSchema = createInsertSchema(appointmentTypes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type AppointmentType = typeof appointmentTypes.$inferSelect;
+export type InsertAppointmentType = z.infer<typeof insertAppointmentTypeSchema>;
+
+// Therapist Availability insert schema
+export const insertTherapistAvailabilitySchema = createInsertSchema(therapistAvailability).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type TherapistAvailability = typeof therapistAvailability.$inferSelect;
+export type InsertTherapistAvailability = z.infer<typeof insertTherapistAvailabilitySchema>;
+
+// Therapist Time Off insert schema
+export const insertTherapistTimeOffSchema = createInsertSchema(therapistTimeOff).omit({
+  id: true,
+  createdAt: true,
+});
+export type TherapistTimeOff = typeof therapistTimeOff.$inferSelect;
+export type InsertTherapistTimeOff = z.infer<typeof insertTherapistTimeOffSchema>;
+
+// Booking Settings insert schema
+export const insertBookingSettingsSchema = createInsertSchema(bookingSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type BookingSettings = typeof bookingSettings.$inferSelect;
+export type InsertBookingSettings = z.infer<typeof insertBookingSettingsSchema>;
+
+// Online Booking insert schema
+export const insertOnlineBookingSchema = createInsertSchema(onlineBookings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type OnlineBooking = typeof onlineBookings.$inferSelect;
+export type InsertOnlineBooking = z.infer<typeof insertOnlineBookingSchema>;
 
 // Insurance Authorization insert schemas
 export const insertPatientInsuranceAuthorizationSchema = createInsertSchema(patientInsuranceAuthorizations).omit({

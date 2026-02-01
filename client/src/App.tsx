@@ -23,6 +23,10 @@ import InvitePage from "@/pages/invite";
 import PayerManagement from "@/pages/payer-management";
 import BreachIncidents from "@/pages/breach-incidents";
 import Appeals from "@/pages/appeals";
+import Waitlist from "@/pages/waitlist";
+import Reviews from "@/pages/reviews";
+import PublicBooking from "@/pages/public-booking";
+import BookingSettings from "@/pages/booking-settings";
 import MfaChallenge from "@/pages/mfa-challenge";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -45,6 +49,7 @@ function Router() {
         <Route path="/intake" component={PatientIntake} />
         <Route path="/invite/:token" component={InvitePage} />
         <Route path="/mfa-challenge" component={MfaChallenge} />
+        <Route path="/book/:slug" component={PublicBooking} />
         <Route component={NotFound} />
       </Switch>
     );
@@ -58,6 +63,10 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/claims" component={Claims} />
         <Route path="/appeals" component={Appeals} />
+        <Route path="/waitlist" component={Waitlist} />
+        <Route path="/reviews" component={Reviews} />
+        <Route path="/online-booking" component={BookingSettings} />
+        <Route path="/book/:slug" component={PublicBooking} />
         <Route path="/patients" component={Patients} />
         <Route path="/intake" component={PatientIntake} />
         <Route path="/calendar" component={Calendar} />
