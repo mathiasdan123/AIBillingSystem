@@ -191,7 +191,7 @@ export default function TelehealthPage() {
   const upcomingSessions = todaysSessions.filter((s) => s.status === "scheduled");
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="md:ml-64 p-6 space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
