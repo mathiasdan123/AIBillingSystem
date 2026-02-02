@@ -618,8 +618,162 @@ export function startScheduler() {
   });
   scheduledTasks.set('preAppointmentEligibility', preAppointmentEligibilityTask);
 
+  // Automated review requests - runs daily at 10:00 AM
+  // Sends review requests to patients 24-48 hours after completed appointments
+  const automatedReviewRequestTask = cron.schedule('0 10 * * *', async () => {
+    try {
+      logger.info('Starting automated review request processing');
+
+      const practiceIds = [1]; // TODO: iterate through actual practices
+
+      for (const practiceId of practiceIds) {
+        // Get practice settings
+        const practice = await storage.getPractice(practiceId);
+        if (!practice) continue;
+
+        // Get Google review URL from practice settings (would need to be stored)
+        // For now, use a placeholder that should be configured per practice
+        const googleReviewUrl = process.env.GOOGLE_REVIEW_URL || '';
+        if (!googleReviewUrl) {
+          logger.warn('No Google review URL configured, skipping review requests', { practiceId });
+          continue;
+        }
+
+        // Find eligible appointments (completed 24-48 hours ago, no review request sent)
+        const eligibleAppointments = await storage.getPatientsEligibleForReview(practiceId);
+        logger.info('Found appointments eligible for review request', {
+          practiceId,
+          count: eligibleAppointments.length
+        });
+
+        const { generateReviewRequestMessage } = await import('./services/reviewResponseService');
+
+        for (const appointment of eligibleAppointments) {
+          try {
+            const patient = await storage.getPatient(appointment.patientId);
+            if (!patient) continue;
+
+            // Check if patient was asked for a review in the last 30 days
+            const recentRequests = await storage.getReviewRequests(practiceId, {
+              patientId: patient.id,
+              startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            });
+            if (recentRequests.length > 0) {
+              logger.debug('Patient already received review request recently', { patientId: patient.id });
+              continue;
+            }
+
+            // Determine send method based on patient preferences
+            const canEmail = patient.email && patient.preferredContactMethod !== 'sms';
+            const canSms = patient.phone && patient.smsConsentGiven && patient.preferredContactMethod !== 'email';
+
+            if (!canEmail && !canSms) {
+              logger.debug('No valid contact method for patient', { patientId: patient.id });
+              continue;
+            }
+
+            // Create the review request record
+            const reviewRequest = await storage.createReviewRequest({
+              practiceId,
+              patientId: patient.id,
+              appointmentId: appointment.appointmentId,
+              status: 'pending',
+              emailSent: false,
+              smsSent: false,
+            });
+
+            let emailSent = false;
+            let smsSent = false;
+
+            // Send email
+            if (canEmail && patient.email) {
+              try {
+                const { isEmailConfigured } = await import('./email');
+                if (isEmailConfigured()) {
+                  const message = generateReviewRequestMessage(patient.firstName, practice.name, googleReviewUrl, 'email');
+                  const nodemailer = await import('nodemailer');
+                  const transporter = nodemailer.createTransport({
+                    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+                    port: parseInt(process.env.SMTP_PORT || '587'),
+                    secure: process.env.SMTP_SECURE === 'true',
+                    auth: {
+                      user: process.env.SMTP_USER,
+                      pass: process.env.SMTP_PASS,
+                    },
+                  });
+
+                  await transporter.sendMail({
+                    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                    to: patient.email,
+                    subject: message.subject,
+                    html: message.body,
+                  });
+                  emailSent = true;
+                }
+              } catch (err: any) {
+                logger.error('Failed to send review request email', { patientId: patient.id, error: err.message });
+              }
+            }
+
+            // Send SMS
+            if (canSms && patient.phone) {
+              try {
+                const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+                const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+                const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
+
+                if (twilioSid && twilioToken && twilioPhone) {
+                  const twilio = await import('twilio');
+                  const client = twilio.default(twilioSid, twilioToken);
+                  const message = generateReviewRequestMessage(patient.firstName, practice.name, googleReviewUrl, 'sms');
+
+                  await client.messages.create({
+                    body: message.body,
+                    from: twilioPhone,
+                    to: patient.phone,
+                  });
+                  smsSent = true;
+                }
+              } catch (err: any) {
+                logger.error('Failed to send review request SMS', { patientId: patient.id, error: err.message });
+              }
+            }
+
+            // Update the review request with send status
+            if (emailSent || smsSent) {
+              await storage.updateReviewRequest(reviewRequest.id, {
+                status: 'sent',
+                emailSent,
+                smsSent,
+                sentVia: emailSent && smsSent ? 'both' : emailSent ? 'email' : 'sms',
+                sentAt: new Date(),
+              });
+              logger.info('Review request sent', {
+                patientId: patient.id,
+                emailSent,
+                smsSent,
+              });
+            }
+          } catch (err: any) {
+            logger.error('Failed to process review request for appointment', {
+              appointmentId: appointment.appointmentId,
+              error: err.message,
+            });
+          }
+        }
+      }
+
+      logger.info('Automated review request processing completed');
+    } catch (error: any) {
+      logger.error('Automated review request task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('automatedReviewRequests', automatedReviewRequestTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility'],
+    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests'],
   });
 }
 
@@ -661,6 +815,86 @@ export async function triggerHardDeletionNow(): Promise<{ deletedCount: number; 
   }
 
   return { deletedCount: expiredPatients.length - errors.length, errors };
+}
+
+// Manual trigger for review requests
+export async function triggerReviewRequestsNow(practiceId: number = 1): Promise<{ sent: number; errors: string[] }> {
+  const errors: string[] = [];
+  let sent = 0;
+
+  try {
+    const practice = await storage.getPractice(practiceId);
+    if (!practice) {
+      return { sent: 0, errors: ['Practice not found'] };
+    }
+
+    const googleReviewUrl = process.env.GOOGLE_REVIEW_URL || '';
+    if (!googleReviewUrl) {
+      return { sent: 0, errors: ['No Google review URL configured'] };
+    }
+
+    const eligibleAppointments = await storage.getPatientsEligibleForReview(practiceId);
+    const { generateReviewRequestMessage } = await import('./services/reviewResponseService');
+
+    for (const appointment of eligibleAppointments) {
+      try {
+        const patient = await storage.getPatient(appointment.patientId);
+        if (!patient) continue;
+
+        // Check for recent requests
+        const recentRequests = await storage.getReviewRequests(practiceId, {
+          patientId: patient.id,
+          startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        });
+        if (recentRequests.length > 0) continue;
+
+        const canEmail = patient.email && patient.preferredContactMethod !== 'sms';
+        if (!canEmail) continue;
+
+        const reviewRequest = await storage.createReviewRequest({
+          practiceId,
+          patientId: patient.id,
+          appointmentId: appointment.appointmentId,
+          status: 'pending',
+          emailSent: false,
+          smsSent: false,
+        });
+
+        const { isEmailConfigured } = await import('./email');
+        if (isEmailConfigured() && patient.email) {
+          const message = generateReviewRequestMessage(patient.firstName, practice.name, googleReviewUrl, 'email');
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port: parseInt(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+          });
+
+          await transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: patient.email,
+            subject: message.subject,
+            html: message.body,
+          });
+
+          await storage.updateReviewRequest(reviewRequest.id, {
+            status: 'sent',
+            emailSent: true,
+            sentVia: 'email',
+            sentAt: new Date(),
+          });
+          sent++;
+        }
+      } catch (err: any) {
+        errors.push(`Patient ${appointment.patientId}: ${err.message}`);
+      }
+    }
+  } catch (err: any) {
+    errors.push(err.message);
+  }
+
+  return { sent, errors };
 }
 
 // Export for route handlers
