@@ -145,6 +145,15 @@ import {
   type InsertPatientAssessment,
   type AssessmentSchedule,
   type InsertAssessmentSchedule,
+  referralSources,
+  referrals,
+  referralCommunications,
+  type ReferralSource,
+  type InsertReferralSource,
+  type Referral,
+  type InsertReferral,
+  type ReferralCommunication,
+  type InsertReferralCommunication,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -4191,6 +4200,268 @@ export class DatabaseStorage implements IStorage {
       .sort((a, b) => b.count - a.count);
 
     return { totalAssessments, averageScore, improvementRate, bySeverity };
+  }
+
+  // ==================== Referral Sources ====================
+
+  async createReferralSource(source: InsertReferralSource): Promise<ReferralSource> {
+    const [newSource] = await db.insert(referralSources).values(source).returning();
+    return newSource;
+  }
+
+  async getReferralSources(practiceId: number, filters?: {
+    type?: string;
+    isActive?: boolean;
+  }): Promise<ReferralSource[]> {
+    const conditions = [eq(referralSources.practiceId, practiceId)];
+
+    if (filters?.type) {
+      conditions.push(eq(referralSources.type, filters.type));
+    }
+    if (filters?.isActive !== undefined) {
+      conditions.push(eq(referralSources.isActive, filters.isActive));
+    }
+
+    return db.select()
+      .from(referralSources)
+      .where(and(...conditions))
+      .orderBy(referralSources.name);
+  }
+
+  async getReferralSource(id: number): Promise<ReferralSource | undefined> {
+    const [source] = await db.select()
+      .from(referralSources)
+      .where(eq(referralSources.id, id));
+    return source;
+  }
+
+  async updateReferralSource(id: number, updates: Partial<InsertReferralSource>): Promise<ReferralSource | undefined> {
+    const [updated] = await db.update(referralSources)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(referralSources.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteReferralSource(id: number): Promise<void> {
+    await db.update(referralSources)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(referralSources.id, id));
+  }
+
+  // ==================== Referrals ====================
+
+  async createReferral(referral: InsertReferral): Promise<Referral> {
+    const [newReferral] = await db.insert(referrals).values(referral).returning();
+    return newReferral;
+  }
+
+  async getReferrals(practiceId: number, filters?: {
+    direction?: string;
+    status?: string;
+    patientId?: number;
+    referralSourceId?: number;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<Referral[]> {
+    const conditions = [eq(referrals.practiceId, practiceId)];
+
+    if (filters?.direction) {
+      conditions.push(eq(referrals.direction, filters.direction));
+    }
+    if (filters?.status) {
+      conditions.push(eq(referrals.status, filters.status));
+    }
+    if (filters?.patientId) {
+      conditions.push(eq(referrals.patientId, filters.patientId));
+    }
+    if (filters?.referralSourceId) {
+      conditions.push(eq(referrals.referralSourceId, filters.referralSourceId));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(referrals.referralDate, filters.startDate.toISOString().split('T')[0]));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(referrals.referralDate, filters.endDate.toISOString().split('T')[0]));
+    }
+
+    return db.select()
+      .from(referrals)
+      .where(and(...conditions))
+      .orderBy(desc(referrals.referralDate));
+  }
+
+  async getReferral(id: number): Promise<Referral | undefined> {
+    const [referral] = await db.select()
+      .from(referrals)
+      .where(eq(referrals.id, id));
+    return referral;
+  }
+
+  async updateReferral(id: number, updates: Partial<InsertReferral> & {
+    statusUpdatedAt?: Date;
+    statusUpdatedBy?: string;
+  }): Promise<Referral | undefined> {
+    const [updated] = await db.update(referrals)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(referrals.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateReferralStatus(id: number, status: string, userId: string): Promise<Referral | undefined> {
+    return this.updateReferral(id, {
+      status,
+      statusUpdatedAt: new Date(),
+      statusUpdatedBy: userId,
+    });
+  }
+
+  async getPatientReferrals(patientId: number): Promise<Referral[]> {
+    return db.select()
+      .from(referrals)
+      .where(eq(referrals.patientId, patientId))
+      .orderBy(desc(referrals.referralDate));
+  }
+
+  async getPendingReferrals(practiceId: number): Promise<Referral[]> {
+    return db.select()
+      .from(referrals)
+      .where(and(
+        eq(referrals.practiceId, practiceId),
+        eq(referrals.status, 'pending')
+      ))
+      .orderBy(referrals.referralDate);
+  }
+
+  async getReferralsNeedingFollowUp(practiceId: number): Promise<Referral[]> {
+    const today = new Date().toISOString().split('T')[0];
+    return db.select()
+      .from(referrals)
+      .where(and(
+        eq(referrals.practiceId, practiceId),
+        eq(referrals.followUpRequired, true),
+        eq(referrals.followUpCompleted, false),
+        lte(referrals.followUpDate, today)
+      ))
+      .orderBy(referrals.followUpDate);
+  }
+
+  // ==================== Referral Communications ====================
+
+  async createReferralCommunication(communication: InsertReferralCommunication): Promise<ReferralCommunication> {
+    const [newComm] = await db.insert(referralCommunications).values(communication).returning();
+    return newComm;
+  }
+
+  async getReferralCommunications(referralId: number): Promise<ReferralCommunication[]> {
+    return db.select()
+      .from(referralCommunications)
+      .where(eq(referralCommunications.referralId, referralId))
+      .orderBy(desc(referralCommunications.createdAt));
+  }
+
+  // ==================== Referral Analytics ====================
+
+  async getReferralStats(practiceId: number, startDate?: Date, endDate?: Date): Promise<{
+    totalIncoming: number;
+    totalOutgoing: number;
+    pendingIncoming: number;
+    conversionRate: number;
+    topSources: { sourceId: number; sourceName: string; count: number }[];
+    byStatus: { status: string; count: number }[];
+  }> {
+    const conditions = [eq(referrals.practiceId, practiceId)];
+    if (startDate) {
+      conditions.push(gte(referrals.referralDate, startDate.toISOString().split('T')[0]));
+    }
+    if (endDate) {
+      conditions.push(lte(referrals.referralDate, endDate.toISOString().split('T')[0]));
+    }
+
+    const allReferrals = await db.select()
+      .from(referrals)
+      .where(and(...conditions));
+
+    const totalIncoming = allReferrals.filter((r: Referral) => r.direction === 'incoming').length;
+    const totalOutgoing = allReferrals.filter((r: Referral) => r.direction === 'outgoing').length;
+    const pendingIncoming = allReferrals.filter((r: Referral) => r.direction === 'incoming' && r.status === 'pending').length;
+
+    // Conversion rate: incoming referrals that became scheduled/completed
+    const incomingReferrals = allReferrals.filter((r: Referral) => r.direction === 'incoming');
+    const convertedReferrals = incomingReferrals.filter((r: Referral) =>
+      r.status === 'scheduled' || r.status === 'completed'
+    ).length;
+    const conversionRate = incomingReferrals.length > 0
+      ? (convertedReferrals / incomingReferrals.length) * 100
+      : 0;
+
+    // Top referral sources
+    const sourceCounts: Record<number, number> = {};
+    for (const r of allReferrals) {
+      if (r.referralSourceId) {
+        sourceCounts[r.referralSourceId] = (sourceCounts[r.referralSourceId] || 0) + 1;
+      }
+    }
+
+    const sources = await this.getReferralSources(practiceId);
+    const topSources = Object.entries(sourceCounts)
+      .map(([sourceId, count]) => {
+        const source = sources.find((s: ReferralSource) => s.id === parseInt(sourceId));
+        return {
+          sourceId: parseInt(sourceId),
+          sourceName: source?.name || 'Unknown',
+          count,
+        };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // By status
+    const statusCounts: Record<string, number> = {};
+    for (const r of allReferrals) {
+      const status = r.status || 'unknown';
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+    }
+    const byStatus = Object.entries(statusCounts)
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      totalIncoming,
+      totalOutgoing,
+      pendingIncoming,
+      conversionRate,
+      topSources,
+      byStatus,
+    };
+  }
+
+  async getReferralWithDetails(id: number): Promise<{
+    referral: Referral;
+    source: ReferralSource | null;
+    patient: Patient | null;
+    communications: ReferralCommunication[];
+  } | null> {
+    const referral = await this.getReferral(id);
+    if (!referral) return null;
+
+    const source = referral.referralSourceId
+      ? await this.getReferralSource(referral.referralSourceId)
+      : null;
+
+    const patient = referral.patientId
+      ? await this.getPatient(referral.patientId)
+      : null;
+
+    const communications = await this.getReferralCommunications(id);
+
+    return {
+      referral,
+      source: source || null,
+      patient: patient || null,
+      communications,
+    };
   }
 }
 

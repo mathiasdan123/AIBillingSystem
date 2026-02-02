@@ -1797,3 +1797,105 @@ export const insertAssessmentScheduleSchema = createInsertSchema(assessmentSched
 export type AssessmentSchedule = typeof assessmentSchedules.$inferSelect;
 export type InsertAssessmentSchedule = z.infer<typeof insertAssessmentScheduleSchema>;
 
+// Referral Sources (providers, organizations that refer patients)
+export const referralSources = pgTable("referral_sources", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // Source details
+  type: varchar("type").notNull(), // provider, organization, self, insurance, other
+  name: varchar("name", { length: 255 }).notNull(),
+  organization: varchar("organization", { length: 255 }),
+  specialty: varchar("specialty", { length: 100 }),
+  // Contact info
+  email: varchar("email"),
+  phone: varchar("phone"),
+  fax: varchar("fax"),
+  address: text("address"),
+  // Provider details (if applicable)
+  npi: varchar("npi", { length: 10 }),
+  credentials: varchar("credentials", { length: 50 }), // MD, PhD, LCSW, etc.
+  // Relationship
+  notes: text("notes"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertReferralSourceSchema = createInsertSchema(referralSources).omit({ id: true, createdAt: true, updatedAt: true });
+export type ReferralSource = typeof referralSources.$inferSelect;
+export type InsertReferralSource = z.infer<typeof insertReferralSourceSchema>;
+
+// Referrals (incoming and outgoing)
+export const referrals = pgTable("referrals", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id),
+  // Referral direction
+  direction: varchar("direction").notNull(), // incoming, outgoing
+  // Source/Destination
+  referralSourceId: integer("referral_source_id").references(() => referralSources.id),
+  externalProviderName: varchar("external_provider_name", { length: 255 }), // For quick entry without creating source
+  externalProviderOrg: varchar("external_provider_org", { length: 255 }),
+  externalProviderPhone: varchar("external_provider_phone"),
+  externalProviderFax: varchar("external_provider_fax"),
+  externalProviderEmail: varchar("external_provider_email"),
+  // Referral details
+  referralDate: date("referral_date").notNull(),
+  receivedDate: date("received_date"), // When we received the referral
+  reason: text("reason").notNull(), // Reason for referral
+  diagnosisCodes: jsonb("diagnosis_codes"), // [{code, description}]
+  urgency: varchar("urgency").default("routine"), // urgent, routine, emergency
+  // Status tracking
+  status: varchar("status").default("pending"), // pending, contacted, scheduled, completed, declined, no_show
+  statusUpdatedAt: timestamp("status_updated_at"),
+  statusUpdatedBy: varchar("status_updated_by").references(() => users.id),
+  // Outgoing referral specific
+  referredToSpecialty: varchar("referred_to_specialty"),
+  referralLetterSent: boolean("referral_letter_sent").default(false),
+  referralLetterSentAt: timestamp("referral_letter_sent_at"),
+  // Incoming referral specific
+  firstContactDate: date("first_contact_date"),
+  firstAppointmentDate: date("first_appointment_date"),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  // Authorization
+  authorizationRequired: boolean("authorization_required").default(false),
+  authorizationNumber: varchar("authorization_number"),
+  authorizationStatus: varchar("authorization_status"), // pending, approved, denied
+  // Follow-up
+  followUpRequired: boolean("follow_up_required").default(false),
+  followUpDate: date("follow_up_date"),
+  followUpCompleted: boolean("follow_up_completed").default(false),
+  followUpNotes: text("follow_up_notes"),
+  // Communication
+  notes: text("notes"),
+  internalNotes: text("internal_notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertReferralSchema = createInsertSchema(referrals).omit({ id: true, createdAt: true, updatedAt: true });
+export type Referral = typeof referrals.$inferSelect;
+export type InsertReferral = z.infer<typeof insertReferralSchema>;
+
+// Referral Communications (tracking correspondence)
+export const referralCommunications = pgTable("referral_communications", {
+  id: serial("id").primaryKey(),
+  referralId: integer("referral_id").references(() => referrals.id).notNull(),
+  // Communication details
+  type: varchar("type").notNull(), // phone, email, fax, letter, portal
+  direction: varchar("direction").notNull(), // inbound, outbound
+  subject: varchar("subject", { length: 255 }),
+  content: text("content"),
+  // Tracking
+  sentAt: timestamp("sent_at"),
+  receivedAt: timestamp("received_at"),
+  sentBy: varchar("sent_by").references(() => users.id),
+  // Attachments
+  attachments: jsonb("attachments"), // [{name, url, type}]
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertReferralCommunicationSchema = createInsertSchema(referralCommunications).omit({ id: true, createdAt: true });
+export type ReferralCommunication = typeof referralCommunications.$inferSelect;
+export type InsertReferralCommunication = z.infer<typeof insertReferralCommunicationSchema>;
+

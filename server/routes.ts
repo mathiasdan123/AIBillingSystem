@@ -6042,6 +6042,238 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== REFERRAL SOURCES ====================
+
+  // Get referral sources
+  app.get('/api/referral-sources', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        type: req.query.type as string | undefined,
+        isActive: req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined,
+      };
+      const sources = await storage.getReferralSources(practiceId, filters);
+      res.json(sources);
+    } catch (error) {
+      console.error('Error fetching referral sources:', error);
+      res.status(500).json({ message: 'Failed to fetch referral sources' });
+    }
+  });
+
+  // Get single referral source
+  app.get('/api/referral-sources/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const source = await storage.getReferralSource(id);
+      if (!source) {
+        return res.status(404).json({ message: 'Referral source not found' });
+      }
+      res.json(source);
+    } catch (error) {
+      console.error('Error fetching referral source:', error);
+      res.status(500).json({ message: 'Failed to fetch referral source' });
+    }
+  });
+
+  // Create referral source
+  app.post('/api/referral-sources', isAuthenticated, async (req: any, res) => {
+    try {
+      const source = await storage.createReferralSource(req.body);
+      res.status(201).json(source);
+    } catch (error) {
+      console.error('Error creating referral source:', error);
+      res.status(500).json({ message: 'Failed to create referral source' });
+    }
+  });
+
+  // Update referral source
+  app.patch('/api/referral-sources/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const source = await storage.updateReferralSource(id, req.body);
+      if (!source) {
+        return res.status(404).json({ message: 'Referral source not found' });
+      }
+      res.json(source);
+    } catch (error) {
+      console.error('Error updating referral source:', error);
+      res.status(500).json({ message: 'Failed to update referral source' });
+    }
+  });
+
+  // Delete referral source (soft delete)
+  app.delete('/api/referral-sources/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteReferralSource(id);
+      res.json({ message: 'Referral source deleted' });
+    } catch (error) {
+      console.error('Error deleting referral source:', error);
+      res.status(500).json({ message: 'Failed to delete referral source' });
+    }
+  });
+
+  // ==================== REFERRALS ====================
+
+  // Get referrals with filters
+  app.get('/api/referrals', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        direction: req.query.direction as string | undefined,
+        status: req.query.status as string | undefined,
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        referralSourceId: req.query.referralSourceId ? parseInt(req.query.referralSourceId as string) : undefined,
+        startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+        endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+      };
+      const referralsList = await storage.getReferrals(practiceId, filters);
+      res.json(referralsList);
+    } catch (error) {
+      console.error('Error fetching referrals:', error);
+      res.status(500).json({ message: 'Failed to fetch referrals' });
+    }
+  });
+
+  // Get referral stats
+  app.get('/api/referrals/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+      const stats = await storage.getReferralStats(practiceId, startDate, endDate);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching referral stats:', error);
+      res.status(500).json({ message: 'Failed to fetch referral stats' });
+    }
+  });
+
+  // Get pending referrals
+  app.get('/api/referrals/pending', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const pending = await storage.getPendingReferrals(practiceId);
+      res.json(pending);
+    } catch (error) {
+      console.error('Error fetching pending referrals:', error);
+      res.status(500).json({ message: 'Failed to fetch pending referrals' });
+    }
+  });
+
+  // Get referrals needing follow-up
+  app.get('/api/referrals/needs-followup', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const needsFollowUp = await storage.getReferralsNeedingFollowUp(practiceId);
+      res.json(needsFollowUp);
+    } catch (error) {
+      console.error('Error fetching referrals needing follow-up:', error);
+      res.status(500).json({ message: 'Failed to fetch referrals needing follow-up' });
+    }
+  });
+
+  // Get single referral with details
+  app.get('/api/referrals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const referralDetails = await storage.getReferralWithDetails(id);
+      if (!referralDetails) {
+        return res.status(404).json({ message: 'Referral not found' });
+      }
+      res.json(referralDetails);
+    } catch (error) {
+      console.error('Error fetching referral:', error);
+      res.status(500).json({ message: 'Failed to fetch referral' });
+    }
+  });
+
+  // Create referral
+  app.post('/api/referrals', isAuthenticated, async (req: any, res) => {
+    try {
+      const referral = await storage.createReferral(req.body);
+      res.status(201).json(referral);
+    } catch (error) {
+      console.error('Error creating referral:', error);
+      res.status(500).json({ message: 'Failed to create referral' });
+    }
+  });
+
+  // Update referral
+  app.patch('/api/referrals/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const referral = await storage.updateReferral(id, req.body);
+      if (!referral) {
+        return res.status(404).json({ message: 'Referral not found' });
+      }
+      res.json(referral);
+    } catch (error) {
+      console.error('Error updating referral:', error);
+      res.status(500).json({ message: 'Failed to update referral' });
+    }
+  });
+
+  // Update referral status
+  app.post('/api/referrals/:id/status', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const userId = req.user?.id || 'system';
+      const referral = await storage.updateReferralStatus(id, status, userId);
+      if (!referral) {
+        return res.status(404).json({ message: 'Referral not found' });
+      }
+      res.json(referral);
+    } catch (error) {
+      console.error('Error updating referral status:', error);
+      res.status(500).json({ message: 'Failed to update referral status' });
+    }
+  });
+
+  // Get patient's referrals
+  app.get('/api/patients/:id/referrals', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const patientReferrals = await storage.getPatientReferrals(patientId);
+      res.json(patientReferrals);
+    } catch (error) {
+      console.error('Error fetching patient referrals:', error);
+      res.status(500).json({ message: 'Failed to fetch patient referrals' });
+    }
+  });
+
+  // ==================== REFERRAL COMMUNICATIONS ====================
+
+  // Get communications for a referral
+  app.get('/api/referrals/:id/communications', isAuthenticated, async (req: any, res) => {
+    try {
+      const referralId = parseInt(req.params.id);
+      const communications = await storage.getReferralCommunications(referralId);
+      res.json(communications);
+    } catch (error) {
+      console.error('Error fetching referral communications:', error);
+      res.status(500).json({ message: 'Failed to fetch referral communications' });
+    }
+  });
+
+  // Create communication for a referral
+  app.post('/api/referrals/:id/communications', isAuthenticated, async (req: any, res) => {
+    try {
+      const referralId = parseInt(req.params.id);
+      const userId = req.user?.id;
+      const communication = await storage.createReferralCommunication({
+        ...req.body,
+        referralId,
+        sentBy: userId,
+      });
+      res.status(201).json(communication);
+    } catch (error) {
+      console.error('Error creating referral communication:', error);
+      res.status(500).json({ message: 'Failed to create referral communication' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
