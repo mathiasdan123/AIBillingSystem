@@ -1899,3 +1899,190 @@ export const insertReferralCommunicationSchema = createInsertSchema(referralComm
 export type ReferralCommunication = typeof referralCommunications.$inferSelect;
 export type InsertReferralCommunication = z.infer<typeof insertReferralCommunicationSchema>;
 
+// Patient Payment Methods (stored payment info)
+export const patientPaymentMethods = pgTable("patient_payment_methods", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // Payment method details
+  type: varchar("type").notNull(), // card, bank_account, hsa, fsa
+  // Card details (tokenized)
+  stripePaymentMethodId: varchar("stripe_payment_method_id"), // Stripe PM ID
+  cardBrand: varchar("card_brand"), // visa, mastercard, amex, discover
+  cardLast4: varchar("card_last4", { length: 4 }),
+  cardExpMonth: integer("card_exp_month"),
+  cardExpYear: integer("card_exp_year"),
+  // Bank account details (tokenized)
+  bankName: varchar("bank_name"),
+  bankLast4: varchar("bank_last4", { length: 4 }),
+  bankAccountType: varchar("bank_account_type"), // checking, savings
+  // Billing address
+  billingName: varchar("billing_name", { length: 255 }),
+  billingAddress: text("billing_address"),
+  billingCity: varchar("billing_city"),
+  billingState: varchar("billing_state"),
+  billingZip: varchar("billing_zip"),
+  // Settings
+  isDefault: boolean("is_default").default(false),
+  isActive: boolean("is_active").default(true),
+  // Verification
+  isVerified: boolean("is_verified").default(false),
+  verifiedAt: timestamp("verified_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientPaymentMethodSchema = createInsertSchema(patientPaymentMethods).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientPaymentMethod = typeof patientPaymentMethods.$inferSelect;
+export type InsertPatientPaymentMethod = z.infer<typeof insertPatientPaymentMethodSchema>;
+
+// Payment Transactions
+export const paymentTransactions = pgTable("payment_transactions", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  paymentMethodId: integer("payment_method_id").references(() => patientPaymentMethods.id),
+  // Related records
+  claimId: integer("claim_id").references(() => claims.id),
+  statementId: integer("statement_id").references(() => patientStatements.id),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  // Transaction details
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  type: varchar("type").notNull(), // payment, refund, adjustment, write_off
+  category: varchar("category"), // copay, deductible, coinsurance, self_pay, balance
+  description: text("description"),
+  // Payment processor
+  processor: varchar("processor"), // stripe, square, manual, cash, check
+  processorTransactionId: varchar("processor_transaction_id"),
+  processorFee: decimal("processor_fee", { precision: 10, scale: 2 }),
+  // Status
+  status: varchar("status").default("pending"), // pending, processing, completed, failed, refunded, disputed
+  failureReason: text("failure_reason"),
+  // Timing
+  processedAt: timestamp("processed_at"),
+  settledAt: timestamp("settled_at"),
+  // Manual payment details
+  checkNumber: varchar("check_number"),
+  referenceNumber: varchar("reference_number"),
+  // Receipt
+  receiptSent: boolean("receipt_sent").default(false),
+  receiptSentAt: timestamp("receipt_sent_at"),
+  receiptEmail: varchar("receipt_email"),
+  // Audit
+  createdBy: varchar("created_by").references(() => users.id),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPaymentTransactionSchema = createInsertSchema(paymentTransactions).omit({ id: true, createdAt: true, updatedAt: true });
+export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
+export type InsertPaymentTransaction = z.infer<typeof insertPaymentTransactionSchema>;
+
+// Payment Plans (recurring/installment payments)
+export const paymentPlans = pgTable("payment_plans", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  paymentMethodId: integer("payment_method_id").references(() => patientPaymentMethods.id),
+  // Plan details
+  name: varchar("name", { length: 255 }),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  remainingAmount: decimal("remaining_amount", { precision: 10, scale: 2 }).notNull(),
+  installmentAmount: decimal("installment_amount", { precision: 10, scale: 2 }).notNull(),
+  numberOfInstallments: integer("number_of_installments").notNull(),
+  completedInstallments: integer("completed_installments").default(0),
+  // Schedule
+  frequency: varchar("frequency").notNull(), // weekly, bi-weekly, monthly
+  startDate: date("start_date").notNull(),
+  nextPaymentDate: date("next_payment_date"),
+  endDate: date("end_date"),
+  // Auto-pay settings
+  autoPayEnabled: boolean("auto_pay_enabled").default(true),
+  autoPayDayOfMonth: integer("auto_pay_day_of_month"),
+  // Status
+  status: varchar("status").default("active"), // active, paused, completed, cancelled, defaulted
+  pausedAt: timestamp("paused_at"),
+  pauseReason: text("pause_reason"),
+  // Terms
+  interestRate: decimal("interest_rate", { precision: 5, scale: 2 }).default("0"),
+  lateFee: decimal("late_fee", { precision: 10, scale: 2 }),
+  // Agreement
+  agreementSignedAt: timestamp("agreement_signed_at"),
+  agreementSignature: text("agreement_signature"),
+  terms: text("terms"),
+  // Tracking
+  notes: text("notes"),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPaymentPlanSchema = createInsertSchema(paymentPlans).omit({ id: true, createdAt: true, updatedAt: true });
+export type PaymentPlan = typeof paymentPlans.$inferSelect;
+export type InsertPaymentPlan = z.infer<typeof insertPaymentPlanSchema>;
+
+// Payment Plan Installments (scheduled payments)
+export const paymentPlanInstallments = pgTable("payment_plan_installments", {
+  id: serial("id").primaryKey(),
+  paymentPlanId: integer("payment_plan_id").references(() => paymentPlans.id).notNull(),
+  transactionId: integer("transaction_id").references(() => paymentTransactions.id),
+  // Installment details
+  installmentNumber: integer("installment_number").notNull(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  dueDate: date("due_date").notNull(),
+  // Status
+  status: varchar("status").default("scheduled"), // scheduled, processing, paid, failed, skipped
+  paidAt: timestamp("paid_at"),
+  failedAt: timestamp("failed_at"),
+  failureReason: text("failure_reason"),
+  retryCount: integer("retry_count").default(0),
+  nextRetryAt: timestamp("next_retry_at"),
+  // Reminders
+  reminderSentAt: timestamp("reminder_sent_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPaymentPlanInstallmentSchema = createInsertSchema(paymentPlanInstallments).omit({ id: true, createdAt: true, updatedAt: true });
+export type PaymentPlanInstallment = typeof paymentPlanInstallments.$inferSelect;
+export type InsertPaymentPlanInstallment = z.infer<typeof insertPaymentPlanInstallmentSchema>;
+
+// Practice Payment Settings
+export const practicePaymentSettings = pgTable("practice_payment_settings", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull().unique(),
+  // Stripe configuration
+  stripeAccountId: varchar("stripe_account_id"),
+  stripePublishableKey: varchar("stripe_publishable_key"),
+  stripeSecretKeyEncrypted: text("stripe_secret_key_encrypted"),
+  stripeWebhookSecret: text("stripe_webhook_secret"),
+  // Payment options
+  acceptCards: boolean("accept_cards").default(true),
+  acceptBankTransfers: boolean("accept_bank_transfers").default(false),
+  acceptHsa: boolean("accept_hsa").default(true),
+  acceptCash: boolean("accept_cash").default(true),
+  acceptChecks: boolean("accept_checks").default(true),
+  // Auto-collection settings
+  autoCollectCopay: boolean("auto_collect_copay").default(false),
+  autoCollectBalance: boolean("auto_collect_balance").default(false),
+  autoCollectDaysAfterService: integer("auto_collect_days_after_service").default(30),
+  // Payment plan settings
+  allowPaymentPlans: boolean("allow_payment_plans").default(true),
+  minPaymentPlanAmount: decimal("min_payment_plan_amount", { precision: 10, scale: 2 }).default("100"),
+  maxPaymentPlanMonths: integer("max_payment_plan_months").default(12),
+  // Receipts
+  autoSendReceipts: boolean("auto_send_receipts").default(true),
+  receiptEmailTemplate: text("receipt_email_template"),
+  // Display settings
+  displayPricesOnPortal: boolean("display_prices_on_portal").default(true),
+  requirePaymentAtBooking: boolean("require_payment_at_booking").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPracticePaymentSettingsSchema = createInsertSchema(practicePaymentSettings).omit({ id: true, createdAt: true, updatedAt: true });
+export type PracticePaymentSettings = typeof practicePaymentSettings.$inferSelect;
+export type InsertPracticePaymentSettings = z.infer<typeof insertPracticePaymentSettingsSchema>;
+

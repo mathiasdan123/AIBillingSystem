@@ -6274,6 +6274,501 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== PAYMENT PROCESSING ====================
+
+  // Get practice payment settings
+  app.get('/api/payment-settings', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const settings = await storage.getPracticePaymentSettings(practiceId);
+      res.json(settings || {
+        practiceId,
+        acceptsCreditCards: false,
+        acceptsAch: false,
+        autoChargeOnFile: false,
+        paymentDueDays: 30,
+      });
+    } catch (error) {
+      console.error('Error fetching payment settings:', error);
+      res.status(500).json({ message: 'Failed to fetch payment settings' });
+    }
+  });
+
+  // Update practice payment settings
+  app.put('/api/payment-settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const settings = await storage.upsertPracticePaymentSettings(req.body);
+      res.json(settings);
+    } catch (error) {
+      console.error('Error updating payment settings:', error);
+      res.status(500).json({ message: 'Failed to update payment settings' });
+    }
+  });
+
+  // ==================== PATIENT PAYMENT METHODS ====================
+
+  // Get patient's payment methods
+  app.get('/api/patients/:id/payment-methods', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const methods = await storage.getPatientPaymentMethods(patientId);
+      res.json(methods);
+    } catch (error) {
+      console.error('Error fetching payment methods:', error);
+      res.status(500).json({ message: 'Failed to fetch payment methods' });
+    }
+  });
+
+  // Get patient's default payment method
+  app.get('/api/patients/:id/payment-methods/default', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const method = await storage.getDefaultPaymentMethod(patientId);
+      res.json(method || null);
+    } catch (error) {
+      console.error('Error fetching default payment method:', error);
+      res.status(500).json({ message: 'Failed to fetch default payment method' });
+    }
+  });
+
+  // Add payment method
+  app.post('/api/patients/:id/payment-methods', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const method = await storage.createPatientPaymentMethod({
+        ...req.body,
+        patientId,
+      });
+      res.status(201).json(method);
+    } catch (error) {
+      console.error('Error creating payment method:', error);
+      res.status(500).json({ message: 'Failed to create payment method' });
+    }
+  });
+
+  // Update payment method
+  app.patch('/api/payment-methods/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const method = await storage.updatePatientPaymentMethod(id, req.body);
+      if (!method) {
+        return res.status(404).json({ message: 'Payment method not found' });
+      }
+      res.json(method);
+    } catch (error) {
+      console.error('Error updating payment method:', error);
+      res.status(500).json({ message: 'Failed to update payment method' });
+    }
+  });
+
+  // Set default payment method
+  app.post('/api/payment-methods/:id/set-default', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      // Get method first to get patientId
+      const existingMethod = await storage.getPatientPaymentMethod(id);
+      if (!existingMethod) {
+        return res.status(404).json({ message: 'Payment method not found' });
+      }
+      const method = await storage.setDefaultPaymentMethod(id, existingMethod.patientId);
+      res.json(method);
+    } catch (error) {
+      console.error('Error setting default payment method:', error);
+      res.status(500).json({ message: 'Failed to set default payment method' });
+    }
+  });
+
+  // Delete payment method
+  app.delete('/api/payment-methods/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deletePatientPaymentMethod(id);
+      res.json({ message: 'Payment method deleted' });
+    } catch (error) {
+      console.error('Error deleting payment method:', error);
+      res.status(500).json({ message: 'Failed to delete payment method' });
+    }
+  });
+
+  // ==================== PAYMENT TRANSACTIONS ====================
+
+  // Get transactions with filters
+  app.get('/api/payment-transactions', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        status: req.query.status as string | undefined,
+        type: req.query.type as string | undefined,
+        startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+        endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+      };
+      const transactions = await storage.getPaymentTransactions(practiceId, filters);
+      res.json(transactions);
+    } catch (error) {
+      console.error('Error fetching payment transactions:', error);
+      res.status(500).json({ message: 'Failed to fetch payment transactions' });
+    }
+  });
+
+  // Get payment stats
+  app.get('/api/payment-transactions/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+      const stats = await storage.getPaymentStats(practiceId, startDate, endDate);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching payment stats:', error);
+      res.status(500).json({ message: 'Failed to fetch payment stats' });
+    }
+  });
+
+  // Get single transaction
+  app.get('/api/payment-transactions/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const transaction = await storage.getPaymentTransaction(id);
+      if (!transaction) {
+        return res.status(404).json({ message: 'Transaction not found' });
+      }
+      res.json(transaction);
+    } catch (error) {
+      console.error('Error fetching payment transaction:', error);
+      res.status(500).json({ message: 'Failed to fetch transaction' });
+    }
+  });
+
+  // Create payment transaction (process payment)
+  app.post('/api/payment-transactions', isAuthenticated, async (req: any, res) => {
+    try {
+      const transaction = await storage.createPaymentTransaction(req.body);
+
+      // Create audit log
+      await storage.createAuditLog({
+        userId: req.user?.claims?.sub || 'system',
+        eventType: 'write',
+        eventCategory: 'payment',
+        resourceType: 'payment_transaction',
+        resourceId: transaction.id.toString(),
+        practiceId: transaction.practiceId,
+        ipAddress: req.ip || '0.0.0.0',
+        details: {
+          amount: transaction.amount,
+          type: transaction.type,
+          patientId: transaction.patientId,
+        },
+      });
+
+      res.status(201).json(transaction);
+    } catch (error) {
+      console.error('Error creating payment transaction:', error);
+      res.status(500).json({ message: 'Failed to create payment transaction' });
+    }
+  });
+
+  // Update transaction status (refund, void, etc.)
+  app.patch('/api/payment-transactions/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const transaction = await storage.updatePaymentTransaction(id, req.body);
+      if (!transaction) {
+        return res.status(404).json({ message: 'Transaction not found' });
+      }
+      res.json(transaction);
+    } catch (error) {
+      console.error('Error updating payment transaction:', error);
+      res.status(500).json({ message: 'Failed to update transaction' });
+    }
+  });
+
+  // Refund a transaction
+  app.post('/api/payment-transactions/:id/refund', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { amount, reason } = req.body;
+
+      const original = await storage.getPaymentTransaction(id);
+      if (!original) {
+        return res.status(404).json({ message: 'Transaction not found' });
+      }
+
+      if (original.status !== 'completed') {
+        return res.status(400).json({ message: 'Can only refund completed transactions' });
+      }
+
+      // Create refund transaction
+      const refundAmount = amount ? parseFloat(amount) : parseFloat(original.amount);
+      const refund = await storage.createPaymentTransaction({
+        practiceId: original.practiceId,
+        patientId: original.patientId,
+        claimId: original.claimId,
+        paymentMethodId: original.paymentMethodId,
+        amount: (-refundAmount).toString(),
+        type: 'refund',
+        processor: original.processor,
+        status: 'completed',
+        description: reason || `Refund for transaction #${id}`,
+        processedAt: new Date(),
+      });
+
+      // Update original transaction status to refunded
+      await storage.updatePaymentTransaction(id, {
+        status: 'refunded',
+      });
+
+      res.json(refund);
+    } catch (error) {
+      console.error('Error refunding transaction:', error);
+      res.status(500).json({ message: 'Failed to refund transaction' });
+    }
+  });
+
+  // Get patient's transactions
+  app.get('/api/patients/:id/transactions', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const transactions = await storage.getPatientPaymentHistory(patientId);
+      res.json(transactions);
+    } catch (error) {
+      console.error('Error fetching patient transactions:', error);
+      res.status(500).json({ message: 'Failed to fetch patient transactions' });
+    }
+  });
+
+  // Get patient's balance
+  app.get('/api/patients/:id/balance', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const balance = await storage.getPatientBalance(patientId);
+      res.json({ patientId, balance });
+    } catch (error) {
+      console.error('Error fetching patient balance:', error);
+      res.status(500).json({ message: 'Failed to fetch patient balance' });
+    }
+  });
+
+  // ==================== PAYMENT PLANS ====================
+
+  // Get payment plans
+  app.get('/api/payment-plans', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
+        status: req.query.status as string | undefined,
+      };
+      const plans = await storage.getPaymentPlans(practiceId, filters);
+      res.json(plans);
+    } catch (error) {
+      console.error('Error fetching payment plans:', error);
+      res.status(500).json({ message: 'Failed to fetch payment plans' });
+    }
+  });
+
+  // Get single payment plan with installments
+  app.get('/api/payment-plans/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const planDetails = await storage.getPaymentPlanWithInstallments(id);
+      if (!planDetails) {
+        return res.status(404).json({ message: 'Payment plan not found' });
+      }
+      res.json(planDetails);
+    } catch (error) {
+      console.error('Error fetching payment plan:', error);
+      res.status(500).json({ message: 'Failed to fetch payment plan' });
+    }
+  });
+
+  // Create payment plan
+  app.post('/api/payment-plans', isAuthenticated, async (req: any, res) => {
+    try {
+      const { numberOfInstallments, ...planData } = req.body;
+
+      // Create the plan
+      const plan = await storage.createPaymentPlan(planData);
+
+      // Generate installments if requested
+      if (numberOfInstallments && numberOfInstallments > 0) {
+        const totalAmount = parseFloat(planData.totalAmount);
+        const installmentAmount = (totalAmount / numberOfInstallments).toFixed(2);
+        const startDate = new Date(planData.startDate || Date.now());
+
+        for (let i = 0; i < numberOfInstallments; i++) {
+          const dueDate = new Date(startDate);
+          if (planData.frequency === 'weekly') {
+            dueDate.setDate(dueDate.getDate() + (i * 7));
+          } else if (planData.frequency === 'bi-weekly') {
+            dueDate.setDate(dueDate.getDate() + (i * 14));
+          } else {
+            dueDate.setMonth(dueDate.getMonth() + i);
+          }
+
+          await storage.createPaymentPlanInstallment({
+            paymentPlanId: plan.id,
+            installmentNumber: i + 1,
+            amount: installmentAmount,
+            dueDate: dueDate.toISOString().split('T')[0],
+            status: 'scheduled',
+          });
+        }
+      }
+
+      // Return plan with installments
+      const planWithInstallments = await storage.getPaymentPlanWithInstallments(plan.id);
+      res.status(201).json(planWithInstallments);
+    } catch (error) {
+      console.error('Error creating payment plan:', error);
+      res.status(500).json({ message: 'Failed to create payment plan' });
+    }
+  });
+
+  // Update payment plan
+  app.patch('/api/payment-plans/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const plan = await storage.updatePaymentPlan(id, req.body);
+      if (!plan) {
+        return res.status(404).json({ message: 'Payment plan not found' });
+      }
+      res.json(plan);
+    } catch (error) {
+      console.error('Error updating payment plan:', error);
+      res.status(500).json({ message: 'Failed to update payment plan' });
+    }
+  });
+
+  // Cancel payment plan
+  app.post('/api/payment-plans/:id/cancel', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { reason } = req.body;
+      const plan = await storage.updatePaymentPlan(id, {
+        status: 'cancelled',
+        pausedAt: new Date(),
+        pauseReason: reason || 'Cancelled by user',
+      });
+      if (!plan) {
+        return res.status(404).json({ message: 'Payment plan not found' });
+      }
+      res.json(plan);
+    } catch (error) {
+      console.error('Error cancelling payment plan:', error);
+      res.status(500).json({ message: 'Failed to cancel payment plan' });
+    }
+  });
+
+  // Get patient's payment plans
+  app.get('/api/patients/:id/payment-plans', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const plans = await storage.getPatientPaymentPlans(patientId);
+      res.json(plans);
+    } catch (error) {
+      console.error('Error fetching patient payment plans:', error);
+      res.status(500).json({ message: 'Failed to fetch patient payment plans' });
+    }
+  });
+
+  // ==================== PAYMENT PLAN INSTALLMENTS ====================
+
+  // Get plan installments
+  app.get('/api/payment-plans/:id/installments', isAuthenticated, async (req: any, res) => {
+    try {
+      const planId = parseInt(req.params.id);
+      const installments = await storage.getPaymentPlanInstallments(planId);
+      res.json(installments);
+    } catch (error) {
+      console.error('Error fetching installments:', error);
+      res.status(500).json({ message: 'Failed to fetch installments' });
+    }
+  });
+
+  // Pay an installment
+  app.post('/api/installments/:id/pay', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { paymentMethodId } = req.body;
+
+      const installment = await storage.getPaymentPlanInstallment(id);
+      if (!installment) {
+        return res.status(404).json({ message: 'Installment not found' });
+      }
+
+      if (installment.status === 'paid') {
+        return res.status(400).json({ message: 'Installment already paid' });
+      }
+
+      // Get the payment plan
+      const plan = await storage.getPaymentPlan(installment.paymentPlanId);
+      if (!plan) {
+        return res.status(404).json({ message: 'Payment plan not found' });
+      }
+
+      // Create payment transaction
+      const transaction = await storage.createPaymentTransaction({
+        practiceId: plan.practiceId,
+        patientId: plan.patientId,
+        paymentMethodId,
+        amount: installment.amount,
+        type: 'payment',
+        status: 'completed',
+        processedAt: new Date(),
+        description: `Payment plan installment #${installment.installmentNumber}`,
+      });
+
+      // Update installment
+      const updated = await storage.updatePaymentPlanInstallment(id, {
+        status: 'paid',
+        paidAt: new Date(),
+        transactionId: transaction.id,
+      });
+
+      // Update plan remaining amount
+      const installmentAmt = parseFloat(installment.amount);
+      const newRemainingAmount = parseFloat(plan.remainingAmount) - installmentAmt;
+      const newCompletedInstallments = (plan.completedInstallments || 0) + 1;
+      const planStatus = newRemainingAmount <= 0 ? 'completed' : 'active';
+      await storage.updatePaymentPlan(plan.id, {
+        remainingAmount: newRemainingAmount.toFixed(2),
+        completedInstallments: newCompletedInstallments,
+        status: planStatus,
+      });
+
+      res.json({ installment: updated, transaction });
+    } catch (error) {
+      console.error('Error paying installment:', error);
+      res.status(500).json({ message: 'Failed to pay installment' });
+    }
+  });
+
+  // Get upcoming due installments
+  app.get('/api/installments/upcoming', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const days = parseInt(req.query.days as string) || 7;
+      const upcoming = await storage.getUpcomingInstallments(practiceId, days);
+      res.json(upcoming);
+    } catch (error) {
+      console.error('Error fetching upcoming installments:', error);
+      res.status(500).json({ message: 'Failed to fetch upcoming installments' });
+    }
+  });
+
+  // Get overdue installments
+  app.get('/api/installments/overdue', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const overdue = await storage.getOverdueInstallments(practiceId);
+      res.json(overdue);
+    } catch (error) {
+      console.error('Error fetching overdue installments:', error);
+      res.status(500).json({ message: 'Failed to fetch overdue installments' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
