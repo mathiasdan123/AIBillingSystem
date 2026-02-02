@@ -230,57 +230,185 @@ export default function OutcomeMeasures() {
     });
   };
 
-  // Default templates if none exist
+  // Default OT-specific outcome measure templates
+  const fimOptions = [
+    { value: 1, label: "Total Assistance" },
+    { value: 2, label: "Maximal Assistance" },
+    { value: 3, label: "Moderate Assistance" },
+    { value: 4, label: "Minimal Assistance" },
+    { value: 5, label: "Supervision" },
+    { value: 6, label: "Modified Independence" },
+    { value: 7, label: "Complete Independence" },
+  ];
+
+  const barthelOptions = [
+    { value: 0, label: "Unable" },
+    { value: 5, label: "Needs Help" },
+    { value: 10, label: "Independent" },
+  ];
+
+  const bergOptions = [
+    { value: 0, label: "Unable/Lowest" },
+    { value: 1, label: "Needs Assistance" },
+    { value: 2, label: "Needs Supervision" },
+    { value: 3, label: "Minimal Difficulty" },
+    { value: 4, label: "Independent/Safe" },
+  ];
+
   const defaultTemplates: OutcomeMeasureTemplate[] = [
     {
       id: 1,
-      name: "Patient Health Questionnaire",
-      abbreviation: "PHQ-9",
-      description: "Screens for depression severity",
-      category: "depression",
-      maxScore: 27,
+      name: "Barthel Index",
+      abbreviation: "BI",
+      description: "Measures performance in basic activities of daily living",
+      category: "ADL",
+      maxScore: 100,
       isActive: true,
       questions: [
-        { id: 1, text: "Little interest or pleasure in doing things", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 2, text: "Feeling down, depressed, or hopeless", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 3, text: "Trouble falling or staying asleep, or sleeping too much", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 4, text: "Feeling tired or having little energy", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 5, text: "Poor appetite or overeating", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 6, text: "Feeling bad about yourself - or that you are a failure", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 7, text: "Trouble concentrating on things", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 8, text: "Moving or speaking slowly, or being fidgety/restless", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 9, text: "Thoughts of self-harm or being better off dead", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
+        { id: 1, text: "Feeding", options: [{ value: 0, label: "Unable" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
+        { id: 2, text: "Bathing", options: [{ value: 0, label: "Dependent" }, { value: 5, label: "Independent" }] },
+        { id: 3, text: "Grooming", options: [{ value: 0, label: "Needs Help" }, { value: 5, label: "Independent" }] },
+        { id: 4, text: "Dressing", options: [{ value: 0, label: "Dependent" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
+        { id: 5, text: "Bowel Control", options: [{ value: 0, label: "Incontinent" }, { value: 5, label: "Occasional Accident" }, { value: 10, label: "Continent" }] },
+        { id: 6, text: "Bladder Control", options: [{ value: 0, label: "Incontinent" }, { value: 5, label: "Occasional Accident" }, { value: 10, label: "Continent" }] },
+        { id: 7, text: "Toilet Use", options: [{ value: 0, label: "Dependent" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
+        { id: 8, text: "Transfers (bed to chair)", options: [{ value: 0, label: "Unable" }, { value: 5, label: "Major Help" }, { value: 10, label: "Minor Help" }, { value: 15, label: "Independent" }] },
+        { id: 9, text: "Mobility", options: [{ value: 0, label: "Immobile" }, { value: 5, label: "Wheelchair Independent" }, { value: 10, label: "Walks with Help" }, { value: 15, label: "Independent" }] },
+        { id: 10, text: "Stairs", options: [{ value: 0, label: "Unable" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
       ],
       scoringRanges: [
-        { min: 0, max: 4, label: "Minimal", severity: "minimal" },
-        { min: 5, max: 9, label: "Mild", severity: "mild" },
-        { min: 10, max: 14, label: "Moderate", severity: "moderate" },
-        { min: 15, max: 19, label: "Moderately Severe", severity: "moderately severe" },
-        { min: 20, max: 27, label: "Severe", severity: "severe" },
+        { min: 0, max: 20, label: "Total Dependence", severity: "severe" },
+        { min: 21, max: 60, label: "Severe Dependence", severity: "moderately severe" },
+        { min: 61, max: 90, label: "Moderate Dependence", severity: "moderate" },
+        { min: 91, max: 99, label: "Slight Dependence", severity: "mild" },
+        { min: 100, max: 100, label: "Independent", severity: "minimal" },
       ],
     },
     {
       id: 2,
-      name: "Generalized Anxiety Disorder",
-      abbreviation: "GAD-7",
-      description: "Screens for anxiety severity",
-      category: "anxiety",
-      maxScore: 21,
+      name: "Berg Balance Scale",
+      abbreviation: "BBS",
+      description: "Assesses balance and fall risk in adults",
+      category: "Balance",
+      maxScore: 56,
       isActive: true,
       questions: [
-        { id: 1, text: "Feeling nervous, anxious, or on edge", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 2, text: "Not being able to stop or control worrying", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 3, text: "Worrying too much about different things", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 4, text: "Trouble relaxing", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 5, text: "Being so restless that it's hard to sit still", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 6, text: "Becoming easily annoyed or irritable", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
-        { id: 7, text: "Feeling afraid as if something awful might happen", options: [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }] },
+        { id: 1, text: "Sitting to standing", options: bergOptions },
+        { id: 2, text: "Standing unsupported", options: bergOptions },
+        { id: 3, text: "Sitting unsupported", options: bergOptions },
+        { id: 4, text: "Standing to sitting", options: bergOptions },
+        { id: 5, text: "Transfers", options: bergOptions },
+        { id: 6, text: "Standing with eyes closed", options: bergOptions },
+        { id: 7, text: "Standing with feet together", options: bergOptions },
+        { id: 8, text: "Reaching forward with outstretched arm", options: bergOptions },
+        { id: 9, text: "Retrieving object from floor", options: bergOptions },
+        { id: 10, text: "Turning to look behind", options: bergOptions },
+        { id: 11, text: "Turning 360 degrees", options: bergOptions },
+        { id: 12, text: "Placing alternate foot on stool", options: bergOptions },
+        { id: 13, text: "Standing with one foot in front", options: bergOptions },
+        { id: 14, text: "Standing on one foot", options: bergOptions },
       ],
       scoringRanges: [
-        { min: 0, max: 4, label: "Minimal", severity: "minimal" },
-        { min: 5, max: 9, label: "Mild", severity: "mild" },
-        { min: 10, max: 14, label: "Moderate", severity: "moderate" },
-        { min: 15, max: 21, label: "Severe", severity: "severe" },
+        { min: 0, max: 20, label: "High Fall Risk", severity: "severe" },
+        { min: 21, max: 40, label: "Medium Fall Risk", severity: "moderate" },
+        { min: 41, max: 56, label: "Low Fall Risk", severity: "minimal" },
+      ],
+    },
+    {
+      id: 3,
+      name: "Lawton IADL Scale",
+      abbreviation: "IADL",
+      description: "Measures instrumental activities of daily living",
+      category: "IADL",
+      maxScore: 8,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Ability to use telephone", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 2, text: "Shopping", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 3, text: "Food preparation", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 4, text: "Housekeeping", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 5, text: "Laundry", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 6, text: "Transportation", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 7, text: "Medication management", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 8, text: "Finances", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+      ],
+      scoringRanges: [
+        { min: 0, max: 2, label: "Severe Impairment", severity: "severe" },
+        { min: 3, max: 5, label: "Moderate Impairment", severity: "moderate" },
+        { min: 6, max: 7, label: "Mild Impairment", severity: "mild" },
+        { min: 8, max: 8, label: "Independent", severity: "minimal" },
+      ],
+    },
+    {
+      id: 4,
+      name: "Quick DASH",
+      abbreviation: "QuickDASH",
+      description: "Upper extremity functional outcome measure",
+      category: "Upper Extremity",
+      maxScore: 100,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Open a tight or new jar", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 2, text: "Do heavy household chores", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 3, text: "Carry a shopping bag or briefcase", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 4, text: "Wash your back", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 5, text: "Use a knife to cut food", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 6, text: "Recreational activities with arm force/impact", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 7, text: "Arm/shoulder/hand problem interfering with social activities", options: [{ value: 1, label: "Not at All" }, { value: 2, label: "Slightly" }, { value: 3, label: "Moderately" }, { value: 4, label: "Quite a Bit" }, { value: 5, label: "Extremely" }] },
+        { id: 8, text: "Limited in work or daily activities", options: [{ value: 1, label: "Not at All" }, { value: 2, label: "Slightly" }, { value: 3, label: "Moderately" }, { value: 4, label: "Quite a Bit" }, { value: 5, label: "Extremely" }] },
+        { id: 9, text: "Arm/shoulder/hand pain severity", options: [{ value: 1, label: "None" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Extreme" }] },
+        { id: 10, text: "Tingling (pins and needles) in arm/shoulder/hand", options: [{ value: 1, label: "None" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Extreme" }] },
+        { id: 11, text: "Difficulty sleeping due to pain", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+      ],
+      scoringRanges: [
+        { min: 0, max: 25, label: "No/Minimal Disability", severity: "minimal" },
+        { min: 26, max: 50, label: "Mild Disability", severity: "mild" },
+        { min: 51, max: 75, label: "Moderate Disability", severity: "moderate" },
+        { min: 76, max: 100, label: "Severe Disability", severity: "severe" },
+      ],
+    },
+    {
+      id: 5,
+      name: "Montreal Cognitive Assessment",
+      abbreviation: "MoCA",
+      description: "Cognitive screening for mild cognitive impairment",
+      category: "Cognitive",
+      maxScore: 30,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Visuospatial/Executive (Trail Making)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 2, text: "Visuospatial/Executive (Cube Copy)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 3, text: "Visuospatial/Executive (Clock Drawing - Contour)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 4, text: "Visuospatial/Executive (Clock Drawing - Numbers)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 5, text: "Visuospatial/Executive (Clock Drawing - Hands)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 6, text: "Naming (Lion)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 7, text: "Naming (Rhinoceros)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 8, text: "Naming (Camel)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 9, text: "Attention (Digit Span Forward)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 10, text: "Attention (Digit Span Backward)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 11, text: "Attention (Vigilance)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 12, text: "Attention (Serial 7s)", options: [{ value: 0, label: "0-1 Correct" }, { value: 1, label: "2-3 Correct" }, { value: 2, label: "4-5 Correct" }, { value: 3, label: "All Correct" }] },
+        { id: 13, text: "Language (Sentence Repetition 1)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 14, text: "Language (Sentence Repetition 2)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 15, text: "Language (Verbal Fluency)", options: [{ value: 0, label: "<11 words" }, { value: 1, label: "11+ words" }] },
+        { id: 16, text: "Abstraction (Similarity 1)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 17, text: "Abstraction (Similarity 2)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 18, text: "Delayed Recall (Word 1)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
+        { id: 19, text: "Delayed Recall (Word 2)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
+        { id: 20, text: "Delayed Recall (Word 3)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
+        { id: 21, text: "Delayed Recall (Word 4)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
+        { id: 22, text: "Delayed Recall (Word 5)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
+        { id: 23, text: "Orientation (Date)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 24, text: "Orientation (Month)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 25, text: "Orientation (Year)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 26, text: "Orientation (Day)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 27, text: "Orientation (Place)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 28, text: "Orientation (City)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+      ],
+      scoringRanges: [
+        { min: 0, max: 17, label: "Moderate Impairment", severity: "severe" },
+        { min: 18, max: 25, label: "Mild Cognitive Impairment", severity: "moderate" },
+        { min: 26, max: 30, label: "Normal", severity: "minimal" },
       ],
     },
   ];
@@ -292,7 +420,7 @@ export default function OutcomeMeasures() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Outcome Measures</h1>
         <p className="text-muted-foreground mt-1">
-          Track patient progress with standardized clinical assessments
+          Track patient functional progress with standardized OT assessments
         </p>
       </div>
 
@@ -352,8 +480,11 @@ export default function OutcomeMeasures() {
                   <div className="flex items-center justify-between">
                     <Badge variant="outline">{template.abbreviation}</Badge>
                     <Badge className={
-                      template.category === "depression" ? "bg-blue-100 text-blue-800" :
-                      template.category === "anxiety" ? "bg-purple-100 text-purple-800" :
+                      template.category === "ADL" ? "bg-blue-100 text-blue-800" :
+                      template.category === "IADL" ? "bg-purple-100 text-purple-800" :
+                      template.category === "Balance" ? "bg-orange-100 text-orange-800" :
+                      template.category === "Upper Extremity" ? "bg-green-100 text-green-800" :
+                      template.category === "Cognitive" ? "bg-pink-100 text-pink-800" :
                       "bg-gray-100 text-gray-800"
                     }>
                       {template.category}
