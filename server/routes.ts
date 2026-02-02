@@ -5727,6 +5727,321 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== OUTCOME MEASURE TEMPLATES ====================
+
+  // Get all outcome measure templates
+  app.get('/api/outcome-measures/templates', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = req.query.practiceId ? parseInt(req.query.practiceId as string) : undefined;
+      const templates = await storage.getOutcomeMeasureTemplates(practiceId);
+      res.json(templates);
+    } catch (error) {
+      console.error('Error fetching outcome measure templates:', error);
+      res.status(500).json({ message: 'Failed to fetch outcome measure templates' });
+    }
+  });
+
+  // Get templates by category
+  app.get('/api/outcome-measures/templates/category/:category', isAuthenticated, async (req: any, res) => {
+    try {
+      const category = req.params.category;
+      const practiceId = req.query.practiceId ? parseInt(req.query.practiceId as string) : undefined;
+      const templates = await storage.getTemplatesByCategory(category, practiceId);
+      res.json(templates);
+    } catch (error) {
+      console.error('Error fetching templates by category:', error);
+      res.status(500).json({ message: 'Failed to fetch templates' });
+    }
+  });
+
+  // Get single template
+  app.get('/api/outcome-measures/templates/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const template = await storage.getOutcomeMeasureTemplate(id);
+      if (!template) {
+        return res.status(404).json({ message: 'Template not found' });
+      }
+      res.json(template);
+    } catch (error) {
+      console.error('Error fetching outcome measure template:', error);
+      res.status(500).json({ message: 'Failed to fetch template' });
+    }
+  });
+
+  // Create custom template
+  app.post('/api/outcome-measures/templates', isAuthenticated, async (req: any, res) => {
+    try {
+      const template = await storage.createOutcomeMeasureTemplate(req.body);
+      res.status(201).json(template);
+    } catch (error) {
+      console.error('Error creating outcome measure template:', error);
+      res.status(500).json({ message: 'Failed to create template' });
+    }
+  });
+
+  // Update template
+  app.patch('/api/outcome-measures/templates/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const template = await storage.updateOutcomeMeasureTemplate(id, req.body);
+      if (!template) {
+        return res.status(404).json({ message: 'Template not found' });
+      }
+      res.json(template);
+    } catch (error) {
+      console.error('Error updating outcome measure template:', error);
+      res.status(500).json({ message: 'Failed to update template' });
+    }
+  });
+
+  // ==================== PATIENT ASSESSMENTS ====================
+
+  // Get practice assessments with filters
+  app.get('/api/outcome-measures/assessments', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        templateId: req.query.templateId ? parseInt(req.query.templateId as string) : undefined,
+        startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+        endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+        assessmentType: req.query.assessmentType as string | undefined,
+      };
+      const assessments = await storage.getPracticeAssessments(practiceId, filters);
+      res.json(assessments);
+    } catch (error) {
+      console.error('Error fetching assessments:', error);
+      res.status(500).json({ message: 'Failed to fetch assessments' });
+    }
+  });
+
+  // Get outcome measure stats
+  app.get('/api/outcome-measures/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const templateId = req.query.templateId ? parseInt(req.query.templateId as string) : undefined;
+      const stats = await storage.getOutcomeMeasureStats(practiceId, templateId);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching outcome measure stats:', error);
+      res.status(500).json({ message: 'Failed to fetch stats' });
+    }
+  });
+
+  // Get single assessment
+  app.get('/api/outcome-measures/assessments/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const assessment = await storage.getPatientAssessment(id);
+      if (!assessment) {
+        return res.status(404).json({ message: 'Assessment not found' });
+      }
+
+      // Get the template for context
+      const template = await storage.getOutcomeMeasureTemplate(assessment.templateId);
+
+      res.json({ assessment, template });
+    } catch (error) {
+      console.error('Error fetching assessment:', error);
+      res.status(500).json({ message: 'Failed to fetch assessment' });
+    }
+  });
+
+  // Create/submit assessment
+  app.post('/api/outcome-measures/assessments', isAuthenticated, async (req: any, res) => {
+    try {
+      const { templateId, patientId, responses, ...rest } = req.body;
+
+      // Get template for scoring
+      const template = await storage.getOutcomeMeasureTemplate(templateId);
+      if (!template) {
+        return res.status(404).json({ message: 'Template not found' });
+      }
+
+      // Calculate total score
+      let totalScore = 0;
+      if (template.scoringMethod === 'sum') {
+        totalScore = responses.reduce((sum: number, r: any) => sum + (r.value || 0), 0);
+      } else if (template.scoringMethod === 'average') {
+        totalScore = Math.round(
+          responses.reduce((sum: number, r: any) => sum + (r.value || 0), 0) / responses.length
+        );
+      }
+
+      // Determine severity based on scoring ranges
+      let severity = 'unknown';
+      let interpretation = '';
+      if (template.scoringRanges && Array.isArray(template.scoringRanges)) {
+        for (const range of template.scoringRanges as any[]) {
+          if (totalScore >= range.min && totalScore <= range.max) {
+            severity = range.severity;
+            interpretation = range.interpretation || '';
+            break;
+          }
+        }
+      }
+
+      const assessment = await storage.createPatientAssessment({
+        templateId,
+        patientId,
+        responses,
+        totalScore,
+        severity,
+        interpretation,
+        status: 'completed',
+        completedAt: new Date(),
+        ...rest,
+      });
+
+      res.status(201).json(assessment);
+    } catch (error) {
+      console.error('Error creating assessment:', error);
+      res.status(500).json({ message: 'Failed to create assessment' });
+    }
+  });
+
+  // Update assessment
+  app.patch('/api/outcome-measures/assessments/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const assessment = await storage.updatePatientAssessment(id, req.body);
+      if (!assessment) {
+        return res.status(404).json({ message: 'Assessment not found' });
+      }
+      res.json(assessment);
+    } catch (error) {
+      console.error('Error updating assessment:', error);
+      res.status(500).json({ message: 'Failed to update assessment' });
+    }
+  });
+
+  // Get patient's assessments
+  app.get('/api/patients/:id/assessments', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const templateId = req.query.templateId ? parseInt(req.query.templateId as string) : undefined;
+      const assessments = await storage.getPatientAssessments(patientId, templateId);
+      res.json(assessments);
+    } catch (error) {
+      console.error('Error fetching patient assessments:', error);
+      res.status(500).json({ message: 'Failed to fetch assessments' });
+    }
+  });
+
+  // Get patient's assessment history with trend analysis
+  app.get('/api/patients/:id/assessments/:templateId/history', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const templateId = parseInt(req.params.templateId);
+      const history = await storage.getPatientAssessmentHistory(patientId, templateId);
+      res.json(history);
+    } catch (error) {
+      console.error('Error fetching assessment history:', error);
+      res.status(500).json({ message: 'Failed to fetch assessment history' });
+    }
+  });
+
+  // Get patient's latest assessment for a template
+  app.get('/api/patients/:id/assessments/:templateId/latest', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const templateId = parseInt(req.params.templateId);
+      const assessment = await storage.getLatestPatientAssessment(patientId, templateId);
+      res.json(assessment || null);
+    } catch (error) {
+      console.error('Error fetching latest assessment:', error);
+      res.status(500).json({ message: 'Failed to fetch latest assessment' });
+    }
+  });
+
+  // ==================== ASSESSMENT SCHEDULES ====================
+
+  // Get patient's assessment schedules
+  app.get('/api/patients/:id/assessment-schedules', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const schedules = await storage.getPatientAssessmentSchedules(patientId);
+      res.json(schedules);
+    } catch (error) {
+      console.error('Error fetching assessment schedules:', error);
+      res.status(500).json({ message: 'Failed to fetch assessment schedules' });
+    }
+  });
+
+  // Create assessment schedule
+  app.post('/api/assessment-schedules', isAuthenticated, async (req: any, res) => {
+    try {
+      // Calculate next due date based on frequency
+      const { frequency, dayOfWeek, dayOfMonth, ...rest } = req.body;
+      const now = new Date();
+      let nextDueAt = new Date();
+
+      if (frequency === 'weekly' && dayOfWeek !== undefined) {
+        const daysUntilNext = (dayOfWeek - now.getDay() + 7) % 7 || 7;
+        nextDueAt.setDate(now.getDate() + daysUntilNext);
+      } else if (frequency === 'bi-weekly' && dayOfWeek !== undefined) {
+        const daysUntilNext = (dayOfWeek - now.getDay() + 7) % 7 || 7;
+        nextDueAt.setDate(now.getDate() + daysUntilNext + 7);
+      } else if (frequency === 'monthly' && dayOfMonth !== undefined) {
+        nextDueAt.setMonth(now.getMonth() + 1);
+        nextDueAt.setDate(Math.min(dayOfMonth, new Date(nextDueAt.getFullYear(), nextDueAt.getMonth() + 1, 0).getDate()));
+      } else {
+        nextDueAt.setDate(now.getDate() + 7); // Default to 1 week
+      }
+
+      const schedule = await storage.createAssessmentSchedule({
+        frequency,
+        dayOfWeek,
+        dayOfMonth,
+        nextDueAt,
+        ...rest,
+      });
+      res.status(201).json(schedule);
+    } catch (error) {
+      console.error('Error creating assessment schedule:', error);
+      res.status(500).json({ message: 'Failed to create assessment schedule' });
+    }
+  });
+
+  // Update assessment schedule
+  app.patch('/api/assessment-schedules/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const schedule = await storage.updateAssessmentSchedule(id, req.body);
+      if (!schedule) {
+        return res.status(404).json({ message: 'Schedule not found' });
+      }
+      res.json(schedule);
+    } catch (error) {
+      console.error('Error updating assessment schedule:', error);
+      res.status(500).json({ message: 'Failed to update assessment schedule' });
+    }
+  });
+
+  // Delete assessment schedule
+  app.delete('/api/assessment-schedules/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteAssessmentSchedule(id);
+      res.json({ message: 'Schedule deleted' });
+    } catch (error) {
+      console.error('Error deleting assessment schedule:', error);
+      res.status(500).json({ message: 'Failed to delete assessment schedule' });
+    }
+  });
+
+  // Get due assessments for practice
+  app.get('/api/assessment-schedules/due', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const dueSchedules = await storage.getDueAssessments(practiceId);
+      res.json(dueSchedules);
+    } catch (error) {
+      console.error('Error fetching due assessments:', error);
+      res.status(500).json({ message: 'Failed to fetch due assessments' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

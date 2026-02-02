@@ -1706,3 +1706,94 @@ export const insertGoalProgressNoteSchema = createInsertSchema(goalProgressNotes
 export type GoalProgressNote = typeof goalProgressNotes.$inferSelect;
 export type InsertGoalProgressNote = z.infer<typeof insertGoalProgressNoteSchema>;
 
+// Outcome Measure Templates (standardized assessments)
+export const outcomeMeasureTemplates = pgTable("outcome_measure_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id), // null = system-wide template
+  // Template info
+  name: varchar("name", { length: 255 }).notNull(), // PHQ-9, GAD-7, PCL-5, etc.
+  shortName: varchar("short_name", { length: 50 }), // Abbreviated name
+  description: text("description"),
+  category: varchar("category"), // depression, anxiety, trauma, substance_use, general, etc.
+  // Assessment structure
+  questions: jsonb("questions").notNull(), // [{id, text, options: [{value, label}], required}]
+  scoringMethod: varchar("scoring_method"), // sum, average, weighted, custom
+  scoringRanges: jsonb("scoring_ranges"), // [{min, max, severity, interpretation}]
+  maxScore: integer("max_score"),
+  // Clinical info
+  clinicalCutoff: integer("clinical_cutoff"), // Score indicating clinical significance
+  reliableChangeIndex: decimal("reliable_change_index", { precision: 5, scale: 2 }), // For measuring meaningful change
+  minimumClinicallyImportantDifference: integer("mcid"), // Minimum change considered meaningful
+  // Frequency
+  recommendedFrequency: varchar("recommended_frequency"), // intake, weekly, monthly, discharge
+  // Status
+  isActive: boolean("is_active").default(true),
+  isSystemTemplate: boolean("is_system_template").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOutcomeMeasureTemplateSchema = createInsertSchema(outcomeMeasureTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export type OutcomeMeasureTemplate = typeof outcomeMeasureTemplates.$inferSelect;
+export type InsertOutcomeMeasureTemplate = z.infer<typeof insertOutcomeMeasureTemplateSchema>;
+
+// Patient Assessments (completed outcome measures)
+export const patientAssessments = pgTable("patient_assessments", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  templateId: integer("template_id").references(() => outcomeMeasureTemplates.id).notNull(),
+  sessionId: integer("session_id").references(() => treatmentSessions.id), // Optional link to session
+  treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id), // Optional link to plan
+  // Assessment context
+  assessmentType: varchar("assessment_type").default("routine"), // intake, routine, discharge, crisis
+  administeredBy: varchar("administered_by").references(() => users.id),
+  administeredAt: timestamp("administered_at").defaultNow(),
+  // Responses and scoring
+  responses: jsonb("responses").notNull(), // [{questionId, value, text?}]
+  totalScore: integer("total_score"),
+  subscaleScores: jsonb("subscale_scores"), // {subscaleName: score}
+  severity: varchar("severity"), // minimal, mild, moderate, moderately_severe, severe
+  interpretation: text("interpretation"), // Clinical interpretation text
+  // Comparison to previous
+  previousScore: integer("previous_score"),
+  scoreChange: integer("score_change"),
+  isReliableChange: boolean("is_reliable_change"), // Based on RCI
+  isClinicallySignificant: boolean("is_clinically_significant"),
+  // Clinical notes
+  clinicianNotes: text("clinician_notes"),
+  patientFeedback: text("patient_feedback"),
+  // Status
+  status: varchar("status").default("completed"), // pending, in_progress, completed, invalidated
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientAssessmentSchema = createInsertSchema(patientAssessments).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientAssessment = typeof patientAssessments.$inferSelect;
+export type InsertPatientAssessment = z.infer<typeof insertPatientAssessmentSchema>;
+
+// Assessment Schedules (automated assessment assignments)
+export const assessmentSchedules = pgTable("assessment_schedules", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  templateId: integer("template_id").references(() => outcomeMeasureTemplates.id).notNull(),
+  // Schedule settings
+  frequency: varchar("frequency").notNull(), // weekly, bi-weekly, monthly, session
+  dayOfWeek: integer("day_of_week"), // 0-6 for weekly schedules
+  dayOfMonth: integer("day_of_month"), // 1-31 for monthly schedules
+  // Tracking
+  lastSentAt: timestamp("last_sent_at"),
+  nextDueAt: timestamp("next_due_at"),
+  // Status
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAssessmentScheduleSchema = createInsertSchema(assessmentSchedules).omit({ id: true, createdAt: true, updatedAt: true });
+export type AssessmentSchedule = typeof assessmentSchedules.$inferSelect;
+export type InsertAssessmentSchedule = z.infer<typeof insertAssessmentScheduleSchema>;
+

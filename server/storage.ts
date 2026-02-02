@@ -136,6 +136,15 @@ import {
   type InsertTreatmentIntervention,
   type GoalProgressNote,
   type InsertGoalProgressNote,
+  outcomeMeasureTemplates,
+  patientAssessments,
+  assessmentSchedules,
+  type OutcomeMeasureTemplate,
+  type InsertOutcomeMeasureTemplate,
+  type PatientAssessment,
+  type InsertPatientAssessment,
+  type AssessmentSchedule,
+  type InsertAssessmentSchedule,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
@@ -3887,6 +3896,301 @@ export class DatabaseStorage implements IStorage {
         lte(treatmentPlans.nextReviewDate, futureDate.toISOString().split('T')[0])
       ))
       .orderBy(treatmentPlans.nextReviewDate);
+  }
+
+  // ==================== Outcome Measure Templates ====================
+
+  async createOutcomeMeasureTemplate(template: InsertOutcomeMeasureTemplate): Promise<OutcomeMeasureTemplate> {
+    const [newTemplate] = await db.insert(outcomeMeasureTemplates).values(template).returning();
+    return newTemplate;
+  }
+
+  async getOutcomeMeasureTemplates(practiceId?: number): Promise<OutcomeMeasureTemplate[]> {
+    // Get system templates and practice-specific templates
+    if (practiceId) {
+      return db.select()
+        .from(outcomeMeasureTemplates)
+        .where(and(
+          eq(outcomeMeasureTemplates.isActive, true),
+          sql`(${outcomeMeasureTemplates.practiceId} = ${practiceId} OR ${outcomeMeasureTemplates.isSystemTemplate} = true)`
+        ))
+        .orderBy(outcomeMeasureTemplates.name);
+    }
+    return db.select()
+      .from(outcomeMeasureTemplates)
+      .where(eq(outcomeMeasureTemplates.isActive, true))
+      .orderBy(outcomeMeasureTemplates.name);
+  }
+
+  async getOutcomeMeasureTemplate(id: number): Promise<OutcomeMeasureTemplate | undefined> {
+    const [template] = await db.select()
+      .from(outcomeMeasureTemplates)
+      .where(eq(outcomeMeasureTemplates.id, id));
+    return template;
+  }
+
+  async updateOutcomeMeasureTemplate(id: number, updates: Partial<InsertOutcomeMeasureTemplate>): Promise<OutcomeMeasureTemplate | undefined> {
+    const [updated] = await db.update(outcomeMeasureTemplates)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(outcomeMeasureTemplates.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getTemplatesByCategory(category: string, practiceId?: number): Promise<OutcomeMeasureTemplate[]> {
+    const conditions = [
+      eq(outcomeMeasureTemplates.category, category),
+      eq(outcomeMeasureTemplates.isActive, true),
+    ];
+
+    if (practiceId) {
+      return db.select()
+        .from(outcomeMeasureTemplates)
+        .where(and(
+          ...conditions,
+          sql`(${outcomeMeasureTemplates.practiceId} = ${practiceId} OR ${outcomeMeasureTemplates.isSystemTemplate} = true)`
+        ))
+        .orderBy(outcomeMeasureTemplates.name);
+    }
+
+    return db.select()
+      .from(outcomeMeasureTemplates)
+      .where(and(...conditions))
+      .orderBy(outcomeMeasureTemplates.name);
+  }
+
+  // ==================== Patient Assessments ====================
+
+  async createPatientAssessment(assessment: InsertPatientAssessment): Promise<PatientAssessment> {
+    // Calculate comparison to previous assessment
+    const previous = await this.getLatestPatientAssessment(assessment.patientId, assessment.templateId);
+
+    const assessmentWithComparison: InsertPatientAssessment = {
+      ...assessment,
+      previousScore: previous?.totalScore ?? undefined,
+      scoreChange: previous?.totalScore && assessment.totalScore
+        ? assessment.totalScore - previous.totalScore
+        : undefined,
+    };
+
+    // Check for reliable change if template has RCI
+    if (assessmentWithComparison.scoreChange !== undefined && assessmentWithComparison.scoreChange !== null) {
+      const template = await this.getOutcomeMeasureTemplate(assessment.templateId);
+      if (template?.reliableChangeIndex) {
+        const rci = parseFloat(template.reliableChangeIndex);
+        assessmentWithComparison.isReliableChange = Math.abs(assessmentWithComparison.scoreChange) >= rci;
+      }
+      if (template?.clinicalCutoff && assessment.totalScore !== undefined && assessment.totalScore !== null) {
+        const prevAboveCutoff = previous?.totalScore !== undefined && previous.totalScore !== null && previous.totalScore >= template.clinicalCutoff;
+        const currentAboveCutoff = assessment.totalScore >= template.clinicalCutoff;
+        assessmentWithComparison.isClinicallySignificant = prevAboveCutoff !== currentAboveCutoff;
+      }
+    }
+
+    const [newAssessment] = await db.insert(patientAssessments).values(assessmentWithComparison).returning();
+    return newAssessment;
+  }
+
+  async getPatientAssessments(patientId: number, templateId?: number): Promise<PatientAssessment[]> {
+    const conditions = [eq(patientAssessments.patientId, patientId)];
+
+    if (templateId) {
+      conditions.push(eq(patientAssessments.templateId, templateId));
+    }
+
+    return db.select()
+      .from(patientAssessments)
+      .where(and(...conditions))
+      .orderBy(desc(patientAssessments.administeredAt));
+  }
+
+  async getPatientAssessment(id: number): Promise<PatientAssessment | undefined> {
+    const [assessment] = await db.select()
+      .from(patientAssessments)
+      .where(eq(patientAssessments.id, id));
+    return assessment;
+  }
+
+  async getLatestPatientAssessment(patientId: number, templateId: number): Promise<PatientAssessment | undefined> {
+    const [assessment] = await db.select()
+      .from(patientAssessments)
+      .where(and(
+        eq(patientAssessments.patientId, patientId),
+        eq(patientAssessments.templateId, templateId),
+        eq(patientAssessments.status, 'completed')
+      ))
+      .orderBy(desc(patientAssessments.administeredAt))
+      .limit(1);
+    return assessment;
+  }
+
+  async updatePatientAssessment(id: number, updates: Partial<InsertPatientAssessment>): Promise<PatientAssessment | undefined> {
+    const [updated] = await db.update(patientAssessments)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(patientAssessments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getPracticeAssessments(practiceId: number, filters?: {
+    templateId?: number;
+    startDate?: Date;
+    endDate?: Date;
+    assessmentType?: string;
+  }): Promise<PatientAssessment[]> {
+    const conditions = [eq(patientAssessments.practiceId, practiceId)];
+
+    if (filters?.templateId) {
+      conditions.push(eq(patientAssessments.templateId, filters.templateId));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(patientAssessments.administeredAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(patientAssessments.administeredAt, filters.endDate));
+    }
+    if (filters?.assessmentType) {
+      conditions.push(eq(patientAssessments.assessmentType, filters.assessmentType));
+    }
+
+    return db.select()
+      .from(patientAssessments)
+      .where(and(...conditions))
+      .orderBy(desc(patientAssessments.administeredAt));
+  }
+
+  async getPatientAssessmentHistory(patientId: number, templateId: number): Promise<{
+    assessments: PatientAssessment[];
+    trend: 'improving' | 'stable' | 'declining' | 'insufficient_data';
+    averageChange: number | null;
+  }> {
+    const assessments = await this.getPatientAssessments(patientId, templateId);
+
+    if (assessments.length < 2) {
+      return { assessments, trend: 'insufficient_data', averageChange: null };
+    }
+
+    // Calculate trend based on recent assessments
+    const recentAssessments = assessments.slice(0, 5);
+    let totalChange = 0;
+    let changeCount = 0;
+
+    for (let i = 0; i < recentAssessments.length - 1; i++) {
+      const current = recentAssessments[i].totalScore;
+      const previous = recentAssessments[i + 1].totalScore;
+      if (current !== null && previous !== null) {
+        totalChange += current - previous;
+        changeCount++;
+      }
+    }
+
+    const averageChange = changeCount > 0 ? totalChange / changeCount : null;
+
+    let trend: 'improving' | 'stable' | 'declining' | 'insufficient_data';
+    if (averageChange === null) {
+      trend = 'insufficient_data';
+    } else if (averageChange < -2) {
+      trend = 'improving'; // Lower scores typically mean improvement
+    } else if (averageChange > 2) {
+      trend = 'declining';
+    } else {
+      trend = 'stable';
+    }
+
+    return { assessments, trend, averageChange };
+  }
+
+  // ==================== Assessment Schedules ====================
+
+  async createAssessmentSchedule(schedule: InsertAssessmentSchedule): Promise<AssessmentSchedule> {
+    const [newSchedule] = await db.insert(assessmentSchedules).values(schedule).returning();
+    return newSchedule;
+  }
+
+  async getPatientAssessmentSchedules(patientId: number): Promise<AssessmentSchedule[]> {
+    return db.select()
+      .from(assessmentSchedules)
+      .where(and(
+        eq(assessmentSchedules.patientId, patientId),
+        eq(assessmentSchedules.isActive, true)
+      ));
+  }
+
+  async getAssessmentSchedule(id: number): Promise<AssessmentSchedule | undefined> {
+    const [schedule] = await db.select()
+      .from(assessmentSchedules)
+      .where(eq(assessmentSchedules.id, id));
+    return schedule;
+  }
+
+  async updateAssessmentSchedule(id: number, updates: Partial<InsertAssessmentSchedule>): Promise<AssessmentSchedule | undefined> {
+    const [updated] = await db.update(assessmentSchedules)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(assessmentSchedules.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteAssessmentSchedule(id: number): Promise<void> {
+    await db.update(assessmentSchedules)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(assessmentSchedules.id, id));
+  }
+
+  async getDueAssessments(practiceId: number): Promise<AssessmentSchedule[]> {
+    const now = new Date();
+    return db.select()
+      .from(assessmentSchedules)
+      .where(and(
+        eq(assessmentSchedules.practiceId, practiceId),
+        eq(assessmentSchedules.isActive, true),
+        lte(assessmentSchedules.nextDueAt, now)
+      ));
+  }
+
+  // ==================== Outcome Measure Analytics ====================
+
+  async getOutcomeMeasureStats(practiceId: number, templateId?: number): Promise<{
+    totalAssessments: number;
+    averageScore: number | null;
+    improvementRate: number;
+    bySeverity: { severity: string; count: number }[];
+  }> {
+    const conditions = [eq(patientAssessments.practiceId, practiceId)];
+    if (templateId) {
+      conditions.push(eq(patientAssessments.templateId, templateId));
+    }
+
+    const assessments = await db.select()
+      .from(patientAssessments)
+      .where(and(...conditions));
+
+    const totalAssessments = assessments.length;
+
+    // Calculate average score
+    const scoresWithValues = assessments.filter((a: PatientAssessment) => a.totalScore !== null);
+    const averageScore = scoresWithValues.length > 0
+      ? scoresWithValues.reduce((sum: number, a: PatientAssessment) => sum + (a.totalScore || 0), 0) / scoresWithValues.length
+      : null;
+
+    // Calculate improvement rate (assessments showing negative score change)
+    const assessmentsWithChange = assessments.filter((a: PatientAssessment) => a.scoreChange !== null);
+    const improved = assessmentsWithChange.filter((a: PatientAssessment) => (a.scoreChange || 0) < 0).length;
+    const improvementRate = assessmentsWithChange.length > 0
+      ? (improved / assessmentsWithChange.length) * 100
+      : 0;
+
+    // Group by severity
+    const severityCounts: Record<string, number> = {};
+    for (const a of assessments) {
+      const severity = a.severity || 'unknown';
+      severityCounts[severity] = (severityCounts[severity] || 0) + 1;
+    }
+    const bySeverity = Object.entries(severityCounts)
+      .map(([severity, count]) => ({ severity, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return { totalAssessments, averageScore, improvementRate, bySeverity };
   }
 }
 
