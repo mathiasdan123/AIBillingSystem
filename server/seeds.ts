@@ -1,5 +1,5 @@
 import { getDb } from "./db";
-import { practices, cptCodes, icd10Codes, insurances } from "@shared/schema";
+import { practices, cptCodes, icd10Codes, insurances, patients } from "@shared/schema";
 import { sql } from "drizzle-orm";
 
 export async function seedDatabase() {
@@ -228,11 +228,72 @@ export async function seedDatabase() {
       },
     ]);
 
+    // Seed Sample Patients
+    await db.insert(patients).values([
+      {
+        practiceId: practice.id,
+        firstName: "John",
+        lastName: "Smith",
+        dateOfBirth: "1978-03-15",
+        email: "john.smith@email.com",
+        phone: "(555) 234-5678",
+        address: "456 Oak Street, Wellness City, WC 12345",
+        insuranceProvider: "Blue Cross Blue Shield",
+        insuranceId: "BCBS123456789",
+        policyNumber: "POL-2024-001",
+        groupNumber: "GRP-100",
+        smsConsentGiven: true,
+      },
+      {
+        practiceId: practice.id,
+        firstName: "Sarah",
+        lastName: "Johnson",
+        dateOfBirth: "1985-07-22",
+        email: "sarah.johnson@email.com",
+        phone: "(555) 345-6789",
+        address: "789 Maple Avenue, Wellness City, WC 12346",
+        insuranceProvider: "Aetna",
+        insuranceId: "AET987654321",
+        policyNumber: "POL-2024-002",
+        groupNumber: "GRP-200",
+        smsConsentGiven: true,
+      },
+      {
+        practiceId: practice.id,
+        firstName: "Michael",
+        lastName: "Brown",
+        dateOfBirth: "1992-11-08",
+        email: "michael.brown@email.com",
+        phone: "(555) 456-7890",
+        address: "321 Pine Road, Wellness City, WC 12347",
+        insuranceProvider: "UnitedHealth",
+        insuranceId: "UHC456789123",
+        policyNumber: "POL-2024-003",
+        groupNumber: "GRP-300",
+        smsConsentGiven: false,
+      },
+      {
+        practiceId: practice.id,
+        firstName: "Emily",
+        lastName: "Davis",
+        dateOfBirth: "1990-05-30",
+        email: "emily.davis@email.com",
+        phone: "(555) 567-8901",
+        address: "654 Elm Court, Wellness City, WC 12348",
+        insuranceProvider: "Cigna",
+        insuranceId: "CIG789123456",
+        policyNumber: "POL-2024-004",
+        groupNumber: "GRP-400",
+        smsConsentGiven: true,
+      },
+    ]);
+
     console.log("Database seeded successfully with:", {
       practices: 1,
       cptCodes: 10,
       icd10Codes: 13,
       insurances: 7,
+      patients: 4,
     });
   } catch (error) {
     console.error("Error seeding database:", error);
