@@ -222,8 +222,227 @@ export function generateReviewRequestMessage(
   };
 }
 
+/**
+ * Generate a feedback request message (sends to private feedback page, not Google)
+ */
+export function generateFeedbackRequestMessage(
+  patientName: string,
+  practiceName: string,
+  feedbackUrl: string,
+  channel: 'email' | 'sms'
+): { subject?: string; body: string } {
+  if (channel === 'sms') {
+    return {
+      body: `Hi ${patientName}! Thank you for choosing ${practiceName}. We'd love to hear about your experience! Please share your feedback: ${feedbackUrl}`,
+    };
+  }
+
+  return {
+    subject: `How was your visit at ${practiceName}?`,
+    body: `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f8fafc;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    <div style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+      <h1 style="margin: 0; font-size: 24px;">We'd Love Your Feedback!</h1>
+    </div>
+
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      <p style="font-size: 16px; color: #1e293b;">Hi ${patientName},</p>
+
+      <p style="color: #475569;">Thank you for your recent visit to ${practiceName}. Your feedback is incredibly important to us and helps us provide the best possible care.</p>
+
+      <p style="color: #475569;">Would you take a moment to share your experience? It only takes a minute.</p>
+
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${feedbackUrl}" style="display: inline-block; background: #2563eb; color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+          Share Your Feedback
+        </a>
+      </div>
+
+      <p style="color: #64748b; font-size: 14px;">Your honest feedback helps us improve and continue providing quality care.</p>
+    </div>
+
+    <div style="background: #f1f5f9; padding: 20px; border-radius: 0 0 12px 12px; text-align: center; border: 1px solid #e2e8f0; border-top: none;">
+      <p style="margin: 0; color: #64748b; font-size: 13px;">
+        Thank you for being part of our community!<br>
+        <strong>${practiceName}</strong>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+  };
+}
+
+/**
+ * Generate a Google review request message (sent after positive feedback)
+ */
+export function generateGooglePostRequestMessage(
+  patientName: string,
+  practiceName: string,
+  googleReviewUrl: string,
+  channel: 'email' | 'sms'
+): { subject?: string; body: string } {
+  if (channel === 'sms') {
+    return {
+      body: `Hi ${patientName}! Thank you for your wonderful feedback about ${practiceName}! Would you be willing to share it publicly on Google? It would mean so much to us: ${googleReviewUrl}`,
+    };
+  }
+
+  return {
+    subject: `Would you share your experience on Google?`,
+    body: `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f8fafc;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    <div style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+      <h1 style="margin: 0; font-size: 24px;">Thank You for Your Kind Words! 🙏</h1>
+    </div>
+
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      <p style="font-size: 16px; color: #1e293b;">Hi ${patientName},</p>
+
+      <p style="color: #475569;">We were thrilled to receive your positive feedback! Comments like yours truly make our day and inspire us to keep providing excellent care.</p>
+
+      <p style="color: #475569;">Would you be willing to share your experience on Google? Your review would help others in our community find quality care.</p>
+
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${googleReviewUrl}" style="display: inline-block; background: #22c55e; color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+          Post Review on Google ⭐
+        </a>
+      </div>
+
+      <p style="color: #64748b; font-size: 14px;">No pressure at all – we're just grateful you took the time to share your thoughts with us!</p>
+    </div>
+
+    <div style="background: #f0fdf4; padding: 20px; border-radius: 0 0 12px 12px; text-align: center; border: 1px solid #dcfce7; border-top: none;">
+      <p style="margin: 0; color: #166534; font-size: 13px;">
+        With gratitude,<br>
+        <strong>${practiceName}</strong>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+  };
+}
+
+/**
+ * Generate a personalized follow-up email for negative feedback (AI-powered)
+ */
+export async function generateNegativeFeedbackResponse(options: {
+  patientFirstName: string;
+  practiceName: string;
+  practicePhone?: string;
+  practiceEmail?: string;
+  rating: number;
+  feedbackText?: string;
+}): Promise<{ subject: string; body: string }> {
+  const { patientFirstName, practiceName, practicePhone, practiceEmail, rating, feedbackText } = options;
+
+  // If OpenAI is configured, generate a personalized response
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const systemPrompt = `You are writing a follow-up email on behalf of ${practiceName}, a therapy/healthcare practice.
+A patient has submitted negative feedback (${rating} out of 5 stars).
+Write a sincere, empathetic email that:
+- Thanks them for their honest feedback
+- Acknowledges their concerns without being defensive
+- Apologizes for their experience
+- Expresses genuine desire to improve
+- Invites them to discuss further (phone/email provided)
+- Keeps HIPAA compliance - never mention specific treatments or health details
+- Is warm and human, not corporate
+- Is concise (3-4 short paragraphs max)
+
+Do NOT include a subject line - just the email body.`;
+
+      const userPrompt = `Patient name: ${patientFirstName}
+Rating: ${rating}/5
+${feedbackText ? `Their feedback: "${feedbackText}"` : 'No written feedback provided.'}
+${practicePhone ? `Practice phone: ${practicePhone}` : ''}
+${practiceEmail ? `Practice email: ${practiceEmail}` : ''}`;
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 400,
+        temperature: 0.7,
+      });
+
+      const aiBody = completion.choices[0]?.message?.content?.trim() || '';
+
+      if (aiBody) {
+        return {
+          subject: `We're sorry to hear about your experience, ${patientFirstName}`,
+          body: formatNegativeFeedbackEmail(patientFirstName, practiceName, aiBody),
+        };
+      }
+    } catch (error) {
+      console.error('AI response generation failed, using template:', error);
+    }
+  }
+
+  // Fallback template if AI is not available
+  const fallbackBody = `Dear ${patientFirstName},
+
+Thank you for taking the time to share your feedback with us. We're truly sorry to hear that your recent experience at ${practiceName} didn't meet your expectations.
+
+Your feedback is incredibly valuable to us, and we take it seriously. We're committed to providing the best possible care, and hearing where we fell short helps us improve.
+
+${feedbackText ? `We've carefully reviewed your comments and are taking steps to address the concerns you raised.` : `We would love to learn more about your experience so we can make things right.`}
+
+${practicePhone || practiceEmail ? `Please don't hesitate to reach out to us directly${practicePhone ? ` at ${practicePhone}` : ''}${practiceEmail ? ` or ${practiceEmail}` : ''} if you'd like to discuss this further.` : ''}
+
+We truly appreciate you giving us the opportunity to improve and hope we can serve you better in the future.
+
+Warm regards,
+The ${practiceName} Team`;
+
+  return {
+    subject: `We're sorry to hear about your experience, ${patientFirstName}`,
+    body: formatNegativeFeedbackEmail(patientFirstName, practiceName, fallbackBody),
+  };
+}
+
+function formatNegativeFeedbackEmail(patientFirstName: string, practiceName: string, bodyContent: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f8fafc;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    <div style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+      <h1 style="margin: 0; font-size: 22px;">Your Feedback Matters</h1>
+    </div>
+
+    <div style="background: white; padding: 30px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;">
+      ${bodyContent.split('\n').map(p => p.trim() ? `<p style="color: #374151; line-height: 1.6; margin: 0 0 16px 0;">${p}</p>` : '').join('')}
+    </div>
+
+    <div style="background: #f1f5f9; padding: 20px; border-radius: 0 0 12px 12px; text-align: center; border: 1px solid #e2e8f0; border-top: none;">
+      <p style="margin: 0; color: #64748b; font-size: 13px;">
+        <strong>${practiceName}</strong>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 export default {
   generateReviewResponse,
   analyzeReview,
   generateReviewRequestMessage,
+  generateFeedbackRequestMessage,
+  generateGooglePostRequestMessage,
+  generateNegativeFeedbackResponse,
 };

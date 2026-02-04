@@ -15,7 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2 } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink } from "lucide-react";
 import { getAuthHeaders } from "@/hooks/useAuth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,7 @@ const practiceSchema = z.object({
   address: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
+  googleReviewUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
 });
 
 type PracticeFormData = z.infer<typeof practiceSchema>;
@@ -71,6 +72,7 @@ export default function Settings() {
       address: "",
       phone: "",
       email: "",
+      googleReviewUrl: "",
     },
   });
 
@@ -297,6 +299,7 @@ export default function Settings() {
         address: practice.address || "",
         phone: practice.phone || "",
         email: practice.email || "",
+        googleReviewUrl: practice.googleReviewUrl || "",
       });
     }
   }, [practice, form]);
@@ -469,8 +472,46 @@ export default function Settings() {
                       />
                     </div>
 
-                    <Button 
-                      type="submit" 
+                    <Separator className="my-6" />
+
+                    {/* Google Reviews Section */}
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Star className="h-5 w-5 text-yellow-500" />
+                        <h3 className="font-medium">Google Reviews</h3>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Connect your Google Business Profile to automatically request reviews from patients after their appointments.
+                      </p>
+                      <FormField
+                        control={form.control}
+                        name="googleReviewUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Google Review URL</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="https://g.page/r/your-business/review"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              To get this URL: Go to your Google Business Profile → Click "Get more reviews" → Copy the link
+                            </p>
+                          </FormItem>
+                        )}
+                      />
+                      {form.watch("googleReviewUrl") && (
+                        <div className="flex items-center gap-2 text-sm text-green-600">
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Google Reviews connected - patients will be prompted to post positive feedback</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button
+                      type="submit"
                       disabled={updatePracticeMutation.isPending}
                       className="bg-medical-blue-500 hover:bg-medical-blue-600"
                     >

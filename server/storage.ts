@@ -86,6 +86,9 @@ import {
   type InsertReviewRequest,
   type GoogleReview,
   type InsertGoogleReview,
+  patientFeedback,
+  type PatientFeedback,
+  type InsertPatientFeedback,
   type AppointmentType,
   type InsertAppointmentType,
   type TherapistAvailability,
@@ -1468,6 +1471,122 @@ export class DatabaseStorage implements IStorage {
 
     stats.averageRating = Math.round((totalRating / reviews.length) * 10) / 10;
     return stats;
+  }
+
+  // Patient Feedback CRUD (private feedback before Google)
+  async createPatientFeedback(feedback: InsertPatientFeedback): Promise<PatientFeedback> {
+    const [result] = await db.insert(patientFeedback).values(feedback).returning();
+    return result;
+  }
+
+  async getPatientFeedback(practiceId: number, filters?: {
+    sentiment?: string;
+    isAddressed?: boolean;
+    googlePostRequested?: boolean;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<PatientFeedback[]> {
+    const conditions = [eq(patientFeedback.practiceId, practiceId)];
+
+    if (filters?.sentiment) {
+      conditions.push(eq(patientFeedback.sentiment, filters.sentiment));
+    }
+    if (filters?.isAddressed !== undefined) {
+      conditions.push(eq(patientFeedback.isAddressed, filters.isAddressed));
+    }
+    if (filters?.googlePostRequested !== undefined) {
+      conditions.push(eq(patientFeedback.googlePostRequested, filters.googlePostRequested));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(patientFeedback.createdAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(patientFeedback.createdAt, filters.endDate));
+    }
+
+    return await db
+      .select()
+      .from(patientFeedback)
+      .where(and(...conditions))
+      .orderBy(desc(patientFeedback.createdAt));
+  }
+
+  async getPatientFeedbackById(id: number): Promise<PatientFeedback | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientFeedback)
+      .where(eq(patientFeedback.id, id));
+    return result;
+  }
+
+  async getPatientFeedbackByReviewRequest(reviewRequestId: number): Promise<PatientFeedback | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientFeedback)
+      .where(eq(patientFeedback.reviewRequestId, reviewRequestId));
+    return result;
+  }
+
+  async updatePatientFeedback(id: number, updates: Partial<InsertPatientFeedback>): Promise<PatientFeedback> {
+    const [result] = await db
+      .update(patientFeedback)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(patientFeedback.id, id))
+      .returning();
+    return result;
+  }
+
+  async getPatientFeedbackStats(practiceId: number): Promise<{
+    totalFeedback: number;
+    positiveCount: number;
+    neutralCount: number;
+    negativeCount: number;
+    unaddressedNegative: number;
+    googlePostsPending: number;
+    googlePostsCompleted: number;
+    averageRating: number;
+  }> {
+    const feedbackList = await db
+      .select()
+      .from(patientFeedback)
+      .where(eq(patientFeedback.practiceId, practiceId));
+
+    const stats = {
+      totalFeedback: feedbackList.length,
+      positiveCount: 0,
+      neutralCount: 0,
+      negativeCount: 0,
+      unaddressedNegative: 0,
+      googlePostsPending: 0,
+      googlePostsCompleted: 0,
+      averageRating: 0,
+    };
+
+    if (feedbackList.length === 0) return stats;
+
+    let totalRating = 0;
+    for (const feedback of feedbackList) {
+      totalRating += feedback.rating;
+      if (feedback.sentiment === 'positive') stats.positiveCount++;
+      if (feedback.sentiment === 'neutral') stats.neutralCount++;
+      if (feedback.sentiment === 'negative') {
+        stats.negativeCount++;
+        if (!feedback.isAddressed) stats.unaddressedNegative++;
+      }
+      if (feedback.googlePostRequested && !feedback.postedToGoogle) stats.googlePostsPending++;
+      if (feedback.postedToGoogle) stats.googlePostsCompleted++;
+    }
+
+    stats.averageRating = Math.round((totalRating / feedbackList.length) * 10) / 10;
+    return stats;
+  }
+
+  async getReviewRequestByToken(token: string): Promise<ReviewRequest | undefined> {
+    const [result] = await db
+      .select()
+      .from(reviewRequests)
+      .where(eq(reviewRequests.feedbackToken, token));
+    return result;
   }
 
   // ==================== ONLINE BOOKING ====================

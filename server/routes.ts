@@ -10,6 +10,7 @@ import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportN
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
+import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
@@ -261,6 +262,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error in setup:", error);
       res.status(500).json({ message: "Failed to complete setup" });
+    }
+  });
+
+  // ==================== PRACTICE MANAGEMENT ====================
+
+  // Get practice by ID
+  app.get('/api/practices/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const practice = await storage.getPractice(practiceId);
+      if (!practice) {
+        return res.status(404).json({ message: "Practice not found" });
+      }
+      res.json(practice);
+    } catch (error) {
+      console.error("Error fetching practice:", error);
+      res.status(500).json({ message: "Failed to fetch practice" });
+    }
+  });
+
+  // Update practice settings
+  app.patch('/api/practices/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.params.id);
+      const updates = req.body;
+
+      // Remove any undefined or null values
+      const cleanUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([_, v]) => v !== undefined && v !== null)
+      );
+
+      const practice = await storage.updatePractice(practiceId, cleanUpdates);
+      if (!practice) {
+        return res.status(404).json({ message: "Practice not found" });
+      }
+      res.json(practice);
+    } catch (error) {
+      console.error("Error updating practice:", error);
+      res.status(500).json({ message: "Failed to update practice" });
     }
   });
 
@@ -642,7 +682,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/soap-notes', async (req, res) => {
     try {
       const soapNote = await storage.createSoapNote(req.body);
-      res.json(soapNote);
+
+      // Auto-generate AI-optimized superbill from the session
+      let generatedClaim = null;
+      let billingOptimization = null;
+      if (soapNote.sessionId) {
+        try {
+          // Get the session details
+          const sessions = await storage.getAllSessions();
+          const session = sessions.find((s: any) => s.id === soapNote.sessionId);
+
+          if (session) {
+            // Check if session already has a claim
+            const existingClaims = await storage.getClaims(session.practiceId || 1);
+            const existingClaim = existingClaims.find((c: any) => c.sessionId === session.id);
+
+            if (!existingClaim) {
+              // Get all CPT codes and ICD-10 codes
+              const cptCodes = await storage.getCptCodes();
+              const icd10Codes = await storage.getIcd10Codes();
+
+              // Get patient to find their insurance
+              const patients = await storage.getPatients(session.practiceId || 1);
+              const patient = patients.find((p: any) => p.id === session.patientId);
+              const insuranceName = patient?.insuranceProvider || 'Unknown Insurance';
+
+              // Get ICD-10 code if assigned
+              const icd10Code = session.icd10CodeId
+                ? icd10Codes.find((i: any) => i.id === session.icd10CodeId)
+                : null;
+
+              // Get insurance rules (would come from database in production)
+              const { rules, preferences } = await getInsuranceBillingRules(storage, null);
+
+              // Use AI to optimize billing codes based on SOAP content and insurance rules
+              console.log(`AI optimizing billing for session ${session.id}, insurance: ${insuranceName}`);
+
+              const optimization = await optimizeBillingCodes(
+                {
+                  duration: session.duration || 45,
+                  subjective: soapNote.subjective,
+                  objective: soapNote.objective,
+                  assessment: soapNote.assessment,
+                  plan: soapNote.plan,
+                  interventions: soapNote.interventions as string[] || [],
+                },
+                cptCodes.map((c: any) => ({
+                  id: c.id,
+                  code: c.code,
+                  description: c.description,
+                  category: c.category,
+                  baseRate: c.baseRate,
+                })),
+                insuranceName,
+                rules,
+                preferences,
+                icd10Code ? { code: icd10Code.code, description: icd10Code.description } : undefined
+              );
+
+              billingOptimization = optimization;
+
+              // Generate claim number
+              const claimNumber = `SB-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+              // Create the claim with AI-optimized total
+              const claim = await storage.createClaim({
+                practiceId: session.practiceId || 1,
+                patientId: session.patientId,
+                sessionId: session.id,
+                insuranceId: null,
+                claimNumber,
+                totalAmount: optimization.estimatedAmount.toFixed(2),
+                status: 'draft',
+                serviceDate: session.sessionDate,
+                aiReviewNotes: `AI Billing Optimization (${optimization.complianceScore}% compliance): ${optimization.optimizationNotes}`,
+              });
+
+              // Create line items for each recommended code
+              const createdLineItems = [];
+              for (const item of optimization.lineItems) {
+                const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
+                const rate = parseFloat(cptCode?.baseRate || '289');
+                const amount = rate * item.units;
+
+                const lineItem = await storage.createClaimLineItem({
+                  claimId: claim.id,
+                  cptCodeId: item.cptCodeId,
+                  icd10CodeId: session.icd10CodeId || null,
+                  units: item.units,
+                  rate: rate.toFixed(2),
+                  amount: amount.toFixed(2),
+                  dateOfService: session.sessionDate,
+                  modifier: item.modifier || null,
+                  notes: item.reasoning,
+                });
+                createdLineItems.push({
+                  ...lineItem,
+                  cptCode: item.cptCode,
+                  description: item.description,
+                  reasoning: item.reasoning,
+                });
+              }
+
+              generatedClaim = {
+                id: claim.id,
+                claimNumber: claim.claimNumber,
+                totalAmount: optimization.estimatedAmount.toFixed(2),
+                lineItems: createdLineItems,
+                optimization: {
+                  totalUnits: optimization.totalUnits,
+                  complianceScore: optimization.complianceScore,
+                  notes: optimization.optimizationNotes,
+                },
+              };
+
+              console.log(`AI-optimized superbill ${claim.claimNumber} for session ${session.id}: ${optimization.lineItems.length} codes, $${optimization.estimatedAmount.toFixed(2)}, ${optimization.complianceScore}% compliance`);
+            }
+          }
+        } catch (claimError) {
+          // Log but don't fail - SOAP note was created successfully
+          console.error('Error auto-generating AI-optimized superbill:', claimError);
+        }
+      }
+
+      res.json({
+        ...soapNote,
+        generatedClaim,
+        billingOptimization,
+      });
     } catch (error) {
       console.error('Error creating SOAP note:', error);
       res.status(500).json({ error: 'Failed to create SOAP note' });
@@ -3546,9 +3713,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create a review request
   app.post('/api/reviews/requests', isAuthenticated, async (req: any, res) => {
     try {
+      // Generate a unique feedback token
+      const crypto = await import('crypto');
+      const feedbackToken = crypto.randomBytes(32).toString('hex');
+
       const data = {
         ...req.body,
         practiceId: req.body.practiceId || 1,
+        feedbackToken,
       };
       const request = await storage.createReviewRequest(data);
       res.status(201).json(request);
@@ -3558,15 +3730,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Send a review request to patient
+  // Send a review request to patient (now sends to feedback page, not Google directly)
   app.post('/api/reviews/requests/:id/send', isAuthenticated, async (req: any, res) => {
     try {
       const requestId = parseInt(req.params.id);
-      const { googleReviewUrl, sendVia } = req.body;
+      const { sendVia } = req.body;
 
       const request = await storage.getReviewRequest(requestId);
       if (!request) {
         return res.status(404).json({ message: 'Review request not found' });
+      }
+
+      // Ensure feedback token exists
+      if (!request.feedbackToken) {
+        const crypto = await import('crypto');
+        const feedbackToken = crypto.randomBytes(32).toString('hex');
+        await storage.updateReviewRequest(requestId, { feedbackToken });
+        request.feedbackToken = feedbackToken;
       }
 
       const patient = await storage.getPatient(request.patientId);
@@ -3577,7 +3757,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const practice = await storage.getPractice(request.practiceId);
       const practiceName = practice?.name || 'Your Practice';
 
-      const { generateReviewRequestMessage } = await import('./services/reviewResponseService');
+      // Build the feedback URL (private feedback page)
+      const baseUrl = process.env.APP_URL || 'http://localhost:5000';
+      const feedbackUrl = `${baseUrl}/feedback/${request.feedbackToken}`;
+
+      const { generateFeedbackRequestMessage } = await import('./services/reviewResponseService');
       const results: { emailSent?: boolean; smsSent?: boolean; errors: string[] } = { errors: [] };
 
       // Send email
@@ -3585,7 +3769,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const { isEmailConfigured } = await import('./email');
           if (isEmailConfigured()) {
-            const message = generateReviewRequestMessage(patient.firstName, practiceName, googleReviewUrl, 'email');
+            const message = generateFeedbackRequestMessage(patient.firstName, practiceName, feedbackUrl, 'email');
             const nodemailer = await import('nodemailer');
             const transporter = nodemailer.createTransport({
               host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -3615,7 +3799,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const { sendSMS, isSMSConfigured } = await import('./services/smsService');
           if (isSMSConfigured()) {
-            const message = generateReviewRequestMessage(patient.firstName, practiceName, googleReviewUrl, 'sms');
+            const message = generateFeedbackRequestMessage(patient.firstName, practiceName, feedbackUrl, 'sms');
             const smsResult = await sendSMS(patient.phone, message.body);
             results.smsSent = smsResult.success;
             if (!smsResult.success) {
@@ -5326,6 +5510,463 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error signing document:', error);
       res.status(500).json({ message: 'Failed to sign document' });
+    }
+  });
+
+  // ==================== PUBLIC FEEDBACK (No Auth Required) ====================
+
+  // Get feedback form data by token
+  app.get('/api/public/feedback/:token', async (req: any, res) => {
+    try {
+      const { token } = req.params;
+      const reviewRequest = await storage.getReviewRequestByToken(token);
+
+      if (!reviewRequest) {
+        return res.status(404).json({ message: 'Feedback request not found or expired' });
+      }
+
+      // Check if feedback already submitted
+      const existingFeedback = await storage.getPatientFeedbackByReviewRequest(reviewRequest.id);
+      if (existingFeedback) {
+        return res.status(400).json({
+          message: 'Feedback already submitted',
+          alreadySubmitted: true
+        });
+      }
+
+      const patient = await storage.getPatient(reviewRequest.patientId);
+      const practice = await storage.getPractice(reviewRequest.practiceId);
+
+      // Mark as clicked
+      if (reviewRequest.status === 'sent') {
+        await storage.updateReviewRequest(reviewRequest.id, {
+          status: 'clicked',
+          clickedAt: new Date(),
+        });
+      }
+
+      res.json({
+        patientFirstName: patient?.firstName || 'Valued Patient',
+        practiceName: practice?.name || 'Our Practice',
+        practiceId: reviewRequest.practiceId,
+      });
+    } catch (error) {
+      console.error('Error fetching feedback form:', error);
+      res.status(500).json({ message: 'Failed to load feedback form' });
+    }
+  });
+
+  // Submit feedback (public - no auth) - FULLY AUTOMATED WORKFLOW
+  app.post('/api/public/feedback/:token', async (req: any, res) => {
+    try {
+      const { token } = req.params;
+      const { rating, feedbackText, serviceRating, staffRating, facilityRating, wouldRecommend } = req.body;
+
+      const reviewRequest = await storage.getReviewRequestByToken(token);
+      if (!reviewRequest) {
+        return res.status(404).json({ message: 'Feedback request not found or expired' });
+      }
+
+      // Check if feedback already submitted
+      const existingFeedback = await storage.getPatientFeedbackByReviewRequest(reviewRequest.id);
+      if (existingFeedback) {
+        return res.status(400).json({ message: 'Feedback already submitted' });
+      }
+
+      // Determine sentiment based on rating
+      let sentiment = 'neutral';
+      if (rating >= 4) sentiment = 'positive';
+      else if (rating <= 2) sentiment = 'negative';
+
+      // Create the feedback
+      const feedback = await storage.createPatientFeedback({
+        practiceId: reviewRequest.practiceId,
+        reviewRequestId: reviewRequest.id,
+        patientId: reviewRequest.patientId,
+        rating,
+        feedbackText,
+        serviceRating,
+        staffRating,
+        facilityRating,
+        wouldRecommend,
+        sentiment,
+      });
+
+      // Update review request status
+      await storage.updateReviewRequest(reviewRequest.id, {
+        status: 'feedback_received',
+        feedbackReceivedAt: new Date(),
+      });
+
+      // Get practice and patient for automated responses
+      const practice = await storage.getPractice(reviewRequest.practiceId);
+      const patient = await storage.getPatient(reviewRequest.patientId);
+      const practiceName = practice?.name || 'Our Practice';
+
+      // ============ AUTOMATED WORKFLOW ============
+      // Process feedback automatically based on sentiment
+
+      if (sentiment === 'negative' && patient?.email) {
+        // NEGATIVE FEEDBACK: AI generates and sends personalized follow-up email
+        try {
+          const { generateNegativeFeedbackResponse } = await import('./services/reviewResponseService');
+          const { isEmailConfigured } = await import('./email');
+
+          if (isEmailConfigured()) {
+            const emailContent = await generateNegativeFeedbackResponse({
+              patientFirstName: patient.firstName,
+              practiceName,
+              practicePhone: practice?.phone || undefined,
+              practiceEmail: practice?.email || undefined,
+              rating,
+              feedbackText,
+            });
+
+            const nodemailer = await import('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: {
+                user: process.env.SMTP_USER || '',
+                pass: process.env.SMTP_PASS || '',
+              },
+            });
+
+            await transporter.sendMail({
+              from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: patient.email,
+              subject: emailContent.subject,
+              html: emailContent.body,
+            });
+
+            // Mark as automatically addressed
+            await storage.updatePatientFeedback(feedback.id, {
+              isAddressed: true,
+              addressedAt: new Date(),
+              addressedBy: 'AI_AUTOMATED',
+              addressNotes: 'Automated AI-generated follow-up email sent to patient.',
+            });
+
+            console.log(`[AUTO] Negative feedback #${feedback.id}: AI follow-up email sent to ${patient.email}`);
+          }
+        } catch (err) {
+          console.error('[AUTO] Failed to send negative feedback response:', err);
+        }
+      } else if (sentiment === 'positive' && practice?.googleReviewUrl && (patient?.email || patient?.phone)) {
+        // POSITIVE FEEDBACK: Automatically request Google review post
+        try {
+          const { generateGooglePostRequestMessage } = await import('./services/reviewResponseService');
+          let googleRequestSent = false;
+
+          // Send via email if available
+          if (patient.email) {
+            try {
+              const { isEmailConfigured } = await import('./email');
+              if (isEmailConfigured()) {
+                const message = generateGooglePostRequestMessage(
+                  patient.firstName,
+                  practiceName,
+                  practice.googleReviewUrl,
+                  'email'
+                );
+
+                const nodemailer = await import('nodemailer');
+                const transporter = nodemailer.createTransport({
+                  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+                  port: parseInt(process.env.SMTP_PORT || '587'),
+                  secure: process.env.SMTP_SECURE === 'true',
+                  auth: {
+                    user: process.env.SMTP_USER || '',
+                    pass: process.env.SMTP_PASS || '',
+                  },
+                });
+
+                await transporter.sendMail({
+                  from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+                  to: patient.email,
+                  subject: message.subject,
+                  html: message.body,
+                });
+
+                googleRequestSent = true;
+                console.log(`[AUTO] Positive feedback #${feedback.id}: Google post request email sent to ${patient.email}`);
+              }
+            } catch (err) {
+              console.error('[AUTO] Email send failed:', err);
+            }
+          }
+
+          // Also send via SMS if available
+          if (patient.phone) {
+            try {
+              const { sendSMS, isSMSConfigured } = await import('./services/smsService');
+              if (isSMSConfigured()) {
+                const message = generateGooglePostRequestMessage(
+                  patient.firstName,
+                  practiceName,
+                  practice.googleReviewUrl,
+                  'sms'
+                );
+                const smsResult = await sendSMS(patient.phone, message.body);
+                if (smsResult.success) {
+                  googleRequestSent = true;
+                  console.log(`[AUTO] Positive feedback #${feedback.id}: Google post request SMS sent to ${patient.phone}`);
+                }
+              }
+            } catch (err) {
+              console.error('[AUTO] SMS send failed:', err);
+            }
+          }
+
+          if (googleRequestSent) {
+            await storage.updatePatientFeedback(feedback.id, {
+              googlePostRequested: true,
+              googlePostRequestedAt: new Date(),
+            });
+
+            await storage.updateReviewRequest(reviewRequest.id, {
+              status: 'google_requested',
+              googleRequestSentAt: new Date(),
+            });
+          }
+        } catch (err) {
+          console.error('[AUTO] Failed to send Google post request:', err);
+        }
+      }
+      // ============ END AUTOMATED WORKFLOW ============
+
+      res.status(201).json({
+        message: 'Thank you for your feedback!',
+        feedbackId: feedback.id,
+        sentiment,
+        // If positive and practice has Google URL, include it for the thank-you page
+        googleReviewUrl: sentiment === 'positive' ? practice?.googleReviewUrl : null,
+      });
+    } catch (error) {
+      console.error('Error submitting feedback:', error);
+      res.status(500).json({ message: 'Failed to submit feedback' });
+    }
+  });
+
+  // ==================== PATIENT FEEDBACK MANAGEMENT (Authenticated) ====================
+
+  // Get all patient feedback for practice
+  app.get('/api/feedback', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const filters = {
+        sentiment: req.query.sentiment as string | undefined,
+        isAddressed: req.query.isAddressed === 'true' ? true : req.query.isAddressed === 'false' ? false : undefined,
+        googlePostRequested: req.query.googlePostRequested === 'true' ? true : req.query.googlePostRequested === 'false' ? false : undefined,
+      };
+      const feedback = await storage.getPatientFeedback(practiceId, filters);
+
+      // Enrich with patient info
+      const enrichedFeedback = await Promise.all(feedback.map(async (fb) => {
+        const patient = await storage.getPatient(fb.patientId);
+        return {
+          ...fb,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
+          patientEmail: patient?.email,
+          patientPhone: patient?.phone,
+        };
+      }));
+
+      res.json(enrichedFeedback);
+    } catch (error) {
+      console.error('Error fetching patient feedback:', error);
+      res.status(500).json({ message: 'Failed to fetch patient feedback' });
+    }
+  });
+
+  // Get feedback stats
+  app.get('/api/feedback/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const stats = await storage.getPatientFeedbackStats(practiceId);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching feedback stats:', error);
+      res.status(500).json({ message: 'Failed to fetch feedback stats' });
+    }
+  });
+
+  // Get single feedback
+  app.get('/api/feedback/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const feedback = await storage.getPatientFeedbackById(parseInt(req.params.id));
+      if (!feedback) {
+        return res.status(404).json({ message: 'Feedback not found' });
+      }
+
+      const patient = await storage.getPatient(feedback.patientId);
+      res.json({
+        ...feedback,
+        patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
+        patientEmail: patient?.email,
+        patientPhone: patient?.phone,
+      });
+    } catch (error) {
+      console.error('Error fetching feedback:', error);
+      res.status(500).json({ message: 'Failed to fetch feedback' });
+    }
+  });
+
+  // Update feedback (mark as addressed, add notes)
+  app.patch('/api/feedback/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const feedback = await storage.updatePatientFeedback(parseInt(req.params.id), req.body);
+      res.json(feedback);
+    } catch (error) {
+      console.error('Error updating feedback:', error);
+      res.status(500).json({ message: 'Failed to update feedback' });
+    }
+  });
+
+  // Mark feedback as addressed
+  app.post('/api/feedback/:id/address', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.id;
+      const { addressNotes } = req.body;
+
+      const feedback = await storage.updatePatientFeedback(parseInt(req.params.id), {
+        isAddressed: true,
+        addressedAt: new Date(),
+        addressedBy: userId,
+        addressNotes,
+      });
+      res.json(feedback);
+    } catch (error) {
+      console.error('Error addressing feedback:', error);
+      res.status(500).json({ message: 'Failed to address feedback' });
+    }
+  });
+
+  // Request Google post for positive feedback
+  app.post('/api/feedback/:id/request-google-post', isAuthenticated, async (req: any, res) => {
+    try {
+      const feedbackId = parseInt(req.params.id);
+      const { sendVia } = req.body;
+
+      const feedback = await storage.getPatientFeedbackById(feedbackId);
+      if (!feedback) {
+        return res.status(404).json({ message: 'Feedback not found' });
+      }
+
+      if (feedback.sentiment !== 'positive') {
+        return res.status(400).json({ message: 'Can only request Google post for positive feedback' });
+      }
+
+      const patient = await storage.getPatient(feedback.patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const practice = await storage.getPractice(feedback.practiceId);
+      if (!practice?.googleReviewUrl) {
+        return res.status(400).json({ message: 'Practice does not have a Google Review URL configured' });
+      }
+
+      const practiceName = practice.name || 'Your Practice';
+      const { generateGooglePostRequestMessage } = await import('./services/reviewResponseService');
+      const results: { emailSent?: boolean; smsSent?: boolean; errors: string[] } = { errors: [] };
+
+      // Send email
+      if ((sendVia === 'email' || sendVia === 'both') && patient.email) {
+        try {
+          const { isEmailConfigured } = await import('./email');
+          if (isEmailConfigured()) {
+            const message = generateGooglePostRequestMessage(patient.firstName, practiceName, practice.googleReviewUrl, 'email');
+            const nodemailer = await import('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: {
+                user: process.env.SMTP_USER || '',
+                pass: process.env.SMTP_PASS || '',
+              },
+            });
+
+            await transporter.sendMail({
+              from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: patient.email,
+              subject: message.subject,
+              html: message.body,
+            });
+            results.emailSent = true;
+          }
+        } catch (err) {
+          results.errors.push(`Email failed: ${(err as Error).message}`);
+        }
+      }
+
+      // Send SMS
+      if ((sendVia === 'sms' || sendVia === 'both') && patient.phone) {
+        try {
+          const { sendSMS, isSMSConfigured } = await import('./services/smsService');
+          if (isSMSConfigured()) {
+            const message = generateGooglePostRequestMessage(patient.firstName, practiceName, practice.googleReviewUrl, 'sms');
+            const smsResult = await sendSMS(patient.phone, message.body);
+            results.smsSent = smsResult.success;
+            if (!smsResult.success) {
+              results.errors.push(`SMS failed: ${smsResult.error}`);
+            }
+          }
+        } catch (err) {
+          results.errors.push(`SMS error: ${(err as Error).message}`);
+        }
+      }
+
+      // Update feedback
+      if (results.emailSent || results.smsSent) {
+        await storage.updatePatientFeedback(feedbackId, {
+          googlePostRequested: true,
+          googlePostRequestedAt: new Date(),
+        });
+
+        // Also update the review request
+        const reviewRequest = await storage.getReviewRequest(feedback.reviewRequestId);
+        if (reviewRequest) {
+          await storage.updateReviewRequest(reviewRequest.id, {
+            status: 'google_requested',
+            googleRequestSentAt: new Date(),
+          });
+        }
+      }
+
+      res.json({
+        message: 'Google post request sent',
+        ...results,
+      });
+    } catch (error) {
+      console.error('Error requesting Google post:', error);
+      res.status(500).json({ message: 'Failed to request Google post' });
+    }
+  });
+
+  // Mark feedback as posted to Google
+  app.post('/api/feedback/:id/mark-posted', isAuthenticated, async (req: any, res) => {
+    try {
+      const feedback = await storage.updatePatientFeedback(parseInt(req.params.id), {
+        postedToGoogle: true,
+        postedToGoogleAt: new Date(),
+      });
+
+      // Update review request status
+      const reviewRequest = await storage.getReviewRequest(feedback.reviewRequestId);
+      if (reviewRequest) {
+        await storage.updateReviewRequest(reviewRequest.id, {
+          status: 'reviewed',
+          reviewedAt: new Date(),
+        });
+      }
+
+      res.json(feedback);
+    } catch (error) {
+      console.error('Error marking as posted:', error);
+      res.status(500).json({ message: 'Failed to mark as posted' });
     }
   });
 

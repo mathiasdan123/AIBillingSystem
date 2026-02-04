@@ -33,6 +33,7 @@ import Messages from "@/pages/messages";
 import PatientPortal from "@/pages/patient-portal";
 import MfaChallenge from "@/pages/mfa-challenge";
 import OutcomeMeasures from "@/pages/outcome-measures";
+import PublicFeedback from "@/pages/public-feedback";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 
@@ -58,6 +59,7 @@ function Router() {
         <Route path="/join/:code" component={TelehealthJoin} />
         <Route path="/portal" component={PatientPortal} />
         <Route path="/portal/login/:token" component={PatientPortal} />
+        <Route path="/feedback/:token" component={PublicFeedback} />
         <Route component={NotFound} />
       </Switch>
     );
@@ -93,6 +95,7 @@ function Router() {
         {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
         <Route path="/invite/:token" component={InvitePage} />
         <Route path="/mfa-challenge" component={MfaChallenge} />
+        <Route path="/feedback/:token" component={PublicFeedback} />
         <Route component={NotFound} />
       </Switch>
     </>

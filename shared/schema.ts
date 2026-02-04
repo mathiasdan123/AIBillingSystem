@@ -59,6 +59,8 @@ export const practices = pgTable("practices", {
   brandEmailReplyTo: varchar("brand_email_reply_to"),
   brandWebsiteUrl: varchar("brand_website_url"),
   brandPrivacyPolicyUrl: varchar("brand_privacy_policy_url"),
+  // Review collection settings
+  googleReviewUrl: varchar("google_review_url"), // URL for Google Business Profile reviews
   // Additional practice fields
   monthlyClaimsVolume: integer("monthly_claims_volume"),
   professionalLicense: varchar("professional_license"),
@@ -114,6 +116,38 @@ export const insurances = pgTable("insurances", {
   claimSubmissionConfig: jsonb("claim_submission_config"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Insurance Billing Rules - stores payer-specific billing constraints
+export const insuranceBillingRules = pgTable("insurance_billing_rules", {
+  id: serial("id").primaryKey(),
+  insuranceId: integer("insurance_id").references(() => insurances.id).notNull(),
+  cptCodeId: integer("cpt_code_id").references(() => cptCodes.id),
+  maxUnitsPerVisit: integer("max_units_per_visit"), // e.g., 1 unit per code per visit
+  maxUnitsPerDay: integer("max_units_per_day"),
+  maxUnitsPerWeek: integer("max_units_per_week"),
+  requiresModifier: varchar("requires_modifier"), // e.g., "59", "GP"
+  cannotBillWith: jsonb("cannot_bill_with"), // array of CPT code IDs that can't be billed together
+  requiresPriorAuth: boolean("requires_prior_auth").default(false),
+  requiresMedicalNecessity: boolean("requires_medical_necessity").default(true),
+  notes: text("notes"), // additional billing guidance
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Insurance general billing preferences
+export const insuranceBillingPreferences = pgTable("insurance_billing_preferences", {
+  id: serial("id").primaryKey(),
+  insuranceId: integer("insurance_id").references(() => insurances.id).notNull().unique(),
+  maxTotalUnitsPerVisit: integer("max_total_units_per_visit"), // e.g., 4 units total
+  preferredCodeCombinations: jsonb("preferred_code_combinations"), // suggested code pairings
+  avoidCodeCombinations: jsonb("avoid_code_combinations"), // codes to avoid billing together
+  billingGuidelines: text("billing_guidelines"), // free-text guidelines for AI
+  reimbursementTier: varchar("reimbursement_tier"), // high, medium, low
+  averageReimbursementRate: decimal("average_reimbursement_rate", { precision: 5, scale: 2 }), // percentage of billed
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // CPT Codes for OT services
@@ -370,16 +404,47 @@ export const reviewRequests = pgTable("review_requests", {
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
   appointmentId: integer("appointment_id").references(() => appointments.id),
-  status: varchar("status").default("pending"), // pending, sent, clicked, reviewed, declined
+  feedbackToken: varchar("feedback_token").unique(), // unique token for feedback link
+  status: varchar("status").default("pending"), // pending, sent, clicked, feedback_received, google_requested, reviewed, declined
   sentVia: varchar("sent_via"), // email, sms, both
   emailSent: boolean("email_sent").default(false),
   smsSent: boolean("sms_sent").default(false),
   sentAt: timestamp("sent_at"),
   clickedAt: timestamp("clicked_at"), // when they clicked the review link
+  feedbackReceivedAt: timestamp("feedback_received_at"), // when they submitted private feedback
+  googleRequestSentAt: timestamp("google_request_sent_at"), // when we asked them to post to Google
   reviewedAt: timestamp("reviewed_at"), // when we detected they left a review
   declinedAt: timestamp("declined_at"),
   declineReason: varchar("decline_reason"),
   notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Patient Feedback - private feedback before Google review
+export const patientFeedback = pgTable("patient_feedback", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  reviewRequestId: integer("review_request_id").references(() => reviewRequests.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  rating: integer("rating").notNull(), // 1-5 stars
+  feedbackText: text("feedback_text"),
+  // Categorized feedback
+  serviceRating: integer("service_rating"), // 1-5
+  staffRating: integer("staff_rating"), // 1-5
+  facilityRating: integer("facility_rating"), // 1-5
+  wouldRecommend: boolean("would_recommend"),
+  // Processing
+  sentiment: varchar("sentiment"), // positive, neutral, negative (auto-calculated from rating)
+  isAddressed: boolean("is_addressed").default(false), // for negative feedback
+  addressedAt: timestamp("addressed_at"),
+  addressedBy: varchar("addressed_by").references(() => users.id),
+  addressNotes: text("address_notes"),
+  // Google posting
+  googlePostRequested: boolean("google_post_requested").default(false),
+  googlePostRequestedAt: timestamp("google_post_requested_at"),
+  postedToGoogle: boolean("posted_to_google").default(false),
+  postedToGoogleAt: timestamp("posted_to_google_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1090,6 +1155,15 @@ export const insertGoogleReviewSchema = createInsertSchema(googleReviews).omit({
 });
 export type GoogleReview = typeof googleReviews.$inferSelect;
 export type InsertGoogleReview = z.infer<typeof insertGoogleReviewSchema>;
+
+// Patient Feedback insert schema
+export const insertPatientFeedbackSchema = createInsertSchema(patientFeedback).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type PatientFeedback = typeof patientFeedback.$inferSelect;
+export type InsertPatientFeedback = z.infer<typeof insertPatientFeedbackSchema>;
 
 // Appointment Type insert schema
 export const insertAppointmentTypeSchema = createInsertSchema(appointmentTypes).omit({

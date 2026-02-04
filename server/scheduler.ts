@@ -623,6 +623,7 @@ export function startScheduler() {
   const automatedReviewRequestTask = cron.schedule('0 10 * * *', async () => {
     try {
       logger.info('Starting automated review request processing');
+      const crypto = await import('crypto');
 
       const practiceIds = [1]; // TODO: iterate through actual practices
 
@@ -631,14 +632,6 @@ export function startScheduler() {
         const practice = await storage.getPractice(practiceId);
         if (!practice) continue;
 
-        // Get Google review URL from practice settings (would need to be stored)
-        // For now, use a placeholder that should be configured per practice
-        const googleReviewUrl = process.env.GOOGLE_REVIEW_URL || '';
-        if (!googleReviewUrl) {
-          logger.warn('No Google review URL configured, skipping review requests', { practiceId });
-          continue;
-        }
-
         // Find eligible appointments (completed 24-48 hours ago, no review request sent)
         const eligibleAppointments = await storage.getPatientsEligibleForReview(practiceId);
         logger.info('Found appointments eligible for review request', {
@@ -646,7 +639,8 @@ export function startScheduler() {
           count: eligibleAppointments.length
         });
 
-        const { generateReviewRequestMessage } = await import('./services/reviewResponseService');
+        const { generateFeedbackRequestMessage } = await import('./services/reviewResponseService');
+        const baseUrl = process.env.APP_URL || 'http://localhost:5000';
 
         for (const appointment of eligibleAppointments) {
           try {
@@ -672,11 +666,16 @@ export function startScheduler() {
               continue;
             }
 
-            // Create the review request record
+            // Generate unique feedback token
+            const feedbackToken = crypto.randomBytes(32).toString('hex');
+            const feedbackUrl = `${baseUrl}/feedback/${feedbackToken}`;
+
+            // Create the review request record with feedback token
             const reviewRequest = await storage.createReviewRequest({
               practiceId,
               patientId: patient.id,
               appointmentId: appointment.appointmentId,
+              feedbackToken,
               status: 'pending',
               emailSent: false,
               smsSent: false,
@@ -685,12 +684,12 @@ export function startScheduler() {
             let emailSent = false;
             let smsSent = false;
 
-            // Send email
+            // Send email with feedback link (not Google link)
             if (canEmail && patient.email) {
               try {
                 const { isEmailConfigured } = await import('./email');
                 if (isEmailConfigured()) {
-                  const message = generateReviewRequestMessage(patient.firstName, practice.name, googleReviewUrl, 'email');
+                  const message = generateFeedbackRequestMessage(patient.firstName, practice.name, feedbackUrl, 'email');
                   const nodemailer = await import('nodemailer');
                   const transporter = nodemailer.createTransport({
                     host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -715,7 +714,7 @@ export function startScheduler() {
               }
             }
 
-            // Send SMS
+            // Send SMS with feedback link
             if (canSms && patient.phone) {
               try {
                 const twilioSid = process.env.TWILIO_ACCOUNT_SID;
@@ -725,7 +724,7 @@ export function startScheduler() {
                 if (twilioSid && twilioToken && twilioPhone) {
                   const twilio = await import('twilio');
                   const client = twilio.default(twilioSid, twilioToken);
-                  const message = generateReviewRequestMessage(patient.firstName, practice.name, googleReviewUrl, 'sms');
+                  const message = generateFeedbackRequestMessage(patient.firstName, practice.name, feedbackUrl, 'sms');
 
                   await client.messages.create({
                     body: message.body,
@@ -748,10 +747,11 @@ export function startScheduler() {
                 sentVia: emailSent && smsSent ? 'both' : emailSent ? 'email' : 'sms',
                 sentAt: new Date(),
               });
-              logger.info('Review request sent', {
+              logger.info('Automated review request sent', {
                 patientId: patient.id,
                 emailSent,
                 smsSent,
+                feedbackToken: feedbackToken.substring(0, 8) + '...',
               });
             }
           } catch (err: any) {
@@ -817,10 +817,11 @@ export async function triggerHardDeletionNow(): Promise<{ deletedCount: number; 
   return { deletedCount: expiredPatients.length - errors.length, errors };
 }
 
-// Manual trigger for review requests
+// Manual trigger for review requests (uses automated feedback flow)
 export async function triggerReviewRequestsNow(practiceId: number = 1): Promise<{ sent: number; errors: string[] }> {
   const errors: string[] = [];
   let sent = 0;
+  const crypto = await import('crypto');
 
   try {
     const practice = await storage.getPractice(practiceId);
@@ -828,13 +829,9 @@ export async function triggerReviewRequestsNow(practiceId: number = 1): Promise<
       return { sent: 0, errors: ['Practice not found'] };
     }
 
-    const googleReviewUrl = process.env.GOOGLE_REVIEW_URL || '';
-    if (!googleReviewUrl) {
-      return { sent: 0, errors: ['No Google review URL configured'] };
-    }
-
     const eligibleAppointments = await storage.getPatientsEligibleForReview(practiceId);
-    const { generateReviewRequestMessage } = await import('./services/reviewResponseService');
+    const { generateFeedbackRequestMessage } = await import('./services/reviewResponseService');
+    const baseUrl = process.env.APP_URL || 'http://localhost:5000';
 
     for (const appointment of eligibleAppointments) {
       try {
@@ -851,10 +848,15 @@ export async function triggerReviewRequestsNow(practiceId: number = 1): Promise<
         const canEmail = patient.email && patient.preferredContactMethod !== 'sms';
         if (!canEmail) continue;
 
+        // Generate feedback token and URL
+        const feedbackToken = crypto.randomBytes(32).toString('hex');
+        const feedbackUrl = `${baseUrl}/feedback/${feedbackToken}`;
+
         const reviewRequest = await storage.createReviewRequest({
           practiceId,
           patientId: patient.id,
           appointmentId: appointment.appointmentId,
+          feedbackToken,
           status: 'pending',
           emailSent: false,
           smsSent: false,
@@ -862,7 +864,7 @@ export async function triggerReviewRequestsNow(practiceId: number = 1): Promise<
 
         const { isEmailConfigured } = await import('./email');
         if (isEmailConfigured() && patient.email) {
-          const message = generateReviewRequestMessage(patient.firstName, practice.name, googleReviewUrl, 'email');
+          const message = generateFeedbackRequestMessage(patient.firstName, practice.name, feedbackUrl, 'email');
           const nodemailer = await import('nodemailer');
           const transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',

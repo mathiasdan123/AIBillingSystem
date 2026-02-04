@@ -46,6 +46,13 @@ import {
   ThumbsUp,
   ThumbsDown,
   Minus,
+  AlertCircle,
+  CheckCheck,
+  Mail,
+  Phone,
+  Settings,
+  Link,
+  Save,
 } from "lucide-react";
 
 interface ReviewRequest {
@@ -87,6 +94,44 @@ interface Patient {
   phone?: string;
 }
 
+interface PatientFeedback {
+  id: number;
+  practiceId: number;
+  reviewRequestId: number;
+  patientId: number;
+  rating: number;
+  feedbackText?: string;
+  serviceRating?: number;
+  staffRating?: number;
+  facilityRating?: number;
+  wouldRecommend?: boolean;
+  sentiment?: string;
+  isAddressed: boolean;
+  addressedAt?: string;
+  addressedBy?: string;
+  addressNotes?: string;
+  googlePostRequested: boolean;
+  googlePostRequestedAt?: string;
+  postedToGoogle: boolean;
+  postedToGoogleAt?: string;
+  createdAt: string;
+  // Enriched fields
+  patientName?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+}
+
+interface FeedbackStats {
+  totalFeedback: number;
+  positiveCount: number;
+  neutralCount: number;
+  negativeCount: number;
+  unaddressedNegative: number;
+  googlePostsPending: number;
+  googlePostsCompleted: number;
+  averageRating: number;
+}
+
 interface ReviewStats {
   requests: {
     totalSent: number;
@@ -125,10 +170,14 @@ export default function ReviewsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedReview, setSelectedReview] = useState<GoogleReview | null>(null);
+  const [selectedFeedback, setSelectedFeedback] = useState<PatientFeedback | null>(null);
   const [isAddReviewOpen, setIsAddReviewOpen] = useState(false);
   const [isSendRequestOpen, setIsSendRequestOpen] = useState(false);
   const [responseFilter, setResponseFilter] = useState<string>("all");
+  const [feedbackFilter, setFeedbackFilter] = useState<string>("all");
   const [editedResponse, setEditedResponse] = useState("");
+  const [addressNotes, setAddressNotes] = useState("");
+  const [googleReviewUrl, setGoogleReviewUrl] = useState("");
 
   // Fetch stats
   const { data: stats } = useQuery<ReviewStats>({
@@ -171,6 +220,122 @@ export default function ReviewsPage() {
       const res = await fetch("/api/patients?practiceId=1");
       if (!res.ok) throw new Error("Failed to fetch patients");
       return res.json();
+    },
+  });
+
+  // Fetch patient feedback
+  const { data: feedback = [], isLoading: feedbackLoading } = useQuery<PatientFeedback[]>({
+    queryKey: ["/api/feedback", feedbackFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams({ practiceId: "1" });
+      if (feedbackFilter !== "all") {
+        params.append("sentiment", feedbackFilter);
+      }
+      const res = await fetch(`/api/feedback?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch feedback");
+      return res.json();
+    },
+  });
+
+  // Fetch feedback stats
+  const { data: feedbackStats } = useQuery<FeedbackStats>({
+    queryKey: ["/api/feedback/stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/feedback/stats?practiceId=1");
+      if (!res.ok) throw new Error("Failed to fetch feedback stats");
+      return res.json();
+    },
+  });
+
+  // Fetch practice settings (for Google Review URL)
+  const { data: practice } = useQuery<{ id: number; name: string; googleReviewUrl?: string }>({
+    queryKey: ["/api/practices/1"],
+    queryFn: async () => {
+      const res = await fetch("/api/practices/1");
+      if (!res.ok) throw new Error("Failed to fetch practice");
+      return res.json();
+    },
+    onSuccess: (data: { googleReviewUrl?: string }) => {
+      if (data?.googleReviewUrl) {
+        setGoogleReviewUrl(data.googleReviewUrl);
+      }
+    },
+  } as any);
+
+  // Update Google Review URL mutation
+  const updateGoogleUrl = useMutation({
+    mutationFn: async (url: string) => {
+      const res = await fetch("/api/practices/1", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ googleReviewUrl: url }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/practices/1"] });
+      toast({ title: "Google Review URL saved!" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to save URL", variant: "destructive" });
+    },
+  });
+
+  // Address feedback mutation
+  const addressFeedback = useMutation({
+    mutationFn: async ({ id, notes }: { id: number; notes: string }) => {
+      const res = await fetch(`/api/feedback/${id}/address`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addressNotes: notes }),
+      });
+      if (!res.ok) throw new Error("Failed to address feedback");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback/stats"] });
+      setSelectedFeedback(null);
+      setAddressNotes("");
+      toast({ title: "Feedback addressed" });
+    },
+  });
+
+  // Request Google post mutation
+  const requestGooglePost = useMutation({
+    mutationFn: async ({ id, sendVia }: { id: number; sendVia: string }) => {
+      const res = await fetch(`/api/feedback/${id}/request-google-post`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sendVia }),
+      });
+      if (!res.ok) throw new Error("Failed to request Google post");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback/stats"] });
+      toast({
+        title: "Google post request sent",
+        description: data.emailSent ? "Email sent" : data.smsSent ? "SMS sent" : undefined,
+      });
+    },
+  });
+
+  // Mark as posted to Google mutation
+  const markPostedToGoogle = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/feedback/${id}/mark-posted`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to mark as posted");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feedback/stats"] });
+      toast({ title: "Marked as posted to Google" });
     },
   });
 
@@ -439,12 +604,160 @@ export default function ReviewsPage() {
         </Card>
       </div>
 
-      {/* Tabs for Reviews and Requests */}
-      <Tabs defaultValue="reviews" className="space-y-4">
+      {/* Tabs for Feedback, Reviews and Requests */}
+      <Tabs defaultValue="feedback" className="space-y-4">
         <TabsList>
+          <TabsTrigger value="feedback">Patient Feedback</TabsTrigger>
           <TabsTrigger value="reviews">Google Reviews</TabsTrigger>
           <TabsTrigger value="requests">Review Requests</TabsTrigger>
+          <TabsTrigger value="settings">
+            <Settings className="h-4 w-4 mr-1" />
+            Settings
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="feedback" className="space-y-4">
+          {/* Feedback Stats */}
+          {feedbackStats && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-blue-500" />
+                    <span className="text-sm text-muted-foreground">Total Feedback</span>
+                  </div>
+                  <p className="text-2xl font-bold">{feedbackStats.totalFeedback}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="flex items-center gap-2">
+                    <ThumbsUp className="h-4 w-4 text-green-500" />
+                    <span className="text-sm text-muted-foreground">Positive</span>
+                  </div>
+                  <p className="text-2xl font-bold text-green-600">{feedbackStats.positiveCount}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-500" />
+                    <span className="text-sm text-muted-foreground">Needs Attention</span>
+                  </div>
+                  <p className="text-2xl font-bold text-red-600">{feedbackStats.unaddressedNegative}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="flex items-center gap-2">
+                    <Star className="h-4 w-4 text-yellow-500" />
+                    <span className="text-sm text-muted-foreground">Avg Rating</span>
+                  </div>
+                  <p className="text-2xl font-bold">{feedbackStats.averageRating}</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Filter */}
+          <div className="flex gap-4 items-center">
+            <Label>Filter by sentiment:</Label>
+            <Select value={feedbackFilter} onValueChange={setFeedbackFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="positive">Positive</SelectItem>
+                <SelectItem value="neutral">Neutral</SelectItem>
+                <SelectItem value="negative">Negative</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Feedback List */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Patient Feedback</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {feedbackLoading ? (
+                <p className="text-center py-8 text-muted-foreground">Loading...</p>
+              ) : feedback.length === 0 ? (
+                <p className="text-center py-8 text-muted-foreground">
+                  No patient feedback received yet. Send review requests to collect feedback.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {feedback.map((fb) => (
+                    <div
+                      key={fb.id}
+                      className={`p-4 border rounded-lg hover:bg-muted/50 cursor-pointer ${
+                        fb.sentiment === 'negative' && !fb.isAddressed ? 'border-red-300 bg-red-50' : ''
+                      }`}
+                      onClick={() => setSelectedFeedback(fb)}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-3">
+                            <span className="font-medium">{fb.patientName}</span>
+                            {fb.rating && renderStars(fb.rating)}
+                            {fb.sentiment && (
+                              <Badge className={`${SENTIMENT_COLORS[fb.sentiment]?.bg} ${SENTIMENT_COLORS[fb.sentiment]?.text}`}>
+                                <span className="flex items-center gap-1">
+                                  {SENTIMENT_COLORS[fb.sentiment]?.icon}
+                                  {fb.sentiment}
+                                </span>
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground line-clamp-2">
+                            {fb.feedbackText || "No comments provided"}
+                          </p>
+                          <div className="flex gap-2">
+                            {fb.wouldRecommend === true && (
+                              <Badge variant="outline" className="text-xs text-green-600 border-green-300">
+                                Would recommend
+                              </Badge>
+                            )}
+                            {fb.wouldRecommend === false && (
+                              <Badge variant="outline" className="text-xs text-red-600 border-red-300">
+                                Would not recommend
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          {fb.sentiment === 'negative' && !fb.isAddressed && (
+                            <Badge className="bg-red-100 text-red-800">Needs attention</Badge>
+                          )}
+                          {fb.isAddressed && (
+                            <Badge className="bg-green-100 text-green-800">
+                              <CheckCheck className="h-3 w-3 mr-1" />
+                              Addressed
+                            </Badge>
+                          )}
+                          {fb.googlePostRequested && !fb.postedToGoogle && (
+                            <Badge className="bg-blue-100 text-blue-800">Google request sent</Badge>
+                          )}
+                          {fb.postedToGoogle && (
+                            <Badge className="bg-green-100 text-green-800">
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              Posted to Google
+                            </Badge>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(fb.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="reviews" className="space-y-4">
           {/* Filter */}
@@ -586,6 +899,70 @@ export default function ReviewsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="settings" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Link className="h-5 w-5" />
+                Google Review URL
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="googleReviewUrl">Your Google Review Link</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="googleReviewUrl"
+                    value={googleReviewUrl}
+                    onChange={(e) => setGoogleReviewUrl(e.target.value)}
+                    placeholder="https://g.page/r/your-business-id/review"
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={() => updateGoogleUrl.mutate(googleReviewUrl)}
+                    disabled={updateGoogleUrl.isPending}
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {updateGoogleUrl.isPending ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  This URL is used when sending review requests to patients. When they click the link, they'll be taken directly to your Google review page.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                <h4 className="font-medium text-blue-900">How to get your Google Review URL:</h4>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-blue-800">
+                  <li>Go to <a href="https://business.google.com" target="_blank" rel="noopener noreferrer" className="underline">Google Business Profile</a></li>
+                  <li>Click on your business</li>
+                  <li>Click "Get more reviews" or find "Share review form"</li>
+                  <li>Copy the link and paste it above</li>
+                </ol>
+                <p className="text-xs text-blue-700">
+                  The URL usually looks like: https://g.page/r/XXXXX/review
+                </p>
+              </div>
+
+              {googleReviewUrl && (
+                <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <CheckCircle className="h-5 w-5 text-green-600" />
+                  <span className="text-green-800">Google Review URL is configured</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => window.open(googleReviewUrl, '_blank')}
+                    className="ml-auto"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-1" />
+                    Test Link
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Review Detail Sheet */}
@@ -720,6 +1097,230 @@ export default function ReviewsPage() {
                     </div>
                   )}
                 </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Feedback Detail Sheet */}
+      <Sheet open={!!selectedFeedback} onOpenChange={() => {
+        setSelectedFeedback(null);
+        setAddressNotes("");
+      }}>
+        <SheetContent className="w-[500px] sm:w-[640px] overflow-y-auto">
+          {selectedFeedback && (
+            <>
+              <SheetHeader>
+                <SheetTitle>Feedback from {selectedFeedback.patientName}</SheetTitle>
+                <SheetDescription>
+                  Received {new Date(selectedFeedback.createdAt).toLocaleDateString()}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="mt-6 space-y-6">
+                {/* Overall Rating */}
+                <div className="flex items-center gap-3">
+                  {selectedFeedback.rating && renderStars(selectedFeedback.rating)}
+                  {selectedFeedback.sentiment && (
+                    <Badge className={`${SENTIMENT_COLORS[selectedFeedback.sentiment]?.bg} ${SENTIMENT_COLORS[selectedFeedback.sentiment]?.text}`}>
+                      {selectedFeedback.sentiment}
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Detailed Ratings */}
+                {(selectedFeedback.serviceRating || selectedFeedback.staffRating || selectedFeedback.facilityRating) && (
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Detailed Ratings</h4>
+                    <div className="grid grid-cols-3 gap-4">
+                      {selectedFeedback.serviceRating && (
+                        <div className="text-center p-2 bg-muted rounded">
+                          <p className="text-xs text-muted-foreground">Service</p>
+                          <p className="font-bold">{selectedFeedback.serviceRating}/5</p>
+                        </div>
+                      )}
+                      {selectedFeedback.staffRating && (
+                        <div className="text-center p-2 bg-muted rounded">
+                          <p className="text-xs text-muted-foreground">Staff</p>
+                          <p className="font-bold">{selectedFeedback.staffRating}/5</p>
+                        </div>
+                      )}
+                      {selectedFeedback.facilityRating && (
+                        <div className="text-center p-2 bg-muted rounded">
+                          <p className="text-xs text-muted-foreground">Facility</p>
+                          <p className="font-bold">{selectedFeedback.facilityRating}/5</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Would Recommend */}
+                {selectedFeedback.wouldRecommend !== null && (
+                  <div className="flex items-center gap-2">
+                    {selectedFeedback.wouldRecommend ? (
+                      <>
+                        <ThumbsUp className="h-5 w-5 text-green-500" />
+                        <span className="text-green-700">Would recommend to others</span>
+                      </>
+                    ) : (
+                      <>
+                        <ThumbsDown className="h-5 w-5 text-red-500" />
+                        <span className="text-red-700">Would not recommend</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Feedback Text */}
+                <div className="space-y-2">
+                  <h4 className="font-medium">Comments</h4>
+                  <p className="text-sm bg-muted p-3 rounded-lg">
+                    {selectedFeedback.feedbackText || "No comments provided"}
+                  </p>
+                </div>
+
+                {/* Patient Contact Info */}
+                <div className="space-y-2">
+                  <h4 className="font-medium">Patient Contact</h4>
+                  <div className="flex flex-col gap-1 text-sm">
+                    {selectedFeedback.patientEmail && (
+                      <div className="flex items-center gap-2">
+                        <Mail className="h-4 w-4 text-muted-foreground" />
+                        {selectedFeedback.patientEmail}
+                      </div>
+                    )}
+                    {selectedFeedback.patientPhone && (
+                      <div className="flex items-center gap-2">
+                        <Phone className="h-4 w-4 text-muted-foreground" />
+                        {selectedFeedback.patientPhone}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Actions for Negative Feedback */}
+                {selectedFeedback.sentiment === 'negative' && !selectedFeedback.isAddressed && (
+                  <div className="space-y-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-red-800">
+                      <AlertCircle className="h-5 w-5" />
+                      <h4 className="font-medium">This feedback needs attention</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Resolution Notes</Label>
+                      <Textarea
+                        value={addressNotes}
+                        onChange={(e) => setAddressNotes(e.target.value)}
+                        placeholder="Describe how you addressed this feedback..."
+                        rows={3}
+                      />
+                    </div>
+                    <Button
+                      onClick={() => addressFeedback.mutate({ id: selectedFeedback.id, notes: addressNotes })}
+                      disabled={addressFeedback.isPending}
+                      className="w-full"
+                    >
+                      <CheckCheck className="mr-2 h-4 w-4" />
+                      Mark as Addressed
+                    </Button>
+                  </div>
+                )}
+
+                {/* Addressed Status */}
+                {selectedFeedback.isAddressed && (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-green-800 mb-2">
+                      <CheckCheck className="h-5 w-5" />
+                      <h4 className="font-medium">Addressed</h4>
+                    </div>
+                    {selectedFeedback.addressNotes && (
+                      <p className="text-sm text-green-700">{selectedFeedback.addressNotes}</p>
+                    )}
+                    {selectedFeedback.addressedAt && (
+                      <p className="text-xs text-green-600 mt-2">
+                        {new Date(selectedFeedback.addressedAt).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Actions for Positive Feedback */}
+                {selectedFeedback.sentiment === 'positive' && (
+                  <div className="space-y-4">
+                    {!selectedFeedback.googlePostRequested && !selectedFeedback.postedToGoogle && (
+                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h4 className="font-medium text-blue-800 mb-3">
+                          Request Google Review
+                        </h4>
+                        <p className="text-sm text-blue-700 mb-4">
+                          This patient had a positive experience! Ask them to share it on Google.
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => requestGooglePost.mutate({ id: selectedFeedback.id, sendVia: 'email' })}
+                            disabled={!selectedFeedback.patientEmail || requestGooglePost.isPending}
+                          >
+                            <Mail className="mr-2 h-4 w-4" />
+                            Send Email
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => requestGooglePost.mutate({ id: selectedFeedback.id, sendVia: 'sms' })}
+                            disabled={!selectedFeedback.patientPhone || requestGooglePost.isPending}
+                          >
+                            <Phone className="mr-2 h-4 w-4" />
+                            Send SMS
+                          </Button>
+                          <Button
+                            onClick={() => requestGooglePost.mutate({ id: selectedFeedback.id, sendVia: 'both' })}
+                            disabled={(!selectedFeedback.patientEmail && !selectedFeedback.patientPhone) || requestGooglePost.isPending}
+                          >
+                            <Send className="mr-2 h-4 w-4" />
+                            Send Both
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedFeedback.googlePostRequested && !selectedFeedback.postedToGoogle && (
+                      <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="font-medium text-yellow-800">Google Post Requested</h4>
+                            <p className="text-sm text-yellow-700">
+                              Sent {selectedFeedback.googlePostRequestedAt
+                                ? new Date(selectedFeedback.googlePostRequestedAt).toLocaleDateString()
+                                : 'recently'}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            onClick={() => markPostedToGoogle.mutate(selectedFeedback.id)}
+                            disabled={markPostedToGoogle.isPending}
+                          >
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            Mark as Posted
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedFeedback.postedToGoogle && (
+                      <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="flex items-center gap-2 text-green-800">
+                          <ExternalLink className="h-5 w-5" />
+                          <h4 className="font-medium">Posted to Google</h4>
+                        </div>
+                        {selectedFeedback.postedToGoogleAt && (
+                          <p className="text-sm text-green-700 mt-1">
+                            {new Date(selectedFeedback.postedToGoogleAt).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}

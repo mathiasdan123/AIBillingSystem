@@ -69,6 +69,8 @@ export default function Claims() {
   const [claimAppeals, setClaimAppeals] = useState<any[]>([]);
   const [loadingAppeals, setLoadingAppeals] = useState(false);
   const [showAppealLetter, setShowAppealLetter] = useState(false);
+  const [claimLineItems, setClaimLineItems] = useState<any[]>([]);
+  const [loadingLineItems, setLoadingLineItems] = useState(false);
 
   // Superbill creation state
   const [superbillPatient, setSuperbillPatient] = useState("");
@@ -380,6 +382,20 @@ export default function Claims() {
     },
   });
 
+  // Fetch line items for a claim
+  const fetchLineItems = async (claimId: number) => {
+    setLoadingLineItems(true);
+    try {
+      const response = await apiRequest("GET", `/api/claims/${claimId}/line-items`);
+      const data = await response.json();
+      setClaimLineItems(data);
+    } catch (error) {
+      console.error('Error fetching line items:', error);
+      setClaimLineItems([]);
+    }
+    setLoadingLineItems(false);
+  };
+
   // Fetch appeals for a claim
   const fetchAppeals = async (claimId: number) => {
     setLoadingAppeals(true);
@@ -541,6 +557,8 @@ export default function Claims() {
     setSelectedClaim(claim);
     setShowDetailDialog(true);
     setShowAppealLetter(false);
+    // Always fetch line items
+    fetchLineItems(claim.id);
     // Fetch appeals for denied claims
     if (claim.status === 'denied') {
       fetchAppeals(claim.id);
@@ -1145,7 +1163,7 @@ export default function Claims() {
 
       {/* Claim Detail Dialog */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Claim Details</DialogTitle>
             <DialogDescription>
@@ -1183,6 +1201,81 @@ export default function Claims() {
                   <div>
                     <Label className="text-slate-500">AI Review Score</Label>
                     <p className="font-medium">{parseFloat(selectedClaim.aiReviewScore).toFixed(0)}%</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Line Items / Superbill Details */}
+              <div className="border-t pt-4">
+                <Label className="text-slate-700 text-base font-semibold flex items-center gap-2 mb-3">
+                  <FileText className="w-4 h-4" />
+                  Bill Line Items
+                </Label>
+                {loadingLineItems ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                  </div>
+                ) : claimLineItems.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="bg-slate-50 rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="text-left p-2 font-medium text-slate-600">CPT Code</th>
+                            <th className="text-left p-2 font-medium text-slate-600">Description</th>
+                            <th className="text-center p-2 font-medium text-slate-600">Units</th>
+                            <th className="text-right p-2 font-medium text-slate-600">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {claimLineItems.map((item: any, index: number) => (
+                            <tr key={index} className="border-t border-slate-200">
+                              <td className="p-2">
+                                <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                                  {item.cptCode?.code || item.cptCodeId}
+                                </span>
+                              </td>
+                              <td className="p-2 text-slate-600">
+                                {item.cptCode?.description || 'N/A'}
+                              </td>
+                              <td className="p-2 text-center">{item.units || 1}</td>
+                              <td className="p-2 text-right font-medium">
+                                ${parseFloat(item.amount || item.chargeAmount || '0').toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="border-t-2 border-slate-300 bg-slate-100">
+                          <tr>
+                            <td colSpan={3} className="p-2 text-right font-semibold">Total:</td>
+                            <td className="p-2 text-right font-bold text-green-600">
+                              ${parseFloat(selectedClaim.totalAmount).toFixed(2)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* ICD-10 Diagnosis Codes */}
+                    {claimLineItems.some((item: any) => item.icd10Code) && (
+                      <div className="mt-3">
+                        <Label className="text-slate-500 text-xs">Diagnosis Codes (ICD-10)</Label>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {claimLineItems
+                            .filter((item: any) => item.icd10Code)
+                            .map((item: any, index: number) => (
+                              <Badge key={index} variant="outline" className="text-xs">
+                                <span className="font-mono">{item.icd10Code?.code}</span>
+                                <span className="ml-1 text-slate-500">- {item.icd10Code?.description}</span>
+                              </Badge>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-4 bg-slate-50 rounded-lg">
+                    <p className="text-sm text-slate-500">No line items found for this claim</p>
                   </div>
                 )}
               </div>
