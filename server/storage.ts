@@ -10,6 +10,7 @@ import {
   cptCodes,
   icd10Codes,
   insurances,
+  insuranceRates,
   soapNotes,
   cptCodeMappings,
   invites,
@@ -45,6 +46,8 @@ import {
   type CptCode,
   type Icd10Code,
   type Insurance,
+  type InsuranceRate,
+  type InsertInsuranceRate,
   type SoapNote,
   type CptCodeMapping,
   type InsertPractice,
@@ -5020,6 +5023,64 @@ export class DatabaseStorage implements IStorage {
         lt(paymentPlanInstallments.dueDate, today)
       ))
       .orderBy(paymentPlanInstallments.dueDate);
+  }
+
+  // ==================== INSURANCE RATE / FEE SCHEDULE METHODS ====================
+
+  async getInsuranceRates(insuranceProvider?: string): Promise<InsuranceRate[]> {
+    if (insuranceProvider) {
+      return db.select()
+        .from(insuranceRates)
+        .where(eq(insuranceRates.insuranceProvider, insuranceProvider))
+        .orderBy(insuranceRates.cptCode);
+    }
+    return db.select()
+      .from(insuranceRates)
+      .orderBy(insuranceRates.insuranceProvider, insuranceRates.cptCode);
+  }
+
+  async getInsuranceRateByCode(insuranceProvider: string, cptCode: string): Promise<InsuranceRate | undefined> {
+    const [rate] = await db.select()
+      .from(insuranceRates)
+      .where(and(
+        eq(insuranceRates.insuranceProvider, insuranceProvider),
+        eq(insuranceRates.cptCode, cptCode)
+      ))
+      .limit(1);
+    return rate;
+  }
+
+  async createInsuranceRate(rate: InsertInsuranceRate): Promise<InsuranceRate> {
+    const [created] = await db.insert(insuranceRates).values(rate).returning();
+    return created;
+  }
+
+  async updateInsuranceRate(id: number, updates: Partial<InsertInsuranceRate>): Promise<InsuranceRate | undefined> {
+    const [updated] = await db.update(insuranceRates)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(insuranceRates.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteInsuranceRate(id: number): Promise<void> {
+    await db.delete(insuranceRates).where(eq(insuranceRates.id, id));
+  }
+
+  async upsertInsuranceRate(rate: InsertInsuranceRate): Promise<InsuranceRate> {
+    // Check if exists
+    const existing = await this.getInsuranceRateByCode(rate.insuranceProvider, rate.cptCode);
+    if (existing) {
+      return (await this.updateInsuranceRate(existing.id, rate))!;
+    }
+    return this.createInsuranceRate(rate);
+  }
+
+  async getUniqueInsuranceProviders(): Promise<string[]> {
+    const results = await db.selectDistinct({ provider: insuranceRates.insuranceProvider })
+      .from(insuranceRates)
+      .orderBy(insuranceRates.insuranceProvider);
+    return results.map(r => r.provider);
   }
 }
 

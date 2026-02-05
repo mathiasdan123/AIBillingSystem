@@ -35,6 +35,7 @@ import MfaChallenge from "@/pages/mfa-challenge";
 import OutcomeMeasures from "@/pages/outcome-measures";
 import PublicFeedback from "@/pages/public-feedback";
 import SessionRecorder from "@/pages/session-recorder";
+import InsuranceRates from "@/pages/insurance-rates";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 
@@ -94,6 +95,7 @@ function Router() {
         <Route path="/settings" component={Settings} />
         <Route path="/data-upload" component={DataUpload} />
         <Route path="/payer-management" component={PayerManagement} />
+        <Route path="/insurance-rates" component={InsuranceRates} />
         {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
         <Route path="/invite/:token" component={InvitePage} />
         <Route path="/mfa-challenge" component={MfaChallenge} />

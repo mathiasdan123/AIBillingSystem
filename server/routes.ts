@@ -13,6 +13,7 @@ import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
 import { processSessionRecording, processTranscriptionText } from "./services/sessionRecorderService";
+import { estimatePatientCost, parseInsuranceContract, saveContractRates, getQuickEstimate } from "./services/insuranceCostEstimator";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import logger from "./services/logger";
@@ -860,6 +861,150 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching insurances:', error);
       res.status(500).json({ message: 'Failed to fetch insurances' });
+    }
+  });
+
+  // ==================== INSURANCE RATES / FEE SCHEDULES ====================
+
+  // Get all insurance rates (optionally filtered by provider)
+  app.get('/api/insurance-rates', isAuthenticated, async (req: any, res) => {
+    try {
+      const { provider } = req.query;
+      const rates = await storage.getInsuranceRates(provider);
+      res.json(rates);
+    } catch (error) {
+      console.error('Error fetching insurance rates:', error);
+      res.status(500).json({ message: 'Failed to fetch insurance rates' });
+    }
+  });
+
+  // Get unique insurance providers with rates on file
+  app.get('/api/insurance-rates/providers', isAuthenticated, async (req: any, res) => {
+    try {
+      const providers = await storage.getUniqueInsuranceProviders();
+      res.json(providers);
+    } catch (error) {
+      console.error('Error fetching providers:', error);
+      res.status(500).json({ message: 'Failed to fetch providers' });
+    }
+  });
+
+  // Create or update an insurance rate
+  app.post('/api/insurance-rates', isAuthenticated, async (req: any, res) => {
+    try {
+      const rate = await storage.upsertInsuranceRate(req.body);
+      res.json(rate);
+    } catch (error) {
+      console.error('Error saving insurance rate:', error);
+      res.status(500).json({ message: 'Failed to save insurance rate' });
+    }
+  });
+
+  // Delete an insurance rate
+  app.delete('/api/insurance-rates/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.deleteInsuranceRate(parseInt(req.params.id));
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting insurance rate:', error);
+      res.status(500).json({ message: 'Failed to delete insurance rate' });
+    }
+  });
+
+  // Parse insurance contract with AI
+  app.post('/api/insurance-rates/parse-contract', isAuthenticated, async (req: any, res) => {
+    try {
+      const { contractText, insuranceProvider } = req.body;
+
+      if (!contractText || !insuranceProvider) {
+        return res.status(400).json({ message: 'Contract text and insurance provider are required' });
+      }
+
+      const parseResult = await parseInsuranceContract(contractText, insuranceProvider);
+      res.json(parseResult);
+    } catch (error) {
+      console.error('Error parsing contract:', error);
+      res.status(500).json({ message: 'Failed to parse contract' });
+    }
+  });
+
+  // Save parsed contract rates to database
+  app.post('/api/insurance-rates/save-parsed', isAuthenticated, async (req: any, res) => {
+    try {
+      const result = await saveContractRates(req.body);
+      res.json(result);
+    } catch (error) {
+      console.error('Error saving parsed rates:', error);
+      res.status(500).json({ message: 'Failed to save parsed rates' });
+    }
+  });
+
+  // ==================== PATIENT COST ESTIMATION ====================
+
+  // Estimate patient out-of-pocket cost
+  app.post('/api/cost-estimate', isAuthenticated, async (req: any, res) => {
+    try {
+      const { patientId, cptCodes, sessionRate } = req.body;
+
+      if (!patientId || !cptCodes || cptCodes.length === 0) {
+        return res.status(400).json({ message: 'Patient ID and CPT codes are required' });
+      }
+
+      const estimate = await estimatePatientCost(patientId, cptCodes, sessionRate || 300);
+      res.json(estimate);
+    } catch (error) {
+      console.error('Error estimating cost:', error);
+      res.status(500).json({ message: 'Failed to estimate cost' });
+    }
+  });
+
+  // Quick estimate by insurance name (without patient/CPT details)
+  app.get('/api/cost-estimate/quick', isAuthenticated, async (req: any, res) => {
+    try {
+      const { insurance, duration, sessionRate } = req.query;
+
+      if (!insurance) {
+        return res.status(400).json({ message: 'Insurance provider name is required' });
+      }
+
+      const estimate = await getQuickEstimate(
+        insurance,
+        parseInt(duration) || 45,
+        parseInt(sessionRate) || 300
+      );
+      res.json(estimate);
+    } catch (error) {
+      console.error('Error getting quick estimate:', error);
+      res.status(500).json({ message: 'Failed to get estimate' });
+    }
+  });
+
+  // Get cost estimate for a specific patient
+  app.get('/api/patients/:id/cost-estimate', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const { sessionRate } = req.query;
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      // Get a quick estimate based on patient's insurance
+      const insurance = patient.insuranceProvider || 'Unknown';
+      const estimate = await getQuickEstimate(insurance, 45, parseInt(sessionRate) || 300);
+
+      res.json({
+        patient: {
+          id: patient.id,
+          name: `${patient.firstName} ${patient.lastName}`,
+          insurance,
+        },
+        ...estimate,
+      });
+    } catch (error) {
+      console.error('Error getting patient cost estimate:', error);
+      res.status(500).json({ message: 'Failed to get estimate' });
     }
   });
 
