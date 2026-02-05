@@ -34,6 +34,7 @@ import PatientPortal from "@/pages/patient-portal";
 import MfaChallenge from "@/pages/mfa-challenge";
 import OutcomeMeasures from "@/pages/outcome-measures";
 import PublicFeedback from "@/pages/public-feedback";
+import SessionRecorder from "@/pages/session-recorder";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 
@@ -84,6 +85,7 @@ function Router() {
         <Route path="/intake" component={PatientIntake} />
         <Route path="/calendar" component={Calendar} />
         <Route path="/soap-notes" component={SoapNotes} />
+        <Route path="/session-recorder" component={SessionRecorder} />
         <Route path="/outcome-measures" component={OutcomeMeasures} />
         {isAdmin && <Route path="/accounting" component={Accounting} />}
         {isAdmin && <Route path="/analytics" component={Analytics} />}

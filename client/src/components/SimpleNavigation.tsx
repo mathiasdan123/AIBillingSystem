@@ -25,7 +25,8 @@ import {
   CalendarCheck,
   Video,
   MessageSquare,
-  BarChart3
+  BarChart3,
+  Mic
 } from "lucide-react";
 import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
@@ -40,6 +41,7 @@ const navigation = [
   { name: 'Telehealth', href: '/telehealth', icon: Video, adminOnly: false },
   { name: 'Messages', href: '/messages', icon: MessageSquare, adminOnly: false },
   { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
+  { name: 'Session Recorder', href: '/session-recorder', icon: Mic, adminOnly: false },
   { name: 'Outcome Measures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
   { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
   { name: 'Appeals', href: '/appeals', icon: Scale, adminOnly: false },

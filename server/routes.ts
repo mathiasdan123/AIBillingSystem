@@ -12,6 +12,7 @@ import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
+import { processSessionRecording, processTranscriptionText } from "./services/sessionRecorderService";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import logger from "./services/logger";
@@ -2987,6 +2988,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: error instanceof Error ? error.message : 'Transcription failed'
       });
     }
+  });
+
+  // ==================== SESSION RECORDER (Sidekick-like) ====================
+
+  // Process a recorded therapy session - transcribe and generate SOAP note
+  app.post('/api/session-recorder/process', isAuthenticated, async (req: any, res) => {
+    try {
+      const {
+        audioBase64,
+        mimeType,
+        patientId,
+        patientName,
+        therapistName,
+        sessionDuration,
+        insuranceName,
+        diagnosis,
+        sessionType
+      } = req.body;
+
+      if (!audioBase64) {
+        return res.status(400).json({ error: 'No audio data provided' });
+      }
+
+      if (!patientName || !sessionDuration) {
+        return res.status(400).json({ error: 'Patient name and session duration are required' });
+      }
+
+      console.log(`Processing session recording for ${patientName}, ${sessionDuration} minutes`);
+
+      const result = await processSessionRecording({
+        audioBase64,
+        mimeType: mimeType || 'audio/webm',
+        patientId: patientId || 0,
+        patientName,
+        therapistName: therapistName || 'Therapist',
+        sessionDuration,
+        insuranceName,
+        diagnosis,
+        sessionType
+      });
+
+      res.json({
+        success: true,
+        ...result
+      });
+
+    } catch (error) {
+      console.error('Session recording processing error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Failed to process recording'
+      });
+    }
+  });
+
+  // Process a transcription text directly (for manual entry or re-processing)
+  app.post('/api/session-recorder/process-text', isAuthenticated, async (req: any, res) => {
+    try {
+      const {
+        transcription,
+        patientId,
+        patientName,
+        therapistName,
+        sessionDuration,
+        insuranceName,
+        diagnosis,
+        sessionType
+      } = req.body;
+
+      if (!transcription) {
+        return res.status(400).json({ error: 'No transcription text provided' });
+      }
+
+      if (!patientName || !sessionDuration) {
+        return res.status(400).json({ error: 'Patient name and session duration are required' });
+      }
+
+      console.log(`Processing transcription text for ${patientName}, ${sessionDuration} minutes`);
+
+      const result = await processTranscriptionText(transcription, {
+        patientId: patientId || 0,
+        patientName,
+        therapistName: therapistName || 'Therapist',
+        sessionDuration,
+        insuranceName,
+        diagnosis,
+        sessionType
+      });
+
+      res.json({
+        success: true,
+        ...result
+      });
+
+    } catch (error) {
+      console.error('Transcription processing error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Failed to process transcription'
+      });
+    }
+  });
+
+  // Get session recorder status
+  app.get('/api/session-recorder/status', (req, res) => {
+    res.json({
+      available: isVoiceTranscriptionAvailable(),
+      features: {
+        transcription: isVoiceTranscriptionAvailable(),
+        soapGeneration: !!process.env.OPENAI_API_KEY,
+        billingOptimization: !!process.env.OPENAI_API_KEY
+      }
+    });
   });
 
   // ==================== TEXT-TO-SPEECH (Eleven Labs) ====================
