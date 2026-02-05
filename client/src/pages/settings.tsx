@@ -15,7 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink, Palette, BadgeCheck } from "lucide-react";
 import { getAuthHeaders } from "@/hooks/useAuth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -31,12 +31,32 @@ interface InviteData {
 }
 
 const practiceSchema = z.object({
+  // Basic Info
   name: z.string().min(1, "Practice name is required"),
   npi: z.string().optional(),
   taxId: z.string().optional(),
   address: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
+
+  // Branding
+  brandLogoUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+  brandPrimaryColor: z.string().optional(),
+  brandWebsiteUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+  brandPrivacyPolicyUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+
+  // Licenses
+  professionalLicense: z.string().optional(),
+  licenseExpiration: z.string().optional(),
+  businessLicense: z.string().optional(),
+  caqhProfileId: z.string().optional(),
+
+  // Billing Contact
+  billingContactName: z.string().optional(),
+  billingContactEmail: z.string().email("Invalid email").optional().or(z.literal("")),
+  billingContactPhone: z.string().optional(),
+
+  // Reviews
   googleReviewUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
 });
 
@@ -72,6 +92,17 @@ export default function Settings() {
       address: "",
       phone: "",
       email: "",
+      brandLogoUrl: "",
+      brandPrimaryColor: "#2563eb",
+      brandWebsiteUrl: "",
+      brandPrivacyPolicyUrl: "",
+      professionalLicense: "",
+      licenseExpiration: "",
+      businessLicense: "",
+      caqhProfileId: "",
+      billingContactName: "",
+      billingContactEmail: "",
+      billingContactPhone: "",
       googleReviewUrl: "",
     },
   });
@@ -299,6 +330,17 @@ export default function Settings() {
         address: practice.address || "",
         phone: practice.phone || "",
         email: practice.email || "",
+        brandLogoUrl: practice.brandLogoUrl || "",
+        brandPrimaryColor: practice.brandPrimaryColor || "#2563eb",
+        brandWebsiteUrl: practice.brandWebsiteUrl || "",
+        brandPrivacyPolicyUrl: practice.brandPrivacyPolicyUrl || "",
+        professionalLicense: practice.professionalLicense || "",
+        licenseExpiration: practice.licenseExpiration || "",
+        businessLicense: practice.businessLicense || "",
+        caqhProfileId: practice.caqhProfileId || "",
+        billingContactName: practice.billingContactName || "",
+        billingContactEmail: practice.billingContactEmail || "",
+        billingContactPhone: practice.billingContactPhone || "",
         googleReviewUrl: practice.googleReviewUrl || "",
       });
     }
@@ -322,6 +364,7 @@ export default function Settings() {
 
   const tabs = [
     { id: "practice", label: "Practice Information", icon: Building },
+    { id: "branding", label: "Branding & Onboarding", icon: Palette },
     { id: "profile", label: "Profile", icon: User },
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
@@ -817,6 +860,272 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {activeTab === "branding" && (
+            <div className="space-y-6">
+              {/* Branding Settings */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Palette className="w-5 h-5" />
+                    Branding & White-Label Settings
+                  </CardTitle>
+                  <CardDescription>
+                    Customize how your practice appears to patients on intake forms, emails, and patient portal
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                      <FormField
+                        control={form.control}
+                        name="brandLogoUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Logo URL</FormLabel>
+                            <FormControl>
+                              <Input placeholder="https://yourdomain.com/logo.png" {...field} />
+                            </FormControl>
+                            <p className="text-xs text-muted-foreground">Your practice logo will appear on patient forms and emails</p>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="brandPrimaryColor"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Brand Color</FormLabel>
+                              <FormControl>
+                                <div className="flex gap-2">
+                                  <Input type="color" {...field} className="w-12 h-10 p-1" />
+                                  <Input {...field} placeholder="#2563eb" className="flex-1" />
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="brandWebsiteUrl"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Website URL</FormLabel>
+                              <FormControl>
+                                <Input placeholder="https://yourpractice.com" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name="brandPrivacyPolicyUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Privacy Policy URL</FormLabel>
+                            <FormControl>
+                              <Input placeholder="https://yourpractice.com/privacy" {...field} />
+                            </FormControl>
+                            <p className="text-xs text-muted-foreground">Link displayed on consent forms and patient portal</p>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <Button type="submit" disabled={updatePracticeMutation.isPending}>
+                        {updatePracticeMutation.isPending ? "Saving..." : "Save Branding"}
+                      </Button>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+
+              {/* Licenses & Credentials */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BadgeCheck className="w-5 h-5" />
+                    Licenses & Credentials
+                  </CardTitle>
+                  <CardDescription>
+                    Keep your professional credentials on file for insurance enrollment
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="professionalLicense"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Professional License #</FormLabel>
+                              <FormControl>
+                                <Input placeholder="e.g., OT12345" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="licenseExpiration"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Expiration</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="businessLicense"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Business License #</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Business registration number" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="caqhProfileId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>CAQH Profile ID</FormLabel>
+                              <FormControl>
+                                <Input placeholder="12345678" {...field} />
+                              </FormControl>
+                              <p className="text-xs text-muted-foreground">Required for insurance credentialing</p>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <Button type="submit" disabled={updatePracticeMutation.isPending}>
+                        {updatePracticeMutation.isPending ? "Saving..." : "Save Credentials"}
+                      </Button>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+
+              {/* Billing Contact */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mail className="w-5 h-5" />
+                    Billing Contact
+                  </CardTitle>
+                  <CardDescription>
+                    Contact person for billing inquiries and insurance communications
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                      <FormField
+                        control={form.control}
+                        name="billingContactName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Billing Contact Name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Jane Smith" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="billingContactEmail"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Billing Email</FormLabel>
+                              <FormControl>
+                                <Input type="email" placeholder="billing@yourpractice.com" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="billingContactPhone"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Billing Phone</FormLabel>
+                              <FormControl>
+                                <Input placeholder="(555) 123-4567" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <Button type="submit" disabled={updatePracticeMutation.isPending}>
+                        {updatePracticeMutation.isPending ? "Saving..." : "Save Contact"}
+                      </Button>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+
+              {/* Onboarding Checklist */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Onboarding Checklist</CardTitle>
+                  <CardDescription>Complete these steps to fully set up your practice</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {[
+                      { label: "Practice name and address", field: "name", done: !!form.watch("name") },
+                      { label: "NPI number", field: "npi", done: !!form.watch("npi") },
+                      { label: "Tax ID", field: "taxId", done: !!form.watch("taxId") },
+                      { label: "Professional license", field: "professionalLicense", done: !!form.watch("professionalLicense") },
+                      { label: "CAQH Profile ID", field: "caqhProfileId", done: !!form.watch("caqhProfileId") },
+                      { label: "Billing contact info", field: "billingContactEmail", done: !!form.watch("billingContactEmail") },
+                      { label: "Privacy policy URL", field: "brandPrivacyPolicyUrl", done: !!form.watch("brandPrivacyPolicyUrl") },
+                    ].map((item, i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        {item.done ? (
+                          <CheckCircle className="w-5 h-5 text-green-500" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full border-2 border-slate-300" />
+                        )}
+                        <span className={item.done ? "text-slate-600" : "text-slate-900 font-medium"}>
+                          {item.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {activeTab === "baa" && isAdmin && (

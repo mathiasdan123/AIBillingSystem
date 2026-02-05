@@ -29,8 +29,9 @@ export function useAuth() {
   // Only authenticated if we have user data (not null) and no error
   const isAuthenticated = isFetched && user != null && !error;
 
-  // Check for demo role override (for switching between admin/therapist during demos)
-  const demoRoleOverride = localStorage.getItem('demo-role-override') as 'admin' | 'therapist' | null;
+  // Check for demo role override (only in development mode for testing)
+  const isDev = import.meta.env.DEV;
+  const demoRoleOverride = isDev ? localStorage.getItem('demo-role-override') as 'admin' | 'therapist' | null : null;
   const effectiveRole = demoRoleOverride || user?.role;
 
   return {
@@ -39,6 +40,8 @@ export function useAuth() {
     isAuthenticated,
     isAdmin: effectiveRole === 'admin',
     currentRole: effectiveRole || 'therapist',
+    // Expose actual role (ignoring demo override) for certain checks
+    actualRole: user?.role || 'therapist',
   };
 }
 

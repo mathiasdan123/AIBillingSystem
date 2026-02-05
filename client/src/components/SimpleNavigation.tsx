@@ -113,22 +113,24 @@ export default function SimpleNavigation() {
         </div>
 
         <div className="p-6 border-t border-slate-200 space-y-4">
-          {/* Demo Role Switcher */}
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-amber-600" />
-                <span className="text-xs font-medium text-amber-800">Demo Mode</span>
+          {/* Demo Role Switcher - Only show in development mode */}
+          {import.meta.env.DEV && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-amber-600" />
+                  <span className="text-xs font-medium text-amber-800">Demo Mode</span>
+                </div>
+                <Switch
+                  checked={currentRole === 'admin'}
+                  onCheckedChange={handleRoleSwitch}
+                />
               </div>
-              <Switch
-                checked={currentRole === 'admin'}
-                onCheckedChange={handleRoleSwitch}
-              />
+              <p className="text-xs text-amber-700 mt-1">
+                {currentRole === 'admin' ? 'Viewing as Admin' : 'Viewing as Therapist'}
+              </p>
             </div>
-            <p className="text-xs text-amber-700 mt-1">
-              {currentRole === 'admin' ? 'Viewing as Admin' : 'Viewing as Therapist'}
-            </p>
-          </div>
+          )}
 
           <div className="flex items-center space-x-3">
             <Avatar>
