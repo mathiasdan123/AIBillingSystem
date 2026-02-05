@@ -89,7 +89,7 @@ export default function SimpleNavigation() {
           <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
         </div>
 
-        <div className="flex-1 px-6 py-6">
+        <div className="flex-1 px-6 py-6 overflow-y-auto">
           <nav className="space-y-2">
             {filteredNavigation.map((item) => {
               const Icon = item.icon;
@@ -177,7 +177,7 @@ export default function SimpleNavigation() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="fixed inset-0 top-16 bg-white z-50">
+          <div className="fixed inset-0 top-16 bg-white z-50 overflow-y-auto">
             <nav className="px-4 py-6 space-y-2">
               {filteredNavigation.map((item) => {
                 const Icon = item.icon;
