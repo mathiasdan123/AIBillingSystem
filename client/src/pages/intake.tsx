@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 
@@ -31,6 +31,8 @@ import {
   Brain,
   Stethoscope,
   AlertCircle,
+  Building2,
+  FileCheck,
 } from "lucide-react";
 
 // Simplified patient schema for intake
@@ -76,8 +78,12 @@ const patientIntakeSchema = z.object({
   billingAddress: z.string().min(1, "Billing address is required"),
   billingZip: z.string().min(1, "Billing ZIP code is required"),
   
-  // Insurance verification consent
+  // HIPAA Insurance Consents
   insuranceConsentAuthorized: z.boolean().default(false),
+  assignmentOfBenefitsConsent: z.boolean().default(false),
+  releaseOfInfoConsent: z.boolean().default(false),
+  consentSignerRelationship: z.string().default("self"), // self, parent, guardian, legal_representative
+  consentSignerName: z.string().optional(),
 
   // Signature and agreement
   electronicSignature: z.string().min(1, "Electronic signature is required"),
@@ -111,6 +117,21 @@ export default function PatientIntake() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Fetch practice info for consent forms
+  const { data: practiceInfo } = useQuery<{
+    id: number;
+    name: string;
+    address: string;
+    phone: string;
+    email: string;
+    npi: string;
+    brandLogoUrl: string;
+    brandPrimaryColor: string;
+    brandPrivacyPolicyUrl: string;
+  }>({
+    queryKey: ['/api/practices/1/public-info'],
+  });
 
   // Load saved form data from localStorage
   const getSavedFormData = () => {
@@ -159,6 +180,10 @@ export default function PatientIntake() {
       billingAddress: "",
       billingZip: "",
       insuranceConsentAuthorized: false,
+      assignmentOfBenefitsConsent: false,
+      releaseOfInfoConsent: false,
+      consentSignerRelationship: "self",
+      consentSignerName: "",
       electronicSignature: "",
       agreesToTerms: false,
       agreesToPrivacy: false,
@@ -225,22 +250,93 @@ export default function PatientIntake() {
       const response = await apiRequest("POST", "/api/patients", finalPatientData);
       const patient = await response.json();
 
-      // If insurance consent was given, create authorization and trigger eligibility check
+      // Create HIPAA-compliant consent records
+      const practiceId = data.practiceId || 1;
+      const signerName = data.consentSignerRelationship === 'self'
+        ? `${data.firstName} ${data.lastName}`
+        : data.consentSignerName || `${data.firstName} ${data.lastName}`;
+
+      // Insurance Verification Consent
       if (data.insuranceConsentAuthorized && patient.id) {
         try {
+          await fetch('/api/patient-consents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              practiceId,
+              patientId: patient.id,
+              consentType: 'insurance_verification',
+              purposeOfDisclosure: 'To verify insurance eligibility, coverage details, and benefits for therapy services',
+              informationToBeDisclosed: 'Patient name, date of birth, insurance member ID, policy number, and group number',
+              recipientOfInformation: `${data.insuranceProvider} and affiliated clearinghouses`,
+              signatureType: 'electronic',
+              signatureName: signerName,
+              signerRelationship: data.consentSignerRelationship,
+              signerName: data.consentSignerRelationship !== 'self' ? signerName : null,
+            }),
+          });
+
+          // Also trigger eligibility check
           const headers = await getAuthHeaders();
           await fetch(`/api/patients/${patient.id}/insurance-authorization`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...headers },
             body: JSON.stringify({ consentSource: 'intake' }),
           });
-          // Trigger eligibility verification
           await fetch(`/api/patients/${patient.id}/insurance-data/refresh`, {
             method: 'POST',
             headers: { ...headers },
           });
         } catch (err) {
-          console.error('Insurance verification trigger failed:', err);
+          console.error('Insurance verification consent/trigger failed:', err);
+        }
+      }
+
+      // Assignment of Benefits Consent
+      if (data.assignmentOfBenefitsConsent && patient.id) {
+        try {
+          await fetch('/api/patient-consents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              practiceId,
+              patientId: patient.id,
+              consentType: 'assignment_of_benefits',
+              purposeOfDisclosure: 'To authorize direct payment of insurance benefits to the healthcare provider',
+              informationToBeDisclosed: 'Treatment dates, procedure codes, diagnosis codes, and billed amounts',
+              recipientOfInformation: `${data.insuranceProvider}`,
+              signatureType: 'electronic',
+              signatureName: signerName,
+              signerRelationship: data.consentSignerRelationship,
+              signerName: data.consentSignerRelationship !== 'self' ? signerName : null,
+            }),
+          });
+        } catch (err) {
+          console.error('Assignment of benefits consent failed:', err);
+        }
+      }
+
+      // Release of Information Consent
+      if (data.releaseOfInfoConsent && patient.id) {
+        try {
+          await fetch('/api/patient-consents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              practiceId,
+              patientId: patient.id,
+              consentType: 'hipaa_release',
+              purposeOfDisclosure: 'To submit claims and communicate with insurance company regarding coverage and payment',
+              informationToBeDisclosed: 'Protected health information necessary for claims processing including diagnosis, treatment notes, and clinical documentation',
+              recipientOfInformation: `${data.insuranceProvider}, affiliated clearinghouses, and billing entities`,
+              signatureType: 'electronic',
+              signatureName: signerName,
+              signerRelationship: data.consentSignerRelationship,
+              signerName: data.consentSignerRelationship !== 'self' ? signerName : null,
+            }),
+          });
+        } catch (err) {
+          console.error('Release of info consent failed:', err);
         }
       }
 
@@ -750,32 +846,196 @@ export default function PatientIntake() {
                     )}
                   />
 
-                  <div className="border-t pt-4 mt-4">
-                    <FormField
-                      control={form.control}
-                      name="insuranceConsentAuthorized"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                          <FormControl>
-                            <input
-                              type="checkbox"
-                              checked={field.value}
-                              onChange={field.onChange}
-                              className="mt-1"
-                              data-testid="checkbox-insurance-consent"
-                            />
-                          </FormControl>
-                          <div className="space-y-1 leading-none">
-                            <FormLabel className="text-sm">
-                              I authorize TherapyBill to verify my insurance eligibility and benefits
-                            </FormLabel>
-                            <FormDescription>
-                              This allows us to check your coverage, copay, deductible, and session limits with your insurance provider in real time.
-                            </FormDescription>
-                          </div>
-                        </FormItem>
-                      )}
-                    />
+                  {/* HIPAA-Compliant Insurance Authorization Section */}
+                  <div className="border-t pt-6 mt-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <FileCheck className="w-5 h-5 text-blue-600" />
+                      <h3 className="font-semibold text-slate-900">Insurance Authorization & Consent</h3>
+                    </div>
+
+                    {/* Practice Info Header */}
+                    <div className="bg-slate-50 border rounded-lg p-4 mb-4">
+                      <div className="flex items-start gap-3">
+                        <Building2 className="w-5 h-5 text-slate-600 mt-0.5" />
+                        <div>
+                          <h4 className="font-medium text-slate-900">
+                            {practiceInfo?.name || "Healthcare Provider"}
+                          </h4>
+                          {practiceInfo?.address && (
+                            <p className="text-sm text-slate-600">{practiceInfo.address}</p>
+                          )}
+                          {practiceInfo?.phone && (
+                            <p className="text-sm text-slate-600">Phone: {practiceInfo.phone}</p>
+                          )}
+                          {practiceInfo?.npi && (
+                            <p className="text-sm text-slate-500">NPI: {practiceInfo.npi}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Who is signing (for minors) */}
+                    <div className="mb-4">
+                      <FormField
+                        control={form.control}
+                        name="consentSignerRelationship"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Person Signing This Consent</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select relationship" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="self">Patient (Self)</SelectItem>
+                                <SelectItem value="parent">Parent/Guardian of Minor</SelectItem>
+                                <SelectItem value="guardian">Legal Guardian</SelectItem>
+                                <SelectItem value="legal_representative">Legal Representative</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    {form.watch("consentSignerRelationship") !== "self" && (
+                      <div className="mb-4">
+                        <FormField
+                          control={form.control}
+                          name="consentSignerName"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Name of Person Signing *</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Full legal name" {...field} />
+                              </FormControl>
+                              <FormDescription>
+                                Enter your full legal name if signing on behalf of the patient
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
+
+                    {/* Consent 1: Insurance Verification */}
+                    <div className="border rounded-lg p-4 mb-3 bg-white">
+                      <FormField
+                        control={form.control}
+                        name="insuranceConsentAuthorized"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="mt-1 h-4 w-4"
+                                data-testid="checkbox-insurance-consent"
+                              />
+                            </FormControl>
+                            <div className="space-y-2">
+                              <FormLabel className="text-sm font-medium">
+                                Authorization to Verify Insurance Benefits
+                              </FormLabel>
+                              <div className="text-xs text-slate-600 space-y-1">
+                                <p><strong>Purpose:</strong> To verify insurance eligibility, coverage details, deductibles, copays, and session limits.</p>
+                                <p><strong>Information disclosed:</strong> Patient name, date of birth, insurance member ID, policy number, and group number.</p>
+                                <p><strong>Disclosed to:</strong> {form.watch("insuranceProvider") || "Your insurance provider"} and affiliated clearinghouses.</p>
+                              </div>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    {/* Consent 2: Assignment of Benefits */}
+                    <div className="border rounded-lg p-4 mb-3 bg-white">
+                      <FormField
+                        control={form.control}
+                        name="assignmentOfBenefitsConsent"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="mt-1 h-4 w-4"
+                              />
+                            </FormControl>
+                            <div className="space-y-2">
+                              <FormLabel className="text-sm font-medium">
+                                Assignment of Insurance Benefits
+                              </FormLabel>
+                              <div className="text-xs text-slate-600 space-y-1">
+                                <p><strong>Purpose:</strong> To authorize direct payment of insurance benefits to {practiceInfo?.name || "the healthcare provider"}.</p>
+                                <p><strong>Information disclosed:</strong> Treatment dates, procedure codes (CPT), diagnosis codes (ICD-10), and billed amounts.</p>
+                                <p><strong>Disclosed to:</strong> {form.watch("insuranceProvider") || "Your insurance provider"}.</p>
+                                <p className="text-slate-500 italic">I understand that I am financially responsible for any amount not covered by my insurance.</p>
+                              </div>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    {/* Consent 3: Release of Information */}
+                    <div className="border rounded-lg p-4 mb-3 bg-white">
+                      <FormField
+                        control={form.control}
+                        name="releaseOfInfoConsent"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="mt-1 h-4 w-4"
+                              />
+                            </FormControl>
+                            <div className="space-y-2">
+                              <FormLabel className="text-sm font-medium">
+                                Authorization to Release Protected Health Information
+                              </FormLabel>
+                              <div className="text-xs text-slate-600 space-y-1">
+                                <p><strong>Purpose:</strong> To submit claims and communicate with insurance regarding coverage, payment, and healthcare operations.</p>
+                                <p><strong>Information disclosed:</strong> Protected health information necessary for claims processing, including diagnosis codes, treatment notes, and clinical documentation as required.</p>
+                                <p><strong>Disclosed to:</strong> {form.watch("insuranceProvider") || "Your insurance provider"}, affiliated clearinghouses, and billing entities.</p>
+                              </div>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    {/* HIPAA Notice */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
+                      <div className="flex items-start gap-3">
+                        <Shield className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div className="text-xs text-blue-800">
+                          <p className="font-medium mb-1">Your HIPAA Rights</p>
+                          <ul className="list-disc list-inside space-y-1">
+                            <li>You may revoke these authorizations at any time by submitting a written request.</li>
+                            <li>Revocation will not affect any actions taken before the revocation was received.</li>
+                            <li>These authorizations will remain in effect until revoked or treatment ends.</li>
+                            <li>You have the right to receive a copy of this authorization.</li>
+                          </ul>
+                          {practiceInfo?.brandPrivacyPolicyUrl && (
+                            <p className="mt-2">
+                              <a href={practiceInfo.brandPrivacyPolicyUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                                View our full Privacy Policy
+                              </a>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                 </CardContent>

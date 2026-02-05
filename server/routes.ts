@@ -1,5 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
+import multer from "multer";
+import * as pdfParse from "pdf-parse";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import AIReimbursementPredictor from "./aiReimbursementPredictor";
@@ -63,6 +65,21 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
     res.status(500).json({ message: "Failed to verify permissions" });
   }
 };
+
+// Configure multer for file uploads (in-memory storage)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['application/pdf', 'text/plain', 'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, TXT, DOC, DOCX allowed.'));
+    }
+  }
+});
 
 // Generate mock eligibility data for testing
 // In production, this would be replaced by real API calls
@@ -911,6 +928,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Extract text from uploaded insurance contract file (PDF, TXT, DOC)
+  app.post('/api/insurance-rates/extract-text', isAuthenticated, upload.single('file'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      let text = '';
+      const mimeType = req.file.mimetype;
+
+      if (mimeType === 'application/pdf') {
+        // Extract text from PDF
+        const pdfData = await (pdfParse as any).default(req.file.buffer);
+        text = pdfData.text;
+      } else if (mimeType === 'text/plain') {
+        // Plain text file
+        text = req.file.buffer.toString('utf-8');
+      } else if (mimeType === 'application/msword' ||
+                 mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        // For DOC/DOCX, we'll extract basic text (limited support without additional libraries)
+        // In production, you'd want to use mammoth or similar for better DOC support
+        text = req.file.buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+      }
+
+      // Clean up the extracted text
+      text = text
+        .replace(/\r\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      if (!text || text.length < 50) {
+        return res.status(400).json({
+          message: 'Could not extract sufficient text from the file. Try pasting the text directly.'
+        });
+      }
+
+      res.json({
+        text,
+        filename: req.file.originalname,
+        size: req.file.size,
+        type: mimeType
+      });
+    } catch (error) {
+      console.error('Error extracting text from file:', error);
+      res.status(500).json({ message: 'Failed to extract text from file' });
+    }
+  });
+
   // Parse insurance contract with AI
   app.post('/api/insurance-rates/parse-contract', isAuthenticated, async (req: any, res) => {
     try {
@@ -936,6 +1001,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error saving parsed rates:', error);
       res.status(500).json({ message: 'Failed to save parsed rates' });
+    }
+  });
+
+  // ==================== PATIENT CONSENTS (HIPAA) ====================
+
+  // Get practice info for consent forms (public - needed for intake)
+  app.get('/api/practices/:id/public-info', async (req: any, res) => {
+    try {
+      const practice = await storage.getPractice(parseInt(req.params.id));
+      if (!practice) {
+        return res.status(404).json({ message: 'Practice not found' });
+      }
+
+      // Return only public info needed for consent forms
+      res.json({
+        id: practice.id,
+        name: practice.name,
+        address: practice.address,
+        phone: practice.phone,
+        email: practice.email,
+        npi: practice.npi,
+        brandLogoUrl: practice.brandLogoUrl,
+        brandPrimaryColor: practice.brandPrimaryColor,
+        brandPrivacyPolicyUrl: practice.brandPrivacyPolicyUrl,
+      });
+    } catch (error) {
+      console.error('Error fetching practice info:', error);
+      res.status(500).json({ message: 'Failed to fetch practice info' });
+    }
+  });
+
+  // Create patient consent
+  app.post('/api/patient-consents', async (req: any, res) => {
+    try {
+      const consent = await storage.createPatientConsent({
+        ...req.body,
+        signatureDate: new Date(),
+        effectiveDate: new Date().toISOString().split('T')[0],
+        signatureIpAddress: req.ip || req.connection.remoteAddress,
+      });
+      res.json(consent);
+    } catch (error) {
+      console.error('Error creating consent:', error);
+      res.status(500).json({ message: 'Failed to create consent' });
+    }
+  });
+
+  // Get patient consents
+  app.get('/api/patients/:id/consents', isAuthenticated, async (req: any, res) => {
+    try {
+      const consents = await storage.getPatientConsents(parseInt(req.params.id));
+      res.json(consents);
+    } catch (error) {
+      console.error('Error fetching consents:', error);
+      res.status(500).json({ message: 'Failed to fetch consents' });
+    }
+  });
+
+  // Get active consent by type
+  app.get('/api/patients/:id/consents/:type', isAuthenticated, async (req: any, res) => {
+    try {
+      const consent = await storage.getActiveConsent(parseInt(req.params.id), req.params.type);
+      res.json(consent || null);
+    } catch (error) {
+      console.error('Error fetching consent:', error);
+      res.status(500).json({ message: 'Failed to fetch consent' });
+    }
+  });
+
+  // Revoke consent
+  app.post('/api/patient-consents/:id/revoke', isAuthenticated, async (req: any, res) => {
+    try {
+      const { reason } = req.body;
+      const userId = req.user?.claims?.sub || 'unknown';
+      const consent = await storage.revokeConsent(parseInt(req.params.id), userId, reason);
+      res.json(consent);
+    } catch (error) {
+      console.error('Error revoking consent:', error);
+      res.status(500).json({ message: 'Failed to revoke consent' });
     }
   });
 

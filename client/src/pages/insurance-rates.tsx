@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   DollarSign, Plus, Trash2, Upload, Wand2, Loader2, Calculator,
-  FileText, CheckCircle, AlertCircle, Users, Building2
+  FileText, CheckCircle, AlertCircle, Users, Building2, FileUp
 } from "lucide-react";
 
 interface InsuranceRate {
@@ -51,6 +51,7 @@ export default function InsuranceRates() {
   const [contractText, setContractText] = useState("");
   const [parseProvider, setParseProvider] = useState("");
   const [parseResult, setParseResult] = useState<any>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   // New rate form state
   const [newRate, setNewRate] = useState({
@@ -158,6 +159,48 @@ export default function InsuranceRates() {
     },
   });
 
+  // Handle file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/insurance-rates/extract-text', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to extract text from file');
+      }
+
+      const data = await res.json();
+      setContractText(data.text);
+
+      // Try to auto-detect provider name from filename
+      const filename = file.name.toLowerCase();
+      if (!parseProvider) {
+        if (filename.includes('aetna')) setParseProvider('Aetna');
+        else if (filename.includes('bcbs') || filename.includes('blue cross')) setParseProvider('Blue Cross Blue Shield');
+        else if (filename.includes('cigna')) setParseProvider('Cigna');
+        else if (filename.includes('united') || filename.includes('uhc')) setParseProvider('United Healthcare');
+        else if (filename.includes('medicare')) setParseProvider('Medicare');
+      }
+
+      toast({ title: "File Uploaded", description: "Text extracted from document. Review and parse." });
+    } catch (error) {
+      toast({ title: "Upload Failed", description: "Could not extract text from file", variant: "destructive" });
+    } finally {
+      setUploadingFile(false);
+      e.target.value = ''; // Reset input
+    }
+  };
+
   // Patient cost estimates
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
   const { data: patientEstimate, isLoading: estimateLoading } = useQuery<CostEstimate>({
@@ -216,13 +259,50 @@ export default function InsuranceRates() {
                     placeholder="e.g., Blue Cross Blue Shield"
                   />
                 </div>
+
+                {/* File Upload */}
+                <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center">
+                  <input
+                    type="file"
+                    id="contract-file"
+                    accept=".pdf,.txt,.doc,.docx"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  <label htmlFor="contract-file" className="cursor-pointer">
+                    {uploadingFile ? (
+                      <div className="flex items-center justify-center gap-2 text-slate-500">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span>Extracting text...</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <FileUp className="h-8 w-8 text-slate-400" />
+                        <span className="text-sm text-slate-600">
+                          <span className="text-blue-600 font-medium">Upload a file</span> or drag and drop
+                        </span>
+                        <span className="text-xs text-slate-400">PDF, TXT, DOC, DOCX</span>
+                      </div>
+                    )}
+                  </label>
+                </div>
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-white px-2 text-slate-500">Or paste text</span>
+                  </div>
+                </div>
+
                 <div>
                   <Label>Contract Text / Fee Schedule</Label>
                   <Textarea
                     value={contractText}
                     onChange={(e) => setContractText(e.target.value)}
                     placeholder="Paste the contract text or fee schedule here..."
-                    rows={10}
+                    rows={8}
                   />
                 </div>
 
@@ -409,12 +489,12 @@ export default function InsuranceRates() {
             <CardContent className="pt-4">
               <div className="flex items-center gap-4">
                 <Label>Filter by Insurance:</Label>
-                <Select value={selectedProvider} onValueChange={setSelectedProvider}>
+                <Select value={selectedProvider || "all"} onValueChange={(v) => setSelectedProvider(v === "all" ? "" : v)}>
                   <SelectTrigger className="w-64">
                     <SelectValue placeholder="All providers" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All providers</SelectItem>
+                    <SelectItem value="all">All providers</SelectItem>
                     {providers?.map((p) => (
                       <SelectItem key={p} value={p}>{p}</SelectItem>
                     ))}

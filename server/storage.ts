@@ -34,6 +34,7 @@ import {
   onlineBookings,
   telehealthSessions,
   telehealthSettings,
+  patientConsents,
   type User,
   type UpsertUser,
   type Practice,
@@ -106,6 +107,8 @@ import {
   type InsertTelehealthSession,
   type TelehealthSettings,
   type InsertTelehealthSettings,
+  type PatientConsent,
+  type InsertPatientConsent,
   conversations,
   messages,
   messageNotifications,
@@ -5081,6 +5084,77 @@ export class DatabaseStorage implements IStorage {
       .from(insuranceRates)
       .orderBy(insuranceRates.insuranceProvider);
     return results.map(r => r.provider);
+  }
+
+  // ==================== PATIENT CONSENTS ====================
+
+  async createPatientConsent(consent: InsertPatientConsent): Promise<PatientConsent> {
+    const [created] = await db.insert(patientConsents).values(consent).returning();
+    return created;
+  }
+
+  async getPatientConsents(patientId: number): Promise<PatientConsent[]> {
+    return db.select()
+      .from(patientConsents)
+      .where(eq(patientConsents.patientId, patientId))
+      .orderBy(desc(patientConsents.createdAt));
+  }
+
+  async getPatientConsentsByType(patientId: number, consentType: string): Promise<PatientConsent[]> {
+    return db.select()
+      .from(patientConsents)
+      .where(
+        and(
+          eq(patientConsents.patientId, patientId),
+          eq(patientConsents.consentType, consentType),
+          eq(patientConsents.isRevoked, false)
+        )
+      )
+      .orderBy(desc(patientConsents.createdAt));
+  }
+
+  async getActiveConsent(patientId: number, consentType: string): Promise<PatientConsent | undefined> {
+    const [consent] = await db.select()
+      .from(patientConsents)
+      .where(
+        and(
+          eq(patientConsents.patientId, patientId),
+          eq(patientConsents.consentType, consentType),
+          eq(patientConsents.isRevoked, false)
+        )
+      )
+      .orderBy(desc(patientConsents.createdAt))
+      .limit(1);
+    return consent;
+  }
+
+  async revokeConsent(consentId: number, revokedBy: string, reason?: string): Promise<PatientConsent | undefined> {
+    const [updated] = await db.update(patientConsents)
+      .set({
+        isRevoked: true,
+        revokedDate: new Date(),
+        revokedBy,
+        revocationReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientConsents.id, consentId))
+      .returning();
+    return updated;
+  }
+
+  async getConsentsByPractice(practiceId: number, filters?: { consentType?: string; isRevoked?: boolean }): Promise<PatientConsent[]> {
+    let query = db.select()
+      .from(patientConsents)
+      .where(eq(patientConsents.practiceId, practiceId));
+
+    if (filters?.consentType) {
+      query = query.where(eq(patientConsents.consentType, filters.consentType)) as any;
+    }
+    if (filters?.isRevoked !== undefined) {
+      query = query.where(eq(patientConsents.isRevoked, filters.isRevoked)) as any;
+    }
+
+    return query.orderBy(desc(patientConsents.createdAt));
   }
 }
 

@@ -656,6 +656,53 @@ export const payments = pgTable("payments", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Patient Consents - HIPAA-compliant consent tracking
+export const patientConsents = pgTable("patient_consents", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+
+  // Consent type and scope
+  consentType: varchar("consent_type").notNull(), // 'insurance_verification', 'treatment', 'billing', 'hipaa_release', 'assignment_of_benefits'
+
+  // HIPAA-required fields
+  purposeOfDisclosure: text("purpose_of_disclosure").notNull(), // Why info is being shared
+  informationToBeDisclosed: text("information_to_be_disclosed").notNull(), // What info will be shared
+  recipientOfInformation: text("recipient_of_information").notNull(), // Who receives the info
+
+  // Consent validity
+  effectiveDate: date("effective_date").notNull(),
+  expirationDate: date("expiration_date"), // null = until revoked
+
+  // Signature information
+  signatureType: varchar("signature_type").default("electronic"), // electronic, wet_ink, verbal
+  signatureName: varchar("signature_name").notNull(), // Full legal name
+  signatureDate: timestamp("signature_date").notNull(),
+  signatureIpAddress: varchar("signature_ip_address"), // For audit trail
+
+  // For minors/guardians
+  signerRelationship: varchar("signer_relationship"), // 'self', 'parent', 'guardian', 'legal_representative'
+  signerName: varchar("signer_name"), // If different from patient
+
+  // Revocation tracking
+  isRevoked: boolean("is_revoked").default(false),
+  revokedDate: timestamp("revoked_date"),
+  revokedBy: varchar("revoked_by"),
+  revocationReason: text("revocation_reason"),
+
+  // Audit fields
+  consentVersion: varchar("consent_version").default("1.0"), // Track form version changes
+  witnessName: varchar("witness_name"),
+  notes: text("notes"),
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientConsentSchema = createInsertSchema(patientConsents);
+export type InsertPatientConsent = z.infer<typeof insertPatientConsentSchema>;
+export type PatientConsent = typeof patientConsents.$inferSelect;
+
 // Eligibility Checks - stores results from eligibility verification
 export const eligibilityChecks = pgTable("eligibility_checks", {
   id: serial("id").primaryKey(),
