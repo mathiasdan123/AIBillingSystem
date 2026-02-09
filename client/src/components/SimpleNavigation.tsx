@@ -26,7 +26,8 @@ import {
   Video,
   MessageSquare,
   BarChart3,
-  Mic
+  Mic,
+  CreditCard
 } from "lucide-react";
 import { useAuth, setDemoRole } from "@/hooks/useAuth";
 
@@ -51,6 +52,7 @@ const navigation = [
   { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
   { name: 'Payer Management', href: '/payer-management', icon: Shield, adminOnly: true },
   { name: 'Breach Incidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
+  { name: 'Subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
   { name: 'Settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
 

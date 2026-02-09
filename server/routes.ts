@@ -16,6 +16,7 @@ import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBil
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
 import { processSessionRecording, processTranscriptionText } from "./services/sessionRecorderService";
 import { estimatePatientCost, parseInsuranceContract, saveContractRates, getQuickEstimate } from "./services/insuranceCostEstimator";
+import * as stripeService from "./services/stripeService";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import logger from "./services/logger";
@@ -1083,6 +1084,239 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== STRIPE BILLING ====================
+
+  // Get Stripe setup intent for adding payment method
+  app.post('/api/billing/setup-intent', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripeService.isStripeConfigured()) {
+        return res.status(503).json({
+          message: 'Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.'
+        });
+      }
+
+      const practiceId = req.body.practiceId || 1;
+      const practice = await storage.getPractice(practiceId);
+
+      if (!practice) {
+        return res.status(404).json({ message: 'Practice not found' });
+      }
+
+      // Get or create Stripe customer
+      const customer = await stripeService.getOrCreateCustomer({
+        id: practice.id,
+        name: practice.name,
+        email: practice.email || '',
+        stripeCustomerId: practice.stripeCustomerId,
+      });
+
+      // Update practice with Stripe customer ID if new
+      if (!practice.stripeCustomerId) {
+        await storage.updatePractice(practiceId, { stripeCustomerId: customer.id });
+      }
+
+      // Create setup intent
+      const setupIntent = await stripeService.createSetupIntent(customer.id);
+
+      res.json({
+        clientSecret: setupIntent.client_secret,
+        customerId: customer.id,
+      });
+    } catch (error) {
+      console.error('Error creating setup intent:', error);
+      res.status(500).json({ message: 'Failed to create setup intent' });
+    }
+  });
+
+  // List payment methods for a practice
+  app.get('/api/billing/payment-methods', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripeService.isStripeConfigured()) {
+        return res.json({ paymentMethods: [] });
+      }
+
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practice = await storage.getPractice(practiceId);
+
+      if (!practice?.stripeCustomerId) {
+        return res.json({ paymentMethods: [] });
+      }
+
+      const paymentMethods = await stripeService.listPaymentMethods(practice.stripeCustomerId);
+      res.json({ paymentMethods });
+    } catch (error) {
+      console.error('Error listing payment methods:', error);
+      res.status(500).json({ message: 'Failed to list payment methods' });
+    }
+  });
+
+  // Set default payment method
+  app.post('/api/billing/set-default-payment-method', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripeService.isStripeConfigured()) {
+        return res.status(503).json({
+          message: 'Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.'
+        });
+      }
+
+      const { practiceId, paymentMethodId } = req.body;
+      const practice = await storage.getPractice(practiceId || 1);
+
+      if (!practice?.stripeCustomerId) {
+        return res.status(400).json({ message: 'No Stripe customer found' });
+      }
+
+      await stripeService.setDefaultPaymentMethod(practice.stripeCustomerId, paymentMethodId);
+      await storage.updatePractice(practice.id, { stripePaymentMethodId: paymentMethodId });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error setting default payment method:', error);
+      res.status(500).json({ message: 'Failed to set default payment method' });
+    }
+  });
+
+  // Get billing info for practice
+  app.get('/api/billing/info', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practice = await storage.getPractice(practiceId);
+
+      if (!practice) {
+        return res.status(404).json({ message: 'Practice not found' });
+      }
+
+      const plan = stripeService.PRICING_PLANS[practice.billingPlan as keyof typeof stripeService.PRICING_PLANS]
+        || stripeService.PRICING_PLANS.growing;
+
+      res.json({
+        plan: practice.billingPlan || 'growing',
+        planName: plan.name,
+        percentage: practice.billingPercentage || 4.5,
+        features: plan.features,
+        hasPaymentMethod: !!practice.stripePaymentMethodId,
+        trialEndsAt: practice.trialEndsAt,
+        isInTrial: practice.trialEndsAt ? new Date(practice.trialEndsAt) > new Date() : false,
+      });
+    } catch (error) {
+      console.error('Error getting billing info:', error);
+      res.status(500).json({ message: 'Failed to get billing info' });
+    }
+  });
+
+  // Get payment history
+  app.get('/api/billing/history', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripeService.isStripeConfigured()) {
+        return res.json({ payments: [] });
+      }
+
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practice = await storage.getPractice(practiceId);
+
+      if (!practice?.stripeCustomerId) {
+        return res.json({ payments: [] });
+      }
+
+      const payments = await stripeService.getPaymentHistory(practice.stripeCustomerId, 20);
+      res.json({
+        payments: payments.map(p => ({
+          id: p.id,
+          amount: p.amount / 100, // Convert from cents
+          status: p.status,
+          description: p.description,
+          created: new Date(p.created * 1000).toISOString(),
+        })),
+      });
+    } catch (error) {
+      console.error('Error getting payment history:', error);
+      res.status(500).json({ message: 'Failed to get payment history' });
+    }
+  });
+
+  // Create patient payment link
+  app.post('/api/billing/patient-payment-link', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripeService.isStripeConfigured()) {
+        return res.status(503).json({
+          message: 'Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.'
+        });
+      }
+
+      const { patientId, amount, description } = req.body;
+      const patient = await storage.getPatient(patientId);
+
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const paymentLink = await stripeService.createPatientPaymentLink({
+        amount: Math.round(amount * 100), // Convert to cents
+        patientName: `${patient.firstName} ${patient.lastName}`,
+        practiceId: patient.practiceId,
+        patientId: patient.id,
+        description: description || `Payment for ${patient.firstName} ${patient.lastName}`,
+      });
+
+      res.json({ url: paymentLink.url });
+    } catch (error) {
+      console.error('Error creating payment link:', error);
+      res.status(500).json({ message: 'Failed to create payment link' });
+    }
+  });
+
+  // Stripe webhook handler
+  app.post('/api/webhooks/stripe', async (req: any, res) => {
+    if (!stripeService.isStripeConfigured()) {
+      return res.status(503).json({ message: 'Stripe not configured' });
+    }
+
+    const sig = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+      console.error('Stripe webhook secret not configured');
+      return res.status(500).json({ message: 'Webhook not configured' });
+    }
+
+    try {
+      const event = stripeService.verifyWebhookSignature(
+        req.body,
+        sig,
+        webhookSecret
+      );
+
+      // Handle different event types
+      switch (event.type) {
+        case 'payment_intent.succeeded':
+          const paymentIntent = event.data.object as any;
+          console.log('Payment succeeded:', paymentIntent.id);
+          // TODO: Record payment in database
+          break;
+
+        case 'payment_intent.payment_failed':
+          const failedPayment = event.data.object as any;
+          console.log('Payment failed:', failedPayment.id);
+          // TODO: Notify practice of failed payment
+          break;
+
+        case 'setup_intent.succeeded':
+          const setupIntent = event.data.object as any;
+          console.log('Setup intent succeeded:', setupIntent.id);
+          // Payment method saved
+          break;
+
+        default:
+          console.log('Unhandled event type:', event.type);
+      }
+
+      res.json({ received: true });
+    } catch (error) {
+      console.error('Webhook error:', error);
+      res.status(400).json({ message: 'Webhook error' });
+    }
+  });
+
   // ==================== PATIENT COST ESTIMATION ====================
 
   // Estimate patient out-of-pocket cost
@@ -1176,19 +1410,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
         insurance = insurances.find((i: any) => i.id === insuranceId);
       }
 
-      // Check if real API is configured (future: check insurance.eligibilityApiConfig)
-      const hasRealApi = insurance?.eligibilityApiConfig &&
-                         Object.keys(insurance.eligibilityApiConfig as object).length > 0;
+      // Check if Stedi API key is configured (from env var or database)
+      const stediApiKey = process.env.STEDI_API_KEY;
+      const hasRealApi = !!stediApiKey || (insurance?.eligibilityApiConfig &&
+                         Object.keys(insurance.eligibilityApiConfig as object).length > 0);
 
       let eligibilityResult;
 
-      if (hasRealApi) {
-        // Future: Call real eligibility API based on config
-        // For now, fall through to mock
-      }
+      if (hasRealApi && stediApiKey) {
+        // Use Stedi for real eligibility check
+        try {
+          const practice = await storage.getPractice(patient.practiceId || 1);
+          const adapter = new StediAdapter(stediApiKey);
 
-      // Generate mock eligibility response
-      eligibilityResult = generateMockEligibility(patient, insurance);
+          const result = await adapter.checkEligibility({
+            providerNpi: practice?.npiNumber || '1234567890',
+            providerName: practice?.name || 'Practice',
+            memberFirstName: patient.firstName,
+            memberLastName: patient.lastName,
+            memberDob: patient.dateOfBirth,
+            memberId: patient.insuranceId || '',
+            groupNumber: patient.groupNumber || undefined,
+            payerName: insurance?.name || 'Unknown',
+          });
+
+          // Convert Stedi response to our format
+          eligibilityResult = {
+            status: result.eligibility.isEligible ? 'active' : 'inactive',
+            coverageType: result.eligibility.planType || 'Commercial',
+            effectiveDate: result.eligibility.effectiveDate,
+            terminationDate: result.eligibility.terminationDate,
+            copay: result.benefits.copay,
+            deductible: result.benefits.deductible?.individual,
+            deductibleMet: result.benefits.deductible?.individualMet,
+            outOfPocketMax: result.benefits.outOfPocketMax?.individual,
+            outOfPocketMet: result.benefits.outOfPocketMax?.individualMet,
+            coinsurance: result.benefits.coinsurance,
+            visitsAllowed: result.benefits.visitsAllowed,
+            visitsUsed: result.benefits.visitsUsed,
+            authRequired: result.benefits.priorAuthRequired,
+            planName: result.eligibility.planName,
+            groupNumber: result.eligibility.groupNumber,
+            source: 'stedi',
+            raw: result.raw,
+          };
+        } catch (stediError: any) {
+          console.error('Stedi eligibility check failed, falling back to mock:', stediError.message);
+          // Fall back to mock if Stedi fails
+          eligibilityResult = generateMockEligibility(patient, insurance);
+          eligibilityResult.source = 'mock_fallback';
+          eligibilityResult.stediError = stediError.message;
+        }
+      } else {
+        // Generate mock eligibility response
+        eligibilityResult = generateMockEligibility(patient, insurance);
+        eligibilityResult.source = 'mock';
+      }
 
       // Store the result in the database
       const savedCheck = await storage.createEligibilityCheck({
@@ -2136,20 +2413,256 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Only draft claims can be submitted' });
       }
 
+      // Get related data for claim submission
+      const patient = await storage.getPatient(claim.patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const practice = await storage.getPractice(claim.practiceId);
+      if (!practice) {
+        return res.status(404).json({ message: 'Practice not found' });
+      }
+
+      // Get claim line items
+      const lineItems = await storage.getClaimLineItems(claimId);
+      if (!lineItems || lineItems.length === 0) {
+        return res.status(400).json({ message: 'Claim has no line items' });
+      }
+
+      // Get insurance info
+      let insurance = null;
+      if (claim.insuranceId) {
+        const insurances = await storage.getInsurances();
+        insurance = insurances.find((i: any) => i.id === claim.insuranceId);
+      }
+
+      // Check if Stedi is configured
+      const stediApiKey = process.env.STEDI_API_KEY;
+
+      let clearinghouseResult: any = null;
+      let submissionMethod = 'manual';
+
+      if (stediApiKey && insurance) {
+        // Submit via Stedi
+        try {
+          const stediService = await import('./services/stediService');
+
+          // Get CPT and ICD codes for line items
+          const cptCodes = await storage.getCptCodes();
+          const icd10Codes = await storage.getIcd10Codes();
+
+          // Build service lines from claim line items
+          const serviceLines = lineItems.map((item: any) => {
+            const cpt = cptCodes.find((c: any) => c.id === item.cptCodeId);
+            const icd = item.icd10CodeId ? icd10Codes.find((c: any) => c.id === item.icd10CodeId) : null;
+
+            return {
+              procedureCode: cpt?.code || '',
+              modifiers: item.modifier ? [item.modifier] : [],
+              diagnosisCodes: icd ? [icd.code] : [],
+              amount: parseFloat(item.amount) || 0,
+              units: item.units || 1,
+              dateOfService: item.dateOfService || new Date().toISOString().split('T')[0],
+              description: cpt?.description || '',
+            };
+          });
+
+          // Get all diagnosis codes from line items
+          const diagnosisCodes = [...new Set(
+            lineItems
+              .filter((item: any) => item.icd10CodeId)
+              .map((item: any) => {
+                const icd = icd10Codes.find((c: any) => c.id === item.icd10CodeId);
+                return icd?.code;
+              })
+              .filter(Boolean)
+          )] as string[];
+
+          // Build claim submission
+          const claimSubmission: stediService.ClaimSubmission = {
+            claimId: claim.claimNumber || `CLM${claim.id}`,
+            totalAmount: parseFloat(claim.totalAmount as any) || 0,
+            placeOfService: '11', // Office (most common for therapy)
+            dateOfService: lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0],
+            patient: {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth,
+              gender: (patient.gender?.charAt(0)?.toUpperCase() as 'M' | 'F') || 'U',
+              address: {
+                line1: patient.address || '',
+                city: patient.city || '',
+                state: patient.state || '',
+                zip: patient.zipCode || '',
+              },
+              memberId: patient.insuranceId || '',
+            },
+            provider: {
+              npi: practice.npiNumber || '',
+              taxId: practice.taxId || '',
+              organizationName: practice.name,
+              address: {
+                line1: practice.address || '',
+                city: practice.city || '',
+                state: practice.state || '',
+                zip: practice.zipCode || '',
+              },
+              taxonomy: '101YM0800X', // Mental health counselor
+            },
+            payer: {
+              id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerId || '00000',
+              name: insurance.name || 'Unknown',
+            },
+            serviceLines,
+            diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'], // Default to anxiety if none
+          };
+
+          clearinghouseResult = await stediService.submitClaim(claimSubmission);
+          submissionMethod = 'stedi';
+
+          logger.info('Claim submitted via Stedi', {
+            claimId,
+            stediClaimId: clearinghouseResult.stediClaimId,
+            status: clearinghouseResult.status,
+          });
+        } catch (stediError: any) {
+          console.error('Stedi claim submission failed:', stediError.message);
+          // Continue with manual submission tracking
+          clearinghouseResult = {
+            success: false,
+            status: 'pending',
+            errors: [stediError.message],
+          };
+        }
+      }
+
+      // Update claim with submission info
       const updatedClaim = await storage.updateClaim(claimId, {
         status: 'submitted',
         submittedAt: new Date(),
-        submittedAmount: claim.totalAmount, // Set submitted amount to total if not set
+        submittedAmount: claim.totalAmount,
+        clearinghouseClaimId: clearinghouseResult?.stediClaimId || null,
+        clearinghouseStatus: clearinghouseResult?.status || 'pending',
+        clearinghouseResponse: clearinghouseResult || null,
+        clearinghouseSubmittedAt: new Date(),
       });
 
       res.json({
         success: true,
-        message: 'Claim submitted successfully',
-        claim: updatedClaim
+        message: submissionMethod === 'stedi'
+          ? 'Claim submitted to clearinghouse successfully'
+          : 'Claim marked as submitted (manual submission)',
+        claim: updatedClaim,
+        clearinghouse: clearinghouseResult,
+        submissionMethod,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting claim:', error);
-      res.status(500).json({ message: 'Failed to submit claim' });
+      res.status(500).json({ message: error.message || 'Failed to submit claim' });
+    }
+  });
+
+  // Check claim status via clearinghouse
+  app.post('/api/claims/:id/check-status', isAuthenticated, async (req: any, res) => {
+    try {
+      const claimId = parseInt(req.params.id);
+      const claim = await storage.getClaim(claimId);
+
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      if (claim.status === 'draft') {
+        return res.status(400).json({ message: 'Claim has not been submitted yet' });
+      }
+
+      const patient = await storage.getPatient(claim.patientId);
+      const practice = await storage.getPractice(claim.practiceId);
+
+      let insurance = null;
+      if (claim.insuranceId) {
+        const insurances = await storage.getInsurances();
+        insurance = insurances.find((i: any) => i.id === claim.insuranceId);
+      }
+
+      const stediApiKey = process.env.STEDI_API_KEY;
+
+      if (!stediApiKey) {
+        return res.json({
+          success: true,
+          message: 'Clearinghouse not configured - status check unavailable',
+          claim,
+          statusSource: 'local',
+        });
+      }
+
+      if (!insurance || !patient) {
+        return res.status(400).json({ message: 'Missing patient or insurance information' });
+      }
+
+      try {
+        const stediService = await import('./services/stediService');
+
+        const lineItems = await storage.getClaimLineItems(claimId);
+        const dateOfService = lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0];
+
+        const statusResult = await stediService.checkClaimStatus({
+          claimId: claim.claimNumber || `CLM${claim.id}`,
+          payer: {
+            id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerId || '00000',
+          },
+          provider: {
+            npi: practice?.npiNumber || '',
+            taxId: practice?.taxId,
+          },
+          subscriber: {
+            memberId: patient.insuranceId || '',
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+            dateOfBirth: patient.dateOfBirth,
+          },
+          dateOfService,
+          claimAmount: parseFloat(claim.totalAmount as any),
+        });
+
+        // Update claim based on status
+        let updateData: any = {
+          clearinghouseStatus: statusResult.status,
+          clearinghouseResponse: statusResult.raw,
+        };
+
+        if (statusResult.status === 'paid' && statusResult.paidAmount) {
+          updateData.status = 'paid';
+          updateData.paidAmount = statusResult.paidAmount;
+          updateData.paidAt = statusResult.paidDate ? new Date(statusResult.paidDate) : new Date();
+        } else if (statusResult.status === 'denied') {
+          updateData.status = 'denied';
+          updateData.denialReason = statusResult.denialReason || 'Claim denied by payer';
+        }
+
+        const updatedClaim = await storage.updateClaim(claimId, updateData);
+
+        res.json({
+          success: true,
+          message: 'Claim status retrieved from clearinghouse',
+          claim: updatedClaim,
+          statusResult,
+          statusSource: 'stedi',
+        });
+      } catch (stediError: any) {
+        console.error('Stedi status check failed:', stediError.message);
+        res.json({
+          success: false,
+          message: 'Failed to check status with clearinghouse',
+          claim,
+          error: stediError.message,
+          statusSource: 'error',
+        });
+      }
+    } catch (error: any) {
+      console.error('Error checking claim status:', error);
+      res.status(500).json({ message: error.message || 'Failed to check claim status' });
     }
   });
 

@@ -79,6 +79,15 @@ export const practices = pgTable("practices", {
   optumSubmitterId: varchar("optum_submitter_id"),
   optumReceiverId: varchar("optum_receiver_id"),
   lastEnrollmentCheck: timestamp("last_enrollment_check"),
+  // Stripe billing fields
+  stripeCustomerId: varchar("stripe_customer_id"),
+  stripePaymentMethodId: varchar("stripe_payment_method_id"),
+  billingPlan: varchar("billing_plan").default("growing"), // solo, growing, enterprise
+  billingPercentage: decimal("billing_percentage", { precision: 5, scale: 2 }).default("4.5"),
+  trialEndsAt: timestamp("trial_ends_at"),
+  // Stedi clearinghouse fields
+  stediApiKey: varchar("stedi_api_key"),
+  stediPartnerId: varchar("stedi_partner_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -251,6 +260,11 @@ export const claims = pgTable("claims", {
   aiReviewScore: decimal("ai_review_score", { precision: 3, scale: 2 }),
   aiReviewNotes: text("ai_review_notes"),
   reimbursementOptimizationId: integer("reimbursement_optimization_id"),
+  // Clearinghouse tracking
+  clearinghouseClaimId: varchar("clearinghouse_claim_id"), // Stedi claim ID
+  clearinghouseStatus: varchar("clearinghouse_status"), // accepted, rejected, pending
+  clearinghouseResponse: jsonb("clearinghouse_response"), // Raw response from clearinghouse
+  clearinghouseSubmittedAt: timestamp("clearinghouse_submitted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

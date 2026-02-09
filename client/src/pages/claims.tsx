@@ -47,6 +47,8 @@ interface Claim {
   createdAt: string;
   submittedAt: string | null;
   paidAt: string | null;
+  clearinghouseClaimId?: string | null;
+  clearinghouseStatus?: string | null;
 }
 
 export default function Claims() {
@@ -303,7 +305,9 @@ export default function Claims() {
       queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
       toast({
         title: data.success ? "Success" : "Error",
-        description: data.message,
+        description: data.submissionMethod === 'stedi'
+          ? "Claim submitted to clearinghouse"
+          : data.message,
         variant: data.success ? "default" : "destructive",
       });
     },
@@ -322,6 +326,39 @@ export default function Claims() {
       toast({
         title: "Error",
         description: "Failed to submit claim",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const checkStatusMutation = useMutation({
+    mutationFn: async (claimId: number) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/check-status`, {});
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      if (data.statusResult) {
+        const status = data.statusResult.status;
+        toast({
+          title: "Status Updated",
+          description: status === 'paid'
+            ? `Claim paid: $${data.statusResult.paidAmount?.toFixed(2) || '0.00'}`
+            : status === 'denied'
+            ? `Claim denied: ${data.statusResult.denialReason || 'No reason provided'}`
+            : `Claim status: ${status}`,
+        });
+      } else {
+        toast({
+          title: "Status Check",
+          description: data.message,
+        });
+      }
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to check claim status",
         variant: "destructive",
       });
     },
@@ -1100,17 +1137,28 @@ export default function Claims() {
                             <Eye className="w-4 h-4 mr-2" />
                             View Details
                           </DropdownMenuItem>
-                          {canManageClaims && claim.status === 'submitted' && (
+                          {claim.status === 'submitted' && (
                             <>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => handleMarkPaid(claim)}>
-                                <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
-                                Mark as Paid
+                              <DropdownMenuItem
+                                onClick={() => checkStatusMutation.mutate(claim.id)}
+                                disabled={checkStatusMutation.isPending}
+                              >
+                                <RefreshCw className={`w-4 h-4 mr-2 ${checkStatusMutation.isPending ? 'animate-spin' : ''}`} />
+                                Check Status
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleDenyClaim(claim)}>
-                                <Ban className="w-4 h-4 mr-2 text-red-600" />
-                                Deny Claim
-                              </DropdownMenuItem>
+                              {canManageClaims && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handleMarkPaid(claim)}>
+                                    <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
+                                    Mark as Paid
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleDenyClaim(claim)}>
+                                    <Ban className="w-4 h-4 mr-2 text-red-600" />
+                                    Deny Claim
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </>
                           )}
                         </DropdownMenuContent>
