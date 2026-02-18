@@ -46,6 +46,7 @@ const navigation = [
   { name: 'Outcome Measures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
   { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
   { name: 'Insurance Rates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
+  { name: 'Reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
   { name: 'Appeals', href: '/appeals', icon: Scale, adminOnly: false },
   { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },

@@ -1,4 +1,11 @@
 import OpenAI from "openai";
+import { storage } from "../storage";
+import {
+  OT_INTERVENTION_CATEGORIES,
+  PAYERS_REQUIRING_DIFFERENT_CODES,
+  getOptimalCodeForIntervention,
+  getPayerRatesSummary
+} from "./reimbursementOptimizer";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -43,11 +50,13 @@ interface BillingRecommendation {
     units: number;
     modifier?: string;
     reasoning: string;
+    reimbursementRate?: number;
   }>;
   totalUnits: number;
   estimatedAmount: number;
   optimizationNotes: string;
   complianceScore: number; // 0-100
+  reimbursementOptimized: boolean; // indicates if reimbursement data was used
 }
 
 export async function optimizeBillingCodes(
@@ -65,9 +74,39 @@ export async function optimizeBillingCodes(
   // Build context about insurance rules
   const rulesContext = buildRulesContext(insuranceRules, insurancePreferences, insuranceName);
 
+  // Get reimbursement data for this payer to guide code selection
+  let reimbursementContext = '';
+  let reimbursementOptimized = false;
+  try {
+    const payerRates = await getPayerRatesSummary(insuranceName);
+    if (payerRates.rates.length > 0) {
+      reimbursementOptimized = true;
+      reimbursementContext = `\nREIMBURSEMENT DATA FOR ${insuranceName.toUpperCase()}:
+${payerRates.rates.slice(0, 10).map(r => `- ${r.cptCode}: $${r.inNetworkRate?.toFixed(2)} (Rank #${r.rank})`).join('\n')}
+Average rate: $${payerRates.averageRate.toFixed(2)} per unit
+OPTIMIZATION TIP: When clinically appropriate, favor higher-reimbursing codes.`;
+    }
+  } catch (error) {
+    console.log("No reimbursement data available for", insuranceName);
+  }
+
+  // Check if payer requires different codes per 15-minute unit
+  const requiresDifferentCodes = PAYERS_REQUIRING_DIFFERENT_CODES.some(
+    p => insuranceName.toLowerCase().includes(p.toLowerCase())
+  );
+  const unitRuleContext = requiresDifferentCodes
+    ? `\nIMPORTANT: ${insuranceName} typically requires DIFFERENT codes for each 15-minute unit. Avoid billing multiple units of the same code - instead distribute across different applicable codes.`
+    : '';
+
+  // Build code equivalency hints for the AI
+  const equivalencyHints = Object.entries(OT_INTERVENTION_CATEGORIES)
+    .map(([category, { codes, description }]) =>
+      `- ${category.replace(/_/g, ' ')}: ${codes.join(' or ')} - ${description}`
+    ).join('\n');
+
   // Build the prompt
   const prompt = `You are a medical billing expert specializing in occupational/physical therapy billing. Your job is to recommend the optimal CPT code combination for a therapy session that:
-1. Accurately reflects the services provided (medical necessity)
+1. Accurately reflects the services provided (medical necessity is PRIMARY)
 2. Maximizes appropriate reimbursement within compliance rules
 3. Follows insurance-specific billing guidelines
 
@@ -82,16 +121,22 @@ ${icd10Code ? `- Diagnosis: ${icd10Code.code} - ${icd10Code.description}` : ''}
 
 INSURANCE: ${insuranceName}
 ${rulesContext}
+${reimbursementContext}
+${unitRuleContext}
+
+CODE EQUIVALENCIES (same intervention can often be coded multiple ways):
+${equivalencyHints}
 
 AVAILABLE CPT CODES:
 ${availableCptCodes.map(c => `- ${c.code}: ${c.description} (Rate: $${c.baseRate || '289'})`).join('\n')}
 
 BILLING RULES TO FOLLOW:
-1. Each CPT code represents a distinct type of service - don't bill the same code multiple times unless truly performed multiple separate times
-2. Total units across all codes should not exceed ${insurancePreferences?.maxTotalUnitsPerVisit || totalAvailableUnits} units
-3. Document must support medical necessity for each code billed
-4. Use different codes that reflect the variety of interventions performed
-5. Stay within insurance-specific limits
+1. CLINICAL ACCURACY IS PRIMARY - only use codes that accurately describe documented services
+2. When multiple codes could accurately describe an intervention, prefer higher-reimbursing codes
+3. Total units across all codes should not exceed ${insurancePreferences?.maxTotalUnitsPerVisit || totalAvailableUnits} units
+4. Document must support medical necessity for each code billed
+5. ${requiresDifferentCodes ? 'Use DIFFERENT codes for each 15-minute unit (payer requirement)' : 'May bill multiple units of same code if clinically appropriate'}
+6. Stay within insurance-specific limits
 
 Based on the session documentation, recommend the optimal billing codes. Return your response as JSON:
 {
@@ -103,11 +148,11 @@ Based on the session documentation, recommend the optimal billing codes. Return 
       "reasoning": "Brief explanation of why this code applies"
     }
   ],
-  "optimizationNotes": "Overall explanation of billing strategy",
+  "optimizationNotes": "Overall explanation of billing strategy including any reimbursement optimization applied",
   "complianceScore": 95
 }
 
-Focus on accuracy and compliance over maximizing revenue. Only recommend codes that are clearly supported by the documentation.`;
+Focus on accuracy and compliance. When multiple codes are clinically valid for the documented service, choose the one that reimburses better.`;
 
   try {
     const response = await openai.chat.completions.create({
@@ -130,24 +175,39 @@ Focus on accuracy and compliance over maximizing revenue. Only recommend codes t
 
     const aiResult = JSON.parse(content);
 
-    // Map AI recommendations to our format with full details
-    const lineItems = aiResult.lineItems.map((item: any) => {
+    // Map AI recommendations to our format with full details and actual reimbursement rates
+    const lineItemsPromises = aiResult.lineItems.map(async (item: any) => {
       const cptCode = availableCptCodes.find(c => c.code === item.cptCode);
+
+      // Get actual reimbursement rate if available
+      let actualRate: number | undefined;
+      try {
+        const insuranceRate = await storage.getInsuranceRateByCode(insuranceName, item.cptCode);
+        if (insuranceRate?.inNetworkRate) {
+          actualRate = parseFloat(insuranceRate.inNetworkRate.toString());
+        }
+      } catch (e) {
+        // Rate not available
+      }
+
       return {
         cptCodeId: cptCode?.id || 0,
         cptCode: item.cptCode,
         description: cptCode?.description || '',
         units: item.units || 1,
         modifier: item.modifier || null,
-        reasoning: item.reasoning || ''
+        reasoning: item.reasoning || '',
+        reimbursementRate: actualRate
       };
-    }).filter((item: any) => item.cptCodeId > 0);
+    });
 
-    // Calculate totals
+    const lineItems = (await Promise.all(lineItemsPromises)).filter((item: any) => item.cptCodeId > 0);
+
+    // Calculate totals using actual reimbursement rates when available
     const totalUnits = lineItems.reduce((sum: number, item: any) => sum + item.units, 0);
     const estimatedAmount = lineItems.reduce((sum: number, item: any) => {
-      const cptCode = availableCptCodes.find(c => c.id === item.cptCodeId);
-      const rate = parseFloat(cptCode?.baseRate || '289');
+      // Use actual reimbursement rate if available, otherwise use base rate
+      const rate = item.reimbursementRate || parseFloat(availableCptCodes.find(c => c.id === item.cptCodeId)?.baseRate || '289');
       return sum + (rate * item.units);
     }, 0);
 
@@ -156,7 +216,8 @@ Focus on accuracy and compliance over maximizing revenue. Only recommend codes t
       totalUnits,
       estimatedAmount,
       optimizationNotes: aiResult.optimizationNotes || '',
-      complianceScore: aiResult.complianceScore || 85
+      complianceScore: aiResult.complianceScore || 85,
+      reimbursementOptimized
     };
 
   } catch (error) {
@@ -170,12 +231,14 @@ Focus on accuracy and compliance over maximizing revenue. Only recommend codes t
         cptCode: defaultCode.code,
         description: defaultCode.description,
         units: Math.min(totalAvailableUnits, 2),
-        reasoning: "Default billing - AI optimization unavailable"
+        reasoning: "Default billing - AI optimization unavailable",
+        reimbursementRate: undefined
       }],
       totalUnits: Math.min(totalAvailableUnits, 2),
       estimatedAmount: parseFloat(defaultCode.baseRate || '289') * Math.min(totalAvailableUnits, 2),
       optimizationNotes: "Fallback billing applied - please review manually",
-      complianceScore: 70
+      complianceScore: 70,
+      reimbursementOptimized: false
     };
   }
 }

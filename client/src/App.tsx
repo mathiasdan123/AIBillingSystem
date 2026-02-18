@@ -37,6 +37,7 @@ import PublicFeedback from "@/pages/public-feedback";
 import SessionRecorder from "@/pages/session-recorder";
 import InsuranceRates from "@/pages/insurance-rates";
 import Billing from "@/pages/billing";
+import Reimbursement from "@/pages/reimbursement";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 
@@ -97,6 +98,7 @@ function Router() {
         <Route path="/data-upload" component={DataUpload} />
         <Route path="/payer-management" component={PayerManagement} />
         <Route path="/insurance-rates" component={InsuranceRates} />
+        <Route path="/reimbursement" component={Reimbursement} />
         <Route path="/subscription" component={Billing} />
         {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
         <Route path="/invite/:token" component={InvitePage} />

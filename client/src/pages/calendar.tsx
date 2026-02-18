@@ -54,6 +54,7 @@ export default function CalendarPage() {
 
   const [newAppointment, setNewAppointment] = useState({
     patientId: "",
+    therapistId: "",
     date: new Date().toISOString().split("T")[0],
     startTime: "09:00",
     type: "Individual Therapy",
@@ -63,6 +64,11 @@ export default function CalendarPage() {
   // Fetch patients for the dropdown
   const { data: patients = [] } = useQuery<any[]>({
     queryKey: ["/api/patients"],
+  });
+
+  // Fetch therapists for the dropdown
+  const { data: therapists = [] } = useQuery<any[]>({
+    queryKey: ["/api/users"],
   });
 
   // Compute date range for the current view
@@ -103,7 +109,7 @@ export default function CalendarPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       setShowNewAppointment(false);
       toast({ title: "Appointment Scheduled", description: "Appointment created successfully." });
-      setNewAppointment({ patientId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "" });
+      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -144,6 +150,7 @@ export default function CalendarPage() {
     createMutation.mutate({
       practiceId: 1,
       patientId: parseInt(newAppointment.patientId),
+      therapistId: newAppointment.therapistId || null,
       title: newAppointment.type,
       startTime: startDt.toISOString(),
       endTime: endDt.toISOString(),
@@ -257,6 +264,19 @@ export default function CalendarPage() {
                         {patients.map((p: any) => (
                           <SelectItem key={p.id} value={String(p.id)}>
                             {p.firstName} {p.lastName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Therapist</Label>
+                    <Select value={newAppointment.therapistId} onValueChange={(v) => setNewAppointment({ ...newAppointment, therapistId: v })}>
+                      <SelectTrigger><SelectValue placeholder="Select a therapist" /></SelectTrigger>
+                      <SelectContent>
+                        {therapists.map((t: any) => (
+                          <SelectItem key={t.id} value={String(t.id)}>
+                            {t.firstName} {t.lastName}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -389,6 +409,10 @@ export default function CalendarPage() {
                         <div className="text-xs font-medium truncate">{apt.title || "Appointment"}</div>
                         <div className="text-xs text-slate-600 truncate">
                           {formatTime(apt.startTime)}
+                          {apt.therapistId && (() => {
+                            const therapist = therapists.find((t: any) => t.id === apt.therapistId);
+                            return therapist ? ` - ${therapist.firstName}` : "";
+                          })()}
                           {apt.status === "cancelled" && ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})`}
                         </div>
                       </div>
@@ -419,6 +443,10 @@ export default function CalendarPage() {
                         <div className="font-medium">{apt.title || "Appointment"}</div>
                         <div className="text-sm text-slate-600">
                           {new Date(apt.startTime).toLocaleDateString()} at {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
+                          {apt.therapistId && (() => {
+                            const therapist = therapists.find((t: any) => t.id === apt.therapistId);
+                            return therapist ? ` • ${therapist.firstName} ${therapist.lastName}` : "";
+                          })()}
                         </div>
                       </div>
                     </div>

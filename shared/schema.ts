@@ -139,6 +139,7 @@ export const insuranceBillingRules = pgTable("insurance_billing_rules", {
   cannotBillWith: jsonb("cannot_bill_with"), // array of CPT code IDs that can't be billed together
   requiresPriorAuth: boolean("requires_prior_auth").default(false),
   requiresMedicalNecessity: boolean("requires_medical_necessity").default(true),
+  requiresDifferentCodesPerUnit: boolean("requires_different_codes_per_unit").default(false), // some payers require different codes for each 15-min block
   notes: text("notes"), // additional billing guidance
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
@@ -168,6 +169,19 @@ export const cptCodes = pgTable("cpt_codes", {
   baseRate: decimal("base_rate", { precision: 10, scale: 2 }),
   cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
   billingUnits: integer("billing_units").default(1), // 15-minute units
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// CPT Code Equivalencies - tracks which codes can represent similar interventions
+// This allows AI to choose optimal code when multiple codes could accurately describe the service
+export const cptCodeEquivalencies = pgTable("cpt_code_equivalencies", {
+  id: serial("id").primaryKey(),
+  primaryCodeId: integer("primary_code_id").references(() => cptCodes.id).notNull(),
+  equivalentCodeId: integer("equivalent_code_id").references(() => cptCodes.id).notNull(),
+  interventionCategory: varchar("intervention_category").notNull(), // e.g., "strengthening", "fine_motor", "adl_training"
+  clinicalContext: text("clinical_context"), // when it's appropriate to use either code
+  notes: text("notes"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -1154,12 +1168,18 @@ export const insuranceRates = pgTable("insurance_rates", {
   deductibleApplies: boolean("deductible_applies").default(true),
   coinsurancePercent: decimal("coinsurance_percent", { precision: 5, scale: 2 }).default("20.00"),
   copayAmount: decimal("copay_amount", { precision: 6, scale: 2 }),
+  reimbursementRank: integer("reimbursement_rank"), // 1 = highest reimbursement for this payer, useful for code selection
+  effectiveDate: date("effective_date"), // when this rate became effective
+  terminationDate: date("termination_date"), // when this rate expires
+  sourceDocument: varchar("source_document"), // reference to parsed contract/fee schedule
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export type InsuranceRate = typeof insuranceRates.$inferSelect;
 export type InsertInsuranceRate = typeof insuranceRates.$inferInsert;
+export type CptCodeEquivalency = typeof cptCodeEquivalencies.$inferSelect;
+export type InsertCptCodeEquivalency = typeof cptCodeEquivalencies.$inferInsert;
 export type Practice = typeof practices.$inferSelect;
 export type InsertSoapNote = z.infer<typeof insertSoapNoteSchema>;
 export type SoapNote = typeof soapNotes.$inferSelect;

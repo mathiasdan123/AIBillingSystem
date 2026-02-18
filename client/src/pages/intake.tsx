@@ -276,17 +276,22 @@ export default function PatientIntake() {
             }),
           });
 
-          // Also trigger eligibility check
-          const headers = await getAuthHeaders();
-          await fetch(`/api/patients/${patient.id}/insurance-authorization`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...headers },
-            body: JSON.stringify({ consentSource: 'intake' }),
-          });
-          await fetch(`/api/patients/${patient.id}/insurance-data/refresh`, {
-            method: 'POST',
-            headers: { ...headers },
-          });
+          // Auto-check eligibility via Stedi when consent is granted
+          try {
+            const eligibilityResponse = await fetch('/api/insurance/eligibility', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                patientId: patient.id,
+              }),
+            });
+            const eligibilityData = await eligibilityResponse.json();
+            if (eligibilityData.success && eligibilityData.eligibility?.status === 'active') {
+              console.log('Eligibility verified:', eligibilityData.eligibility);
+            }
+          } catch (eligibilityErr) {
+            console.error('Auto eligibility check failed:', eligibilityErr);
+          }
         } catch (err) {
           console.error('Insurance verification consent/trigger failed:', err);
         }

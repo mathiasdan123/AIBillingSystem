@@ -85,14 +85,16 @@ const upload = multer({
 // Generate mock eligibility data for testing
 // In production, this would be replaced by real API calls
 function generateMockEligibility(patient: any, insurance: any) {
-  // Simulate realistic eligibility outcomes
-  const random = Math.random();
+  // Use patient ID to generate consistent results for the same patient
+  // This ensures the same patient always gets the same eligibility status
+  const patientSeed = patient?.id || 1;
+  const consistentRandom = (patientSeed * 9301 + 49297) % 233280 / 233280;
 
-  // 85% active, 10% inactive, 5% unknown
+  // 95% active for demo purposes (only patients with ID ending in specific digits will be inactive)
   let status: 'active' | 'inactive' | 'unknown';
-  if (random < 0.85) {
+  if (consistentRandom < 0.95) {
     status = 'active';
-  } else if (random < 0.95) {
+  } else if (consistentRandom < 0.98) {
     status = 'inactive';
   } else {
     status = 'unknown';
@@ -1002,6 +1004,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error saving parsed rates:', error);
       res.status(500).json({ message: 'Failed to save parsed rates' });
+    }
+  });
+
+  // ==================== REIMBURSEMENT OPTIMIZATION ====================
+
+  // Get payer rates summary (ranked by reimbursement)
+  app.get('/api/reimbursement/payer-summary/:provider', isAuthenticated, async (req: any, res) => {
+    try {
+      const { getPayerRatesSummary } = await import('./services/reimbursementOptimizer');
+      const summary = await getPayerRatesSummary(req.params.provider);
+      res.json(summary);
+    } catch (error) {
+      console.error('Error getting payer summary:', error);
+      res.status(500).json({ message: 'Failed to get payer summary' });
+    }
+  });
+
+  // Get optimal code for an intervention category
+  app.get('/api/reimbursement/optimal-code', isAuthenticated, async (req: any, res) => {
+    try {
+      const { interventionCategory, insuranceProvider } = req.query;
+      if (!interventionCategory || !insuranceProvider) {
+        return res.status(400).json({ message: 'interventionCategory and insuranceProvider are required' });
+      }
+      const { getOptimalCodeForIntervention } = await import('./services/reimbursementOptimizer');
+      const result = await getOptimalCodeForIntervention(
+        interventionCategory as string,
+        insuranceProvider as string
+      );
+      res.json(result);
+    } catch (error) {
+      console.error('Error getting optimal code:', error);
+      res.status(500).json({ message: 'Failed to get optimal code' });
+    }
+  });
+
+  // Optimize session codes based on interventions performed
+  app.post('/api/reimbursement/optimize-session', isAuthenticated, async (req: any, res) => {
+    try {
+      const { sessionDurationMinutes, interventions, insuranceProvider } = req.body;
+      if (!sessionDurationMinutes || !interventions || !insuranceProvider) {
+        return res.status(400).json({
+          message: 'sessionDurationMinutes, interventions, and insuranceProvider are required'
+        });
+      }
+      const { optimizeSessionCodes } = await import('./services/reimbursementOptimizer');
+      const result = await optimizeSessionCodes(
+        sessionDurationMinutes,
+        interventions,
+        insuranceProvider
+      );
+      res.json(result);
+    } catch (error) {
+      console.error('Error optimizing session codes:', error);
+      res.status(500).json({ message: 'Failed to optimize session codes' });
+    }
+  });
+
+  // Analyze and save fee schedule data
+  app.post('/api/reimbursement/analyze-fee-schedule', isAuthenticated, async (req: any, res) => {
+    try {
+      const { feeScheduleData, insuranceProvider } = req.body;
+      if (!feeScheduleData || !insuranceProvider) {
+        return res.status(400).json({ message: 'feeScheduleData and insuranceProvider are required' });
+      }
+      const { analyzeFeeSchedule } = await import('./services/reimbursementOptimizer');
+      const result = await analyzeFeeSchedule(feeScheduleData, insuranceProvider);
+      res.json(result);
+    } catch (error) {
+      console.error('Error analyzing fee schedule:', error);
+      res.status(500).json({ message: 'Failed to analyze fee schedule' });
+    }
+  });
+
+  // Get intervention categories and their equivalent codes
+  app.get('/api/reimbursement/intervention-categories', isAuthenticated, async (req: any, res) => {
+    try {
+      const { OT_INTERVENTION_CATEGORIES, PAYERS_REQUIRING_DIFFERENT_CODES } = await import('./services/reimbursementOptimizer');
+      res.json({
+        categories: OT_INTERVENTION_CATEGORIES,
+        payersRequiringDifferentCodes: PAYERS_REQUIRING_DIFFERENT_CODES
+      });
+    } catch (error) {
+      console.error('Error getting intervention categories:', error);
+      res.status(500).json({ message: 'Failed to get intervention categories' });
     }
   });
 

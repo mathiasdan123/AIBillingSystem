@@ -11,6 +11,7 @@ import {
   icd10Codes,
   insurances,
   insuranceRates,
+  cptCodeEquivalencies,
   soapNotes,
   cptCodeMappings,
   invites,
@@ -48,6 +49,8 @@ import {
   type Icd10Code,
   type Insurance,
   type InsuranceRate,
+  type CptCodeEquivalency,
+  type InsertCptCodeEquivalency,
   type InsertInsuranceRate,
   type SoapNote,
   type CptCodeMapping,
@@ -180,7 +183,7 @@ import {
   type InsertPracticePaymentSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
 import { createHash } from "crypto";
 import {
   encryptPatientRecord,
@@ -5083,7 +5086,74 @@ export class DatabaseStorage implements IStorage {
     const results = await db.selectDistinct({ provider: insuranceRates.insuranceProvider })
       .from(insuranceRates)
       .orderBy(insuranceRates.insuranceProvider);
-    return results.map(r => r.provider);
+    return results.map((r: { provider: string }) => r.provider);
+  }
+
+  // Get rates ranked by reimbursement for a payer (highest paying first)
+  async getRatesRankedByReimbursement(insuranceProvider: string): Promise<InsuranceRate[]> {
+    return db.select()
+      .from(insuranceRates)
+      .where(eq(insuranceRates.insuranceProvider, insuranceProvider))
+      .orderBy(desc(insuranceRates.inNetworkRate));
+  }
+
+  // Get the best-paying code among a set of equivalent codes for a payer
+  async getBestPayingCode(insuranceProvider: string, cptCodeList: string[]): Promise<InsuranceRate | undefined> {
+    const [best] = await db.select()
+      .from(insuranceRates)
+      .where(
+        and(
+          eq(insuranceRates.insuranceProvider, insuranceProvider),
+          inArray(insuranceRates.cptCode, cptCodeList)
+        )
+      )
+      .orderBy(desc(insuranceRates.inNetworkRate))
+      .limit(1);
+    return best;
+  }
+
+  // ==================== CPT CODE EQUIVALENCIES ====================
+
+  async createCptCodeEquivalency(equivalency: InsertCptCodeEquivalency): Promise<CptCodeEquivalency> {
+    const [created] = await db.insert(cptCodeEquivalencies).values(equivalency).returning();
+    return created;
+  }
+
+  async getCptCodeEquivalencies(cptCodeId: number): Promise<CptCodeEquivalency[]> {
+    return db.select()
+      .from(cptCodeEquivalencies)
+      .where(
+        and(
+          or(
+            eq(cptCodeEquivalencies.primaryCodeId, cptCodeId),
+            eq(cptCodeEquivalencies.equivalentCodeId, cptCodeId)
+          ),
+          eq(cptCodeEquivalencies.isActive, true)
+        )
+      );
+  }
+
+  async getEquivalentCodesForIntervention(interventionCategory: string): Promise<CptCodeEquivalency[]> {
+    return db.select()
+      .from(cptCodeEquivalencies)
+      .where(
+        and(
+          eq(cptCodeEquivalencies.interventionCategory, interventionCategory),
+          eq(cptCodeEquivalencies.isActive, true)
+        )
+      );
+  }
+
+  async getAllCptCodeEquivalencies(): Promise<CptCodeEquivalency[]> {
+    return db.select()
+      .from(cptCodeEquivalencies)
+      .where(eq(cptCodeEquivalencies.isActive, true));
+  }
+
+  async deleteCptCodeEquivalency(id: number): Promise<void> {
+    await db.update(cptCodeEquivalencies)
+      .set({ isActive: false })
+      .where(eq(cptCodeEquivalencies.id, id));
   }
 
   // ==================== PATIENT CONSENTS ====================

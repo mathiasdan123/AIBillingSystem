@@ -2,12 +2,14 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import { TrendingUp, TrendingDown, DollarSign, FileText, AlertCircle, CheckCircle, CalendarX, Clock, UserX, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, FileText, AlertCircle, CheckCircle, CalendarX, Clock, UserX, AlertTriangle, Users, Building2, UserCog, CreditCard, Shield, AlertOctagon } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 
 export default function Analytics() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -72,6 +74,111 @@ export default function Analytics() {
     retry: false,
   }) as any;
 
+  // NEW QUERIES for enhanced analytics
+  const { data: patients = [] } = useQuery<any[]>({
+    queryKey: ["/api/patients"],
+    enabled: isAuthenticated,
+  });
+
+  const { data: claims = [] } = useQuery<any[]>({
+    queryKey: ["/api/claims"],
+    enabled: isAuthenticated,
+  });
+
+  const { data: therapists = [] } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: isAuthenticated,
+  });
+
+  const { data: eligibilityData = [] } = useQuery<any[]>({
+    queryKey: ["/api/eligibility-checks"],
+    enabled: isAuthenticated,
+  });
+
+  // Calculate patient payment stats
+  const patientPaymentStats = patients.map((patient: any) => {
+    const patientClaims = claims.filter((c: any) => c.patientId === patient.id);
+    const totalBilled = patientClaims.reduce((sum: number, c: any) => sum + parseFloat(c.totalAmount || 0), 0);
+    const paidClaims = patientClaims.filter((c: any) => c.status === 'paid');
+    const totalPaid = paidClaims.reduce((sum: number, c: any) => sum + parseFloat(c.paidAmount || c.totalAmount || 0), 0);
+    const insurancePaid = paidClaims.reduce((sum: number, c: any) => sum + parseFloat(c.insurancePaid || c.totalAmount * 0.8 || 0), 0);
+    const patientPaid = totalPaid - insurancePaid;
+
+    return {
+      id: patient.id,
+      name: `${patient.firstName} ${patient.lastName}`,
+      insurance: patient.insuranceProvider || 'Self-Pay',
+      totalBilled,
+      totalPaid,
+      insurancePaid,
+      patientPaid,
+      claimCount: patientClaims.length,
+      paidCount: paidClaims.length,
+    };
+  }).sort((a: any, b: any) => b.totalPaid - a.totalPaid);
+
+  // Calculate therapist revenue stats
+  const therapistStats = therapists.map((therapist: any) => {
+    // Find claims/sessions for this therapist
+    const therapistClaims = claims.filter((c: any) => c.therapistId === therapist.id);
+    const totalRevenue = therapistClaims.reduce((sum: number, c: any) => {
+      if (c.status === 'paid') return sum + parseFloat(c.paidAmount || c.totalAmount || 0);
+      return sum;
+    }, 0);
+    const totalBilled = therapistClaims.reduce((sum: number, c: any) => sum + parseFloat(c.totalAmount || 0), 0);
+    const sessionCount = therapistClaims.length;
+
+    return {
+      id: therapist.id,
+      name: `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || therapist.email,
+      totalRevenue,
+      totalBilled,
+      sessionCount,
+      avgPerSession: sessionCount > 0 ? totalRevenue / sessionCount : 0,
+    };
+  }).filter((t: any) => t.name).sort((a: any, b: any) => b.totalRevenue - a.totalRevenue);
+
+  // Patients approaching visit limits
+  const patientsNearVisitLimit = patients
+    .map((patient: any) => {
+      // Get latest eligibility for this patient
+      const patientEligibility = eligibilityData.find((e: any) => e.patientId === patient.id);
+      if (!patientEligibility || !patientEligibility.visitsAllowed) return null;
+
+      const visitsAllowed = patientEligibility.visitsAllowed || 0;
+      const visitsUsed = patientEligibility.visitsUsed || 0;
+      const visitsRemaining = visitsAllowed - visitsUsed;
+      const percentUsed = visitsAllowed > 0 ? (visitsUsed / visitsAllowed) * 100 : 0;
+
+      return {
+        id: patient.id,
+        name: `${patient.firstName} ${patient.lastName}`,
+        insurance: patient.insuranceProvider || 'N/A',
+        visitsAllowed,
+        visitsUsed,
+        visitsRemaining,
+        percentUsed,
+      };
+    })
+    .filter((p: any) => p && p.visitsRemaining <= 5 && p.visitsAllowed > 0)
+    .sort((a: any, b: any) => a.visitsRemaining - b.visitsRemaining);
+
+  // Summary stats
+  const totalPatients = patients.length;
+  const activePatients = patients.filter((p: any) => {
+    const patientClaims = claims.filter((c: any) => c.patientId === p.id);
+    const recentClaim = patientClaims.find((c: any) => {
+      const claimDate = new Date(c.serviceDate || c.createdAt);
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      return claimDate >= threeMonthsAgo;
+    });
+    return !!recentClaim;
+  }).length;
+
+  const totalInsurancePaid = patientPaymentStats.reduce((sum: any, p: any) => sum + p.insurancePaid, 0);
+  const totalPatientPaid = patientPaymentStats.reduce((sum: any, p: any) => sum + p.patientPaid, 0);
+
   if (isLoading || statsLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -126,7 +233,7 @@ export default function Analytics() {
 
   return (
     <div className="p-6 pt-20 md:pt-6 md:ml-64">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Analytics Dashboard</h1>
           <p className="text-slate-600">Track your practice performance and billing insights</p>
@@ -142,6 +249,18 @@ export default function Analytics() {
           </SelectContent>
         </Select>
       </div>
+
+      <Tabs defaultValue="overview" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="patients">Patients</TabsTrigger>
+          <TabsTrigger value="payments">Payments</TabsTrigger>
+          <TabsTrigger value="therapists">Therapists</TabsTrigger>
+          <TabsTrigger value="cancellations">Cancellations</TabsTrigger>
+        </TabsList>
+
+        {/* ==================== OVERVIEW TAB ==================== */}
+        <TabsContent value="overview" className="space-y-6">
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -337,10 +456,364 @@ export default function Analytics() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
 
-      {/* ==================== CANCELLATION ANALYTICS ==================== */}
-      <div className="mb-8">
-        <h2 className="text-xl font-bold text-slate-900 mb-4">Cancellation Analytics</h2>
+        {/* ==================== PATIENTS TAB ==================== */}
+        <TabsContent value="patients" className="space-y-6">
+          {/* Patient Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Patients</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{totalPatients}</div>
+                <p className="text-xs text-muted-foreground">registered in system</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Active Patients</CardTitle>
+                <CheckCircle className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{activePatients}</div>
+                <p className="text-xs text-muted-foreground">seen in last 3 months</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-amber-50 border-amber-200">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-amber-800">Near Visit Limit</CardTitle>
+                <AlertOctagon className="h-4 w-4 text-amber-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-amber-700">{patientsNearVisitLimit.length}</div>
+                <p className="text-xs text-amber-600">≤5 visits remaining</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Revenue/Patient</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {formatCurrency(patientPaymentStats.length > 0
+                    ? patientPaymentStats.reduce((sum: number, p: any) => sum + p.totalPaid, 0) / patientPaymentStats.length
+                    : 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">lifetime value</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Patients Near Visit Limit Alert */}
+          {patientsNearVisitLimit.length > 0 && (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-amber-800">
+                  <AlertOctagon className="w-5 h-5" />
+                  Patients Approaching Visit Limits
+                </CardTitle>
+                <CardDescription className="text-amber-700">
+                  These patients are close to exhausting their allowed visits - consider requesting authorization
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Insurance</TableHead>
+                      <TableHead className="text-center">Visits Used</TableHead>
+                      <TableHead className="text-center">Visits Allowed</TableHead>
+                      <TableHead className="text-center">Remaining</TableHead>
+                      <TableHead>Progress</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {patientsNearVisitLimit.slice(0, 10).map((patient: any) => (
+                      <TableRow key={patient.id}>
+                        <TableCell className="font-medium">{patient.name}</TableCell>
+                        <TableCell>{patient.insurance}</TableCell>
+                        <TableCell className="text-center">{patient.visitsUsed}</TableCell>
+                        <TableCell className="text-center">{patient.visitsAllowed}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={patient.visitsRemaining <= 2 ? "destructive" : "secondary"}>
+                            {patient.visitsRemaining}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="w-24">
+                            <Progress value={patient.percentUsed} className="h-2" />
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Patient Revenue Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue by Patient</CardTitle>
+              <CardDescription>Patient billing and payment summary</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Patient</TableHead>
+                    <TableHead>Insurance</TableHead>
+                    <TableHead className="text-right">Total Billed</TableHead>
+                    <TableHead className="text-right">Insurance Paid</TableHead>
+                    <TableHead className="text-right">Patient Paid</TableHead>
+                    <TableHead className="text-center">Claims</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {patientPaymentStats.slice(0, 15).map((patient: any) => (
+                    <TableRow key={patient.id}>
+                      <TableCell className="font-medium">{patient.name}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{patient.insurance}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">{formatCurrency(patient.totalBilled)}</TableCell>
+                      <TableCell className="text-right text-green-600">{formatCurrency(patient.insurancePaid)}</TableCell>
+                      <TableCell className="text-right text-blue-600">{formatCurrency(patient.patientPaid)}</TableCell>
+                      <TableCell className="text-center">{patient.claimCount}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ==================== PAYMENTS TAB ==================== */}
+        <TabsContent value="payments" className="space-y-6">
+          {/* Payment Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="bg-green-50 border-green-200">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-green-800">Insurance Payments</CardTitle>
+                <Shield className="h-4 w-4 text-green-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-700">{formatCurrency(totalInsurancePaid)}</div>
+                <p className="text-xs text-green-600">total collected from payers</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-blue-50 border-blue-200">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-blue-800">Patient Payments</CardTitle>
+                <CreditCard className="h-4 w-4 text-blue-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-blue-700">{formatCurrency(totalPatientPaid)}</div>
+                <p className="text-xs text-blue-600">copays & self-pay</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Collected</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{formatCurrency(totalInsurancePaid + totalPatientPaid)}</div>
+                <p className="text-xs text-muted-foreground">all sources</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Insurance %</CardTitle>
+                <Shield className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {totalInsurancePaid + totalPatientPaid > 0
+                    ? Math.round((totalInsurancePaid / (totalInsurancePaid + totalPatientPaid)) * 100)
+                    : 0}%
+                </div>
+                <p className="text-xs text-muted-foreground">of revenue from insurance</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Payment Source Pie Chart */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Payment Sources</CardTitle>
+                <CardDescription>Insurance vs Patient payments</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: 'Insurance', value: totalInsurancePaid },
+                        { name: 'Patient', value: totalPatientPaid },
+                      ]}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={100}
+                      dataKey="value"
+                    >
+                      <Cell fill="hsl(142, 71%, 45%)" />
+                      <Cell fill="hsl(207, 90%, 54%)" />
+                    </Pie>
+                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Paying Insurers</CardTitle>
+                <CardDescription>Revenue by insurance company</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  const insurerPayments: Record<string, number> = {};
+                  patientPaymentStats.forEach((p: any) => {
+                    insurerPayments[p.insurance] = (insurerPayments[p.insurance] || 0) + p.insurancePaid;
+                  });
+                  const sortedInsurers = Object.entries(insurerPayments)
+                    .sort(([, a], [, b]) => (b as number) - (a as number))
+                    .slice(0, 5);
+
+                  return (
+                    <div className="space-y-3">
+                      {sortedInsurers.map(([insurer, amount], idx) => (
+                        <div key={insurer} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                              <span className="text-green-600 font-medium text-sm">{idx + 1}</span>
+                            </div>
+                            <span className="font-medium">{insurer}</span>
+                          </div>
+                          <span className="font-bold text-green-600">{formatCurrency(amount as number)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ==================== THERAPISTS TAB ==================== */}
+        <TabsContent value="therapists" className="space-y-6">
+          {/* Therapist Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Therapists</CardTitle>
+                <UserCog className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{therapists.length}</div>
+                <p className="text-xs text-muted-foreground">active in practice</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Revenue/Therapist</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {formatCurrency(therapistStats.length > 0
+                    ? therapistStats.reduce((sum: number, t: any) => sum + t.totalRevenue, 0) / therapistStats.length
+                    : 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">per therapist</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Sessions</CardTitle>
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {therapistStats.reduce((sum: number, t: any) => sum + t.sessionCount, 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">all therapists combined</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Therapist Performance Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Therapist Performance</CardTitle>
+              <CardDescription>Revenue and session stats by therapist</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Therapist</TableHead>
+                    <TableHead className="text-right">Sessions</TableHead>
+                    <TableHead className="text-right">Total Billed</TableHead>
+                    <TableHead className="text-right">Revenue Collected</TableHead>
+                    <TableHead className="text-right">Avg/Session</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {therapistStats.map((therapist: any) => (
+                    <TableRow key={therapist.id}>
+                      <TableCell className="font-medium">{therapist.name}</TableCell>
+                      <TableCell className="text-right">{therapist.sessionCount}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(therapist.totalBilled)}</TableCell>
+                      <TableCell className="text-right text-green-600 font-bold">{formatCurrency(therapist.totalRevenue)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(therapist.avgPerSession)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {therapistStats.length === 0 && (
+                <div className="text-center py-8 text-slate-500">
+                  No therapist data available yet
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Therapist Revenue Chart */}
+          {therapistStats.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Revenue by Therapist</CardTitle>
+                <CardDescription>Compare therapist performance</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={therapistStats.slice(0, 10)} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" tickFormatter={(value) => `$${value / 1000}k`} />
+                    <YAxis type="category" dataKey="name" width={120} />
+                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                    <Bar dataKey="totalRevenue" fill="hsl(207, 90%, 54%)" name="Revenue" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ==================== CANCELLATIONS TAB ==================== */}
+        <TabsContent value="cancellations" className="space-y-6">
 
         {/* Cancellation Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
@@ -537,7 +1010,8 @@ export default function Analytics() {
             )}
           </CardContent>
         </Card>
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

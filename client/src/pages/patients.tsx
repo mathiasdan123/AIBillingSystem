@@ -8,10 +8,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
+import BenefitsSummary from "@/components/BenefitsSummary";
 
 interface EligibilityCheck {
   id: number;
@@ -49,6 +50,13 @@ export default function Patients() {
     retry: false,
   }) as any;
 
+  // Fetch stored eligibility for selected patient
+  const { data: storedEligibility, refetch: refetchEligibility } = useQuery({
+    queryKey: [`/api/patients/${selectedPatient?.id}/eligibility`],
+    enabled: !!selectedPatient?.id,
+    retry: false,
+  }) as any;
+
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -81,14 +89,21 @@ export default function Patients() {
       if (data.eligibility) {
         setEligibilityResults(prev => ({
           ...prev,
-          [variables.patientId]: data.eligibility
+          [variables.patientId]: {
+            ...data.eligibility,
+            source: data.eligibility.source || 'stedi',
+          }
         }));
       }
+      // Refetch stored eligibility
+      queryClient.invalidateQueries({ queryKey: [`/api/patients/${variables.patientId}/eligibility`] });
+
       const status = data.eligibility?.status;
+      const source = data.eligibility?.source;
       toast({
-        title: status === 'active' ? "Coverage Active" : status === 'inactive' ? "Coverage Inactive" : "Eligibility Check Complete",
+        title: status === 'active' ? "Coverage Verified" : status === 'inactive' ? "Coverage Inactive" : "Eligibility Check Complete",
         description: status === 'active'
-          ? `${data.eligibility.coverageType} plan verified. Copay: $${data.eligibility.copay}`
+          ? `${source === 'stedi' ? '✓ Live data: ' : ''}${data.eligibility.coverageType || 'Plan'} - Copay: $${data.eligibility.copay || 0}`
           : status === 'inactive'
           ? "Patient coverage has been terminated"
           : "Unable to verify coverage",
@@ -433,124 +448,42 @@ export default function Patients() {
                 </div>
               </div>
 
-              {/* Eligibility Information */}
-              {eligibilityResults[selectedPatient.id] && (
-                <div className="border-t pt-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-medium text-slate-900">Eligibility Status</h4>
-                    {getEligibilityBadge(selectedPatient.id)}
-                  </div>
-
-                  {eligibilityResults[selectedPatient.id].status === 'active' && (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Plan Type</label>
-                          <p className="text-sm text-slate-600">{eligibilityResults[selectedPatient.id].coverageType}</p>
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Copay</label>
-                          <p className="text-sm text-slate-600">${eligibilityResults[selectedPatient.id].copay}</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Deductible</label>
-                          <p className="text-sm text-slate-600">
-                            ${eligibilityResults[selectedPatient.id].deductibleMet} / ${eligibilityResults[selectedPatient.id].deductible}
-                          </p>
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Coinsurance</label>
-                          <p className="text-sm text-slate-600">{eligibilityResults[selectedPatient.id].coinsurance}%</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">OT Visits</label>
-                          <p className="text-sm text-slate-600">
-                            {eligibilityResults[selectedPatient.id].visitsUsed} used / {eligibilityResults[selectedPatient.id].visitsAllowed} allowed
-                          </p>
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Auth Required</label>
-                          <p className="text-sm text-slate-600">
-                            {eligibilityResults[selectedPatient.id].authRequired ? "Yes" : "No"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Effective Date</label>
-                          <p className="text-sm text-slate-600">
-                            {new Date(eligibilityResults[selectedPatient.id].effectiveDate!).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-slate-700">Term Date</label>
-                          <p className="text-sm text-slate-600">
-                            {new Date(eligibilityResults[selectedPatient.id].terminationDate!).toLocaleDateString()}
-                          </p>
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-slate-400 mt-2">
-                        Last checked: {new Date(eligibilityResults[selectedPatient.id].checkDate).toLocaleString()}
-                      </p>
-                    </div>
-                  )}
-
-                  {eligibilityResults[selectedPatient.id].status !== 'active' && (
-                    <div className="p-3 bg-red-50 rounded-lg">
-                      <p className="text-sm text-red-700">
-                        {eligibilityResults[selectedPatient.id].status === 'inactive'
-                          ? "This patient's insurance coverage has been terminated."
-                          : "Unable to verify eligibility. Please check insurance information."}
-                      </p>
-                    </div>
+              {/* Benefits Summary */}
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-medium text-slate-900">Insurance Benefits</h4>
+                  {selectedPatient.insuranceProvider && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        checkEligibilityMutation.mutate({ patientId: selectedPatient.id });
+                      }}
+                      disabled={checkingEligibility === selectedPatient.id}
+                    >
+                      {checkingEligibility === selectedPatient.id ? (
+                        <>
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3 h-3 mr-1" />
+                          Verify Now
+                        </>
+                      )}
+                    </Button>
                   )}
                 </div>
-              )}
 
-              {/* Cost Estimation from cached insurance data */}
-              {(insuranceData as any)?.benefits && (
-                <div className="border-t pt-4">
-                  <CostEstimationCard
-                    benefits={{
-                      ...(insuranceData as any).benefits,
-                      priorAuthStatus: (insuranceData as any).benefits?.priorAuthStatus ?? null,
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Check Eligibility Button in Modal */}
-              {selectedPatient.insuranceProvider && !eligibilityResults[selectedPatient.id] && (
-                <div className="border-t pt-4">
-                  <Button
-                    className="w-full"
-                    onClick={() => checkEligibilityMutation.mutate({
-                      patientId: selectedPatient.id,
-                    })}
-                    disabled={checkingEligibility === selectedPatient.id}
-                  >
-                    {checkingEligibility === selectedPatient.id ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Checking Eligibility...
-                      </>
-                    ) : (
-                      <>
-                        <Shield className="w-4 h-4 mr-2" />
-                        Check Insurance Eligibility
-                      </>
-                    )}
-                  </Button>
-                </div>
-              )}
+                <BenefitsSummary
+                  eligibility={
+                    eligibilityResults[selectedPatient.id] ||
+                    storedEligibility ||
+                    null
+                  }
+                />
+              </div>
             </div>
           </DialogContent>
         </Dialog>
