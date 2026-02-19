@@ -37,61 +37,65 @@ DB_BACKUP_FILE="$BACKUP_DIR/db_backup_$DATE.sql"
 
 # Extract database connection details from DATABASE_URL
 if [ -n "$DATABASE_URL" ]; then
-    # Use node to dump the database (since psql may not be installed)
-    node -e "
-    const { Client } = require('pg');
-    const fs = require('fs');
+    # Create a Node.js backup script
+    cat > "$BACKUP_DIR/.backup_db.js" << 'NODESCRIPT'
+const { Client } = require('pg');
+const fs = require('fs');
 
-    async function backup() {
-        const client = new Client({ connectionString: process.env.DATABASE_URL });
-        await client.connect();
+async function backup() {
+    const client = new Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
 
-        // Get all table names
-        const tablesResult = await client.query(\"\"\"
-            SELECT tablename FROM pg_tables
-            WHERE schemaname = 'public'
-            ORDER BY tablename
-        \"\"\");
+    const tablesResult = await client.query(
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+    );
 
-        let backup = '-- Database Backup: ' + new Date().toISOString() + '\n';
-        backup += '-- Tables: ' + tablesResult.rows.length + '\n\n';
+    let backup = '-- Database Backup: ' + new Date().toISOString() + '\n';
+    backup += '-- Tables: ' + tablesResult.rows.length + '\n\n';
 
-        for (const row of tablesResult.rows) {
-            const table = row.tablename;
-            backup += '-- Table: ' + table + '\n';
+    for (const row of tablesResult.rows) {
+        const table = row.tablename;
+        backup += '-- Table: ' + table + '\n';
 
-            // Get row count
-            const countResult = await client.query('SELECT COUNT(*) FROM \"' + table + '\"');
-            backup += '-- Rows: ' + countResult.rows[0].count + '\n';
+        const countResult = await client.query('SELECT COUNT(*) FROM "' + table + '"');
+        backup += '-- Rows: ' + countResult.rows[0].count + '\n';
 
-            // Get data
-            const dataResult = await client.query('SELECT * FROM \"' + table + '\"');
-            if (dataResult.rows.length > 0) {
-                for (const dataRow of dataResult.rows) {
-                    const columns = Object.keys(dataRow).map(k => '\"' + k + '\"').join(', ');
-                    const values = Object.values(dataRow).map(v => {
-                        if (v === null) return 'NULL';
-                        if (typeof v === 'object') return \"'\" + JSON.stringify(v).replace(/'/g, \"''\") + \"'\";
-                        if (typeof v === 'string') return \"'\" + v.replace(/'/g, \"''\") + \"'\";
-                        if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-                        return v;
-                    }).join(', ');
-                    backup += 'INSERT INTO \"' + table + '\" (' + columns + ') VALUES (' + values + ');\n';
-                }
+        const dataResult = await client.query('SELECT * FROM "' + table + '"');
+        if (dataResult.rows.length > 0) {
+            for (const dataRow of dataResult.rows) {
+                const columns = Object.keys(dataRow).map(k => '"' + k + '"').join(', ');
+                const values = Object.values(dataRow).map(v => {
+                    if (v === null) return 'NULL';
+                    if (typeof v === 'object') return "'" + JSON.stringify(v).replace(/'/g, "''") + "'";
+                    if (typeof v === 'string') return "'" + v.replace(/'/g, "''") + "'";
+                    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+                    return v;
+                }).join(', ');
+                backup += 'INSERT INTO "' + table + '" (' + columns + ') VALUES (' + values + ');\n';
             }
-            backup += '\n';
         }
-
-        fs.writeFileSync('$DB_BACKUP_FILE', backup);
-        console.log('Database backup complete: ' + tablesResult.rows.length + ' tables');
-        await client.end();
+        backup += '\n';
     }
 
-    backup().catch(e => {
-        console.error('Backup failed:', e.message);
-        process.exit(1);
-    });
-    " && log "Database backup saved to: $DB_BACKUP_FILE" || log "ERROR: Database backup failed"
+    fs.writeFileSync(process.env.BACKUP_FILE, backup);
+    console.log('Database backup complete: ' + tablesResult.rows.length + ' tables');
+    await client.end();
+}
+
+backup().catch(e => {
+    console.error('Backup failed:', e.message);
+    process.exit(1);
+});
+NODESCRIPT
+
+    # Run the backup script
+    cd "$PROJECT_DIR"
+    BACKUP_FILE="$DB_BACKUP_FILE" node "$BACKUP_DIR/.backup_db.js" && \
+        log "Database backup saved to: $DB_BACKUP_FILE" || \
+        log "ERROR: Database backup failed"
+
+    # Cleanup temp script
+    rm -f "$BACKUP_DIR/.backup_db.js"
 else
     log "WARNING: DATABASE_URL not set, skipping database backup"
 fi
