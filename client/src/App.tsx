@@ -31,6 +31,7 @@ import Telehealth from "@/pages/telehealth";
 import TelehealthJoin from "@/pages/telehealth-join";
 import Messages from "@/pages/messages";
 import PatientPortal from "@/pages/patient-portal";
+import NewPatientPortal from "@/pages/patient-portal/index";
 import MfaChallenge from "@/pages/mfa-challenge";
 import OutcomeMeasures from "@/pages/outcome-measures";
 import PublicFeedback from "@/pages/public-feedback";
@@ -63,6 +64,9 @@ function Router() {
         <Route path="/join/:code" component={TelehealthJoin} />
         <Route path="/portal" component={PatientPortal} />
         <Route path="/portal/login/:token" component={PatientPortal} />
+        <Route path="/patient-portal" component={NewPatientPortal} />
+        <Route path="/patient-portal/login" component={NewPatientPortal} />
+        <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
         <Route path="/feedback/:token" component={PublicFeedback} />
         <Route component={NotFound} />
       </Switch>

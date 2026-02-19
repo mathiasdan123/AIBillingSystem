@@ -181,6 +181,12 @@ import {
   type InsertPaymentPlanInstallment,
   type PracticePaymentSettings,
   type InsertPracticePaymentSettings,
+  therapyBank,
+  type TherapyBank,
+  type InsertTherapyBank,
+  appointmentRequests,
+  type AppointmentRequest,
+  type InsertAppointmentRequest,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -312,6 +318,11 @@ export interface IStorage {
     patient: Patient | null;
     appeal: ReimbursementOptimization | null;
   }[]>;
+
+  // Therapy Bank operations
+  getTherapyBank(practiceId: number): Promise<TherapyBank[]>;
+  createTherapyBankEntry(entry: InsertTherapyBank): Promise<TherapyBank>;
+  deleteTherapyBankEntry(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3277,17 +3288,40 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Patient Portal Access
-  async createPatientPortalAccess(patientId: number, practiceId: number): Promise<PatientPortalAccess> {
+  async createPatientPortalAccess(data: InsertPatientPortalAccess): Promise<PatientPortalAccess>;
+  async createPatientPortalAccess(patientId: number, practiceId: number): Promise<PatientPortalAccess>;
+  async createPatientPortalAccess(dataOrPatientId: InsertPatientPortalAccess | number, practiceId?: number): Promise<PatientPortalAccess> {
+    if (typeof dataOrPatientId === 'object') {
+      // Full object provided
+      const [result] = await db.insert(patientPortalAccess).values(dataOrPatientId).returning();
+      return result;
+    }
+
+    // Legacy: patientId and practiceId provided
     const portalToken = this.generatePortalToken();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 90); // 90 days
 
     const [result] = await db.insert(patientPortalAccess).values({
-      patientId,
-      practiceId,
+      patientId: dataOrPatientId,
+      practiceId: practiceId!,
       portalToken,
       portalTokenExpiresAt: expiresAt,
     }).returning();
+    return result;
+  }
+
+  async updatePatientPortalMagicLink(id: number, magicLinkToken: string, magicLinkExpiresAt: Date): Promise<PatientPortalAccess> {
+    const [result] = await db
+      .update(patientPortalAccess)
+      .set({
+        magicLinkToken,
+        magicLinkExpiresAt,
+        magicLinkUsedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(patientPortalAccess.id, id))
+      .returning();
     return result;
   }
 
@@ -3559,6 +3593,93 @@ export class DatabaseStorage implements IStorage {
       .from(patientStatements)
       .where(and(...conditions))
       .orderBy(desc(patientStatements.statementDate));
+  }
+
+  // ==================== APPOINTMENT REQUESTS ====================
+
+  async createAppointmentRequest(request: InsertAppointmentRequest): Promise<AppointmentRequest> {
+    const [result] = await db.insert(appointmentRequests).values(request).returning();
+    return result;
+  }
+
+  async getAppointmentRequest(id: number): Promise<AppointmentRequest | undefined> {
+    const [result] = await db
+      .select()
+      .from(appointmentRequests)
+      .where(eq(appointmentRequests.id, id));
+    return result;
+  }
+
+  async getPatientAppointmentRequests(patientId: number, status?: string): Promise<any[]> {
+    const conditions = [eq(appointmentRequests.patientId, patientId)];
+    if (status) {
+      conditions.push(eq(appointmentRequests.status, status));
+    }
+
+    const results = await db
+      .select()
+      .from(appointmentRequests)
+      .where(and(...conditions))
+      .orderBy(desc(appointmentRequests.createdAt));
+
+    // Enrich with appointment type name
+    const enrichedResults = await Promise.all(results.map(async (request: AppointmentRequest) => {
+      let appointmentTypeName = null;
+      let therapistName = null;
+
+      if (request.appointmentTypeId) {
+        const appointmentType = await this.getAppointmentType(request.appointmentTypeId);
+        appointmentTypeName = appointmentType?.name;
+      }
+
+      if (request.therapistId) {
+        const therapist = await this.getUser(request.therapistId);
+        if (therapist) {
+          therapistName = `${therapist.firstName} ${therapist.lastName}`;
+        }
+      }
+
+      return {
+        ...request,
+        appointmentTypeName,
+        therapistName,
+      };
+    }));
+
+    return enrichedResults;
+  }
+
+  async getPracticeAppointmentRequests(practiceId: number, status?: string): Promise<AppointmentRequest[]> {
+    const conditions = [eq(appointmentRequests.practiceId, practiceId)];
+    if (status) {
+      conditions.push(eq(appointmentRequests.status, status));
+    }
+
+    return await db
+      .select()
+      .from(appointmentRequests)
+      .where(and(...conditions))
+      .orderBy(desc(appointmentRequests.createdAt));
+  }
+
+  async updateAppointmentRequest(id: number, updates: Partial<InsertAppointmentRequest> & { processedAt?: Date; processedById?: string; appointmentId?: number }): Promise<AppointmentRequest> {
+    const [result] = await db
+      .update(appointmentRequests)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(appointmentRequests.id, id))
+      .returning();
+    return result;
+  }
+
+  async getPendingAppointmentRequestsCount(practiceId: number): Promise<number> {
+    const result = await db
+      .select({ count: count() })
+      .from(appointmentRequests)
+      .where(and(
+        eq(appointmentRequests.practiceId, practiceId),
+        eq(appointmentRequests.status, 'pending_approval')
+      ));
+    return result[0]?.count || 0;
   }
 
   // Get patient portal dashboard data
@@ -5225,6 +5346,29 @@ export class DatabaseStorage implements IStorage {
     }
 
     return query.orderBy(desc(patientConsents.createdAt));
+  }
+
+  // Therapy Bank operations
+  async getTherapyBank(practiceId: number): Promise<TherapyBank[]> {
+    return await db
+      .select()
+      .from(therapyBank)
+      .where(eq(therapyBank.practiceId, practiceId))
+      .orderBy(desc(therapyBank.createdAt));
+  }
+
+  async createTherapyBankEntry(entry: InsertTherapyBank): Promise<TherapyBank> {
+    const [newEntry] = await db
+      .insert(therapyBank)
+      .values(entry)
+      .returning();
+    return newEntry;
+  }
+
+  async deleteTherapyBankEntry(id: number): Promise<void> {
+    await db
+      .delete(therapyBank)
+      .where(eq(therapyBank.id, id));
   }
 }
 

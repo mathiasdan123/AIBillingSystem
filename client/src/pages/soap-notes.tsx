@@ -20,7 +20,7 @@ import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { type SoapNote, type Patient, type CptCode } from "@shared/schema";
+import { type SoapNote, type Patient, type CptCode, type TherapyBank } from "@shared/schema";
 
 // ============================================
 // OT-SPECIFIC DROPDOWN OPTIONS (from OT template)
@@ -155,6 +155,8 @@ export default function SoapNotes() {
   // Subjective
   const [mood, setMood] = useState("");
   const [caregiverReport, setCaregiverReport] = useState("");
+  const [selectedTherapies, setSelectedTherapies] = useState<string[]>([]);
+  const [newTherapyInput, setNewTherapyInput] = useState("");
 
   // Objective - Selected activities
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
@@ -219,6 +221,7 @@ export default function SoapNotes() {
         if (data.mood) setMood(data.mood);
         if (data.caregiverReport) setCaregiverReport(data.caregiverReport);
         if (data.selectedActivities) setSelectedActivities(data.selectedActivities);
+        if (data.selectedTherapies) setSelectedTherapies(data.selectedTherapies);
         if (data.assessment) setAssessment(data.assessment);
         if (data.planNextSteps) setPlanNextSteps(data.planNextSteps);
         if (data.nextSessionFocus) setNextSessionFocus(data.nextSessionFocus);
@@ -239,13 +242,14 @@ export default function SoapNotes() {
       mood,
       caregiverReport,
       selectedActivities,
+      selectedTherapies,
       assessment,
       planNextSteps,
       nextSessionFocus,
       homeProgram,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [selectedPatient, sessionDate, duration, location, mood, caregiverReport, selectedActivities, assessment, planNextSteps, nextSessionFocus, homeProgram]);
+  }, [selectedPatient, sessionDate, duration, location, mood, caregiverReport, selectedActivities, selectedTherapies, assessment, planNextSteps, nextSessionFocus, homeProgram]);
 
   const { data: patients, isLoading: patientsLoading } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
@@ -261,6 +265,82 @@ export default function SoapNotes() {
     queryKey: ["/api/soap-notes"],
     retry: false,
   });
+
+  // Therapy Bank - practice-wide saved therapies
+  const { data: therapyBank, isLoading: therapyBankLoading } = useQuery<TherapyBank[]>({
+    queryKey: ["/api/therapy-bank"],
+    retry: false,
+  });
+
+  // Mutation to add new therapy to the bank
+  const addTherapyMutation = useMutation({
+    mutationFn: async (therapyName: string) => {
+      const response = await apiRequest("POST", "/api/therapy-bank", { therapyName });
+      return response.json();
+    },
+    onSuccess: (newTherapy: TherapyBank) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/therapy-bank"] });
+      // Auto-select the newly added therapy
+      setSelectedTherapies(prev => [...prev, newTherapy.therapyName]);
+      setNewTherapyInput("");
+      toast({
+        title: "Therapy Added",
+        description: `"${newTherapy.therapyName}" has been added to the therapy bank.`,
+      });
+    },
+    onError: (error: any) => {
+      const message = error?.message || "Failed to add therapy";
+      if (message.includes("already exists")) {
+        toast({
+          title: "Therapy Already Exists",
+          description: "This therapy is already in the bank. You can select it from the list.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+  });
+
+  // Handle adding a new therapy (typed in by user)
+  const handleAddNewTherapy = () => {
+    const trimmed = newTherapyInput.trim();
+    if (!trimmed) return;
+
+    // Check if already in local selection
+    if (selectedTherapies.some(t => t.toLowerCase() === trimmed.toLowerCase())) {
+      toast({
+        title: "Already Selected",
+        description: "This therapy is already selected.",
+      });
+      return;
+    }
+
+    // Check if already in the bank
+    const existsInBank = therapyBank?.some(t => t.therapyName.toLowerCase() === trimmed.toLowerCase());
+    if (existsInBank) {
+      // Just select it
+      setSelectedTherapies(prev => [...prev, trimmed]);
+      setNewTherapyInput("");
+      return;
+    }
+
+    // Add to bank (which will auto-select on success)
+    addTherapyMutation.mutate(trimmed);
+  };
+
+  // Toggle therapy selection
+  const toggleTherapy = (therapyName: string) => {
+    setSelectedTherapies(prev =>
+      prev.includes(therapyName)
+        ? prev.filter(t => t !== therapyName)
+        : [...prev, therapyName]
+    );
+  };
 
   // Handle voice/document transcription - populates structured fields
   const handleTranscription = (text: string, method: "voice" | "upload") => {
@@ -353,6 +433,7 @@ export default function SoapNotes() {
       const response = await apiRequest("POST", "/api/ai/generate-soap-billing", {
         patientId: selectedPatient,
         activities: selectedActivities,
+        additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
         mood: mood || "Cooperative",
         caregiverReport: caregiverReport || undefined,
         duration,
@@ -495,6 +576,7 @@ export default function SoapNotes() {
       setMood("");
       setCaregiverReport("");
       setSelectedActivities([]);
+      setSelectedTherapies([]);
       setAssessment({ performance: "", assistance: "", strength: "", motorPlanning: "", sensoryRegulation: "" });
       setPlanNextSteps("");
       setNextSessionFocus("");
@@ -717,6 +799,92 @@ export default function SoapNotes() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Additional Therapies - Practice-wide banked therapies */}
+                <div>
+                  <Label className="text-xs text-slate-500 flex items-center gap-2">
+                    Additional Therapies
+                    {selectedTherapies.length > 0 && (
+                      <Badge variant="secondary" className="text-xs">{selectedTherapies.length} selected</Badge>
+                    )}
+                  </Label>
+
+                  {/* Input for adding new therapy */}
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      placeholder="Type a therapy name..."
+                      value={newTherapyInput}
+                      onChange={(e) => setNewTherapyInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddNewTherapy();
+                        }
+                      }}
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleAddNewTherapy}
+                      disabled={!newTherapyInput.trim() || addTherapyMutation.isPending}
+                    >
+                      {addTherapyMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Plus className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* List of available therapies from bank */}
+                  {therapyBank && therapyBank.length > 0 && (
+                    <div className="mt-2 p-2 bg-slate-50 rounded-lg border max-h-32 overflow-y-auto">
+                      <div className="flex flex-wrap gap-1">
+                        {therapyBank.map((therapy) => (
+                          <Badge
+                            key={therapy.id}
+                            variant={selectedTherapies.includes(therapy.therapyName) ? "default" : "outline"}
+                            className={`text-xs cursor-pointer transition-colors ${
+                              selectedTherapies.includes(therapy.therapyName)
+                                ? "bg-blue-600 hover:bg-blue-700"
+                                : "hover:bg-blue-100"
+                            }`}
+                            onClick={() => toggleTherapy(therapy.therapyName)}
+                          >
+                            {therapy.therapyName}
+                            {selectedTherapies.includes(therapy.therapyName) && (
+                              <X className="w-3 h-3 ml-1" />
+                            )}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Selected therapies display */}
+                  {selectedTherapies.length > 0 && (
+                    <div className="mt-2 p-2 bg-blue-50 rounded-lg">
+                      <p className="text-xs text-slate-500 mb-1">Selected therapies:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {selectedTherapies.map((therapy) => (
+                          <Badge
+                            key={therapy}
+                            className="text-xs bg-blue-600 cursor-pointer hover:bg-red-500"
+                            onClick={() => toggleTherapy(therapy)}
+                          >
+                            {therapy} <X className="w-3 h-3 ml-1" />
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {therapyBankLoading && (
+                    <p className="text-xs text-slate-400 mt-1">Loading therapy bank...</p>
+                  )}
+                </div>
+
                 <div>
                   <Label className="text-xs text-slate-500">Caregiver Report (optional)</Label>
                   <Textarea

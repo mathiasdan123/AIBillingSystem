@@ -1701,6 +1701,36 @@ export const insertPatientStatementSchema = createInsertSchema(patientStatements
 export type PatientStatement = typeof patientStatements.$inferSelect;
 export type InsertPatientStatement = z.infer<typeof insertPatientStatementSchema>;
 
+// ==================== APPOINTMENT REQUESTS ====================
+
+// Appointment Requests (patient-initiated, pending admin approval)
+export const appointmentRequests = pgTable("appointment_requests", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  appointmentTypeId: integer("appointment_type_id").references(() => appointmentTypes.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  // Request details
+  requestedDate: varchar("requested_date").notNull(), // YYYY-MM-DD
+  requestedTime: varchar("requested_time").notNull(), // HH:MM
+  notes: text("notes"),
+  // Status
+  status: varchar("status").default("pending_approval").notNull(), // pending_approval, approved, rejected, cancelled
+  rejectionReason: text("rejection_reason"),
+  // If approved, link to created appointment
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  // Processing
+  processedAt: timestamp("processed_at"),
+  processedById: varchar("processed_by_id").references(() => users.id),
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAppointmentRequestSchema = createInsertSchema(appointmentRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export type AppointmentRequest = typeof appointmentRequests.$inferSelect;
+export type InsertAppointmentRequest = z.infer<typeof insertAppointmentRequestSchema>;
+
 // ==================== ELIGIBILITY ALERTS ====================
 
 // Eligibility Alerts (coverage issues that need attention)
@@ -2240,4 +2270,19 @@ export const practicePaymentSettings = pgTable("practice_payment_settings", {
 export const insertPracticePaymentSettingsSchema = createInsertSchema(practicePaymentSettings).omit({ id: true, createdAt: true, updatedAt: true });
 export type PracticePaymentSettings = typeof practicePaymentSettings.$inferSelect;
 export type InsertPracticePaymentSettings = z.infer<typeof insertPracticePaymentSettingsSchema>;
+
+// Therapy Bank - practice-wide bank of therapies that can be selected in SOAP notes
+export const therapyBank = pgTable("therapy_bank", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  therapyName: varchar("therapy_name").notNull(),
+  category: varchar("category"), // optional category for organizing therapies
+  createdBy: varchar("created_by").references(() => users.id), // therapist who created it
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTherapyBankSchema = createInsertSchema(therapyBank).omit({ id: true, createdAt: true, updatedAt: true });
+export type TherapyBank = typeof therapyBank.$inferSelect;
+export type InsertTherapyBank = z.infer<typeof insertTherapyBankSchema>;
 

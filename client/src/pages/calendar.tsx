@@ -8,10 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList } from "lucide-react";
 import type { Appointment } from "@shared/schema";
+import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
 interface AvailabilitySlot {
   dayOfWeek: number;
@@ -346,6 +348,11 @@ export default function CalendarPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Pending Appointment Requests */}
+        <div className="mb-6">
+          <AppointmentRequestQueue practiceId={1} />
+        </div>
 
         {/* Navigation */}
         <Card className="mb-6 relative z-10">

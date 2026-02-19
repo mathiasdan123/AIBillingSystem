@@ -838,6 +838,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Therapy Bank API routes - practice-wide saved therapies for SOAP notes
+  app.get('/api/therapy-bank', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+      const therapies = await storage.getTherapyBank(user.practiceId);
+      res.json(therapies);
+    } catch (error) {
+      console.error('Error fetching therapy bank:', error);
+      res.status(500).json({ error: 'Failed to fetch therapy bank' });
+    }
+  });
+
+  app.post('/api/therapy-bank', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      const { therapyName, category } = req.body;
+      if (!therapyName || typeof therapyName !== 'string' || therapyName.trim().length === 0) {
+        return res.status(400).json({ error: 'Therapy name is required' });
+      }
+
+      // Check if therapy already exists in the practice
+      const existingTherapies = await storage.getTherapyBank(user.practiceId);
+      const exists = existingTherapies.some(
+        t => t.therapyName.toLowerCase() === therapyName.trim().toLowerCase()
+      );
+      if (exists) {
+        return res.status(409).json({ error: 'Therapy already exists in bank' });
+      }
+
+      const therapy = await storage.createTherapyBankEntry({
+        practiceId: user.practiceId,
+        therapyName: therapyName.trim(),
+        category: category?.trim() || null,
+        createdBy: user.id,
+      });
+      res.status(201).json(therapy);
+    } catch (error) {
+      console.error('Error creating therapy bank entry:', error);
+      res.status(500).json({ error: 'Failed to create therapy bank entry' });
+    }
+  });
+
+  app.delete('/api/therapy-bank/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid therapy ID' });
+      }
+
+      // Verify the therapy belongs to the user's practice
+      const therapies = await storage.getTherapyBank(user.practiceId);
+      const therapy = therapies.find(t => t.id === id);
+      if (!therapy) {
+        return res.status(404).json({ error: 'Therapy not found' });
+      }
+
+      await storage.deleteTherapyBankEntry(id);
+      res.status(204).send();
+    } catch (error) {
+      console.error('Error deleting therapy bank entry:', error);
+      res.status(500).json({ error: 'Failed to delete therapy bank entry' });
+    }
+  });
+
   // Treatment Sessions API routes
   app.get('/api/sessions', async (req, res) => {
     try {
@@ -8408,6 +8484,661 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching overdue installments:', error);
       res.status(500).json({ message: 'Failed to fetch overdue installments' });
+    }
+  });
+
+  // ==================== NEW PATIENT PORTAL (Separate from /api/public/portal) ====================
+
+  // Helper to get patient from Bearer token
+  const getPatientFromPortalToken = async (req: any): Promise<{ patient: any; access: any } | null> => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return null;
+    }
+    const token = authHeader.substring(7);
+    const access = await storage.getPatientPortalByToken(token);
+    if (!access) {
+      return null;
+    }
+    const patient = await storage.getPatient(access.patientId);
+    if (!patient) {
+      return null;
+    }
+    return { patient, access };
+  };
+
+  // Request login link via email
+  app.post('/api/patient-portal/request-login', async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: 'Email is required' });
+      }
+
+      // Find patient by email
+      const patients = await storage.getPatients(1); // TODO: Support multiple practices
+      const patient = patients.find(p => p.email?.toLowerCase() === email.toLowerCase());
+
+      if (!patient) {
+        // For security, don't reveal whether the email exists
+        return res.json({ message: 'If an account exists with this email, a login link will be sent.' });
+      }
+
+      // Generate or refresh portal access with magic link
+      let access = await storage.getPatientPortalAccess(patient.id);
+
+      // Generate new magic link token
+      const magicLinkToken = Array.from({ length: 64 }, () =>
+        'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
+      ).join('');
+      const magicLinkExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+      if (access) {
+        // Update with new magic link
+        await storage.updatePatientPortalMagicLink(access.id, magicLinkToken, magicLinkExpires);
+      } else {
+        // Create new portal access
+        const portalToken = Array.from({ length: 64 }, () =>
+          'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
+        ).join('');
+        const portalTokenExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
+
+        await storage.createPatientPortalAccess({
+          patientId: patient.id,
+          practiceId: patient.practiceId,
+          portalToken,
+          portalTokenExpiresAt: portalTokenExpires,
+          magicLinkToken,
+          magicLinkExpiresAt: magicLinkExpires,
+        });
+      }
+
+      // Send email with magic link
+      const loginUrl = `${process.env.BASE_URL || 'http://localhost:5000'}/patient-portal/login/${magicLinkToken}`;
+
+      try {
+        const { isEmailConfigured } = await import('./email');
+        if (isEmailConfigured()) {
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port: parseInt(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+              user: process.env.SMTP_USER || '',
+              pass: process.env.SMTP_PASS || '',
+            },
+          });
+
+          await transporter.sendMail({
+            from: `"Patient Portal" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+            to: patient.email!,
+            subject: 'Your Patient Portal Login Link',
+            html: `
+              <h2>Patient Portal Access</h2>
+              <p>Hi ${patient.firstName},</p>
+              <p>Click the link below to access your patient portal:</p>
+              <p><a href="${loginUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Log In to Patient Portal</a></p>
+              <p>This link will expire in 15 minutes for your security.</p>
+              <p>If you didn't request this link, you can safely ignore this email.</p>
+            `,
+          });
+        }
+      } catch (emailError) {
+        console.error('Error sending login email:', emailError);
+      }
+
+      res.json({ message: 'If an account exists with this email, a login link will be sent.' });
+    } catch (error) {
+      console.error('Error requesting login:', error);
+      res.status(500).json({ message: 'Failed to process request' });
+    }
+  });
+
+  // Exchange magic link token for portal token
+  app.get('/api/patient-portal/login/:token', async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.useMagicLink(token);
+
+      if (!access) {
+        return res.status(401).json({ message: 'Invalid or expired login link' });
+      }
+
+      res.json({
+        portalToken: access.portalToken,
+        expiresAt: access.portalTokenExpiresAt,
+      });
+    } catch (error) {
+      console.error('Error logging in:', error);
+      res.status(500).json({ message: 'Login failed' });
+    }
+  });
+
+  // Get patient dashboard
+  app.get('/api/patient-portal/dashboard', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient, access } = auth;
+      await storage.updatePortalAccess(patient.id);
+
+      // Get upcoming appointments
+      const now = new Date();
+      const allAppointments = await storage.getAppointments(patient.practiceId);
+      const upcomingAppointments = allAppointments
+        .filter(apt => apt.patientId === patient.id && new Date(apt.startTime) >= now && apt.status !== 'cancelled')
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+        .slice(0, 5)
+        .map(apt => ({
+          id: apt.id,
+          startTime: apt.startTime,
+          endTime: apt.endTime,
+          title: apt.title,
+          status: apt.status,
+        }));
+
+      // Get pending appointment requests
+      const pendingRequests = await storage.getPatientAppointmentRequests(patient.id, 'pending_approval');
+
+      // Get recent (past) appointments
+      const recentAppointments = allAppointments
+        .filter(apt => apt.patientId === patient.id && (new Date(apt.startTime) < now || apt.status === 'completed'))
+        .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
+        .slice(0, 5)
+        .map(apt => ({
+          id: apt.id,
+          startTime: apt.startTime,
+          status: apt.status,
+          title: apt.title,
+        }));
+
+      // Calculate profile completion
+      const requiredFields = ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'address', 'insuranceProvider'];
+      const missingFields: string[] = [];
+      requiredFields.forEach(field => {
+        if (!patient[field as keyof typeof patient]) {
+          missingFields.push(field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()));
+        }
+      });
+      const completedFields = requiredFields.length - missingFields.length;
+      const percentage = Math.round((completedFields / requiredFields.length) * 100);
+
+      res.json({
+        patient: {
+          id: patient.id,
+          firstName: patient.firstName,
+          lastName: patient.lastName,
+          email: patient.email,
+          phone: patient.phone,
+          dateOfBirth: patient.dateOfBirth,
+          insuranceProvider: patient.insuranceProvider,
+        },
+        upcomingAppointments,
+        pendingRequests,
+        recentAppointments,
+        profileCompletion: {
+          percentage,
+          missingFields,
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching dashboard:', error);
+      res.status(500).json({ message: 'Failed to fetch dashboard' });
+    }
+  });
+
+  // Get patient profile
+  app.get('/api/patient-portal/profile', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient } = auth;
+
+      res.json({
+        id: patient.id,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        email: patient.email,
+        phone: patient.phone,
+        phoneType: patient.phoneType,
+        dateOfBirth: patient.dateOfBirth,
+        address: patient.address,
+        preferredContactMethod: patient.preferredContactMethod,
+        smsConsentGiven: patient.smsConsentGiven,
+        insuranceProvider: patient.insuranceProvider,
+        insuranceId: patient.insuranceId,
+        policyNumber: patient.policyNumber,
+        groupNumber: patient.groupNumber,
+      });
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      res.status(500).json({ message: 'Failed to fetch profile' });
+    }
+  });
+
+  // Update patient profile
+  app.put('/api/patient-portal/profile', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient, access } = auth;
+      if (!access.canUpdateProfile) {
+        return res.status(403).json({ message: 'Profile updates not allowed' });
+      }
+
+      // Only allow specific fields to be updated
+      const allowedFields = [
+        'firstName', 'lastName', 'email', 'phone', 'phoneType',
+        'dateOfBirth', 'address', 'preferredContactMethod', 'smsConsentGiven',
+        'insuranceProvider', 'insuranceId', 'policyNumber', 'groupNumber'
+      ];
+
+      const updates: Record<string, any> = {};
+      for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+          updates[field] = req.body[field];
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: 'No valid fields to update' });
+      }
+
+      const updatedPatient = await storage.updatePatient(patient.id, updates);
+      res.json(updatedPatient);
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      res.status(500).json({ message: 'Failed to update profile' });
+    }
+  });
+
+  // Get patient appointments
+  app.get('/api/patient-portal/appointments', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient, access } = auth;
+      if (!access.canViewAppointments) {
+        return res.status(403).json({ message: 'Appointment viewing not allowed' });
+      }
+
+      const allAppointments = await storage.getAppointments(patient.practiceId);
+      const patientAppointments = allAppointments
+        .filter(apt => apt.patientId === patient.id)
+        .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+
+      // Enrich with therapist names
+      const enrichedAppointments = await Promise.all(patientAppointments.map(async (apt) => {
+        let therapistName = null;
+        if (apt.therapistId) {
+          const therapist = await storage.getUser(apt.therapistId);
+          if (therapist) {
+            therapistName = `${therapist.firstName} ${therapist.lastName}`;
+          }
+        }
+        return {
+          ...apt,
+          therapistName,
+        };
+      }));
+
+      res.json({ appointments: enrichedAppointments });
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      res.status(500).json({ message: 'Failed to fetch appointments' });
+    }
+  });
+
+  // Get appointment requests
+  app.get('/api/patient-portal/appointment-requests', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient } = auth;
+      const requests = await storage.getPatientAppointmentRequests(patient.id);
+
+      res.json({ requests });
+    } catch (error) {
+      console.error('Error fetching appointment requests:', error);
+      res.status(500).json({ message: 'Failed to fetch appointment requests' });
+    }
+  });
+
+  // Get appointment types (for booking)
+  app.get('/api/patient-portal/appointment-types', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient } = auth;
+      const appointmentTypes = await storage.getAppointmentTypes(patient.practiceId, true);
+
+      // Only return types that allow online booking
+      const bookableTypes = appointmentTypes.filter(t => t.allowOnlineBooking);
+
+      res.json(bookableTypes.map(t => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        duration: t.duration,
+        requiresApproval: t.requiresApproval,
+      })));
+    } catch (error) {
+      console.error('Error fetching appointment types:', error);
+      res.status(500).json({ message: 'Failed to fetch appointment types' });
+    }
+  });
+
+  // Get therapists (for booking)
+  app.get('/api/patient-portal/therapists', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const users = await storage.getAllUsers();
+      const therapists = users.filter(u => u.role === 'therapist' || u.role === 'admin');
+
+      res.json(therapists.map(t => ({
+        id: t.id,
+        firstName: t.firstName,
+        lastName: t.lastName,
+      })));
+    } catch (error) {
+      console.error('Error fetching therapists:', error);
+      res.status(500).json({ message: 'Failed to fetch therapists' });
+    }
+  });
+
+  // Request new appointment (pending approval)
+  app.post('/api/patient-portal/appointments/request', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient } = auth;
+      const { appointmentTypeId, therapistId, requestedDate, requestedTime, notes } = req.body;
+
+      if (!appointmentTypeId || !requestedDate || !requestedTime) {
+        return res.status(400).json({ message: 'Appointment type, date, and time are required' });
+      }
+
+      // Validate appointment type exists
+      const appointmentType = await storage.getAppointmentType(parseInt(appointmentTypeId));
+      if (!appointmentType) {
+        return res.status(404).json({ message: 'Invalid appointment type' });
+      }
+
+      // Create appointment request
+      const request = await storage.createAppointmentRequest({
+        practiceId: patient.practiceId,
+        patientId: patient.id,
+        appointmentTypeId: parseInt(appointmentTypeId),
+        therapistId: therapistId || null,
+        requestedDate,
+        requestedTime,
+        notes: notes || null,
+        status: 'pending_approval',
+      });
+
+      res.status(201).json({
+        message: 'Appointment request submitted successfully',
+        request,
+      });
+    } catch (error) {
+      console.error('Error creating appointment request:', error);
+      res.status(500).json({ message: 'Failed to create appointment request' });
+    }
+  });
+
+  // Cancel appointment request
+  app.post('/api/patient-portal/appointment-requests/:id/cancel', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient } = auth;
+      const requestId = parseInt(req.params.id);
+
+      const request = await storage.getAppointmentRequest(requestId);
+      if (!request || request.patientId !== patient.id) {
+        return res.status(404).json({ message: 'Request not found' });
+      }
+
+      if (request.status !== 'pending_approval') {
+        return res.status(400).json({ message: 'Only pending requests can be cancelled' });
+      }
+
+      await storage.updateAppointmentRequest(requestId, { status: 'cancelled' });
+
+      res.json({ message: 'Request cancelled successfully' });
+    } catch (error) {
+      console.error('Error cancelling request:', error);
+      res.status(500).json({ message: 'Failed to cancel request' });
+    }
+  });
+
+  // ==================== ADMIN: APPOINTMENT REQUEST MANAGEMENT ====================
+
+  // Get all pending appointment requests (for admin/staff)
+  app.get('/api/appointment-requests', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const status = req.query.status as string || undefined;
+      const requests = await storage.getPracticeAppointmentRequests(practiceId, status);
+
+      // Enrich with patient and type names
+      const enrichedRequests = await Promise.all(requests.map(async (request) => {
+        const patient = await storage.getPatient(request.patientId);
+        const appointmentType = request.appointmentTypeId
+          ? await storage.getAppointmentType(request.appointmentTypeId)
+          : null;
+        let therapistName = null;
+        if (request.therapistId) {
+          const therapist = await storage.getUser(request.therapistId);
+          if (therapist) {
+            therapistName = `${therapist.firstName} ${therapist.lastName}`;
+          }
+        }
+
+        return {
+          ...request,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
+          patientEmail: patient?.email,
+          patientPhone: patient?.phone,
+          appointmentTypeName: appointmentType?.name || 'Unknown',
+          appointmentTypeDuration: appointmentType?.duration || 60,
+          therapistName,
+        };
+      }));
+
+      res.json(enrichedRequests);
+    } catch (error) {
+      console.error('Error fetching appointment requests:', error);
+      res.status(500).json({ message: 'Failed to fetch appointment requests' });
+    }
+  });
+
+  // Approve appointment request (creates actual appointment)
+  app.post('/api/appointment-requests/:id/approve', isAuthenticated, async (req: any, res) => {
+    try {
+      const requestId = parseInt(req.params.id);
+      const { therapistId, startTime, endTime, notes } = req.body;
+
+      const request = await storage.getAppointmentRequest(requestId);
+      if (!request) {
+        return res.status(404).json({ message: 'Request not found' });
+      }
+
+      if (request.status !== 'pending_approval') {
+        return res.status(400).json({ message: 'Request has already been processed' });
+      }
+
+      // Get appointment type for title
+      const appointmentType = request.appointmentTypeId
+        ? await storage.getAppointmentType(request.appointmentTypeId)
+        : null;
+
+      // Calculate start/end times if not provided
+      const appointmentStart = startTime
+        ? new Date(startTime)
+        : new Date(`${request.requestedDate}T${request.requestedTime}`);
+      const duration = appointmentType?.duration || 60;
+      const appointmentEnd = endTime
+        ? new Date(endTime)
+        : new Date(appointmentStart.getTime() + duration * 60 * 1000);
+
+      // Create the appointment
+      const appointment = await storage.createAppointment({
+        practiceId: request.practiceId,
+        patientId: request.patientId,
+        therapistId: therapistId || request.therapistId,
+        title: appointmentType?.name || 'Appointment',
+        startTime: appointmentStart,
+        endTime: appointmentEnd,
+        status: 'scheduled',
+        notes: notes || request.notes,
+      });
+
+      // Update request status
+      await storage.updateAppointmentRequest(requestId, {
+        status: 'approved',
+        appointmentId: appointment.id,
+        processedAt: new Date(),
+        processedById: req.user?.claims?.sub,
+      });
+
+      // Optionally notify patient
+      const patient = await storage.getPatient(request.patientId);
+      if (patient?.email) {
+        try {
+          const { isEmailConfigured } = await import('./email');
+          if (isEmailConfigured()) {
+            const nodemailer = await import('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: {
+                user: process.env.SMTP_USER || '',
+                pass: process.env.SMTP_PASS || '',
+              },
+            });
+
+            await transporter.sendMail({
+              from: `"Appointment Confirmation" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: patient.email,
+              subject: 'Your Appointment Has Been Confirmed',
+              html: `
+                <h2>Appointment Confirmed</h2>
+                <p>Hi ${patient.firstName},</p>
+                <p>Your appointment request has been approved!</p>
+                <p><strong>Date:</strong> ${appointmentStart.toLocaleDateString()}</p>
+                <p><strong>Time:</strong> ${appointmentStart.toLocaleTimeString()}</p>
+                <p><strong>Type:</strong> ${appointmentType?.name || 'Appointment'}</p>
+                <p>We look forward to seeing you!</p>
+              `,
+            });
+          }
+        } catch (emailError) {
+          console.error('Error sending confirmation email:', emailError);
+        }
+      }
+
+      res.json({
+        message: 'Appointment request approved',
+        appointment,
+      });
+    } catch (error) {
+      console.error('Error approving request:', error);
+      res.status(500).json({ message: 'Failed to approve request' });
+    }
+  });
+
+  // Reject appointment request
+  app.post('/api/appointment-requests/:id/reject', isAuthenticated, async (req: any, res) => {
+    try {
+      const requestId = parseInt(req.params.id);
+      const { rejectionReason } = req.body;
+
+      const request = await storage.getAppointmentRequest(requestId);
+      if (!request) {
+        return res.status(404).json({ message: 'Request not found' });
+      }
+
+      if (request.status !== 'pending_approval') {
+        return res.status(400).json({ message: 'Request has already been processed' });
+      }
+
+      await storage.updateAppointmentRequest(requestId, {
+        status: 'rejected',
+        rejectionReason: rejectionReason || null,
+        processedAt: new Date(),
+        processedById: req.user?.claims?.sub,
+      });
+
+      // Optionally notify patient
+      const patient = await storage.getPatient(request.patientId);
+      if (patient?.email) {
+        try {
+          const { isEmailConfigured } = await import('./email');
+          if (isEmailConfigured()) {
+            const nodemailer = await import('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: {
+                user: process.env.SMTP_USER || '',
+                pass: process.env.SMTP_PASS || '',
+              },
+            });
+
+            await transporter.sendMail({
+              from: `"Appointment Update" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+              to: patient.email,
+              subject: 'Appointment Request Update',
+              html: `
+                <h2>Appointment Request Update</h2>
+                <p>Hi ${patient.firstName},</p>
+                <p>We were unable to accommodate your appointment request for ${request.requestedDate} at ${request.requestedTime}.</p>
+                ${rejectionReason ? `<p><strong>Reason:</strong> ${rejectionReason}</p>` : ''}
+                <p>Please log in to your patient portal to request a different time slot.</p>
+              `,
+            });
+          }
+        } catch (emailError) {
+          console.error('Error sending rejection email:', emailError);
+        }
+      }
+
+      res.json({ message: 'Appointment request rejected' });
+    } catch (error) {
+      console.error('Error rejecting request:', error);
+      res.status(500).json({ message: 'Failed to reject request' });
     }
   });
 
