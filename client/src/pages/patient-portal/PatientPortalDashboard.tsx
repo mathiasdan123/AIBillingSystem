@@ -180,6 +180,52 @@ export default function PatientPortalDashboard({ token, onNavigate }: PatientPor
       )}
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {/* Quick Profile Card - First */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <User className="h-5 w-5 text-primary" />
+              Your Profile
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Name</span>
+                <span className="font-medium">
+                  {dashboard.patient?.firstName} {dashboard.patient?.lastName}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Email</span>
+                <span className="font-medium truncate max-w-[150px]">
+                  {dashboard.patient?.email || "Not set"}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Phone</span>
+                <span className="font-medium">
+                  {dashboard.patient?.phone || "Not set"}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Insurance</span>
+                <span className="font-medium truncate max-w-[150px]">
+                  {dashboard.patient?.insuranceProvider || "Not set"}
+                </span>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              className="w-full mt-4"
+              onClick={() => onNavigate("profile")}
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              Update Profile
+            </Button>
+          </CardContent>
+        </Card>
+
         {/* Upcoming Appointments Card */}
         <Card>
           <CardHeader className="pb-3">
@@ -268,52 +314,6 @@ export default function PatientPortalDashboard({ token, onNavigate }: PatientPor
               onClick={() => onNavigate("appointments")}
             >
               View All Requests
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Quick Profile Card */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <User className="h-5 w-5 text-primary" />
-              Your Profile
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Name</span>
-                <span className="font-medium">
-                  {dashboard.patient?.firstName} {dashboard.patient?.lastName}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Email</span>
-                <span className="font-medium truncate max-w-[150px]">
-                  {dashboard.patient?.email || "Not set"}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Phone</span>
-                <span className="font-medium">
-                  {dashboard.patient?.phone || "Not set"}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Insurance</span>
-                <span className="font-medium truncate max-w-[150px]">
-                  {dashboard.patient?.insuranceProvider || "Not set"}
-                </span>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              className="w-full mt-4"
-              onClick={() => onNavigate("profile")}
-            >
-              <FileText className="h-4 w-4 mr-2" />
-              Update Profile
             </Button>
           </CardContent>
         </Card>

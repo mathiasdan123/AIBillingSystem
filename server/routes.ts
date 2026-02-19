@@ -8747,6 +8747,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const completedFields = requiredFields.length - missingFields.length;
       const percentage = Math.round((completedFields / requiredFields.length) * 100);
 
+      // Check intake completion (all required fields + insurance ID)
+      const intakeRequiredFields = ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'address', 'insuranceProvider', 'insuranceId'];
+      const intakeCompleted = intakeRequiredFields.every(field => !!patient[field as keyof typeof patient]);
+
+      // Check if patient has a payment method on file
+      // For now, check if patient has a stored payment method via portal access
+      const hasPaymentMethod = access.hasPaymentMethod || false;
+
       res.json({
         patient: {
           id: patient.id,
@@ -8764,6 +8772,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           percentage,
           missingFields,
         },
+        intakeCompleted,
+        hasPaymentMethod,
       });
     } catch (error) {
       console.error('Error fetching dashboard:', error);

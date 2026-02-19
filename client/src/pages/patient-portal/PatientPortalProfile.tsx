@@ -448,6 +448,36 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
         </CardContent>
       </Card>
 
+      {/* Payment Method */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CreditCard className="h-5 w-5" />
+            Payment Method
+          </CardTitle>
+          <CardDescription>
+            A payment method on file is required to schedule appointments
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-medium text-yellow-900">Payment method required</p>
+                <p className="text-yellow-700">
+                  Please contact the office to add a payment method to your account.
+                  This is required before you can schedule appointments.
+                </p>
+                <p className="text-yellow-600 mt-2 text-xs">
+                  Online payment setup coming soon.
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Profile Completion Status */}
       <Card>
         <CardHeader>

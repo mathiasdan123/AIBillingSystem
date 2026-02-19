@@ -94,6 +94,22 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
   const [selectedTime, setSelectedTime] = useState<string>("");
   const [requestNotes, setRequestNotes] = useState("");
 
+  // Fetch dashboard to check intake and payment status
+  const { data: dashboardData } = useQuery({
+    queryKey: ["/api/patient-portal/dashboard", token],
+    queryFn: async () => {
+      const res = await fetch(`/api/patient-portal/dashboard`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to fetch dashboard");
+      return res.json();
+    },
+  });
+
+  const intakeCompleted = dashboardData?.intakeCompleted ?? false;
+  const hasPaymentMethod = dashboardData?.hasPaymentMethod ?? false;
+  const canSchedule = intakeCompleted && hasPaymentMethod;
+
   // Fetch appointments
   const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery({
     queryKey: ["/api/patient-portal/appointments", token],
@@ -310,11 +326,47 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
             View your appointments and request new ones
           </p>
         </div>
-        <Button onClick={() => setShowRequestDialog(true)}>
+        <Button
+          onClick={() => setShowRequestDialog(true)}
+          disabled={!canSchedule}
+        >
           <Plus className="h-4 w-4 mr-2" />
           Request Appointment
         </Button>
       </div>
+
+      {/* Requirements Alert - Show if intake or payment is missing */}
+      {!canSchedule && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="py-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <AlertCircle className="h-5 w-5 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <p className="font-medium text-red-800">Complete the following to schedule appointments:</p>
+                <ul className="mt-2 space-y-1 text-sm text-red-700">
+                  {!intakeCompleted && (
+                    <li className="flex items-center gap-2">
+                      <XCircle className="h-4 w-4" />
+                      Complete your patient intake form (profile information)
+                    </li>
+                  )}
+                  {!hasPaymentMethod && (
+                    <li className="flex items-center gap-2">
+                      <XCircle className="h-4 w-4" />
+                      Add a payment method on file
+                    </li>
+                  )}
+                </ul>
+                <p className="mt-3 text-sm text-red-600">
+                  Please update your profile to complete these requirements.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Pending Requests Alert */}
       {pendingRequests.length > 0 && (

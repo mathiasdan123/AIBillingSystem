@@ -1629,6 +1629,12 @@ export const patientPortalAccess = pgTable("patient_portal_access", {
   canSendMessages: boolean("can_send_messages").default(true),
   canUpdateProfile: boolean("can_update_profile").default(true),
   canCompleteIntake: boolean("can_complete_intake").default(true),
+  // Payment info
+  hasPaymentMethod: boolean("has_payment_method").default(false),
+  stripeCustomerId: varchar("stripe_customer_id"),
+  stripePaymentMethodId: varchar("stripe_payment_method_id"),
+  // Intake completion
+  intakeCompletedAt: timestamp("intake_completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
