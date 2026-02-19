@@ -184,6 +184,9 @@ import {
   therapyBank,
   type TherapyBank,
   type InsertTherapyBank,
+  exerciseBank,
+  type ExerciseBank,
+  type InsertExerciseBank,
   appointmentRequests,
   type AppointmentRequest,
   type InsertAppointmentRequest,
@@ -323,6 +326,11 @@ export interface IStorage {
   getTherapyBank(practiceId: number): Promise<TherapyBank[]>;
   createTherapyBankEntry(entry: InsertTherapyBank): Promise<TherapyBank>;
   deleteTherapyBankEntry(id: number): Promise<void>;
+
+  // Exercise Bank operations
+  getExerciseBank(practiceId: number, category?: string): Promise<ExerciseBank[]>;
+  createExerciseBankEntry(entry: InsertExerciseBank): Promise<ExerciseBank>;
+  deleteExerciseBankEntry(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -5369,6 +5377,37 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(therapyBank)
       .where(eq(therapyBank.id, id));
+  }
+
+  // Exercise Bank operations
+  async getExerciseBank(practiceId: number, category?: string): Promise<ExerciseBank[]> {
+    let query = db
+      .select()
+      .from(exerciseBank)
+      .where(eq(exerciseBank.practiceId, practiceId));
+
+    if (category) {
+      query = query.where(and(
+        eq(exerciseBank.practiceId, practiceId),
+        eq(exerciseBank.category, category)
+      )) as any;
+    }
+
+    return await query.orderBy(exerciseBank.category, exerciseBank.exerciseName);
+  }
+
+  async createExerciseBankEntry(entry: InsertExerciseBank): Promise<ExerciseBank> {
+    const [newEntry] = await db
+      .insert(exerciseBank)
+      .values(entry)
+      .returning();
+    return newEntry;
+  }
+
+  async deleteExerciseBankEntry(id: number): Promise<void> {
+    await db
+      .delete(exerciseBank)
+      .where(eq(exerciseBank.id, id));
   }
 }
 

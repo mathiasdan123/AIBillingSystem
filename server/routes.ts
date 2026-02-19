@@ -914,6 +914,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Exercise Bank API routes - practice-wide saved exercises for SOAP notes activities
+  app.get('/api/exercise-bank', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+      const category = req.query.category as string | undefined;
+      const exercises = await storage.getExerciseBank(user.practiceId, category);
+      res.json(exercises);
+    } catch (error) {
+      console.error('Error fetching exercise bank:', error);
+      res.status(500).json({ error: 'Failed to fetch exercise bank' });
+    }
+  });
+
+  app.post('/api/exercise-bank', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      const { exerciseName, category } = req.body;
+      if (!exerciseName || typeof exerciseName !== 'string' || exerciseName.trim().length === 0) {
+        return res.status(400).json({ error: 'Exercise name is required' });
+      }
+      if (!category || typeof category !== 'string' || category.trim().length === 0) {
+        return res.status(400).json({ error: 'Category is required' });
+      }
+
+      // Check if exercise already exists in the practice for this category
+      const existingExercises = await storage.getExerciseBank(user.practiceId, category);
+      const exists = existingExercises.some(
+        e => e.exerciseName.toLowerCase() === exerciseName.trim().toLowerCase()
+      );
+      if (exists) {
+        return res.status(409).json({ error: 'Exercise already exists in bank for this category' });
+      }
+
+      const exercise = await storage.createExerciseBankEntry({
+        practiceId: user.practiceId,
+        exerciseName: exerciseName.trim(),
+        category: category.trim(),
+        createdBy: user.id,
+      });
+      res.status(201).json(exercise);
+    } catch (error) {
+      console.error('Error creating exercise bank entry:', error);
+      res.status(500).json({ error: 'Failed to create exercise bank entry' });
+    }
+  });
+
+  app.delete('/api/exercise-bank/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid exercise ID' });
+      }
+
+      // Verify the exercise belongs to the user's practice
+      const exercises = await storage.getExerciseBank(user.practiceId);
+      const exercise = exercises.find(e => e.id === id);
+      if (!exercise) {
+        return res.status(404).json({ error: 'Exercise not found' });
+      }
+
+      await storage.deleteExerciseBankEntry(id);
+      res.status(204).send();
+    } catch (error) {
+      console.error('Error deleting exercise bank entry:', error);
+      res.status(500).json({ error: 'Failed to delete exercise bank entry' });
+    }
+  });
+
   // Treatment Sessions API routes
   app.get('/api/sessions', async (req, res) => {
     try {

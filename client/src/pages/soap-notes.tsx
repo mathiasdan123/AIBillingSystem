@@ -20,7 +20,7 @@ import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { type SoapNote, type Patient, type CptCode, type TherapyBank } from "@shared/schema";
+import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 
 // ============================================
 // OT-SPECIFIC DROPDOWN OPTIONS (from OT template)
@@ -161,6 +161,7 @@ export default function SoapNotes() {
   // Objective - Selected activities
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<string[]>(["Strengthening Activities"]);
+  const [newExerciseInputs, setNewExerciseInputs] = useState<Record<string, string>>({});
 
   // Assessment selections
   const [assessment, setAssessment] = useState({
@@ -340,6 +341,84 @@ export default function SoapNotes() {
         ? prev.filter(t => t !== therapyName)
         : [...prev, therapyName]
     );
+  };
+
+  // Exercise Bank - practice-wide saved exercises for activities
+  const { data: exerciseBank, isLoading: exerciseBankLoading } = useQuery<ExerciseBank[]>({
+    queryKey: ["/api/exercise-bank"],
+    retry: false,
+  });
+
+  // Mutation to add new exercise to the bank
+  const addExerciseMutation = useMutation({
+    mutationFn: async ({ exerciseName, category }: { exerciseName: string; category: string }) => {
+      const response = await apiRequest("POST", "/api/exercise-bank", { exerciseName, category });
+      return response.json();
+    },
+    onSuccess: (newExercise: ExerciseBank) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/exercise-bank"] });
+      // Auto-select the newly added exercise
+      setSelectedActivities(prev => [...prev, newExercise.exerciseName]);
+      // Clear the input for that category
+      setNewExerciseInputs(prev => ({ ...prev, [newExercise.category]: "" }));
+      toast({
+        title: "Exercise Added",
+        description: `"${newExercise.exerciseName}" has been added to ${newExercise.category}.`,
+      });
+    },
+    onError: (error: any) => {
+      const message = error?.message || "Failed to add exercise";
+      if (message.includes("already exists")) {
+        toast({
+          title: "Exercise Already Exists",
+          description: "This exercise is already in the bank. You can select it from the list.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+  });
+
+  // Handle adding a new exercise to a category
+  const handleAddNewExercise = (category: string) => {
+    const trimmed = (newExerciseInputs[category] || "").trim();
+    if (!trimmed) return;
+
+    // Check if already in local selection
+    if (selectedActivities.some(a => a.toLowerCase() === trimmed.toLowerCase())) {
+      toast({
+        title: "Already Selected",
+        description: "This exercise is already selected.",
+      });
+      return;
+    }
+
+    // Check if already in the bank for this category
+    const existsInBank = exerciseBank?.some(
+      e => e.category === category && e.exerciseName.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existsInBank) {
+      // Just select it
+      setSelectedActivities(prev => [...prev, trimmed]);
+      setNewExerciseInputs(prev => ({ ...prev, [category]: "" }));
+      return;
+    }
+
+    // Add to bank (which will auto-select on success)
+    addExerciseMutation.mutate({ exerciseName: trimmed, category });
+  };
+
+  // Get custom exercises for a category from the exercise bank
+  const getCustomExercisesForCategory = (categoryName: string): string[] => {
+    if (!exerciseBank) return [];
+    return exerciseBank
+      .filter(e => e.category === categoryName)
+      .map(e => e.exerciseName);
   };
 
   // Handle voice/document transcription - populates structured fields
@@ -800,89 +879,15 @@ export default function SoapNotes() {
                   </Select>
                 </div>
 
-                {/* Additional Therapies - Practice-wide banked therapies */}
+                {/* Additional Comments */}
                 <div>
-                  <Label className="text-xs text-slate-500 flex items-center gap-2">
-                    Additional Therapies
-                    {selectedTherapies.length > 0 && (
-                      <Badge variant="secondary" className="text-xs">{selectedTherapies.length} selected</Badge>
-                    )}
-                  </Label>
-
-                  {/* Input for adding new therapy */}
-                  <div className="flex gap-2 mt-1">
-                    <Input
-                      placeholder="Type a therapy name..."
-                      value={newTherapyInput}
-                      onChange={(e) => setNewTherapyInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddNewTherapy();
-                        }
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleAddNewTherapy}
-                      disabled={!newTherapyInput.trim() || addTherapyMutation.isPending}
-                    >
-                      {addTherapyMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Plus className="w-4 h-4" />
-                      )}
-                    </Button>
-                  </div>
-
-                  {/* List of available therapies from bank */}
-                  {therapyBank && therapyBank.length > 0 && (
-                    <div className="mt-2 p-2 bg-slate-50 rounded-lg border max-h-32 overflow-y-auto">
-                      <div className="flex flex-wrap gap-1">
-                        {therapyBank.map((therapy) => (
-                          <Badge
-                            key={therapy.id}
-                            variant={selectedTherapies.includes(therapy.therapyName) ? "default" : "outline"}
-                            className={`text-xs cursor-pointer transition-colors ${
-                              selectedTherapies.includes(therapy.therapyName)
-                                ? "bg-blue-600 hover:bg-blue-700"
-                                : "hover:bg-blue-100"
-                            }`}
-                            onClick={() => toggleTherapy(therapy.therapyName)}
-                          >
-                            {therapy.therapyName}
-                            {selectedTherapies.includes(therapy.therapyName) && (
-                              <X className="w-3 h-3 ml-1" />
-                            )}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Selected therapies display */}
-                  {selectedTherapies.length > 0 && (
-                    <div className="mt-2 p-2 bg-blue-50 rounded-lg">
-                      <p className="text-xs text-slate-500 mb-1">Selected therapies:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {selectedTherapies.map((therapy) => (
-                          <Badge
-                            key={therapy}
-                            className="text-xs bg-blue-600 cursor-pointer hover:bg-red-500"
-                            onClick={() => toggleTherapy(therapy)}
-                          >
-                            {therapy} <X className="w-3 h-3 ml-1" />
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {therapyBankLoading && (
-                    <p className="text-xs text-slate-400 mt-1">Loading therapy bank...</p>
-                  )}
+                  <Label className="text-xs text-slate-500">Additional Comments</Label>
+                  <Textarea
+                    placeholder="Any additional observations or comments about the session..."
+                    value={selectedTherapies.join('\n')}
+                    onChange={(e) => setSelectedTherapies(e.target.value ? [e.target.value] : [])}
+                    className="mt-1 min-h-[60px]"
+                  />
                 </div>
 
                 <div>
@@ -922,11 +927,16 @@ export default function SoapNotes() {
                       >
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-sm">{category.name}</span>
-                          {selectedActivities.filter(a => category.activities.includes(a)).length > 0 && (
-                            <Badge className="bg-green-100 text-green-700 text-xs">
-                              {selectedActivities.filter(a => category.activities.includes(a)).length}
-                            </Badge>
-                          )}
+                          {(() => {
+                            const customExercises = getCustomExercisesForCategory(category.name);
+                            const allCategoryActivities = [...category.activities, ...customExercises];
+                            const selectedCount = selectedActivities.filter(a => allCategoryActivities.includes(a)).length;
+                            return selectedCount > 0 && (
+                              <Badge className="bg-green-100 text-green-700 text-xs">
+                                {selectedCount}
+                              </Badge>
+                            );
+                          })()}
                         </div>
                         {expandedCategories.includes(category.name) ? (
                           <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -936,23 +946,83 @@ export default function SoapNotes() {
                       </button>
 
                       {expandedCategories.includes(category.name) && (
-                        <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-1 max-h-48 overflow-y-auto">
-                          {category.activities.map((activity) => (
-                            <label
-                              key={activity}
-                              className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
-                                selectedActivities.includes(activity)
-                                  ? "bg-green-50 text-green-800"
-                                  : "hover:bg-slate-50"
-                              }`}
-                            >
-                              <Checkbox
-                                checked={selectedActivities.includes(activity)}
-                                onCheckedChange={() => toggleActivity(activity)}
+                        <div className="p-3">
+                          {/* Built-in activities */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-1 max-h-48 overflow-y-auto">
+                            {category.activities.map((activity) => (
+                              <label
+                                key={activity}
+                                className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
+                                  selectedActivities.includes(activity)
+                                    ? "bg-green-50 text-green-800"
+                                    : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <Checkbox
+                                  checked={selectedActivities.includes(activity)}
+                                  onCheckedChange={() => toggleActivity(activity)}
+                                />
+                                <span className="text-xs">{activity}</span>
+                              </label>
+                            ))}
+                            {/* Custom exercises from exercise bank */}
+                            {getCustomExercisesForCategory(category.name).map((exercise) => (
+                              <label
+                                key={`custom-${exercise}`}
+                                className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
+                                  selectedActivities.includes(exercise)
+                                    ? "bg-blue-50 text-blue-800"
+                                    : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <Checkbox
+                                  checked={selectedActivities.includes(exercise)}
+                                  onCheckedChange={() => toggleActivity(exercise)}
+                                />
+                                <span className="text-xs">{exercise}</span>
+                                <Badge variant="outline" className="text-[10px] px-1 py-0 ml-auto">Custom</Badge>
+                              </label>
+                            ))}
+                          </div>
+
+                          {/* Add new exercise input */}
+                          <div className="mt-3 pt-3 border-t">
+                            <Label className="text-xs text-slate-500 mb-1 block">Add Custom Exercise</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                placeholder="Type exercise name..."
+                                value={newExerciseInputs[category.name] || ""}
+                                onChange={(e) => setNewExerciseInputs(prev => ({
+                                  ...prev,
+                                  [category.name]: e.target.value
+                                }))}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleAddNewExercise(category.name);
+                                  }
+                                }}
+                                className="flex-1 h-8 text-xs"
                               />
-                              <span className="text-xs">{activity}</span>
-                            </label>
-                          ))}
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleAddNewExercise(category.name)}
+                                disabled={!(newExerciseInputs[category.name] || "").trim() || addExerciseMutation.isPending}
+                                className="h-8"
+                              >
+                                {addExerciseMutation.isPending ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Plus className="w-3 h-3" />
+                                )}
+                              </Button>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1">
+                              Added exercises will be saved and available for future sessions
+                            </p>
+                          </div>
                         </div>
                       )}
                     </div>

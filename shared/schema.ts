@@ -2286,3 +2286,18 @@ export const insertTherapyBankSchema = createInsertSchema(therapyBank).omit({ id
 export type TherapyBank = typeof therapyBank.$inferSelect;
 export type InsertTherapyBank = z.infer<typeof insertTherapyBankSchema>;
 
+// Exercise Bank - practice-wide bank of exercises organized by activity category
+export const exerciseBank = pgTable("exercise_bank", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  exerciseName: varchar("exercise_name").notNull(),
+  category: varchar("category").notNull(), // "Strengthening Activities", "Balance & Motor Planning", etc.
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertExerciseBankSchema = createInsertSchema(exerciseBank).omit({ id: true, createdAt: true, updatedAt: true });
+export type ExerciseBank = typeof exerciseBank.$inferSelect;
+export type InsertExerciseBank = z.infer<typeof insertExerciseBankSchema>;
+
