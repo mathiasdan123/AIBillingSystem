@@ -37,8 +37,8 @@ DB_BACKUP_FILE="$BACKUP_DIR/db_backup_$DATE.sql"
 
 # Extract database connection details from DATABASE_URL
 if [ -n "$DATABASE_URL" ]; then
-    # Create a Node.js backup script
-    cat > "$BACKUP_DIR/.backup_db.js" << 'NODESCRIPT'
+    # Create a Node.js backup script (use .cjs for CommonJS in ES module project)
+    cat > "$BACKUP_DIR/.backup_db.cjs" << 'NODESCRIPT'
 const { Client } = require('pg');
 const fs = require('fs');
 
@@ -90,12 +90,12 @@ NODESCRIPT
 
     # Run the backup script
     cd "$PROJECT_DIR"
-    BACKUP_FILE="$DB_BACKUP_FILE" node "$BACKUP_DIR/.backup_db.js" && \
+    BACKUP_FILE="$DB_BACKUP_FILE" node "$BACKUP_DIR/.backup_db.cjs" && \
         log "Database backup saved to: $DB_BACKUP_FILE" || \
         log "ERROR: Database backup failed"
 
     # Cleanup temp script
-    rm -f "$BACKUP_DIR/.backup_db.js"
+    rm -f "$BACKUP_DIR/.backup_db.cjs"
 else
     log "WARNING: DATABASE_URL not set, skipping database backup"
 fi
