@@ -129,6 +129,22 @@ const ASSESSMENT_OPTIONS = {
   sensoryRegulation: ["Well-Regulated", "Needed Minimal Supports", "Required Frequent Supports", "Unable to Regulate"]
 };
 
+// Exercise-level assessment options
+const EXERCISE_ASSESSMENT_OPTIONS = [
+  "Independent",
+  "Verbal Cues Only",
+  "Minimal Assist",
+  "Moderate Assist",
+  "Maximal Assist",
+  "Unable to Complete"
+];
+
+// Type for activity with assessment
+interface ActivityWithAssessment {
+  name: string;
+  assessment: string;
+}
+
 const PLAN_OPTIONS = [
   "Continue Current Goals", "Modify Goals", "Add New Strategies",
   "Trial New Equipment", "Increase Home Program"
@@ -158,10 +174,11 @@ export default function SoapNotes() {
   const [selectedTherapies, setSelectedTherapies] = useState<string[]>([]);
   const [newTherapyInput, setNewTherapyInput] = useState("");
 
-  // Objective - Selected activities
-  const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
+  // Objective - Selected activities with individual assessments
+  const [selectedActivities, setSelectedActivities] = useState<ActivityWithAssessment[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<string[]>(["Strengthening Activities"]);
   const [newExerciseInputs, setNewExerciseInputs] = useState<Record<string, string>>({});
+  const [applyToAllAssessment, setApplyToAllAssessment] = useState("");
 
   // Assessment selections
   const [assessment, setAssessment] = useState({
@@ -358,7 +375,7 @@ export default function SoapNotes() {
     onSuccess: (newExercise: ExerciseBank) => {
       queryClient.invalidateQueries({ queryKey: ["/api/exercise-bank"] });
       // Auto-select the newly added exercise
-      setSelectedActivities(prev => [...prev, newExercise.exerciseName]);
+      setSelectedActivities(prev => [...prev, { name: newExercise.exerciseName, assessment: "" }]);
       // Clear the input for that category
       setNewExerciseInputs(prev => ({ ...prev, [newExercise.category]: "" }));
       toast({
@@ -390,7 +407,7 @@ export default function SoapNotes() {
     if (!trimmed) return;
 
     // Check if already in local selection
-    if (selectedActivities.some(a => a.toLowerCase() === trimmed.toLowerCase())) {
+    if (selectedActivities.some(a => a.name.toLowerCase() === trimmed.toLowerCase())) {
       toast({
         title: "Already Selected",
         description: "This exercise is already selected.",
@@ -404,7 +421,7 @@ export default function SoapNotes() {
     );
     if (existsInBank) {
       // Just select it
-      setSelectedActivities(prev => [...prev, trimmed]);
+      setSelectedActivities(prev => [...prev, { name: trimmed, assessment: "" }]);
       setNewExerciseInputs(prev => ({ ...prev, [category]: "" }));
       return;
     }
@@ -437,7 +454,13 @@ export default function SoapNotes() {
       lowerText.includes(activity.toLowerCase().split(' – ')[0].toLowerCase())
     );
     if (matchedActivities.length > 0) {
-      setSelectedActivities(prev => Array.from(new Set([...prev, ...matchedActivities])));
+      setSelectedActivities(prev => {
+        const existingNames = prev.map(a => a.name);
+        const newActivities = matchedActivities
+          .filter(name => !existingNames.includes(name))
+          .map(name => ({ name, assessment: "" }));
+        return [...prev, ...newActivities];
+      });
     }
 
     // Try to detect assessment keywords
@@ -475,11 +498,34 @@ export default function SoapNotes() {
   };
 
   const toggleActivity = (activity: string) => {
+    setSelectedActivities(prev => {
+      const exists = prev.find(a => a.name === activity);
+      if (exists) {
+        return prev.filter(a => a.name !== activity);
+      } else {
+        return [...prev, { name: activity, assessment: "" }];
+      }
+    });
+  };
+
+  // Update assessment for a specific activity
+  const updateActivityAssessment = (activityName: string, assessment: string) => {
     setSelectedActivities(prev =>
-      prev.includes(activity)
-        ? prev.filter(a => a !== activity)
-        : [...prev, activity]
+      prev.map(a => a.name === activityName ? { ...a, assessment } : a)
     );
+  };
+
+  // Apply assessment to all activities
+  const applyAssessmentToAll = () => {
+    if (!applyToAllAssessment) return;
+    setSelectedActivities(prev =>
+      prev.map(a => ({ ...a, assessment: applyToAllAssessment }))
+    );
+  };
+
+  // Helper to check if activity is selected
+  const isActivitySelected = (activity: string) => {
+    return selectedActivities.some(a => a.name === activity);
   };
 
   // Get patient info
@@ -511,7 +557,8 @@ export default function SoapNotes() {
       // Call the AI backend service
       const response = await apiRequest("POST", "/api/ai/generate-soap-billing", {
         patientId: selectedPatient,
-        activities: selectedActivities,
+        activities: selectedActivities.map(a => a.name), // Activity names for backward compatibility
+        activityAssessments: selectedActivities, // Full activity objects with assessments
         additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
         mood: mood || "Cooperative",
         caregiverReport: caregiverReport || undefined,
@@ -930,7 +977,7 @@ export default function SoapNotes() {
                           {(() => {
                             const customExercises = getCustomExercisesForCategory(category.name);
                             const allCategoryActivities = [...category.activities, ...customExercises];
-                            const selectedCount = selectedActivities.filter(a => allCategoryActivities.includes(a)).length;
+                            const selectedCount = selectedActivities.filter(a => allCategoryActivities.includes(a.name)).length;
                             return selectedCount > 0 && (
                               <Badge className="bg-green-100 text-green-700 text-xs">
                                 {selectedCount}
@@ -953,13 +1000,13 @@ export default function SoapNotes() {
                               <label
                                 key={activity}
                                 className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
-                                  selectedActivities.includes(activity)
+                                  isActivitySelected(activity)
                                     ? "bg-green-50 text-green-800"
                                     : "hover:bg-slate-50"
                                 }`}
                               >
                                 <Checkbox
-                                  checked={selectedActivities.includes(activity)}
+                                  checked={isActivitySelected(activity)}
                                   onCheckedChange={() => toggleActivity(activity)}
                                 />
                                 <span className="text-xs">{activity}</span>
@@ -970,13 +1017,13 @@ export default function SoapNotes() {
                               <label
                                 key={`custom-${exercise}`}
                                 className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
-                                  selectedActivities.includes(exercise)
+                                  isActivitySelected(exercise)
                                     ? "bg-blue-50 text-blue-800"
                                     : "hover:bg-slate-50"
                                 }`}
                               >
                                 <Checkbox
-                                  checked={selectedActivities.includes(exercise)}
+                                  checked={isActivitySelected(exercise)}
                                   onCheckedChange={() => toggleActivity(exercise)}
                                 />
                                 <span className="text-xs">{exercise}</span>
@@ -1030,17 +1077,61 @@ export default function SoapNotes() {
                 </div>
 
                 {selectedActivities.length > 0 && (
-                  <div className="mt-3 p-2 bg-green-50 rounded-lg">
-                    <div className="flex flex-wrap gap-1">
+                  <div className="mt-3 p-3 bg-green-50 rounded-lg space-y-3">
+                    {/* Apply to All option */}
+                    <div className="flex items-center gap-2 pb-2 border-b border-green-200">
+                      <Label className="text-xs text-green-700 whitespace-nowrap">Apply to all:</Label>
+                      <Select value={applyToAllAssessment} onValueChange={setApplyToAllAssessment}>
+                        <SelectTrigger className="h-7 text-xs flex-1 max-w-[200px]">
+                          <SelectValue placeholder="Select assessment" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {EXERCISE_ASSESSMENT_OPTIONS.map((opt) => (
+                            <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={applyAssessmentToAll}
+                        disabled={!applyToAllAssessment}
+                      >
+                        Apply
+                      </Button>
+                    </div>
+
+                    {/* Individual activities with assessments */}
+                    <div className="space-y-2">
                       {selectedActivities.map((activity) => (
-                        <Badge
-                          key={activity}
-                          variant="secondary"
-                          className="text-xs cursor-pointer hover:bg-red-100"
-                          onClick={() => toggleActivity(activity)}
+                        <div
+                          key={activity.name}
+                          className="flex items-center gap-2 bg-white rounded p-2"
                         >
-                          {activity} <X className="w-3 h-3 ml-1" />
-                        </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => toggleActivity(activity.name)}
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                          <span className="text-xs flex-1 min-w-0 truncate">{activity.name}</span>
+                          <Select
+                            value={activity.assessment}
+                            onValueChange={(v) => updateActivityAssessment(activity.name, v)}
+                          >
+                            <SelectTrigger className="h-7 text-xs w-[160px]">
+                              <SelectValue placeholder="Assessment" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {EXERCISE_ASSESSMENT_OPTIONS.map((opt) => (
+                                <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       ))}
                     </div>
                   </div>
