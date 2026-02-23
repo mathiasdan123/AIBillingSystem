@@ -562,6 +562,15 @@ export default function SoapNotes() {
       return;
     }
 
+    if (!nextSessionFocus.trim()) {
+      toast({
+        title: "Missing Information",
+        description: "Please enter the Next Session Focus.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsGenerating(true);
 
     try {
@@ -583,7 +592,7 @@ export default function SoapNotes() {
           sensoryRegulation: assessment.sensoryRegulation || "Needed Minimal Supports"
         },
         planNextSteps: planNextSteps || "Continue Current Goals",
-        nextSessionFocus: nextSessionFocus || undefined,
+        nextSessionFocus: nextSessionFocus,
         homeProgram: homeProgram || undefined,
         ratePerUnit: ratePerUnit // Manual rate override
       });
@@ -1368,12 +1377,13 @@ export default function SoapNotes() {
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs text-slate-500">Next Session Focus (optional)</Label>
+                  <Label className="text-xs text-slate-500">Next Session Focus <span className="text-red-500">*</span></Label>
                   <Textarea
                     placeholder="Areas to target next session..."
                     value={nextSessionFocus}
                     onChange={(e) => setNextSessionFocus(e.target.value)}
                     className="mt-1 min-h-[50px]"
+                    required
                   />
                 </div>
                 <div>
