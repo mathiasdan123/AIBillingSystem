@@ -8695,6 +8695,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Demo login for patient portal (development/demo only)
+  app.get('/api/patient-portal/demo-login', async (req, res) => {
+    try {
+      // Find first patient with portal access
+      const patients = await storage.getPatients(1); // Practice ID 1
+      if (!patients.length) {
+        return res.status(404).json({ message: 'No patients found for demo' });
+      }
+
+      const patient = patients[0];
+
+      // Check if patient has portal access, if not create it
+      let access = await storage.getPatientPortalAccess(patient.id);
+
+      if (!access) {
+        // Create portal access for demo patient
+        const crypto = await import('crypto');
+        access = await storage.createPatientPortalAccess({
+          patientId: patient.id,
+          email: patient.email || `demo-${patient.id}@example.com`,
+          magicLinkToken: crypto.randomBytes(32).toString('hex'),
+          magicLinkExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
+          portalToken: crypto.randomBytes(32).toString('hex'),
+          portalTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        });
+      } else {
+        // Refresh the portal token
+        access = await storage.refreshPortalToken(patient.id);
+      }
+
+      res.json({
+        portalToken: access!.portalToken,
+        expiresAt: access!.portalTokenExpiresAt,
+        patient: {
+          firstName: patient.firstName,
+          lastName: patient.lastName,
+        }
+      });
+    } catch (error) {
+      console.error('Error with demo login:', error);
+      res.status(500).json({ message: 'Demo login failed' });
+    }
+  });
+
   // Get patient dashboard
   app.get('/api/patient-portal/dashboard', async (req, res) => {
     try {

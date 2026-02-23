@@ -21,8 +21,18 @@ export default function PatientPortalPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  // Get token from localStorage
+  // Get token from localStorage or URL query param (for demo QR code)
   const [portalToken, setPortalToken] = useState<string | null>(() => {
+    // Check URL query params first (for QR code demo login)
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl = urlParams.get('token');
+    if (tokenFromUrl) {
+      // Store in localStorage and clean up URL
+      localStorage.setItem("patientPortalToken", tokenFromUrl);
+      // Remove token from URL without page reload
+      window.history.replaceState({}, '', window.location.pathname);
+      return tokenFromUrl;
+    }
     return localStorage.getItem("patientPortalToken");
   });
 
