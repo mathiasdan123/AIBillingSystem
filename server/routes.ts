@@ -519,6 +519,121 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Revenue analytics
+  app.get('/api/analytics/revenue', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const timeRange = req.query.timeRange as string || '12months';
+      const months = { '3months': 3, '6months': 6, '12months': 12 }[timeRange] || 12;
+      const startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - months);
+      const data = await storage.getRevenueByMonth(practiceId, startDate, new Date());
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching revenue analytics:', error);
+      res.status(500).json({ message: 'Failed to fetch revenue analytics' });
+    }
+  });
+
+  // Claims by status
+  app.get('/api/analytics/claims-by-status', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const data = await storage.getClaimsByStatus(practiceId);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching claims by status:', error);
+      res.status(500).json({ message: 'Failed to fetch claims by status' });
+    }
+  });
+
+  // Denial reasons
+  app.get('/api/analytics/denial-reasons', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const data = await storage.getTopDenialReasons(practiceId);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching denial reasons:', error);
+      res.status(500).json({ message: 'Failed to fetch denial reasons' });
+    }
+  });
+
+  // Collection rate analytics
+  app.get('/api/analytics/collection-rate', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const data = await storage.getCollectionRate(practiceId);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching collection rate:', error);
+      res.status(500).json({ message: 'Failed to fetch collection rate' });
+    }
+  });
+
+  // Clean claims rate analytics
+  app.get('/api/analytics/clean-claims-rate', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const data = await storage.getCleanClaimsRate(practiceId);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching clean claims rate:', error);
+      res.status(500).json({ message: 'Failed to fetch clean claims rate' });
+    }
+  });
+
+  // Capacity utilization analytics
+  app.get('/api/analytics/capacity', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 1));
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const data = await storage.getCapacityUtilization(practiceId, start, end);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching capacity utilization:', error);
+      res.status(500).json({ message: 'Failed to fetch capacity utilization' });
+    }
+  });
+
+  // AR aging analytics
+  app.get('/api/analytics/ar-aging', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const data = await storage.getDaysInAR(practiceId);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching AR aging:', error);
+      res.status(500).json({ message: 'Failed to fetch AR aging' });
+    }
+  });
+
+  // Revenue forecast analytics
+  app.get('/api/analytics/revenue/forecast', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const months = parseInt(req.query.months as string) || 3;
+      const data = await storage.getRevenueForecast(practiceId, months);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching revenue forecast:', error);
+      res.status(500).json({ message: 'Failed to fetch revenue forecast' });
+    }
+  });
+
+  // Referrals analytics
+  app.get('/api/analytics/referrals', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const data = await storage.getTopReferringProviders(practiceId);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching referrals:', error);
+      res.status(500).json({ message: 'Failed to fetch referrals' });
+    }
+  });
+
   // Enhanced reimbursement estimation with AI predictions (admin/billing only)
   app.post('/api/estimate-reimbursement', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {

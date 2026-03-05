@@ -306,6 +306,49 @@ export interface IStorage {
     count: number;
   }[]>;
 
+  // Enhanced Analytics operations
+  getCollectionRate(practiceId: number): Promise<{
+    totalBilled: number;
+    totalCollected: number;
+    collectionRate: number;
+    target: number;
+    byInsurance: { name: string; billed: number; collected: number; rate: number }[];
+  }>;
+
+  getCleanClaimsRate(practiceId: number): Promise<{
+    totalSubmitted: number;
+    acceptedFirstPass: number;
+    cleanClaimsRate: number;
+    target: number;
+    rejectionReasons: { reason: string; count: number }[];
+  }>;
+
+  getCapacityUtilization(practiceId: number, start: Date, end: Date): Promise<{
+    totalSlots: number;
+    bookedSlots: number;
+    completedAppointments: number;
+    arrivedRate: number;
+    target: number;
+    byTherapist: { name: string; utilization: number }[];
+  }>;
+
+  getDaysInAR(practiceId: number): Promise<{
+    averageDays: number;
+    byBucket: { bucket: string; count: number; amount: number }[];
+    byInsurance: { name: string; avgDays: number; outstanding: number }[];
+  }>;
+
+  getRevenueForecast(practiceId: number, monthsAhead: number): Promise<{
+    month: string;
+    predicted: number;
+    confidence: { low: number; high: number };
+  }[]>;
+
+  getTopReferringProviders(practiceId: number): Promise<{
+    sources: { name: string; referralCount: number; revenue: number }[];
+    totalReferrals: number;
+  }>;
+
   // Invite operations
   createInvite(invite: InsertInvite): Promise<Invite>;
   getInvitesByPractice(practiceId: number): Promise<Invite[]>;
@@ -887,6 +930,371 @@ export class DatabaseStorage implements IStorage {
       reason: row.reason || "Unknown",
       count: row.count,
     }));
+  }
+
+  // Enhanced Analytics operations
+  async getCollectionRate(practiceId: number): Promise<{
+    totalBilled: number;
+    totalCollected: number;
+    collectionRate: number;
+    target: number;
+    byInsurance: { name: string; billed: number; collected: number; rate: number }[];
+  }> {
+    // Get total billed and collected
+    const totals = await db
+      .select({
+        totalBilled: sum(claims.totalAmount),
+        totalCollected: sum(claims.paidAmount),
+      })
+      .from(claims)
+      .where(eq(claims.practiceId, practiceId));
+
+    const totalBilled = Number(totals[0]?.totalBilled) || 0;
+    const totalCollected = Number(totals[0]?.totalCollected) || 0;
+    const collectionRate = totalBilled > 0 ? (totalCollected / totalBilled) * 100 : 0;
+
+    // Get by insurance (join with insurances table)
+    const byInsuranceResult = await db
+      .select({
+        name: insurances.name,
+        billed: sum(claims.totalAmount),
+        collected: sum(claims.paidAmount),
+      })
+      .from(claims)
+      .leftJoin(insurances, eq(claims.insuranceId, insurances.id))
+      .where(eq(claims.practiceId, practiceId))
+      .groupBy(insurances.name);
+
+    const byInsurance = byInsuranceResult.map((row: any) => {
+      const billed = Number(row.billed) || 0;
+      const collected = Number(row.collected) || 0;
+      return {
+        name: row.name || 'Unknown',
+        billed,
+        collected,
+        rate: billed > 0 ? (collected / billed) * 100 : 0,
+      };
+    });
+
+    return {
+      totalBilled,
+      totalCollected,
+      collectionRate,
+      target: 99,
+      byInsurance,
+    };
+  }
+
+  async getCleanClaimsRate(practiceId: number): Promise<{
+    totalSubmitted: number;
+    acceptedFirstPass: number;
+    cleanClaimsRate: number;
+    target: number;
+    rejectionReasons: { reason: string; count: number }[];
+  }> {
+    // Count total submitted claims
+    const totalResult = await db
+      .select({ count: count() })
+      .from(claims)
+      .where(eq(claims.practiceId, practiceId));
+    const totalSubmitted = totalResult[0]?.count || 0;
+
+    // Count claims that were paid or accepted without denial
+    const acceptedResult = await db
+      .select({ count: count() })
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        or(
+          eq(claims.status, 'paid'),
+          eq(claims.status, 'submitted')
+        ),
+        isNull(claims.denialReason)
+      ));
+    const acceptedFirstPass = acceptedResult[0]?.count || 0;
+
+    const cleanClaimsRate = totalSubmitted > 0 ? (acceptedFirstPass / totalSubmitted) * 100 : 0;
+
+    // Get rejection reasons
+    const rejectionResult = await db
+      .select({
+        reason: claims.denialReason,
+        count: count(),
+      })
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        eq(claims.status, 'denied')
+      ))
+      .groupBy(claims.denialReason)
+      .orderBy(desc(count()))
+      .limit(5);
+
+    const rejectionReasons = rejectionResult.map((row: any) => ({
+      reason: row.reason || 'Unknown',
+      count: row.count,
+    }));
+
+    return {
+      totalSubmitted,
+      acceptedFirstPass,
+      cleanClaimsRate,
+      target: 97,
+      rejectionReasons,
+    };
+  }
+
+  async getCapacityUtilization(practiceId: number, start: Date, end: Date): Promise<{
+    totalSlots: number;
+    bookedSlots: number;
+    completedAppointments: number;
+    arrivedRate: number;
+    target: number;
+    byTherapist: { name: string; utilization: number }[];
+  }> {
+    // Get appointments in date range
+    const startStr = start.toISOString().split('T')[0];
+    const endStr = end.toISOString().split('T')[0];
+    const sessions = await db
+      .select()
+      .from(treatmentSessions)
+      .where(and(
+        eq(treatmentSessions.practiceId, practiceId),
+        gte(treatmentSessions.sessionDate, startStr),
+        lte(treatmentSessions.sessionDate, endStr)
+      ));
+
+    const totalSlots = sessions.length || 1; // Avoid division by zero
+    const completedAppointments = sessions.filter((s: any) => s.status === 'completed').length;
+    const bookedSlots = sessions.filter((s: any) => s.status !== 'cancelled').length;
+    const arrivedRate = totalSlots > 0 ? (completedAppointments / totalSlots) * 100 : 0;
+
+    // Get utilization by therapist
+    const therapistStats: Record<string, { completed: number; total: number }> = {};
+    for (const session of sessions) {
+      const therapistId = (session as any).therapistId?.toString() || 'unknown';
+      if (!therapistStats[therapistId]) {
+        therapistStats[therapistId] = { completed: 0, total: 0 };
+      }
+      therapistStats[therapistId].total++;
+      if ((session as any).status === 'completed') {
+        therapistStats[therapistId].completed++;
+      }
+    }
+
+    const therapistUsers = await db.select().from(users).where(eq(users.practiceId, practiceId));
+    const byTherapist = Object.entries(therapistStats).map(([id, stats]) => {
+      const therapist = therapistUsers.find((u: any) => u.id === id);
+      const name = therapist ? `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || therapist.email || 'Unknown' : `Therapist ${id}`;
+      return {
+        name,
+        utilization: stats.total > 0 ? (stats.completed / stats.total) * 100 : 0,
+      };
+    });
+
+    return {
+      totalSlots,
+      bookedSlots,
+      completedAppointments,
+      arrivedRate,
+      target: 90,
+      byTherapist,
+    };
+  }
+
+  async getDaysInAR(practiceId: number): Promise<{
+    averageDays: number;
+    byBucket: { bucket: string; count: number; amount: number }[];
+    byInsurance: { name: string; avgDays: number; outstanding: number }[];
+  }> {
+    const now = new Date();
+
+    // Get unpaid claims
+    const unpaidClaims = await db
+      .select()
+      .from(claims)
+      .where(and(
+        eq(claims.practiceId, practiceId),
+        or(
+          eq(claims.status, 'submitted'),
+          eq(claims.status, 'pending')
+        )
+      ));
+
+    // Calculate days in AR for each claim
+    const claimsWithDays = unpaidClaims.map((claim: any) => {
+      const submitDate = new Date(claim.submittedAt || claim.createdAt);
+      const days = Math.floor((now.getTime() - submitDate.getTime()) / (1000 * 60 * 60 * 24));
+      return { ...claim, daysInAR: days };
+    });
+
+    // Calculate average days
+    const totalDays = claimsWithDays.reduce((sum: number, c: any) => sum + c.daysInAR, 0);
+    const averageDays = claimsWithDays.length > 0 ? Math.round(totalDays / claimsWithDays.length) : 0;
+
+    // Group by buckets
+    const buckets: Record<string, { count: number; amount: number }> = {
+      '0-30': { count: 0, amount: 0 },
+      '31-60': { count: 0, amount: 0 },
+      '61-90': { count: 0, amount: 0 },
+      '91-120': { count: 0, amount: 0 },
+      '120+': { count: 0, amount: 0 },
+    };
+
+    claimsWithDays.forEach((claim: any) => {
+      const amount = Number(claim.totalAmount) || 0;
+      if (claim.daysInAR <= 30) {
+        buckets['0-30'].count++;
+        buckets['0-30'].amount += amount;
+      } else if (claim.daysInAR <= 60) {
+        buckets['31-60'].count++;
+        buckets['31-60'].amount += amount;
+      } else if (claim.daysInAR <= 90) {
+        buckets['61-90'].count++;
+        buckets['61-90'].amount += amount;
+      } else if (claim.daysInAR <= 120) {
+        buckets['91-120'].count++;
+        buckets['91-120'].amount += amount;
+      } else {
+        buckets['120+'].count++;
+        buckets['120+'].amount += amount;
+      }
+    });
+
+    const byBucket = Object.entries(buckets).map(([bucket, data]) => ({
+      bucket,
+      count: data.count,
+      amount: data.amount,
+    }));
+
+    // Group by insurance (using insuranceId for now)
+    const insuranceStats: Record<string, { totalDays: number; count: number; outstanding: number }> = {};
+    claimsWithDays.forEach((claim: any) => {
+      const insurance = claim.insuranceId ? `Insurance ${claim.insuranceId}` : 'Unknown';
+      if (!insuranceStats[insurance]) {
+        insuranceStats[insurance] = { totalDays: 0, count: 0, outstanding: 0 };
+      }
+      insuranceStats[insurance].totalDays += claim.daysInAR;
+      insuranceStats[insurance].count++;
+      insuranceStats[insurance].outstanding += Number(claim.totalAmount) || 0;
+    });
+
+    const byInsurance = Object.entries(insuranceStats).map(([name, stats]) => ({
+      name,
+      avgDays: stats.count > 0 ? Math.round(stats.totalDays / stats.count) : 0,
+      outstanding: stats.outstanding,
+    }));
+
+    return {
+      averageDays,
+      byBucket,
+      byInsurance,
+    };
+  }
+
+  async getRevenueForecast(practiceId: number, monthsAhead: number): Promise<{
+    month: string;
+    predicted: number;
+    confidence: { low: number; high: number };
+  }[]> {
+    // Get historical revenue data for the past 12 months
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - 12);
+
+    const historicalData = await this.getRevenueByMonth(practiceId, startDate, endDate);
+
+    // Calculate average monthly revenue and growth trend
+    const revenues = historicalData.map(d => d.revenue);
+    const avgRevenue = revenues.length > 0 ? revenues.reduce((a, b) => a + b, 0) / revenues.length : 0;
+
+    // Calculate simple trend (linear regression slope approximation)
+    let trend = 0;
+    if (revenues.length > 1) {
+      const firstHalf = revenues.slice(0, Math.floor(revenues.length / 2));
+      const secondHalf = revenues.slice(Math.floor(revenues.length / 2));
+      const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+      const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+      trend = (secondAvg - firstAvg) / firstAvg;
+    }
+
+    // Generate forecasts
+    const forecasts: { month: string; predicted: number; confidence: { low: number; high: number } }[] = [];
+    const currentDate = new Date();
+
+    for (let i = 1; i <= monthsAhead; i++) {
+      const forecastDate = new Date(currentDate);
+      forecastDate.setMonth(forecastDate.getMonth() + i);
+      const month = forecastDate.toISOString().slice(0, 7);
+
+      // Apply trend growth
+      const predicted = Math.round(avgRevenue * (1 + trend * i));
+
+      // Confidence interval widens with time
+      const uncertaintyFactor = 0.1 + (i * 0.05);
+      const low = Math.round(predicted * (1 - uncertaintyFactor));
+      const high = Math.round(predicted * (1 + uncertaintyFactor));
+
+      forecasts.push({
+        month,
+        predicted,
+        confidence: { low, high },
+      });
+    }
+
+    return forecasts;
+  }
+
+  async getTopReferringProviders(practiceId: number): Promise<{
+    sources: { name: string; referralCount: number; revenue: number }[];
+    totalReferrals: number;
+  }> {
+    // Get patients with referral source
+    const patientsWithReferrals = await db
+      .select()
+      .from(patients)
+      .where(and(
+        eq(patients.practiceId, practiceId)
+      ));
+
+    // Count referrals by source and calculate revenue
+    const referralStats: Record<string, { count: number; revenue: number }> = {};
+
+    for (const patient of patientsWithReferrals) {
+      const referralSource = (patient as any).referralSource || 'Self-Referral';
+      if (!referralStats[referralSource]) {
+        referralStats[referralSource] = { count: 0, revenue: 0 };
+      }
+      referralStats[referralSource].count++;
+
+      // Get revenue from this patient's claims
+      const patientClaims = await db
+        .select({ paidAmount: claims.paidAmount })
+        .from(claims)
+        .where(and(
+          eq(claims.patientId, patient.id),
+          eq(claims.status, 'paid')
+        ));
+
+      const patientRevenue = patientClaims.reduce((sum: number, c: any) => sum + (Number(c.paidAmount) || 0), 0);
+      referralStats[referralSource].revenue += patientRevenue;
+    }
+
+    const sources = Object.entries(referralStats)
+      .map(([name, stats]) => ({
+        name,
+        referralCount: stats.count,
+        revenue: stats.revenue,
+      }))
+      .sort((a, b) => b.referralCount - a.referralCount)
+      .slice(0, 10);
+
+    const totalReferrals = sources.reduce((sum, s) => sum + s.referralCount, 0);
+
+    return {
+      sources,
+      totalReferrals,
+    };
   }
 
   // Invite operations

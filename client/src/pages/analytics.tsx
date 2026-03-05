@@ -57,19 +57,56 @@ export default function Analytics() {
   }) as any;
 
   const { data: cancellationStats } = useQuery({
-    queryKey: ['/api/analytics/cancellations', `?practiceId=${practiceId}`],
+    queryKey: [`/api/analytics/cancellations?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   }) as any;
 
   const { data: cancellationTrend } = useQuery({
-    queryKey: ['/api/analytics/cancellations/trend', `?practiceId=${practiceId}`],
+    queryKey: [`/api/analytics/cancellations/trend?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   }) as any;
 
   const { data: cancellationsByPatient } = useQuery({
-    queryKey: ['/api/analytics/cancellations/by-patient', `?practiceId=${practiceId}`],
+    queryKey: [`/api/analytics/cancellations/by-patient?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  // Enhanced analytics queries
+  const { data: collectionRate } = useQuery({
+    queryKey: [`/api/analytics/collection-rate?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: cleanClaimsRate } = useQuery({
+    queryKey: [`/api/analytics/clean-claims-rate?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: capacityUtilization } = useQuery({
+    queryKey: [`/api/analytics/capacity?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: arAging } = useQuery({
+    queryKey: [`/api/analytics/ar-aging?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: revenueForecast } = useQuery({
+    queryKey: [`/api/analytics/revenue/forecast?practiceId=${practiceId}&months=3`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
+  const { data: referrals } = useQuery({
+    queryKey: [`/api/analytics/referrals?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   }) as any;
@@ -251,10 +288,14 @@ export default function Analytics() {
       </div>
 
       <Tabs defaultValue="overview" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="flex flex-wrap gap-1">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="revenue">Revenue</TabsTrigger>
+          <TabsTrigger value="claims">Claims</TabsTrigger>
+          <TabsTrigger value="capacity">Capacity</TabsTrigger>
+          <TabsTrigger value="ar-aging">A/R Aging</TabsTrigger>
+          <TabsTrigger value="referrals">Referrals</TabsTrigger>
           <TabsTrigger value="patients">Patients</TabsTrigger>
-          <TabsTrigger value="payments">Payments</TabsTrigger>
           <TabsTrigger value="therapists">Therapists</TabsTrigger>
           <TabsTrigger value="cancellations">Cancellations</TabsTrigger>
         </TabsList>
@@ -262,64 +303,108 @@ export default function Analytics() {
         {/* ==================== OVERVIEW TAB ==================== */}
         <TabsContent value="overview" className="space-y-6">
 
-      {/* KPI Cards */}
+      {/* KPI Cards with Target Gauges */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {/* Collection Rate */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+            <CardTitle className="text-sm font-medium">Collection Rate</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(dashboardStats?.totalRevenue || 0)}</div>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingUp className="w-3 h-3 mr-1 text-healthcare-green-500" />
-              <span className="text-healthcare-green-500">+12.5%</span>
-              <span className="ml-1">from last month</span>
+            <div className="text-2xl font-bold">
+              {collectionRate?.collectionRate?.toFixed(1) || 0}%
+            </div>
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>Target: 99%</span>
+                <span className={(collectionRate?.collectionRate || 0) >= 99 ? 'text-green-600' : 'text-amber-600'}>
+                  {((collectionRate?.collectionRate || 0) >= 99) ? 'On Target' : `${(99 - (collectionRate?.collectionRate || 0)).toFixed(1)}% below`}
+                </span>
+              </div>
+              <Progress
+                value={Math.min((collectionRate?.collectionRate || 0), 100)}
+                className="h-2"
+              />
             </div>
           </CardContent>
         </Card>
 
+        {/* Clean Claims Rate */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Claims Success Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">Clean Claims Rate</CardTitle>
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardStats?.successRate?.toFixed(1) || 0}%</div>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingUp className="w-3 h-3 mr-1 text-healthcare-green-500" />
-              <span className="text-healthcare-green-500">+2.1%</span>
-              <span className="ml-1">from last month</span>
+            <div className="text-2xl font-bold">
+              {cleanClaimsRate?.cleanClaimsRate?.toFixed(1) || 0}%
+            </div>
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>Target: 97%</span>
+                <span className={(cleanClaimsRate?.cleanClaimsRate || 0) >= 97 ? 'text-green-600' : 'text-amber-600'}>
+                  {((cleanClaimsRate?.cleanClaimsRate || 0) >= 97) ? 'On Target' : `${(97 - (cleanClaimsRate?.cleanClaimsRate || 0)).toFixed(1)}% below`}
+                </span>
+              </div>
+              <Progress
+                value={Math.min((cleanClaimsRate?.cleanClaimsRate || 0), 100)}
+                className="h-2"
+              />
             </div>
           </CardContent>
         </Card>
 
+        {/* Arrived Capacity */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Denial Rate</CardTitle>
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Arrived Capacity</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardStats?.denialRate?.toFixed(1) || 0}%</div>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingDown className="w-3 h-3 mr-1 text-healthcare-green-500" />
-              <span className="text-healthcare-green-500">-1.8%</span>
-              <span className="ml-1">from last month</span>
+            <div className="text-2xl font-bold">
+              {capacityUtilization?.arrivedRate?.toFixed(1) || 0}%
+            </div>
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>Target: 90%</span>
+                <span className={(capacityUtilization?.arrivedRate || 0) >= 90 ? 'text-green-600' : 'text-amber-600'}>
+                  {((capacityUtilization?.arrivedRate || 0) >= 90) ? 'On Target' : `${(90 - (capacityUtilization?.arrivedRate || 0)).toFixed(1)}% below`}
+                </span>
+              </div>
+              <Progress
+                value={Math.min((capacityUtilization?.arrivedRate || 0), 100)}
+                className="h-2"
+              />
             </div>
           </CardContent>
         </Card>
 
+        {/* Days in AR */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Claims</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Avg Days in A/R</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardStats?.pendingClaims || 0}</div>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingDown className="w-3 h-3 mr-1 text-healthcare-green-500" />
-              <span className="text-healthcare-green-500">-5 claims</span>
-              <span className="ml-1">from last week</span>
+            <div className="text-2xl font-bold">{arAging?.averageDays || 0} days</div>
+            <div className="flex items-center text-xs text-muted-foreground mt-2">
+              {(arAging?.averageDays || 0) <= 30 ? (
+                <>
+                  <TrendingDown className="w-3 h-3 mr-1 text-green-500" />
+                  <span className="text-green-600">Healthy (under 30 days)</span>
+                </>
+              ) : (arAging?.averageDays || 0) <= 45 ? (
+                <>
+                  <AlertTriangle className="w-3 h-3 mr-1 text-amber-500" />
+                  <span className="text-amber-600">Monitor (30-45 days)</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-3 h-3 mr-1 text-red-500" />
+                  <span className="text-red-600">Action needed ({arAging?.averageDays} days)</span>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -365,25 +450,31 @@ export default function Analytics() {
             <CardDescription>Distribution of claim statuses</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={claimsByStatus}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="count"
-                >
-                  {claimsByStatus?.map((entry: any, index: number) => (
-                    <Cell key={`cell-${index}`} fill={getStatusColor(entry.status)} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {claimsByStatus && claimsByStatus.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={claimsByStatus}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="count"
+                  >
+                    {claimsByStatus.map((entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={getStatusColor(entry.status)} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-[300px] text-slate-500">
+                {claimsStatusLoading ? 'Loading claims data...' : 'No claims data available'}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -456,6 +547,521 @@ export default function Analytics() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ==================== REVENUE TAB ==================== */}
+        <TabsContent value="revenue" className="space-y-6">
+          {/* Revenue Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Collected</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{formatCurrency(collectionRate?.totalCollected || 0)}</div>
+                <p className="text-xs text-muted-foreground">of {formatCurrency(collectionRate?.totalBilled || 0)} billed</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Collection Rate</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{collectionRate?.collectionRate?.toFixed(1) || 0}%</div>
+                <p className="text-xs text-muted-foreground">Target: {collectionRate?.target || 99}%</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Revenue Trend</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">
+                  {revenueForecast?.[0]?.predicted ? `+${formatCurrency(revenueForecast[0].predicted)}` : 'N/A'}
+                </div>
+                <p className="text-xs text-muted-foreground">Next month forecast</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Revenue Trend with Forecast */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue Trend & Forecast</CardTitle>
+              <CardDescription>Historical revenue with 3-month prediction</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={350}>
+                <LineChart data={[
+                  ...(revenueData || mockRevenueData).map((d: any) => ({ ...d, type: 'actual' })),
+                  ...(revenueForecast || []).map((d: any) => ({
+                    month: d.month,
+                    revenue: d.predicted,
+                    predictedLow: d.confidence?.low,
+                    predictedHigh: d.confidence?.high,
+                    type: 'forecast'
+                  }))
+                ]}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="month"
+                    tickFormatter={(value) => {
+                      const d = new Date(value + '-01');
+                      return d.toLocaleDateString('en-US', { month: 'short' });
+                    }}
+                  />
+                  <YAxis tickFormatter={(value) => `$${value / 1000}k`} />
+                  <Tooltip
+                    formatter={(value: number, name: string) => [formatCurrency(value), name === 'revenue' ? 'Revenue' : name]}
+                    labelFormatter={(label) => new Date(label + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="hsl(207, 90%, 54%)"
+                    strokeWidth={2}
+                    dot={{ fill: 'hsl(207, 90%, 54%)', strokeWidth: 2 }}
+                    name="Revenue"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Revenue by Insurance */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue by Insurance</CardTitle>
+              <CardDescription>Collection rates by insurance provider</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {collectionRate?.byInsurance?.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Insurance</TableHead>
+                      <TableHead className="text-right">Billed</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Rate</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {collectionRate.byInsurance.map((ins: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{ins.name}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(ins.billed)}</TableCell>
+                        <TableCell className="text-right text-green-600">{formatCurrency(ins.collected)}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={ins.rate >= 99 ? "default" : ins.rate >= 90 ? "secondary" : "destructive"}>
+                            {ins.rate.toFixed(1)}%
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No insurance data available</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ==================== CLAIMS TAB ==================== */}
+        <TabsContent value="claims" className="space-y-6">
+          {/* Claims Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Submitted</CardTitle>
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{cleanClaimsRate?.totalSubmitted || 0}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Clean Claims</CardTitle>
+                <CheckCircle className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">{cleanClaimsRate?.acceptedFirstPass || 0}</div>
+                <p className="text-xs text-muted-foreground">Accepted first submission</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Clean Claims Rate</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{cleanClaimsRate?.cleanClaimsRate?.toFixed(1) || 0}%</div>
+                <p className="text-xs text-muted-foreground">Target: {cleanClaimsRate?.target || 97}%</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Denial Rate</CardTitle>
+                <AlertCircle className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-red-600">{dashboardStats?.denialRate?.toFixed(1) || 0}%</div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Claims by Status Pie */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Claims by Status</CardTitle>
+                <CardDescription>Distribution of claim statuses</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {claimsByStatus && claimsByStatus.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={claimsByStatus}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="count"
+                      >
+                        {claimsByStatus.map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={getStatusColor(entry.status)} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex items-center justify-center h-[300px] text-slate-500">
+                    No claims data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Rejection Reasons */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Rejection Reasons</CardTitle>
+                <CardDescription>Most common reasons for claim rejections</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {cleanClaimsRate?.rejectionReasons?.length > 0 ? (
+                  <div className="space-y-3">
+                    {cleanClaimsRate.rejectionReasons.map((reason: any, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
+                            <span className="text-red-600 font-medium text-sm">{index + 1}</span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">{reason.reason}</p>
+                            <p className="text-sm text-slate-600">{reason.count} claims</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                    <p className="text-slate-600">No rejections - excellent!</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ==================== CAPACITY TAB ==================== */}
+        <TabsContent value="capacity" className="space-y-6">
+          {/* Capacity Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Slots</CardTitle>
+                <CalendarX className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{capacityUtilization?.totalSlots || 0}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Booked</CardTitle>
+                <CheckCircle className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{capacityUtilization?.bookedSlots || 0}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Completed</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">{capacityUtilization?.completedAppointments || 0}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Arrived Rate</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{capacityUtilization?.arrivedRate?.toFixed(1) || 0}%</div>
+                <p className="text-xs text-muted-foreground">Target: {capacityUtilization?.target || 90}%</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Therapist Utilization */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Therapist Utilization</CardTitle>
+              <CardDescription>Appointment completion rate by therapist</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {capacityUtilization?.byTherapist?.length > 0 ? (
+                <div className="space-y-4">
+                  {capacityUtilization.byTherapist.map((therapist: any, idx: number) => (
+                    <div key={idx} className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="font-medium">{therapist.name}</span>
+                        <span className={therapist.utilization >= 90 ? 'text-green-600' : 'text-amber-600'}>
+                          {therapist.utilization.toFixed(1)}%
+                        </span>
+                      </div>
+                      <Progress value={therapist.utilization} className="h-2" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No therapist data available</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ==================== AR AGING TAB ==================== */}
+        <TabsContent value="ar-aging" className="space-y-6">
+          {/* AR Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Days in A/R</CardTitle>
+                <Clock className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{arAging?.averageDays || 0} days</div>
+                <p className="text-xs text-muted-foreground">
+                  {(arAging?.averageDays || 0) <= 30 ? 'Healthy' : (arAging?.averageDays || 0) <= 45 ? 'Monitor' : 'Action needed'}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Outstanding A/R</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {formatCurrency(arAging?.byBucket?.reduce((sum: number, b: any) => sum + b.amount, 0) || 0)}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Claims Outstanding</CardTitle>
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {arAging?.byBucket?.reduce((sum: number, b: any) => sum + b.count, 0) || 0}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* AR Aging Buckets */}
+          <Card>
+            <CardHeader>
+              <CardTitle>A/R Aging Buckets</CardTitle>
+              <CardDescription>Claims and amounts by age</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {arAging?.byBucket?.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={arAging.byBucket}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="bucket" />
+                    <YAxis yAxisId="left" orientation="left" tickFormatter={(value) => `$${value / 1000}k`} />
+                    <YAxis yAxisId="right" orientation="right" />
+                    <Tooltip formatter={(value: number, name: string) => [
+                      name === 'amount' ? formatCurrency(value) : value,
+                      name === 'amount' ? 'Amount' : 'Claims'
+                    ]} />
+                    <Legend />
+                    <Bar yAxisId="left" dataKey="amount" fill="hsl(207, 90%, 54%)" name="Amount" />
+                    <Bar yAxisId="right" dataKey="count" fill="hsl(142, 71%, 45%)" name="Claims" />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No A/R data available</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* AR by Insurance */}
+          <Card>
+            <CardHeader>
+              <CardTitle>A/R by Insurance</CardTitle>
+              <CardDescription>Outstanding amounts and average days by payer</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {arAging?.byInsurance?.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Insurance</TableHead>
+                      <TableHead className="text-right">Avg Days</TableHead>
+                      <TableHead className="text-right">Outstanding</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {arAging.byInsurance.map((ins: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{ins.name}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={ins.avgDays <= 30 ? "default" : ins.avgDays <= 45 ? "secondary" : "destructive"}>
+                            {ins.avgDays} days
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">{formatCurrency(ins.outstanding)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No insurance A/R data available</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ==================== REFERRALS TAB ==================== */}
+        <TabsContent value="referrals" className="space-y-6">
+          {/* Referrals Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Referrals</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{referrals?.totalReferrals || 0}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Top Referrer Revenue</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">
+                  {formatCurrency(referrals?.sources?.[0]?.revenue || 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">{referrals?.sources?.[0]?.name || 'N/A'}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Referral Sources</CardTitle>
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{referrals?.sources?.length || 0}</div>
+                <p className="text-xs text-muted-foreground">unique sources</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Top Referring Providers */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Referring Providers</CardTitle>
+              <CardDescription>Referral sources ranked by patient volume</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {referrals?.sources?.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Source</TableHead>
+                      <TableHead className="text-right">Referrals</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead className="text-right">Avg/Referral</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {referrals.sources.map((source: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                              <span className="text-blue-600 text-xs font-medium">{idx + 1}</span>
+                            </div>
+                            {source.name}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">{source.referralCount}</TableCell>
+                        <TableCell className="text-right text-green-600">{formatCurrency(source.revenue)}</TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(source.referralCount > 0 ? source.revenue / source.referralCount : 0)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No referral data available</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Referral Revenue Chart */}
+          {referrals?.sources?.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Referral Revenue Distribution</CardTitle>
+                <CardDescription>Revenue by referral source</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={referrals.sources.slice(0, 10)} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" tickFormatter={(value) => `$${value / 1000}k`} />
+                    <YAxis type="category" dataKey="name" width={150} />
+                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                    <Bar dataKey="revenue" fill="hsl(207, 90%, 54%)" name="Revenue" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* ==================== PATIENTS TAB ==================== */}
@@ -592,123 +1198,6 @@ export default function Analytics() {
               </Table>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* ==================== PAYMENTS TAB ==================== */}
-        <TabsContent value="payments" className="space-y-6">
-          {/* Payment Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="bg-green-50 border-green-200">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-green-800">Insurance Payments</CardTitle>
-                <Shield className="h-4 w-4 text-green-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-green-700">{formatCurrency(totalInsurancePaid)}</div>
-                <p className="text-xs text-green-600">total collected from payers</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-blue-50 border-blue-200">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-blue-800">Patient Payments</CardTitle>
-                <CreditCard className="h-4 w-4 text-blue-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-blue-700">{formatCurrency(totalPatientPaid)}</div>
-                <p className="text-xs text-blue-600">copays & self-pay</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Collected</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{formatCurrency(totalInsurancePaid + totalPatientPaid)}</div>
-                <p className="text-xs text-muted-foreground">all sources</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Insurance %</CardTitle>
-                <Shield className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {totalInsurancePaid + totalPatientPaid > 0
-                    ? Math.round((totalInsurancePaid / (totalInsurancePaid + totalPatientPaid)) * 100)
-                    : 0}%
-                </div>
-                <p className="text-xs text-muted-foreground">of revenue from insurance</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Payment Source Pie Chart */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Payment Sources</CardTitle>
-                <CardDescription>Insurance vs Patient payments</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: 'Insurance', value: totalInsurancePaid },
-                        { name: 'Patient', value: totalPatientPaid },
-                      ]}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      outerRadius={100}
-                      dataKey="value"
-                    >
-                      <Cell fill="hsl(142, 71%, 45%)" />
-                      <Cell fill="hsl(207, 90%, 54%)" />
-                    </Pie>
-                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Paying Insurers</CardTitle>
-                <CardDescription>Revenue by insurance company</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {(() => {
-                  const insurerPayments: Record<string, number> = {};
-                  patientPaymentStats.forEach((p: any) => {
-                    insurerPayments[p.insurance] = (insurerPayments[p.insurance] || 0) + p.insurancePaid;
-                  });
-                  const sortedInsurers = Object.entries(insurerPayments)
-                    .sort(([, a], [, b]) => (b as number) - (a as number))
-                    .slice(0, 5);
-
-                  return (
-                    <div className="space-y-3">
-                      {sortedInsurers.map(([insurer, amount], idx) => (
-                        <div key={insurer} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                              <span className="text-green-600 font-medium text-sm">{idx + 1}</span>
-                            </div>
-                            <span className="font-medium">{insurer}</span>
-                          </div>
-                          <span className="font-bold text-green-600">{formatCurrency(amount as number)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
 
         {/* ==================== THERAPISTS TAB ==================== */}
