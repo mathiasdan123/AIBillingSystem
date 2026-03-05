@@ -119,7 +119,11 @@ const authorizePractice = async (req: any, res: Response, next: NextFunction) =>
     // Admin users can access any practice
     if (user.role === 'admin') {
       // If admin requests a specific practice, use that; otherwise use their default
-      req.authorizedPracticeId = requestedPracticeId || user.practiceId || 1;
+      const practiceId = requestedPracticeId || user.practiceId;
+      if (!practiceId) {
+        return res.status(400).json({ message: "Practice ID required. Admin must specify practiceId or be assigned to a practice." });
+      }
+      req.authorizedPracticeId = practiceId;
       return next();
     }
 
@@ -160,12 +164,16 @@ const getAuthorizedPracticeId = (req: any): number => {
 
   // Admin users can access any practice
   if (userRole === 'admin') {
-    return requestedPracticeId || userPracticeId || 1;
+    const practiceId = requestedPracticeId || userPracticeId;
+    if (!practiceId) {
+      throw new Error('Practice ID required. Admin must specify practiceId query parameter or be assigned to a practice.');
+    }
+    return practiceId;
   }
 
-  // If user has no practice assigned, default to 1 (for backward compatibility)
+  // Non-admin users must have a practice assigned
   if (!userPracticeId) {
-    return requestedPracticeId || 1;
+    throw new Error('User not assigned to a practice. Contact administrator.');
   }
 
   // Non-admin users: if requesting a different practice, log and use their assigned practice
@@ -180,12 +188,13 @@ const getAuthorizedPracticeId = (req: any): number => {
 
 /**
  * HIPAA Compliance: Verify patient consent before returning PHI
- * Logs warning if consent is missing but allows access (for emergency treatment scenarios)
- * In strict mode, would deny access - but this could block treatment
+ * SECURITY: Fails closed - denies access on error to protect PHI
+ * For emergency access, use explicit emergency override with audit logging
  */
 const verifyPatientConsent = async (patientId: number, accessReason: string = 'treatment'): Promise<{
   hasConsent: boolean;
   missingConsents: string[];
+  verificationError?: boolean;
 }> => {
   try {
     const result = await storage.hasRequiredTreatmentConsents(patientId);
@@ -201,9 +210,14 @@ const verifyPatientConsent = async (patientId: number, accessReason: string = 't
 
     return result;
   } catch (error) {
-    logger.error('Error verifying patient consent', { patientId, error });
-    // Default to allowing access in case of error (fail-open for treatment continuity)
-    return { hasConsent: false, missingConsents: ['unknown'] };
+    logger.error('Error verifying patient consent - ACCESS DENIED (fail-closed)', {
+      patientId,
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    });
+    // SECURITY: Fail-closed - deny access when consent cannot be verified
+    // This prevents PHI exposure during database errors or system failures
+    return { hasConsent: false, missingConsents: ['verification_failed'], verificationError: true };
   }
 };
 
@@ -594,6 +608,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Could not determine inviter ID" });
       }
 
+      // Validate practiceId is provided
+      if (!practiceId) {
+        return res.status(400).json({ message: "Practice ID is required for invites" });
+      }
+
       // Check if user already exists with this email
       const allUsers = await storage.getAllUsers();
       const existingUser = allUsers.find(u => u.email?.toLowerCase() === email.toLowerCase());
@@ -617,7 +636,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const inviteData = {
         email: email.trim(),
         role: role || 'therapist',
-        practiceId: practiceId || 1, // Default practice for now
+        practiceId,
         invitedById,
         token,
         expiresAt,
@@ -1754,10 +1773,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // HIPAA: Verify patient consent before creating PHI record
       if (req.body.patientId) {
         const consentStatus = await verifyPatientConsent(req.body.patientId, 'soap_note_creation');
-        if (!consentStatus.hasConsent) {
-          // Log but don't block - treatment continuity is critical
-          // The warning is logged in verifyPatientConsent
+        // Block access if verification failed due to system error (fail-closed)
+        if (consentStatus.verificationError) {
+          return res.status(503).json({
+            message: 'Unable to verify patient consent. Please try again or contact support.',
+            code: 'CONSENT_VERIFICATION_FAILED'
+          });
         }
+        // Missing consent is logged but allowed for treatment continuity
+        // The warning is logged in verifyPatientConsent
       }
 
       const soapNote = await storage.createSoapNote(req.body);
@@ -1771,9 +1795,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const sessions = await storage.getAllSessions();
           const session = sessions.find((s: any) => s.id === soapNote.sessionId);
 
-          if (session) {
+          if (session && session.practiceId) {
             // Check if session already has a claim
-            const existingClaims = await storage.getClaims(session.practiceId || 1);
+            const existingClaims = await storage.getClaims(session.practiceId);
             const existingClaim = existingClaims.find((c: any) => c.sessionId === session.id);
 
             if (!existingClaim) {
@@ -1782,7 +1806,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const icd10Codes = await storage.getIcd10Codes();
 
               // Get patient to find their insurance
-              const patients = await storage.getPatients(session.practiceId || 1);
+              const patients = await storage.getPatients(session.practiceId);
               const patient = patients.find((p: any) => p.id === session.patientId);
               const insuranceName = patient?.insuranceProvider || 'Unknown Insurance';
 
@@ -1826,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
               // Create the claim with AI-optimized total
               const claim = await storage.createClaim({
-                practiceId: session.practiceId || 1,
+                practiceId: session.practiceId,
                 patientId: session.patientId,
                 sessionId: session.id,
                 insuranceId: null,
@@ -2395,7 +2419,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const practiceId = req.body.practiceId || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const practice = await storage.getPractice(practiceId);
 
       if (!practice) {
@@ -2459,8 +2483,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const { practiceId, paymentMethodId } = req.body;
-      const practice = await storage.getPractice(practiceId || 1);
+      const { paymentMethodId } = req.body;
+      const practiceId = getAuthorizedPracticeId(req);
+      const practice = await storage.getPractice(practiceId);
 
       if (!practice?.stripeCustomerId) {
         return res.status(400).json({ message: 'No Stripe customer found' });
@@ -2600,13 +2625,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'payment_intent.succeeded':
           const paymentIntent = event.data.object as any;
           logger.info('Payment succeeded', { paymentIntentId: paymentIntent.id });
-          // TODO: Record payment in database
+
+          // Record payment in database
+          try {
+            const metadata = paymentIntent.metadata || {};
+            const practiceId = parseInt(metadata.practiceId);
+
+            if (practiceId) {
+              const paymentRecord = {
+                practiceId,
+                patientId: metadata.patientId ? parseInt(metadata.patientId) : null,
+                claimId: metadata.claimId ? parseInt(metadata.claimId) : null,
+                amount: (paymentIntent.amount / 100).toFixed(2), // Convert from cents
+                paymentMethod: metadata.type === 'patient_payment' ? 'patient' : 'practice',
+                paymentType: metadata.type === 'monthly_fee' ? 'subscription' : 'patient_payment',
+                paymentDate: new Date().toISOString().split('T')[0],
+                transactionId: paymentIntent.id,
+                referenceNumber: paymentIntent.latest_charge,
+                notes: paymentIntent.description || `Stripe payment: ${metadata.type}`,
+                status: 'completed',
+              };
+
+              await storage.createPayment(paymentRecord);
+              logger.info('Payment recorded in database', {
+                practiceId,
+                paymentIntentId: paymentIntent.id,
+                amount: paymentRecord.amount
+              });
+            } else {
+              logger.warn('Payment succeeded but no practiceId in metadata', {
+                paymentIntentId: paymentIntent.id
+              });
+            }
+          } catch (recordError: any) {
+            logger.error('Failed to record payment in database', {
+              paymentIntentId: paymentIntent.id,
+              error: recordError.message,
+            });
+            // Don't fail the webhook - Stripe payment succeeded even if our recording failed
+          }
           break;
 
         case 'payment_intent.payment_failed':
           const failedPayment = event.data.object as any;
-          logger.info('Payment failed', { paymentId: failedPayment.id });
-          // TODO: Notify practice of failed payment
+          logger.warn('Payment failed', {
+            paymentId: failedPayment.id,
+            failureCode: failedPayment.last_payment_error?.code,
+            failureMessage: failedPayment.last_payment_error?.message,
+          });
+
+          // Record failed payment and notify practice
+          try {
+            const failedMetadata = failedPayment.metadata || {};
+            const failedPracticeId = parseInt(failedMetadata.practiceId);
+
+            if (failedPracticeId) {
+              // Record the failed payment attempt
+              const failedPaymentRecord = {
+                practiceId: failedPracticeId,
+                patientId: failedMetadata.patientId ? parseInt(failedMetadata.patientId) : null,
+                claimId: failedMetadata.claimId ? parseInt(failedMetadata.claimId) : null,
+                amount: (failedPayment.amount / 100).toFixed(2),
+                paymentMethod: failedMetadata.type === 'patient_payment' ? 'patient' : 'practice',
+                paymentType: failedMetadata.type === 'monthly_fee' ? 'subscription' : 'patient_payment',
+                paymentDate: new Date().toISOString().split('T')[0],
+                transactionId: failedPayment.id,
+                notes: `FAILED: ${failedPayment.last_payment_error?.message || 'Payment failed'}`,
+                status: 'failed',
+              };
+
+              await storage.createPayment(failedPaymentRecord);
+
+              // Log notification (in production, would send email/SMS to practice admin)
+              logger.warn('Practice notified of failed payment', {
+                practiceId: failedPracticeId,
+                paymentIntentId: failedPayment.id,
+                failureReason: failedPayment.last_payment_error?.message,
+              });
+            }
+          } catch (notifyError: any) {
+            logger.error('Failed to record/notify failed payment', {
+              paymentIntentId: failedPayment.id,
+              error: notifyError.message,
+            });
+          }
           break;
 
         case 'setup_intent.succeeded':
@@ -2732,7 +2834,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (hasRealApi && stediApiKey) {
         // Use Stedi for real eligibility check
         try {
-          const practice = await storage.getPractice(patient.practiceId || 1);
+          if (!patient.practiceId) {
+            throw new Error('Patient has no assigned practice');
+          }
+          const practice = await storage.getPractice(patient.practiceId);
           const adapter = new StediAdapter(stediApiKey);
 
           const result = await adapter.checkEligibility({
@@ -2970,7 +3075,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Batch eligibility verification for upcoming appointments
   app.post('/api/eligibility/batch-verify', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.body.practiceId) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const hoursAhead = parseInt(req.body.hoursAhead) || 24;
 
       // Get appointments needing eligibility check
@@ -5610,7 +5715,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/reminders/trigger', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
       const { processAppointmentReminders } = await import('./services/appointmentReminderService');
-      const practiceId = parseInt(req.body.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const hoursBeforeAppointment = parseInt(req.body.hours as string) || 24;
 
       const results = await processAppointmentReminders(practiceId, hoursBeforeAppointment);
@@ -5735,7 +5840,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const data = {
         ...req.body,
-        practiceId: req.body.practiceId || 1,
+        practiceId: getAuthorizedPracticeId(req),
       };
       const entry = await storage.createWaitlistEntry(data);
       res.status(201).json(entry);
@@ -5770,9 +5875,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Find matching waitlist entries for a cancellation slot
   app.post('/api/waitlist/find-matches', isAuthenticated, async (req: any, res) => {
     try {
-      const { practiceId, therapistId, date, time } = req.body;
+      const { therapistId, date, time } = req.body;
+      const practiceId = getAuthorizedPracticeId(req);
       const matches = await storage.getWaitlistForSlot(
-        practiceId || 1,
+        practiceId,
         therapistId,
         new Date(date),
         time
@@ -5901,7 +6007,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Expire old waitlist entries
   app.post('/api/waitlist/expire', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.body.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const count = await storage.expireOldWaitlistEntries(practiceId);
       res.json({ message: `Expired ${count} waitlist entries` });
     } catch (error) {
@@ -5963,7 +6069,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const data = {
         ...req.body,
-        practiceId: req.body.practiceId || 1,
+        practiceId: getAuthorizedPracticeId(req),
         feedbackToken,
       };
       const request = await storage.createReviewRequest(data);
@@ -6129,7 +6235,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const data = {
         ...req.body,
-        practiceId: req.body.practiceId || 1,
+        practiceId: getAuthorizedPracticeId(req),
         sentiment: analysisResult.analysis?.sentiment,
         tags: analysisResult.analysis?.tags,
       };
@@ -6228,7 +6334,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/booking/appointment-types', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const data = { ...req.body, practiceId: getAuthorizedPracticeId(req) };
       const type = await storage.createAppointmentType(data);
       res.status(201).json(type);
     } catch (error) {
@@ -6277,7 +6383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/booking/availability', isAuthenticated, async (req: any, res) => {
     try {
-      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const data = { ...req.body, practiceId: getAuthorizedPracticeId(req) };
       const availability = await storage.setTherapistAvailability(data);
       res.json(availability);
     } catch (error) {
@@ -6312,7 +6418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/booking/time-off', isAuthenticated, async (req: any, res) => {
     try {
-      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const data = { ...req.body, practiceId: getAuthorizedPracticeId(req) };
       const timeOff = await storage.addTherapistTimeOff(data);
       res.json(timeOff);
     } catch (error) {
@@ -6345,7 +6451,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/booking/settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const data = { ...req.body, practiceId: getAuthorizedPracticeId(req) };
       const settings = await storage.upsertBookingSettings(data);
       res.json(settings);
     } catch (error) {
@@ -6632,7 +6738,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Save telehealth settings
   app.post('/api/telehealth/settings', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const data = { ...req.body, practiceId: req.body.practiceId || 1 };
+      const data = { ...req.body, practiceId: getAuthorizedPracticeId(req) };
       const settings = await storage.upsertTelehealthSettings(data);
       res.json(settings);
     } catch (error) {
@@ -6722,8 +6828,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patientAccessCode = storage.generatePatientAccessCode();
 
       // Create the session
+      if (!appointment.practiceId) {
+        return res.status(400).json({ message: 'Appointment has no assigned practice' });
+      }
       const session = await storage.createTelehealthSession({
-        practiceId: appointment.practiceId || 1,
+        practiceId: appointment.practiceId,
         appointmentId,
         patientId: appointment.patientId || undefined,
         therapistId: appointment.therapistId || undefined,
@@ -6927,7 +7036,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Manual trigger for weekly cancellation report
   app.post('/api/reports/weekly-cancellation', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.body.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       await generateAndSendWeeklyCancellationReport(practiceId);
       res.json({ message: 'Weekly cancellation report triggered successfully' });
     } catch (error) {
@@ -7307,7 +7416,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if access already exists
       let access = await storage.getPatientPortalAccess(patientId);
       if (!access) {
-        access = await storage.createPatientPortalAccess(patientId, patient.practiceId || 1);
+        if (!patient.practiceId) {
+          return res.status(400).json({ message: 'Patient has no assigned practice' });
+        }
+        access = await storage.createPatientPortalAccess(patientId, patient.practiceId);
       }
 
       res.json(access);
@@ -7329,7 +7441,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Ensure portal access exists
       let access = await storage.getPatientPortalAccess(patientId);
       if (!access) {
-        access = await storage.createPatientPortalAccess(patientId, patient.practiceId || 1);
+        if (!patient.practiceId) {
+          return res.status(400).json({ message: 'Patient has no assigned practice' });
+        }
+        access = await storage.createPatientPortalAccess(patientId, patient.practiceId);
       }
 
       // Create magic link
@@ -7350,7 +7465,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             },
           });
 
-          const practice = await storage.getPractice(patient.practiceId || 1);
+          if (!patient.practiceId) {
+            logger.warn('Patient has no assigned practice, using default name');
+          }
+          const practice = patient.practiceId ? await storage.getPractice(patient.practiceId) : null;
           const practiceName = practice?.name || 'Your Healthcare Provider';
 
           await transporter.sendMail({
@@ -7423,10 +7541,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!patient) {
         return res.status(404).json({ message: 'Patient not found' });
       }
+      if (!patient.practiceId) {
+        return res.status(400).json({ message: 'Patient has no assigned practice' });
+      }
 
       const document = await storage.createPatientDocument({
         patientId,
-        practiceId: patient.practiceId || 1,
+        practiceId: patient.practiceId,
         uploadedById: req.user?.claims?.sub,
         name,
         description,
@@ -7471,10 +7592,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!patient) {
         return res.status(404).json({ message: 'Patient not found' });
       }
+      if (!patient.practiceId) {
+        return res.status(400).json({ message: 'Patient has no assigned practice' });
+      }
 
       const statement = await storage.createPatientStatement({
         patientId,
-        practiceId: patient.practiceId || 1,
+        practiceId: patient.practiceId,
         totalAmount,
         balanceDue: totalAmount,
         dueDate: dueDate ? new Date(dueDate) : undefined,

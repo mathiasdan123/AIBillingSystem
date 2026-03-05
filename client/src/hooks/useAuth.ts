@@ -10,12 +10,10 @@ interface User {
 }
 
 export function useAuth() {
-  // Check if we're using development bypass
-  const isDevelopment = import.meta.env.DEV;
-  const hasDevBypass = isDevelopment && localStorage.getItem('dev-bypass') === 'true';
-
-  // Use dev endpoint if bypassing, otherwise use regular auth
-  const endpoint = hasDevBypass ? '/api/dev-user' : '/api/auth/user';
+  // SECURITY: Always use the authenticated endpoint
+  // Dev mode authentication is handled server-side in replitAuth.ts based on NODE_ENV
+  // Never allow client-side bypass of authentication
+  const endpoint = '/api/auth/user';
 
   const { data: user, isLoading, error, isFetched } = useQuery<User>({
     queryKey: [endpoint],
@@ -29,10 +27,8 @@ export function useAuth() {
   // Only authenticated if we have user data (not null) and no error
   const isAuthenticated = isFetched && user != null && !error;
 
-  // Check for demo role override (only in development mode for testing)
-  const isDev = import.meta.env.DEV;
-  const demoRoleOverride = isDev ? localStorage.getItem('demo-role-override') as 'admin' | 'therapist' | null : null;
-  const effectiveRole = demoRoleOverride || user?.role;
+  // Use actual user role - no client-side overrides allowed
+  const effectiveRole = user?.role;
 
   return {
     user,
@@ -43,18 +39,6 @@ export function useAuth() {
     // Expose actual role (ignoring demo override) for certain checks
     actualRole: user?.role || 'therapist',
   };
-}
-
-// Helper function to switch demo role
-export function setDemoRole(role: 'admin' | 'therapist') {
-  localStorage.setItem('demo-role-override', role);
-  window.location.reload();
-}
-
-// Helper function to clear demo role override
-export function clearDemoRole() {
-  localStorage.removeItem('demo-role-override');
-  window.location.reload();
 }
 
 // Helper to get auth headers for fetch requests (cookie-based auth, returns empty)

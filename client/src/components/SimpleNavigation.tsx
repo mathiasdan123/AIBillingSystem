@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Switch } from "@/components/ui/switch";
 import {
   Home,
   Users,
@@ -29,7 +28,7 @@ import {
   Mic,
   CreditCard
 } from "lucide-react";
-import { useAuth, setDemoRole } from "@/hooks/useAuth";
+import { useAuth } from "@/hooks/useAuth";
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: Home, adminOnly: false },
@@ -64,10 +63,6 @@ export default function SimpleNavigation() {
 
   // Filter navigation items based on role
   const filteredNavigation = navigation.filter(item => !item.adminOnly || isAdmin);
-
-  const handleRoleSwitch = () => {
-    setDemoRole(currentRole === 'admin' ? 'therapist' : 'admin');
-  };
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -116,25 +111,6 @@ export default function SimpleNavigation() {
         </div>
 
         <div className="p-6 border-t border-slate-200 space-y-4">
-          {/* Demo Role Switcher - Only show in development mode */}
-          {import.meta.env.DEV && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-amber-600" />
-                  <span className="text-xs font-medium text-amber-800">Demo Mode</span>
-                </div>
-                <Switch
-                  checked={currentRole === 'admin'}
-                  onCheckedChange={handleRoleSwitch}
-                />
-              </div>
-              <p className="text-xs text-amber-700 mt-1">
-                {currentRole === 'admin' ? 'Viewing as Admin' : 'Viewing as Therapist'}
-              </p>
-            </div>
-          )}
-
           <div className="flex items-center space-x-3">
             <Avatar>
               <AvatarImage src={(user as any)?.profileImageUrl} />

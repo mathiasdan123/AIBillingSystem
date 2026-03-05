@@ -44,6 +44,36 @@ export function encryptField(plaintext: string | null | undefined): EncryptedFie
   };
 }
 
+// Encrypt any value (handles objects by JSON stringifying them first)
+export function encryptValue(value: any): EncryptedField | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  // If it's an object, stringify it first
+  const plaintext = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  if (plaintext === '') {
+    return null;
+  }
+
+  return encryptField(plaintext);
+}
+
+// Decrypt to original value (parses JSON if applicable)
+export function decryptValue(encrypted: EncryptedField | string | null | undefined, parseJson: boolean = false): any {
+  const decrypted = decryptField(encrypted);
+  if (decrypted === null || !parseJson) {
+    return decrypted;
+  }
+
+  // Try to parse as JSON if requested
+  try {
+    return JSON.parse(decrypted);
+  } catch {
+    return decrypted;
+  }
+}
+
 export function decryptField(encrypted: EncryptedField | string | null | undefined): string | null {
   if (!encrypted) return null;
 
@@ -87,9 +117,14 @@ export function decryptField(encrypted: EncryptedField | string | null | undefin
 }
 
 // PHI fields on each table that need encryption
-const PATIENT_PHI_FIELDS = [
+const PATIENT_PHI_STRING_FIELDS = [
   'firstName', 'lastName', 'dateOfBirth', 'email', 'phone',
-  'address', 'insuranceId', 'policyNumber', 'groupNumber', 'intakeData',
+  'address', 'insuranceId', 'policyNumber', 'groupNumber',
+] as const;
+
+// JSONB fields that contain PHI and need encryption (stored as JSON objects)
+const PATIENT_PHI_JSONB_FIELDS = [
+  'intakeData',
 ] as const;
 
 const SOAP_NOTE_PHI_FIELDS = [
@@ -103,22 +138,42 @@ const TREATMENT_SESSION_PHI_FIELDS = [
 
 export function encryptPatientRecord(patient: Record<string, any>): Record<string, any> {
   const encrypted = { ...patient };
-  for (const field of PATIENT_PHI_FIELDS) {
+
+  // Encrypt string fields
+  for (const field of PATIENT_PHI_STRING_FIELDS) {
     if (encrypted[field] !== undefined) {
       encrypted[field] = encryptField(encrypted[field] as string);
     }
   }
+
+  // Encrypt JSONB fields (objects need to be stringified first)
+  for (const field of PATIENT_PHI_JSONB_FIELDS) {
+    if (encrypted[field] !== undefined && encrypted[field] !== null) {
+      encrypted[field] = encryptValue(encrypted[field]);
+    }
+  }
+
   return encrypted;
 }
 
 export function decryptPatientRecord(patient: Record<string, any> | null | undefined): Record<string, any> | null {
   if (!patient) return null;
   const decrypted = { ...patient };
-  for (const field of PATIENT_PHI_FIELDS) {
+
+  // Decrypt string fields
+  for (const field of PATIENT_PHI_STRING_FIELDS) {
     if (decrypted[field] !== undefined && decrypted[field] !== null) {
       decrypted[field] = decryptField(decrypted[field]);
     }
   }
+
+  // Decrypt JSONB fields (parse back to objects)
+  for (const field of PATIENT_PHI_JSONB_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptValue(decrypted[field], true); // parseJson = true
+    }
+  }
+
   return decrypted;
 }
 
