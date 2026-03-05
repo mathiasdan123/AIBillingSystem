@@ -1,4 +1,5 @@
 import type { Express, Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import * as pdfParse from "pdf-parse";
@@ -73,7 +74,7 @@ const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => 
 
     next();
   } catch (error) {
-    console.error("Error checking user role:", error);
+    logger.error("Error checking user role", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to verify permissions" });
   }
 };
@@ -92,7 +93,7 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
 
     next();
   } catch (error) {
-    console.error("Error checking user role:", error);
+    logger.error("Error checking user role", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to verify permissions" });
   }
 };
@@ -137,7 +138,7 @@ const authorizePractice = async (req: any, res: Response, next: NextFunction) =>
     req.authorizedPracticeId = user.practiceId;
     next();
   } catch (error) {
-    console.error("Error authorizing practice access:", error);
+    logger.error("Error authorizing practice access", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to verify practice access" });
   }
 };
@@ -396,6 +397,13 @@ function generateMockEligibility(patient: any, insurance: any) {
   };
 }
 
+// Helper to generate cryptographically secure claim numbers
+const generateSecureClaimNumber = (prefix: string = 'CLM'): string => {
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const randomPart = crypto.randomBytes(4).toString('hex').toUpperCase();
+  return `${prefix}-${dateStr}-${randomPart}`;
+};
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -415,7 +423,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
-      console.error("Error fetching user:", error);
+      logger.error("Error fetching user", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch user" });
     }
   });
@@ -447,7 +455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
       res.json(safeUsers);
     } catch (error) {
-      console.error("Error fetching users:", error);
+      logger.error("Error fetching users", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch users" });
     }
   });
@@ -481,7 +489,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         role: updatedUser.role
       });
     } catch (error) {
-      console.error("Error updating user role:", error);
+      logger.error("Error updating user role", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to update user role" });
     }
   });
@@ -515,7 +523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
     } catch (error) {
-      console.error("Error in setup:", error);
+      logger.error("Error in setup", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to complete setup" });
     }
   });
@@ -532,7 +540,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(practice);
     } catch (error) {
-      console.error("Error fetching practice:", error);
+      logger.error("Error fetching practice", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch practice" });
     }
   });
@@ -554,7 +562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(practice);
     } catch (error) {
-      console.error("Error updating practice:", error);
+      logger.error("Error updating practice", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to update practice" });
     }
   });
@@ -565,7 +573,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, role, practiceId } = req.body;
       const invitedById = req.user?.claims?.sub;
 
-      console.log("Creating invite for:", { email, role, practiceId, invitedById });
+      logger.info("Creating invite for:", { email, role, practiceId, invitedById });
 
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
@@ -600,7 +608,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Generate unique token
-      const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      const token = crypto.randomBytes(32).toString("hex");
 
       // Set expiry to 7 days from now
       const expiresAt = new Date();
@@ -616,7 +624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: 'pending',
       };
 
-      console.log("Invite data to insert:", inviteData);
+      logger.info("Invite data to insert:", inviteData);
 
       const invite = await storage.createInvite(inviteData);
 
@@ -632,7 +640,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
     } catch (error: any) {
-      console.error("Error creating invite:", error);
+      logger.error("Error creating invite", { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, "Failed to create invite", error);
     }
   });
@@ -643,7 +651,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const invites = await storage.getInvitesByPractice(practiceId);
       res.json(invites);
     } catch (error) {
-      console.error("Error fetching invites:", error);
+      logger.error("Error fetching invites", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch invites" });
     }
   });
@@ -671,7 +679,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expiresAt: invite.expiresAt
       });
     } catch (error) {
-      console.error("Error fetching invite:", error);
+      logger.error("Error fetching invite", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch invite" });
     }
   });
@@ -713,7 +721,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         role: invite.role
       });
     } catch (error) {
-      console.error("Error accepting invite:", error);
+      logger.error("Error accepting invite", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to accept invite" });
     }
   });
@@ -744,7 +752,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(baseStats);
       }
     } catch (error) {
-      console.error("Error fetching dashboard:", error);
+      logger.error("Error fetching dashboard", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch dashboard data" });
     }
   });
@@ -760,7 +768,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getRevenueByMonth(practiceId, startDate, new Date());
       res.json(data);
     } catch (error) {
-      console.error('Error fetching revenue analytics:', error);
+      logger.error('Error fetching revenue analytics', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch revenue analytics' });
     }
   });
@@ -772,7 +780,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getClaimsByStatus(practiceId);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching claims by status:', error);
+      logger.error('Error fetching claims by status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch claims by status' });
     }
   });
@@ -784,7 +792,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getTopDenialReasons(practiceId);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching denial reasons:', error);
+      logger.error('Error fetching denial reasons', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch denial reasons' });
     }
   });
@@ -796,7 +804,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getCollectionRate(practiceId);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching collection rate:', error);
+      logger.error('Error fetching collection rate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch collection rate' });
     }
   });
@@ -808,7 +816,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getCleanClaimsRate(practiceId);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching clean claims rate:', error);
+      logger.error('Error fetching clean claims rate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch clean claims rate' });
     }
   });
@@ -832,7 +840,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getCapacityUtilization(practiceId, start, end);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching capacity utilization:', error);
+      logger.error('Error fetching capacity utilization', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch capacity utilization' });
     }
   });
@@ -844,7 +852,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getDaysInAR(practiceId);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching AR aging:', error);
+      logger.error('Error fetching AR aging', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch AR aging' });
     }
   });
@@ -857,7 +865,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getRevenueForecast(practiceId, months);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching revenue forecast:', error);
+      logger.error('Error fetching revenue forecast', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch revenue forecast' });
     }
   });
@@ -869,7 +877,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getTopReferringProviders(practiceId);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching referrals:', error);
+      logger.error('Error fetching referrals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referrals' });
     }
   });
@@ -883,7 +891,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getRevenueByLocationAndTherapist(practiceId, startDate, endDate);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching revenue by location/therapist:', error);
+      logger.error('Error fetching revenue by location/therapist', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch revenue by location/therapist' });
     }
   });
@@ -942,7 +950,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error estimating reimbursement:', error);
+      logger.error('Error estimating reimbursement', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to estimate reimbursement' });
     }
   });
@@ -979,7 +987,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error uploading reimbursement data:', error);
+      logger.error('Error uploading reimbursement data', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to upload data' });
     }
   });
@@ -1007,7 +1015,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error getting insights:', error);
+      logger.error('Error getting insights', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to get insights' });
     }
   });
@@ -1024,7 +1032,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error exporting training data:', error);
+      logger.error('Error exporting training data', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to export training data' });
     }
   });
@@ -1074,7 +1082,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error predicting OON reimbursement:', error);
+      logger.error('Error predicting OON reimbursement', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to predict reimbursement' });
     }
   });
@@ -1119,7 +1127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error predicting batch OON reimbursement:', error);
+      logger.error('Error predicting batch OON reimbursement', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to predict batch reimbursement' });
     }
   });
@@ -1134,7 +1142,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: payers.length
       });
     } catch (error) {
-      console.error('Error getting supported payers:', error);
+      logger.error('Error getting supported payers', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to get payers' });
     }
   });
@@ -1149,7 +1157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: codes.length
       });
     } catch (error) {
-      console.error('Error getting supported CPT codes:', error);
+      logger.error('Error getting supported CPT codes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to get CPT codes' });
     }
   });
@@ -1185,7 +1193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error getting quick OON estimate:', error);
+      logger.error('Error getting quick OON estimate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to get estimate' });
     }
   });
@@ -1221,7 +1229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error recording claim outcome:', error);
+      logger.error('Error recording claim outcome', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to record claim outcome' });
     }
   });
@@ -1245,7 +1253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error fetching claim outcomes:', error);
+      logger.error('Error fetching claim outcomes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch claim outcomes' });
     }
   });
@@ -1398,7 +1406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
     } catch (error) {
-      console.error('Error in public document upload:', error);
+      logger.error('Error in public document upload', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to process document' });
     }
   });
@@ -1495,7 +1503,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
     } catch (error) {
-      console.error('Error uploading plan document:', error);
+      logger.error('Error uploading plan document', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to upload and parse document' });
     }
   });
@@ -1520,7 +1528,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, documents });
 
     } catch (error) {
-      console.error('Error fetching plan documents:', error);
+      logger.error('Error fetching plan documents', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch plan documents' });
     }
   });
@@ -1554,7 +1562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, benefits });
 
     } catch (error) {
-      console.error('Error fetching plan benefits:', error);
+      logger.error('Error fetching plan benefits', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch plan benefits' });
     }
   });
@@ -1578,7 +1586,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, benefits: verified });
 
     } catch (error) {
-      console.error('Error verifying plan benefits:', error);
+      logger.error('Error verifying plan benefits', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to verify plan benefits' });
     }
   });
@@ -1602,7 +1610,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, benefits: updated });
 
     } catch (error) {
-      console.error('Error updating plan benefits:', error);
+      logger.error('Error updating plan benefits', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to update plan benefits' });
     }
   });
@@ -1678,7 +1686,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error predicting OON with patient data:', error);
+      logger.error('Error predicting OON with patient data', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to generate prediction' });
     }
   });
@@ -1704,7 +1712,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(patientsWithConsent);
     } catch (error) {
-      console.error('Error fetching patients:', error);
+      logger.error('Error fetching patients', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch patients' });
     }
   });
@@ -1714,7 +1722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patient = await storage.createPatient(req.body);
       res.json(patient);
     } catch (error) {
-      console.error('Error creating patient:', error);
+      logger.error('Error creating patient', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to create patient' });
     }
   });
@@ -1725,7 +1733,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cptCodes = await storage.getAllCptCodes();
       res.json(cptCodes);
     } catch (error) {
-      console.error('Error fetching CPT codes:', error);
+      logger.error('Error fetching CPT codes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch CPT codes' });
     }
   });
@@ -1736,7 +1744,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const soapNotes = await storage.getAllSoapNotes();
       res.json(soapNotes);
     } catch (error) {
-      console.error('Error fetching SOAP notes:', error);
+      logger.error('Error fetching SOAP notes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch SOAP notes' });
     }
   });
@@ -1787,7 +1795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const { rules, preferences } = await getInsuranceBillingRules(storage, null);
 
               // Use AI to optimize billing codes based on SOAP content and insurance rules
-              console.log(`AI optimizing billing for session ${session.id}, insurance: ${insuranceName}`);
+              logger.info(`AI optimizing billing for session ${session.id}, insurance: ${insuranceName}`);
 
               const optimization = await optimizeBillingCodes(
                 {
@@ -1814,7 +1822,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               billingOptimization = optimization;
 
               // Generate claim number
-              const claimNumber = `SB-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+              const claimNumber = generateSecureClaimNumber("SB");
 
               // Create the claim with AI-optimized total
               const claim = await storage.createClaim({
@@ -1867,12 +1875,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 },
               };
 
-              console.log(`AI-optimized superbill ${claim.claimNumber} for session ${session.id}: ${optimization.lineItems.length} codes, $${optimization.estimatedAmount.toFixed(2)}, ${optimization.complianceScore}% compliance`);
+              logger.info(`AI-optimized superbill ${claim.claimNumber} for session ${session.id}: ${optimization.lineItems.length} codes, $${optimization.estimatedAmount.toFixed(2)}, ${optimization.complianceScore}% compliance`);
             }
           }
         } catch (claimError) {
           // Log but don't fail - SOAP note was created successfully
-          console.error('Error auto-generating AI-optimized superbill:', claimError);
+          logger.error('Error auto-generating AI-optimized superbill', { error: claimError instanceof Error ? claimError.message : String(claimError) });
         }
       }
 
@@ -1882,7 +1890,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         billingOptimization,
       });
     } catch (error) {
-      console.error('Error creating SOAP note:', error);
+      logger.error('Error creating SOAP note', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to create SOAP note' });
     }
   });
@@ -1897,7 +1905,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const therapies = await storage.getTherapyBank(user.practiceId);
       res.json(therapies);
     } catch (error) {
-      console.error('Error fetching therapy bank:', error);
+      logger.error('Error fetching therapy bank', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch therapy bank' });
     }
   });
@@ -1931,7 +1939,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(therapy);
     } catch (error) {
-      console.error('Error creating therapy bank entry:', error);
+      logger.error('Error creating therapy bank entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to create therapy bank entry' });
     }
   });
@@ -1958,7 +1966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteTherapyBankEntry(id);
       res.status(204).send();
     } catch (error) {
-      console.error('Error deleting therapy bank entry:', error);
+      logger.error('Error deleting therapy bank entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to delete therapy bank entry' });
     }
   });
@@ -1974,7 +1982,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const exercises = await storage.getExerciseBank(user.practiceId, category);
       res.json(exercises);
     } catch (error) {
-      console.error('Error fetching exercise bank:', error);
+      logger.error('Error fetching exercise bank', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch exercise bank' });
     }
   });
@@ -2011,7 +2019,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(exercise);
     } catch (error) {
-      console.error('Error creating exercise bank entry:', error);
+      logger.error('Error creating exercise bank entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to create exercise bank entry' });
     }
   });
@@ -2038,7 +2046,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteExerciseBankEntry(id);
       res.status(204).send();
     } catch (error) {
-      console.error('Error deleting exercise bank entry:', error);
+      logger.error('Error deleting exercise bank entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to delete exercise bank entry' });
     }
   });
@@ -2049,7 +2057,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sessions = await storage.getAllSessions();
       res.json(sessions);
     } catch (error) {
-      console.error('Error fetching sessions:', error);
+      logger.error('Error fetching sessions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch sessions' });
     }
   });
@@ -2072,7 +2080,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const session = await storage.createSession(req.body);
       res.json(session);
     } catch (error) {
-      console.error('Error creating session:', error);
+      logger.error('Error creating session', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to create session' });
     }
   });
@@ -2084,7 +2092,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const insurances = await storage.getInsurances();
       res.json(insurances);
     } catch (error) {
-      console.error('Error fetching insurances:', error);
+      logger.error('Error fetching insurances', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch insurances' });
     }
   });
@@ -2098,7 +2106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rates = await storage.getInsuranceRates(provider);
       res.json(rates);
     } catch (error) {
-      console.error('Error fetching insurance rates:', error);
+      logger.error('Error fetching insurance rates', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch insurance rates' });
     }
   });
@@ -2109,7 +2117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const providers = await storage.getUniqueInsuranceProviders();
       res.json(providers);
     } catch (error) {
-      console.error('Error fetching providers:', error);
+      logger.error('Error fetching providers', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch providers' });
     }
   });
@@ -2120,7 +2128,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rate = await storage.upsertInsuranceRate(req.body);
       res.json(rate);
     } catch (error) {
-      console.error('Error saving insurance rate:', error);
+      logger.error('Error saving insurance rate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to save insurance rate' });
     }
   });
@@ -2131,7 +2139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteInsuranceRate(parseInt(req.params.id));
       res.json({ success: true });
     } catch (error) {
-      console.error('Error deleting insurance rate:', error);
+      logger.error('Error deleting insurance rate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete insurance rate' });
     }
   });
@@ -2179,7 +2187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: mimeType
       });
     } catch (error) {
-      console.error('Error extracting text from file:', error);
+      logger.error('Error extracting text from file', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to extract text from file' });
     }
   });
@@ -2196,7 +2204,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const parseResult = await parseInsuranceContract(contractText, insuranceProvider);
       res.json(parseResult);
     } catch (error) {
-      console.error('Error parsing contract:', error);
+      logger.error('Error parsing contract', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to parse contract' });
     }
   });
@@ -2207,7 +2215,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await saveContractRates(req.body);
       res.json(result);
     } catch (error) {
-      console.error('Error saving parsed rates:', error);
+      logger.error('Error saving parsed rates', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to save parsed rates' });
     }
   });
@@ -2221,7 +2229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const summary = await getPayerRatesSummary(req.params.provider);
       res.json(summary);
     } catch (error) {
-      console.error('Error getting payer summary:', error);
+      logger.error('Error getting payer summary', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get payer summary' });
     }
   });
@@ -2240,7 +2248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.json(result);
     } catch (error) {
-      console.error('Error getting optimal code:', error);
+      logger.error('Error getting optimal code', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get optimal code' });
     }
   });
@@ -2262,7 +2270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.json(result);
     } catch (error) {
-      console.error('Error optimizing session codes:', error);
+      logger.error('Error optimizing session codes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to optimize session codes' });
     }
   });
@@ -2278,7 +2286,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await analyzeFeeSchedule(feeScheduleData, insuranceProvider);
       res.json(result);
     } catch (error) {
-      console.error('Error analyzing fee schedule:', error);
+      logger.error('Error analyzing fee schedule', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to analyze fee schedule' });
     }
   });
@@ -2292,7 +2300,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payersRequiringDifferentCodes: PAYERS_REQUIRING_DIFFERENT_CODES
       });
     } catch (error) {
-      console.error('Error getting intervention categories:', error);
+      logger.error('Error getting intervention categories', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get intervention categories' });
     }
   });
@@ -2320,7 +2328,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         brandPrivacyPolicyUrl: practice.brandPrivacyPolicyUrl,
       });
     } catch (error) {
-      console.error('Error fetching practice info:', error);
+      logger.error('Error fetching practice info', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch practice info' });
     }
   });
@@ -2336,7 +2344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.json(consent);
     } catch (error) {
-      console.error('Error creating consent:', error);
+      logger.error('Error creating consent', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create consent' });
     }
   });
@@ -2347,7 +2355,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const consents = await storage.getPatientConsents(parseInt(req.params.id));
       res.json(consents);
     } catch (error) {
-      console.error('Error fetching consents:', error);
+      logger.error('Error fetching consents', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch consents' });
     }
   });
@@ -2358,7 +2366,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const consent = await storage.getActiveConsent(parseInt(req.params.id), req.params.type);
       res.json(consent || null);
     } catch (error) {
-      console.error('Error fetching consent:', error);
+      logger.error('Error fetching consent', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch consent' });
     }
   });
@@ -2371,7 +2379,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const consent = await storage.revokeConsent(parseInt(req.params.id), userId, reason);
       res.json(consent);
     } catch (error) {
-      console.error('Error revoking consent:', error);
+      logger.error('Error revoking consent', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to revoke consent' });
     }
   });
@@ -2415,7 +2423,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerId: customer.id,
       });
     } catch (error) {
-      console.error('Error creating setup intent:', error);
+      logger.error('Error creating setup intent', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create setup intent' });
     }
   });
@@ -2437,7 +2445,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const paymentMethods = await stripeService.listPaymentMethods(practice.stripeCustomerId);
       res.json({ paymentMethods });
     } catch (error) {
-      console.error('Error listing payment methods:', error);
+      logger.error('Error listing payment methods', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to list payment methods' });
     }
   });
@@ -2463,7 +2471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ success: true });
     } catch (error) {
-      console.error('Error setting default payment method:', error);
+      logger.error('Error setting default payment method', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to set default payment method' });
     }
   });
@@ -2491,7 +2499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isInTrial: practice.trialEndsAt ? new Date(practice.trialEndsAt) > new Date() : false,
       });
     } catch (error) {
-      console.error('Error getting billing info:', error);
+      logger.error('Error getting billing info', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get billing info' });
     }
   });
@@ -2521,7 +2529,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
       });
     } catch (error) {
-      console.error('Error getting payment history:', error);
+      logger.error('Error getting payment history', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get payment history' });
     }
   });
@@ -2552,7 +2560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ url: paymentLink.url });
     } catch (error) {
-      console.error('Error creating payment link:', error);
+      logger.error('Error creating payment link', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create payment link' });
     }
   });
@@ -2591,24 +2599,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       switch (event.type) {
         case 'payment_intent.succeeded':
           const paymentIntent = event.data.object as any;
-          console.log('Payment succeeded:', paymentIntent.id);
+          logger.info('Payment succeeded', { paymentIntentId: paymentIntent.id });
           // TODO: Record payment in database
           break;
 
         case 'payment_intent.payment_failed':
           const failedPayment = event.data.object as any;
-          console.log('Payment failed:', failedPayment.id);
+          logger.info('Payment failed', { paymentId: failedPayment.id });
           // TODO: Notify practice of failed payment
           break;
 
         case 'setup_intent.succeeded':
           const setupIntent = event.data.object as any;
-          console.log('Setup intent succeeded:', setupIntent.id);
+          logger.info('Setup intent succeeded', { setupIntentId: setupIntent.id });
           // Payment method saved
           break;
 
         default:
-          console.log('Unhandled event type:', event.type);
+          logger.info('Unhandled event type', { eventType: event.type });
       }
 
       res.json({ received: true });
@@ -2635,7 +2643,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const estimate = await estimatePatientCost(patientId, cptCodes, sessionRate || 300);
       res.json(estimate);
     } catch (error) {
-      console.error('Error estimating cost:', error);
+      logger.error('Error estimating cost', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to estimate cost' });
     }
   });
@@ -2656,7 +2664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.json(estimate);
     } catch (error) {
-      console.error('Error getting quick estimate:', error);
+      logger.error('Error getting quick estimate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get estimate' });
     }
   });
@@ -2685,7 +2693,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...estimate,
       });
     } catch (error) {
-      console.error('Error getting patient cost estimate:', error);
+      logger.error('Error getting patient cost estimate', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get estimate' });
     }
   });
@@ -2759,7 +2767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             raw: result.raw,
           };
         } catch (stediError: any) {
-          console.error('Stedi eligibility check failed, falling back to mock:', stediError.message);
+          logger.error('Stedi eligibility check failed, falling back to mock', { error: stediError.message });
           // Fall back to mock if Stedi fails
           eligibilityResult = generateMockEligibility(patient, insurance);
           eligibilityResult.source = 'mock_fallback';
@@ -2806,7 +2814,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } : null,
       });
     } catch (error: any) {
-      console.error('Error checking eligibility:', error);
+      logger.error('Error checking eligibility', { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, 'Failed to check eligibility', error);
     }
   });
@@ -2818,7 +2826,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const eligibility = await storage.getPatientEligibility(patientId);
       res.json(eligibility || null);
     } catch (error) {
-      console.error('Error fetching eligibility:', error);
+      logger.error('Error fetching eligibility', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligibility' });
     }
   });
@@ -2830,7 +2838,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const history = await storage.getEligibilityHistory(patientId);
       res.json(history);
     } catch (error) {
-      console.error('Error fetching eligibility history:', error);
+      logger.error('Error fetching eligibility history', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligibility history' });
     }
   });
@@ -2851,7 +2859,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const alerts = await storage.getEligibilityAlerts(practiceId, filters);
       res.json(alerts);
     } catch (error) {
-      console.error('Error fetching eligibility alerts:', error);
+      logger.error('Error fetching eligibility alerts', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligibility alerts' });
     }
   });
@@ -2863,7 +2871,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getEligibilityAlertStats(practiceId);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching eligibility alert stats:', error);
+      logger.error('Error fetching eligibility alert stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligibility alert stats' });
     }
   });
@@ -2878,7 +2886,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(alert);
     } catch (error) {
-      console.error('Error fetching eligibility alert:', error);
+      logger.error('Error fetching eligibility alert', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligibility alert' });
     }
   });
@@ -2889,7 +2897,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const alert = await storage.createEligibilityAlert(req.body);
       res.status(201).json(alert);
     } catch (error) {
-      console.error('Error creating eligibility alert:', error);
+      logger.error('Error creating eligibility alert', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create eligibility alert' });
     }
   });
@@ -2904,7 +2912,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(alert);
     } catch (error) {
-      console.error('Error updating eligibility alert:', error);
+      logger.error('Error updating eligibility alert', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update eligibility alert' });
     }
   });
@@ -2920,7 +2928,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(alert);
     } catch (error) {
-      console.error('Error acknowledging eligibility alert:', error);
+      logger.error('Error acknowledging eligibility alert', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to acknowledge eligibility alert' });
     }
   });
@@ -2937,7 +2945,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(alert);
     } catch (error) {
-      console.error('Error resolving eligibility alert:', error);
+      logger.error('Error resolving eligibility alert', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to resolve eligibility alert' });
     }
   });
@@ -2954,7 +2962,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(alert);
     } catch (error) {
-      console.error('Error dismissing eligibility alert:', error);
+      logger.error('Error dismissing eligibility alert', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to dismiss eligibility alert' });
     }
   });
@@ -3075,7 +3083,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results,
       });
     } catch (error) {
-      console.error('Error in batch eligibility verification:', error);
+      logger.error('Error in batch eligibility verification', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to perform batch eligibility verification' });
     }
   });
@@ -3174,7 +3182,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error) {
-      console.error('Error checking appointment eligibility:', error);
+      logger.error('Error checking appointment eligibility', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to check eligibility' });
     }
   });
@@ -3186,7 +3194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const alerts = await storage.getOpenAlertsForAppointment(appointmentId);
       res.json(alerts);
     } catch (error) {
-      console.error('Error fetching appointment eligibility alerts:', error);
+      logger.error('Error fetching appointment eligibility alerts', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligibility alerts' });
     }
   });
@@ -3201,7 +3209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const practiceSessions = sessions.filter((s: any) => s.practiceId === practiceId);
       res.json(practiceSessions);
     } catch (error) {
-      console.error('Error fetching sessions:', error);
+      logger.error('Error fetching sessions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch sessions' });
     }
   });
@@ -3238,7 +3246,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedSessions);
     } catch (error) {
-      console.error('Error fetching unbilled sessions:', error);
+      logger.error('Error fetching unbilled sessions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch unbilled sessions' });
     }
   });
@@ -3282,7 +3290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Generate claim number
-      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const claimNumber = generateSecureClaimNumber("CLM");
 
       // Create the claim
       const claim = await storage.createClaim({
@@ -3323,7 +3331,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalAmount: totalAmount.toFixed(2),
       });
     } catch (error: any) {
-      console.error('Error creating superbill:', error);
+      logger.error('Error creating superbill', { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, 'Failed to create superbill', error);
     }
   });
@@ -3364,7 +3372,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const totalAmount = (rate * units).toFixed(2);
 
       // Generate claim number
-      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const claimNumber = generateSecureClaimNumber("CLM");
 
       // Create the claim/superbill
       const claim = await storage.createClaim({
@@ -3406,7 +3414,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
     } catch (error: any) {
-      console.error('Error generating superbill:', error);
+      logger.error('Error generating superbill', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to generate superbill' });
     }
   });
@@ -3451,7 +3459,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Generate claim number
-      const claimNumber = `SB-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const claimNumber = generateSecureClaimNumber("SB");
 
       // Create the claim
       const claim = await storage.createClaim({
@@ -3488,7 +3496,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalAmount: totalAmount.toFixed(2),
       });
     } catch (error: any) {
-      console.error('Error creating superbill:', error);
+      logger.error('Error creating superbill', { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, 'Failed to create superbill', error);
     }
   });
@@ -3502,7 +3510,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const claims = await storage.getClaims(practiceId);
       res.json(claims);
     } catch (error) {
-      console.error('Error fetching claims:', error);
+      logger.error('Error fetching claims', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch claims' });
     }
   });
@@ -3555,7 +3563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lineItems: enrichedLineItems,
       });
     } catch (error) {
-      console.error('Error fetching claim:', error);
+      logger.error('Error fetching claim', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch claim' });
     }
   });
@@ -3597,7 +3605,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedLineItems);
     } catch (error) {
-      console.error('Error fetching claim line items:', error);
+      logger.error('Error fetching claim line items', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch line items' });
     }
   });
@@ -3642,7 +3650,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cptCode: { code: cptCode.code, description: cptCode.description },
       });
     } catch (error) {
-      console.error('Error adding line item:', error);
+      logger.error('Error adding line item', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to add line item' });
     }
   });
@@ -3658,7 +3666,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Generate claim number
-      const claimNumber = `CLM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const claimNumber = generateSecureClaimNumber("CLM");
 
       // Initialize AI review fields
       let aiReviewScore = null;
@@ -3682,7 +3690,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             aiReviewNotes = optimization.aiReviewNotes;
           }
         } catch (aiError) {
-          console.error('AI optimization failed, continuing without:', aiError);
+          logger.error('AI optimization failed, continuing without', { error: aiError instanceof Error ? aiError.message : String(aiError) });
         }
       }
 
@@ -3705,7 +3713,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         claim
       });
     } catch (error: any) {
-      console.error('Error creating claim:', error);
+      logger.error('Error creating claim', { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, 'Failed to create claim', error);
     }
   });
@@ -3731,7 +3739,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedClaim = await storage.updateClaim(claimId, req.body);
       res.json(updatedClaim);
     } catch (error) {
-      console.error('Error updating claim:', error);
+      logger.error('Error updating claim', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update claim' });
     }
   });
@@ -3864,7 +3872,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             status: clearinghouseResult.status,
           });
         } catch (stediError: any) {
-          console.error('Stedi claim submission failed:', stediError.message);
+          logger.error('Stedi claim submission failed', { error: stediError.message });
           // Continue with manual submission tracking
           clearinghouseResult = {
             success: false,
@@ -3895,7 +3903,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         submissionMethod,
       });
     } catch (error: any) {
-      console.error('Error submitting claim:', error);
+      logger.error('Error submitting claim', { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, 'Failed to submit claim', error);
     }
   });
@@ -3988,7 +3996,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           statusSource: 'stedi',
         });
       } catch (stediError: any) {
-        console.error('Stedi status check failed:', stediError.message);
+        logger.error('Stedi status check failed', { error: stediError.message });
         res.json({
           success: false,
           message: 'Failed to check status with clearinghouse',
@@ -3998,7 +4006,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
     } catch (error: any) {
-      console.error('Error checking claim status:', error);
+      logger.error('Error checking claim status', { error: error instanceof Error ? error.message : String(error) });
       safeErrorResponse(res, 500, 'Failed to check claim status', error);
     }
   });
@@ -4029,7 +4037,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         claim: updatedClaim
       });
     } catch (error) {
-      console.error('Error marking claim paid:', error);
+      logger.error('Error marking claim paid', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to mark claim as paid' });
     }
   });
@@ -4104,7 +4112,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
       } catch (aiError) {
-        console.error('Error generating AI appeal:', aiError);
+        logger.error('Error generating AI appeal', { error: aiError instanceof Error ? aiError.message : String(aiError) });
         // Continue even if AI appeal fails - the claim is still denied
       }
 
@@ -4119,7 +4127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } : null,
       });
     } catch (error) {
-      console.error('Error denying claim:', error);
+      logger.error('Error denying claim', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to deny claim' });
     }
   });
@@ -4146,7 +4154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(parsedAppeals);
     } catch (error) {
-      console.error('Error fetching appeals:', error);
+      logger.error('Error fetching appeals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appeals' });
     }
   });
@@ -4166,7 +4174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         appeal: updated,
       });
     } catch (error) {
-      console.error('Error updating appeal status:', error);
+      logger.error('Error updating appeal status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update appeal status' });
     }
   });
@@ -4186,7 +4194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         appeal: updated,
       });
     } catch (error) {
-      console.error('Error updating appeal status:', error);
+      logger.error('Error updating appeal status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update appeal status' });
     }
   });
@@ -4206,7 +4214,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         appeal: updated,
       });
     } catch (error) {
-      console.error('Error updating appeal status:', error);
+      logger.error('Error updating appeal status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update appeal status' });
     }
   });
@@ -4281,7 +4289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error) {
-      console.error('Error regenerating appeal:', error);
+      logger.error('Error regenerating appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to regenerate appeal' });
     }
   });
@@ -4295,7 +4303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const dashboard = await storage.getAppealsDashboard(practiceId);
       res.json(dashboard);
     } catch (error) {
-      console.error('Error fetching appeals dashboard:', error);
+      logger.error('Error fetching appeals dashboard', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appeals dashboard' });
     }
   });
@@ -4308,7 +4316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deadlines = await storage.getUpcomingDeadlines(practiceId, days);
       res.json(deadlines);
     } catch (error) {
-      console.error('Error fetching appeal deadlines:', error);
+      logger.error('Error fetching appeal deadlines', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appeal deadlines' });
     }
   });
@@ -4330,7 +4338,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedClaims);
     } catch (error) {
-      console.error('Error fetching denied claims:', error);
+      logger.error('Error fetching denied claims', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch denied claims' });
     }
   });
@@ -4365,7 +4373,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedAppeals);
     } catch (error) {
-      console.error('Error fetching appeals:', error);
+      logger.error('Error fetching appeals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appeals' });
     }
   });
@@ -4402,7 +4410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } : null,
       });
     } catch (error) {
-      console.error('Error fetching appeal:', error);
+      logger.error('Error fetching appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appeal' });
     }
   });
@@ -4457,7 +4465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           practice
         );
       } catch (aiError) {
-        console.error('Error generating AI appeal:', aiError);
+        logger.error('Error generating AI appeal', { error: aiError instanceof Error ? aiError.message : String(aiError) });
       }
 
       // Calculate deadline (default: 60 days from now if not specified)
@@ -4490,7 +4498,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error) {
-      console.error('Error creating appeal:', error);
+      logger.error('Error creating appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create appeal' });
     }
   });
@@ -4515,7 +4523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedAppeal = await storage.updateAppealRecord(appealId, updates);
       res.json(updatedAppeal);
     } catch (error) {
-      console.error('Error updating appeal:', error);
+      logger.error('Error updating appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update appeal' });
     }
   });
@@ -4544,7 +4552,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         appeal: updatedAppeal,
       });
     } catch (error) {
-      console.error('Error submitting appeal:', error);
+      logger.error('Error submitting appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to submit appeal' });
     }
   });
@@ -4591,7 +4599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         appeal: updatedAppeal,
       });
     } catch (error) {
-      console.error('Error resolving appeal:', error);
+      logger.error('Error resolving appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to resolve appeal' });
     }
   });
@@ -4649,7 +4657,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         newAppeal,
       });
     } catch (error) {
-      console.error('Error escalating appeal:', error);
+      logger.error('Error escalating appeal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to escalate appeal' });
     }
   });
@@ -4710,7 +4718,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         suggestedActions: appealResult.suggestedActions,
       });
     } catch (error) {
-      console.error('Error regenerating appeal letter:', error);
+      logger.error('Error regenerating appeal letter', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to regenerate appeal letter' });
     }
   });
@@ -4722,7 +4730,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const statusData = await storage.getClaimsByStatus(practiceId);
       res.json(statusData);
     } catch (error) {
-      console.error('Error fetching claims by status:', error);
+      logger.error('Error fetching claims by status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch claims analytics' });
     }
   });
@@ -4733,7 +4741,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const denialData = await storage.getTopDenialReasons(practiceId);
       res.json(denialData);
     } catch (error) {
-      console.error('Error fetching denial reasons:', error);
+      logger.error('Error fetching denial reasons', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch denial reasons' });
     }
   });
@@ -4815,7 +4823,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
       });
     } catch (error) {
-      console.error('Error fetching denied claims report:', error);
+      logger.error('Error fetching denied claims report', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch denied claims report' });
     }
   });
@@ -4881,7 +4889,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader('Content-Disposition', `attachment; filename="denied-claims-${period}-${new Date().toISOString().split('T')[0]}.csv"`);
       res.send(csv);
     } catch (error) {
-      console.error('Error exporting denied claims report:', error);
+      logger.error('Error exporting denied claims report', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to export denied claims report' });
     }
   });
@@ -4894,7 +4902,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recipients: getDailyReportRecipients(),
       });
     } catch (error) {
-      console.error('Error fetching email settings:', error);
+      logger.error('Error fetching email settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch email settings' });
     }
   });
@@ -4921,7 +4929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recipients: getDailyReportRecipients(),
       });
     } catch (error) {
-      console.error('Error updating email settings:', error);
+      logger.error('Error updating email settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update email settings' });
     }
   });
@@ -4942,7 +4950,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ message: result.error || 'Failed to send test email' });
       }
     } catch (error) {
-      console.error('Error sending test email:', error);
+      logger.error('Error sending test email', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send test email' });
     }
   });
@@ -5025,7 +5033,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ message: result.error || 'Failed to send report' });
       }
     } catch (error) {
-      console.error('Error sending report:', error);
+      logger.error('Error sending report', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send report' });
     }
   });
@@ -5149,7 +5157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: 'Patient name and session duration are required' });
       }
 
-      console.log(`Processing session recording for ${patientName}, ${sessionDuration} minutes`);
+      logger.info(`Processing session recording for ${patientName}, ${sessionDuration} minutes`);
 
       const result = await processSessionRecording({
         audioBase64,
@@ -5196,7 +5204,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: 'Patient name and session duration are required' });
       }
 
-      console.log(`Processing transcription text for ${patientName}, ${sessionDuration} minutes`);
+      logger.info(`Processing transcription text for ${patientName}, ${sessionDuration} minutes`);
 
       const result = await processTranscriptionText(transcription, {
         patientId: patientId || 0,
@@ -5247,7 +5255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const voices = await getAvailableVoices();
       res.json({ voices });
     } catch (error) {
-      console.error('Error fetching voices:', error);
+      logger.error('Error fetching voices', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Failed to fetch voices' });
     }
   });
@@ -5503,7 +5511,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const appointment = await storage.createAppointment(data);
       res.json(appointment);
     } catch (error) {
-      console.error('Error creating appointment:', error);
+      logger.error('Error creating appointment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create appointment' });
     }
   });
@@ -5522,7 +5530,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(appts);
       }
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      logger.error('Error fetching appointments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointments' });
     }
   });
@@ -5533,7 +5541,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!appt) return res.status(404).json({ message: 'Appointment not found' });
       res.json(appt);
     } catch (error) {
-      console.error('Error fetching appointment:', error);
+      logger.error('Error fetching appointment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointment' });
     }
   });
@@ -5543,7 +5551,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const appt = await storage.updateAppointment(parseInt(req.params.id), req.body);
       res.json(appt);
     } catch (error) {
-      console.error('Error updating appointment:', error);
+      logger.error('Error updating appointment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update appointment' });
     }
   });
@@ -5566,7 +5574,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const appt = await storage.cancelAppointment(parseInt(req.params.id), reason, notes, whoCancelled);
       res.json(appt);
     } catch (error) {
-      console.error('Error cancelling appointment:', error);
+      logger.error('Error cancelling appointment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to cancel appointment' });
     }
   });
@@ -5580,7 +5588,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const status = getReminderStatus();
       res.json(status);
     } catch (error) {
-      console.error('Error getting reminder status:', error);
+      logger.error('Error getting reminder status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to get reminder status' });
     }
   });
@@ -5593,7 +5601,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const appointments = await storage.getUpcomingAppointments(practiceId, hours);
       res.json(appointments);
     } catch (error) {
-      console.error('Error fetching upcoming appointments:', error);
+      logger.error('Error fetching upcoming appointments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch upcoming appointments' });
     }
   });
@@ -5611,7 +5619,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results,
       });
     } catch (error) {
-      console.error('Error triggering reminders:', error);
+      logger.error('Error triggering reminders', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to trigger reminders' });
     }
   });
@@ -5671,7 +5679,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(results);
     } catch (error) {
-      console.error('Error sending test reminder:', error);
+      logger.error('Error sending test reminder', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send test reminder' });
     }
   });
@@ -5691,7 +5699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const entries = await storage.getWaitlist(practiceId, filters);
       res.json(entries);
     } catch (error) {
-      console.error('Error fetching waitlist:', error);
+      logger.error('Error fetching waitlist', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch waitlist' });
     }
   });
@@ -5703,7 +5711,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getWaitlistStats(practiceId);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching waitlist stats:', error);
+      logger.error('Error fetching waitlist stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch waitlist stats' });
     }
   });
@@ -5717,7 +5725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(entry);
     } catch (error) {
-      console.error('Error fetching waitlist entry:', error);
+      logger.error('Error fetching waitlist entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch waitlist entry' });
     }
   });
@@ -5732,7 +5740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const entry = await storage.createWaitlistEntry(data);
       res.status(201).json(entry);
     } catch (error) {
-      console.error('Error creating waitlist entry:', error);
+      logger.error('Error creating waitlist entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create waitlist entry' });
     }
   });
@@ -5743,7 +5751,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const entry = await storage.updateWaitlistEntry(parseInt(req.params.id), req.body);
       res.json(entry);
     } catch (error) {
-      console.error('Error updating waitlist entry:', error);
+      logger.error('Error updating waitlist entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update waitlist entry' });
     }
   });
@@ -5754,7 +5762,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteWaitlistEntry(parseInt(req.params.id));
       res.json({ message: 'Waitlist entry deleted' });
     } catch (error) {
-      console.error('Error deleting waitlist entry:', error);
+      logger.error('Error deleting waitlist entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete waitlist entry' });
     }
   });
@@ -5771,7 +5779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.json(matches);
     } catch (error) {
-      console.error('Error finding waitlist matches:', error);
+      logger.error('Error finding waitlist matches', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to find waitlist matches' });
     }
   });
@@ -5870,7 +5878,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...results,
       });
     } catch (error) {
-      console.error('Error notifying waitlist patient:', error);
+      logger.error('Error notifying waitlist patient', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to notify patient' });
     }
   });
@@ -5885,7 +5893,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.json(entry);
     } catch (error) {
-      console.error('Error scheduling waitlist entry:', error);
+      logger.error('Error scheduling waitlist entry', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to schedule waitlist entry' });
     }
   });
@@ -5897,7 +5905,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const count = await storage.expireOldWaitlistEntries(practiceId);
       res.json({ message: `Expired ${count} waitlist entries` });
     } catch (error) {
-      console.error('Error expiring waitlist entries:', error);
+      logger.error('Error expiring waitlist entries', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to expire waitlist entries' });
     }
   });
@@ -5912,7 +5920,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const reviewStats = await storage.getReviewStats(practiceId);
       res.json({ requests: requestStats, reviews: reviewStats });
     } catch (error) {
-      console.error('Error fetching review stats:', error);
+      logger.error('Error fetching review stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch review stats' });
     }
   });
@@ -5928,7 +5936,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const requests = await storage.getReviewRequests(practiceId, filters);
       res.json(requests);
     } catch (error) {
-      console.error('Error fetching review requests:', error);
+      logger.error('Error fetching review requests', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch review requests' });
     }
   });
@@ -5941,7 +5949,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const eligible = await storage.getPatientsEligibleForReview(practiceId, days);
       res.json(eligible);
     } catch (error) {
-      console.error('Error fetching eligible patients:', error);
+      logger.error('Error fetching eligible patients', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch eligible patients' });
     }
   });
@@ -5961,7 +5969,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const request = await storage.createReviewRequest(data);
       res.status(201).json(request);
     } catch (error) {
-      console.error('Error creating review request:', error);
+      logger.error('Error creating review request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create review request' });
     }
   });
@@ -6063,7 +6071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...results,
       });
     } catch (error) {
-      console.error('Error sending review request:', error);
+      logger.error('Error sending review request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send review request' });
     }
   });
@@ -6074,7 +6082,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const request = await storage.updateReviewRequest(parseInt(req.params.id), req.body);
       res.json(request);
     } catch (error) {
-      console.error('Error updating review request:', error);
+      logger.error('Error updating review request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update review request' });
     }
   });
@@ -6092,7 +6100,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const reviews = await storage.getGoogleReviews(practiceId, filters);
       res.json(reviews);
     } catch (error) {
-      console.error('Error fetching Google reviews:', error);
+      logger.error('Error fetching Google reviews', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch Google reviews' });
     }
   });
@@ -6106,7 +6114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(review);
     } catch (error) {
-      console.error('Error fetching Google review:', error);
+      logger.error('Error fetching Google review', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch Google review' });
     }
   });
@@ -6129,7 +6137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const review = await storage.createGoogleReview(data);
       res.status(201).json(review);
     } catch (error) {
-      console.error('Error creating Google review:', error);
+      logger.error('Error creating Google review', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create Google review' });
     }
   });
@@ -6140,7 +6148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const review = await storage.updateGoogleReview(parseInt(req.params.id), req.body);
       res.json(review);
     } catch (error) {
-      console.error('Error updating Google review:', error);
+      logger.error('Error updating Google review', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update Google review' });
     }
   });
@@ -6178,7 +6186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ response: result.response });
     } catch (error) {
-      console.error('Error generating review response:', error);
+      logger.error('Error generating review response', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to generate response' });
     }
   });
@@ -6198,7 +6206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(review);
     } catch (error) {
-      console.error('Error marking review as responded:', error);
+      logger.error('Error marking review as responded', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update review' });
     }
   });
@@ -6213,7 +6221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const types = await storage.getAppointmentTypes(practiceId, activeOnly);
       res.json(types);
     } catch (error) {
-      console.error('Error fetching appointment types:', error);
+      logger.error('Error fetching appointment types', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointment types' });
     }
   });
@@ -6224,7 +6232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const type = await storage.createAppointmentType(data);
       res.status(201).json(type);
     } catch (error) {
-      console.error('Error creating appointment type:', error);
+      logger.error('Error creating appointment type', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create appointment type' });
     }
   });
@@ -6234,7 +6242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const type = await storage.updateAppointmentType(parseInt(req.params.id), req.body);
       res.json(type);
     } catch (error) {
-      console.error('Error updating appointment type:', error);
+      logger.error('Error updating appointment type', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update appointment type' });
     }
   });
@@ -6244,7 +6252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteAppointmentType(parseInt(req.params.id));
       res.json({ message: 'Appointment type deleted' });
     } catch (error) {
-      console.error('Error deleting appointment type:', error);
+      logger.error('Error deleting appointment type', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete appointment type' });
     }
   });
@@ -6262,7 +6270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(availability);
       }
     } catch (error) {
-      console.error('Error fetching availability:', error);
+      logger.error('Error fetching availability', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch availability' });
     }
   });
@@ -6273,7 +6281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const availability = await storage.setTherapistAvailability(data);
       res.json(availability);
     } catch (error) {
-      console.error('Error setting availability:', error);
+      logger.error('Error setting availability', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to set availability' });
     }
   });
@@ -6283,7 +6291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteTherapistAvailability(parseInt(req.params.id));
       res.json({ message: 'Availability deleted' });
     } catch (error) {
-      console.error('Error deleting availability:', error);
+      logger.error('Error deleting availability', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete availability' });
     }
   });
@@ -6297,7 +6305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timeOff = await storage.getTherapistTimeOff(therapistId, startDate, endDate);
       res.json(timeOff);
     } catch (error) {
-      console.error('Error fetching time off:', error);
+      logger.error('Error fetching time off', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch time off' });
     }
   });
@@ -6308,7 +6316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timeOff = await storage.addTherapistTimeOff(data);
       res.json(timeOff);
     } catch (error) {
-      console.error('Error adding time off:', error);
+      logger.error('Error adding time off', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to add time off' });
     }
   });
@@ -6318,7 +6326,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteTherapistTimeOff(parseInt(req.params.id));
       res.json({ message: 'Time off deleted' });
     } catch (error) {
-      console.error('Error deleting time off:', error);
+      logger.error('Error deleting time off', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete time off' });
     }
   });
@@ -6330,7 +6338,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getBookingSettings(practiceId);
       res.json(settings || {});
     } catch (error) {
-      console.error('Error fetching booking settings:', error);
+      logger.error('Error fetching booking settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch booking settings' });
     }
   });
@@ -6341,7 +6349,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.upsertBookingSettings(data);
       res.json(settings);
     } catch (error) {
-      console.error('Error saving booking settings:', error);
+      logger.error('Error saving booking settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to save booking settings' });
     }
   });
@@ -6359,7 +6367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const bookings = await storage.getOnlineBookings(practiceId, filters);
       res.json(bookings);
     } catch (error) {
-      console.error('Error fetching bookings:', error);
+      logger.error('Error fetching bookings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch bookings' });
     }
   });
@@ -6406,7 +6414,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ booking: confirmedBooking, appointment });
     } catch (error) {
-      console.error('Error confirming booking:', error);
+      logger.error('Error confirming booking', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to confirm booking' });
     }
   });
@@ -6417,7 +6425,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const booking = await storage.cancelOnlineBooking(parseInt(req.params.id), reason);
       res.json(booking);
     } catch (error) {
-      console.error('Error cancelling booking:', error);
+      logger.error('Error cancelling booking', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to cancel booking' });
     }
   });
@@ -6461,7 +6469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
       });
     } catch (error) {
-      console.error('Error fetching booking page:', error);
+      logger.error('Error fetching booking page', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to load booking page' });
     }
   });
@@ -6488,7 +6496,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(slots);
     } catch (error) {
-      console.error('Error fetching available slots:', error);
+      logger.error('Error fetching available slots', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch available slots' });
     }
   });
@@ -6575,7 +6583,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error) {
-      console.error('Error creating booking:', error);
+      logger.error('Error creating booking', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create booking' });
     }
   });
@@ -6602,7 +6610,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cancelledAt: booking.cancelledAt,
       });
     } catch (error) {
-      console.error('Error checking booking status:', error);
+      logger.error('Error checking booking status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to check booking status' });
     }
   });
@@ -6616,7 +6624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getTelehealthSettings(practiceId);
       res.json(settings || { isEnabled: true, practiceId });
     } catch (error) {
-      console.error('Error fetching telehealth settings:', error);
+      logger.error('Error fetching telehealth settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch telehealth settings' });
     }
   });
@@ -6628,7 +6636,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.upsertTelehealthSettings(data);
       res.json(settings);
     } catch (error) {
-      console.error('Error saving telehealth settings:', error);
+      logger.error('Error saving telehealth settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to save telehealth settings' });
     }
   });
@@ -6647,7 +6655,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sessions = await storage.getTelehealthSessions(practiceId, filters);
       res.json(sessions);
     } catch (error) {
-      console.error('Error fetching telehealth sessions:', error);
+      logger.error('Error fetching telehealth sessions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch telehealth sessions' });
     }
   });
@@ -6673,7 +6681,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedSessions);
     } catch (error) {
-      console.error('Error fetching today\'s sessions:', error);
+      logger.error('Error fetching today\'s sessions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch sessions' });
     }
   });
@@ -6687,7 +6695,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(session);
     } catch (error) {
-      console.error('Error fetching telehealth session:', error);
+      logger.error('Error fetching telehealth session', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch telehealth session' });
     }
   });
@@ -6731,7 +6739,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(session);
     } catch (error) {
-      console.error('Error creating telehealth session:', error);
+      logger.error('Error creating telehealth session', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create telehealth session' });
     }
   });
@@ -6742,7 +6750,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const session = await storage.updateTelehealthSession(parseInt(req.params.id), req.body);
       res.json(session);
     } catch (error) {
-      console.error('Error updating telehealth session:', error);
+      logger.error('Error updating telehealth session', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update telehealth session' });
     }
   });
@@ -6754,7 +6762,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const session = await storage.startTelehealthSession(parseInt(req.params.id), isTherapist);
       res.json(session);
     } catch (error) {
-      console.error('Error joining telehealth session:', error);
+      logger.error('Error joining telehealth session', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to join session' });
     }
   });
@@ -6765,7 +6773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const session = await storage.endTelehealthSession(parseInt(req.params.id));
       res.json(session);
     } catch (error) {
-      console.error('Error ending telehealth session:', error);
+      logger.error('Error ending telehealth session', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to end session' });
     }
   });
@@ -6829,7 +6837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         waitingRoomEnabled: session.waitingRoomEnabled,
       });
     } catch (error) {
-      console.error('Error joining by access code:', error);
+      logger.error('Error joining by access code', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to join session' });
     }
   });
@@ -6852,7 +6860,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ message: 'Joined waiting room', status: 'waiting' });
     } catch (error) {
-      console.error('Error joining waiting room:', error);
+      logger.error('Error joining waiting room', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to join waiting room' });
     }
   });
@@ -6870,7 +6878,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         therapistJoined: !!session.therapistJoinedAt,
       });
     } catch (error) {
-      console.error('Error checking session status:', error);
+      logger.error('Error checking session status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to check status' });
     }
   });
@@ -6885,7 +6893,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getCancellationStats(practiceId, start, end);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching cancellation stats:', error);
+      logger.error('Error fetching cancellation stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch cancellation stats' });
     }
   });
@@ -6898,7 +6906,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getCancellationsByPatient(practiceId, start, end);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching cancellations by patient:', error);
+      logger.error('Error fetching cancellations by patient', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch cancellations by patient' });
     }
   });
@@ -6911,7 +6919,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = await storage.getCancellationTrend(practiceId, start, end);
       res.json(data);
     } catch (error) {
-      console.error('Error fetching cancellation trend:', error);
+      logger.error('Error fetching cancellation trend', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch cancellation trend' });
     }
   });
@@ -6923,7 +6931,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await generateAndSendWeeklyCancellationReport(practiceId);
       res.json({ message: 'Weekly cancellation report triggered successfully' });
     } catch (error) {
-      console.error('Error triggering weekly cancellation report:', error);
+      logger.error('Error triggering weekly cancellation report', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to trigger weekly cancellation report' });
     }
   });
@@ -6974,7 +6982,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(conversations);
     } catch (error) {
-      console.error('Error fetching conversations:', error);
+      logger.error('Error fetching conversations', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch conversations' });
     }
   });
@@ -6994,7 +7002,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(data);
     } catch (error) {
-      console.error('Error fetching conversation:', error);
+      logger.error('Error fetching conversation', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch conversation' });
     }
   });
@@ -7066,7 +7074,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json({ conversation, isExisting: false });
     } catch (error) {
-      console.error('Error creating conversation:', error);
+      logger.error('Error creating conversation', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create conversation' });
     }
   });
@@ -7110,7 +7118,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(message);
     } catch (error) {
-      console.error('Error sending message:', error);
+      logger.error('Error sending message', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send message' });
     }
   });
@@ -7122,7 +7130,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const conversation = await storage.archiveConversation(id);
       res.json(conversation);
     } catch (error) {
-      console.error('Error archiving conversation:', error);
+      logger.error('Error archiving conversation', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to archive conversation' });
     }
   });
@@ -7135,7 +7143,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const count = await storage.getUnreadCount(practiceId, therapistId);
       res.json({ count });
     } catch (error) {
-      console.error('Error fetching unread count:', error);
+      logger.error('Error fetching unread count', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch unread count' });
     }
   });
@@ -7159,7 +7167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deleted = await storage.softDeleteMessage(id, userId);
       res.json({ message: 'Message deleted', deleted });
     } catch (error) {
-      console.error('Error deleting message:', error);
+      logger.error('Error deleting message', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete message' });
     }
   });
@@ -7182,7 +7190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(conversations);
     } catch (error) {
-      console.error('Error fetching patient conversations:', error);
+      logger.error('Error fetching patient conversations', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch conversations' });
     }
   });
@@ -7209,7 +7217,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(data);
     } catch (error) {
-      console.error('Error fetching patient conversation:', error);
+      logger.error('Error fetching patient conversation', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch conversation' });
     }
   });
@@ -7262,7 +7270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(message);
     } catch (error) {
-      console.error('Error sending patient message:', error);
+      logger.error('Error sending patient message', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send message' });
     }
   });
@@ -7280,7 +7288,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const count = await storage.getPatientUnreadCount(conversation.patientId);
       res.json({ count });
     } catch (error) {
-      console.error('Error fetching patient unread count:', error);
+      logger.error('Error fetching patient unread count', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch unread count' });
     }
   });
@@ -7304,7 +7312,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(access);
     } catch (error) {
-      console.error('Error creating portal access:', error);
+      logger.error('Error creating portal access', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create portal access' });
     }
   });
@@ -7369,7 +7377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           res.json({ message: 'Portal access link sent', email: patient.email });
         } catch (emailError) {
-          console.error('Error sending portal email:', emailError);
+          logger.error('Error sending portal email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
           res.json({
             message: 'Portal link created but email failed',
             portalUrl,
@@ -7384,7 +7392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
     } catch (error) {
-      console.error('Error sending portal link:', error);
+      logger.error('Error sending portal link', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to send portal link' });
     }
   });
@@ -7396,7 +7404,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const documents = await storage.getPatientDocuments(patientId);
       res.json(documents);
     } catch (error) {
-      console.error('Error fetching documents:', error);
+      logger.error('Error fetching documents', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch documents' });
     }
   });
@@ -7432,7 +7440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(document);
     } catch (error) {
-      console.error('Error creating document:', error);
+      logger.error('Error creating document', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create document' });
     }
   });
@@ -7444,7 +7452,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const statements = await storage.getPatientStatements(patientId);
       res.json(statements);
     } catch (error) {
-      console.error('Error fetching statements:', error);
+      logger.error('Error fetching statements', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch statements' });
     }
   });
@@ -7475,7 +7483,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(statement);
     } catch (error) {
-      console.error('Error creating statement:', error);
+      logger.error('Error creating statement', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create statement' });
     }
   });
@@ -7498,7 +7506,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expiresAt: access.portalTokenExpiresAt,
       });
     } catch (error) {
-      console.error('Error logging in:', error);
+      logger.error('Error logging in', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Login failed' });
     }
   });
@@ -7528,7 +7536,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error) {
-      console.error('Error fetching dashboard:', error);
+      logger.error('Error fetching dashboard', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch dashboard' });
     }
   });
@@ -7559,7 +7567,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         address: patient.address,
       });
     } catch (error) {
-      console.error('Error fetching profile:', error);
+      logger.error('Error fetching profile', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch profile' });
     }
   });
@@ -7587,7 +7595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patient = await storage.updatePatient(access.patientId, updates);
       res.json(patient);
     } catch (error) {
-      console.error('Error updating profile:', error);
+      logger.error('Error updating profile', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update profile' });
     }
   });
@@ -7616,7 +7624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(patientAppointments);
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      logger.error('Error fetching appointments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointments' });
     }
   });
@@ -7638,7 +7646,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const statements = await storage.getPatientStatements(access.patientId);
       res.json(statements);
     } catch (error) {
-      console.error('Error fetching statements:', error);
+      logger.error('Error fetching statements', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch statements' });
     }
   });
@@ -7665,7 +7673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(statement);
     } catch (error) {
-      console.error('Error fetching statement:', error);
+      logger.error('Error fetching statement', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch statement' });
     }
   });
@@ -7687,7 +7695,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const documents = await storage.getPatientDocuments(access.patientId, true);
       res.json(documents);
     } catch (error) {
-      console.error('Error fetching documents:', error);
+      logger.error('Error fetching documents', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch documents' });
     }
   });
@@ -7712,7 +7720,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(document);
     } catch (error) {
-      console.error('Error fetching document:', error);
+      logger.error('Error fetching document', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch document' });
     }
   });
@@ -7744,7 +7752,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const signed = await storage.signDocument(document.id, signatureData);
       res.json(signed);
     } catch (error) {
-      console.error('Error signing document:', error);
+      logger.error('Error signing document', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to sign document' });
     }
   });
@@ -7787,7 +7795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         practiceId: reviewRequest.practiceId,
       });
     } catch (error) {
-      console.error('Error fetching feedback form:', error);
+      logger.error('Error fetching feedback form', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to load feedback form' });
     }
   });
@@ -7884,10 +7892,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               addressNotes: 'Automated AI-generated follow-up email sent to patient.',
             });
 
-            console.log(`[AUTO] Negative feedback #${feedback.id}: AI follow-up email sent to ${patient.email}`);
+            logger.info(`[AUTO] Negative feedback #${feedback.id}: AI follow-up email sent to ${patient.email}`);
           }
         } catch (err) {
-          console.error('[AUTO] Failed to send negative feedback response:', err);
+          logger.error('[AUTO] Failed to send negative feedback response', { error: err instanceof Error ? err.message : String(err) });
         }
       } else if (sentiment === 'positive' && practice?.googleReviewUrl && (patient?.email || patient?.phone)) {
         // POSITIVE FEEDBACK: Automatically request Google review post
@@ -7926,10 +7934,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 });
 
                 googleRequestSent = true;
-                console.log(`[AUTO] Positive feedback #${feedback.id}: Google post request email sent to ${patient.email}`);
+                logger.info(`[AUTO] Positive feedback #${feedback.id}: Google post request email sent to ${patient.email}`);
               }
             } catch (err) {
-              console.error('[AUTO] Email send failed:', err);
+              logger.error('[AUTO] Email send failed', { error: err instanceof Error ? err.message : String(err) });
             }
           }
 
@@ -7947,11 +7955,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const smsResult = await sendSMS(patient.phone, message.body);
                 if (smsResult.success) {
                   googleRequestSent = true;
-                  console.log(`[AUTO] Positive feedback #${feedback.id}: Google post request SMS sent to ${patient.phone}`);
+                  logger.info(`[AUTO] Positive feedback #${feedback.id}: Google post request SMS sent to ${patient.phone}`);
                 }
               }
             } catch (err) {
-              console.error('[AUTO] SMS send failed:', err);
+              logger.error('[AUTO] SMS send failed', { error: err instanceof Error ? err.message : String(err) });
             }
           }
 
@@ -7967,7 +7975,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         } catch (err) {
-          console.error('[AUTO] Failed to send Google post request:', err);
+          logger.error('[AUTO] Failed to send Google post request', { error: err instanceof Error ? err.message : String(err) });
         }
       }
       // ============ END AUTOMATED WORKFLOW ============
@@ -7980,7 +7988,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         googleReviewUrl: sentiment === 'positive' ? practice?.googleReviewUrl : null,
       });
     } catch (error) {
-      console.error('Error submitting feedback:', error);
+      logger.error('Error submitting feedback', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to submit feedback' });
     }
   });
@@ -8011,7 +8019,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedFeedback);
     } catch (error) {
-      console.error('Error fetching patient feedback:', error);
+      logger.error('Error fetching patient feedback', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch patient feedback' });
     }
   });
@@ -8023,7 +8031,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getPatientFeedbackStats(practiceId);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching feedback stats:', error);
+      logger.error('Error fetching feedback stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch feedback stats' });
     }
   });
@@ -8044,7 +8052,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         patientPhone: patient?.phone,
       });
     } catch (error) {
-      console.error('Error fetching feedback:', error);
+      logger.error('Error fetching feedback', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch feedback' });
     }
   });
@@ -8055,7 +8063,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const feedback = await storage.updatePatientFeedback(parseInt(req.params.id), req.body);
       res.json(feedback);
     } catch (error) {
-      console.error('Error updating feedback:', error);
+      logger.error('Error updating feedback', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update feedback' });
     }
   });
@@ -8074,7 +8082,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.json(feedback);
     } catch (error) {
-      console.error('Error addressing feedback:', error);
+      logger.error('Error addressing feedback', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to address feedback' });
     }
   });
@@ -8177,7 +8185,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...results,
       });
     } catch (error) {
-      console.error('Error requesting Google post:', error);
+      logger.error('Error requesting Google post', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to request Google post' });
     }
   });
@@ -8201,7 +8209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(feedback);
     } catch (error) {
-      console.error('Error marking as posted:', error);
+      logger.error('Error marking as posted', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to mark as posted' });
     }
   });
@@ -8220,7 +8228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const plans = await storage.getTreatmentPlans(practiceId, filters);
       res.json(plans);
     } catch (error) {
-      console.error('Error fetching treatment plans:', error);
+      logger.error('Error fetching treatment plans', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch treatment plans' });
     }
   });
@@ -8232,7 +8240,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getTreatmentPlanStats(practiceId);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching treatment plan stats:', error);
+      logger.error('Error fetching treatment plan stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch treatment plan stats' });
     }
   });
@@ -8245,7 +8253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const plans = await storage.getPlansNeedingReview(practiceId, daysAhead);
       res.json(plans);
     } catch (error) {
-      console.error('Error fetching plans needing review:', error);
+      logger.error('Error fetching plans needing review', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch plans needing review' });
     }
   });
@@ -8260,7 +8268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(planDetails);
     } catch (error) {
-      console.error('Error fetching treatment plan:', error);
+      logger.error('Error fetching treatment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch treatment plan' });
     }
   });
@@ -8271,7 +8279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const plan = await storage.createTreatmentPlan(req.body);
       res.status(201).json(plan);
     } catch (error) {
-      console.error('Error creating treatment plan:', error);
+      logger.error('Error creating treatment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create treatment plan' });
     }
   });
@@ -8286,7 +8294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(plan);
     } catch (error) {
-      console.error('Error updating treatment plan:', error);
+      logger.error('Error updating treatment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update treatment plan' });
     }
   });
@@ -8305,7 +8313,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(plan);
     } catch (error) {
-      console.error('Error signing treatment plan:', error);
+      logger.error('Error signing treatment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to sign treatment plan' });
     }
   });
@@ -8324,7 +8332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(plan);
     } catch (error) {
-      console.error('Error signing treatment plan:', error);
+      logger.error('Error signing treatment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to sign treatment plan' });
     }
   });
@@ -8336,7 +8344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const plans = await storage.getPatientTreatmentPlans(patientId);
       res.json(plans);
     } catch (error) {
-      console.error('Error fetching patient treatment plans:', error);
+      logger.error('Error fetching patient treatment plans', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch patient treatment plans' });
     }
   });
@@ -8352,7 +8360,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const planDetails = await storage.getTreatmentPlanWithDetails(plan.id);
       res.json(planDetails);
     } catch (error) {
-      console.error('Error fetching active treatment plan:', error);
+      logger.error('Error fetching active treatment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch active treatment plan' });
     }
   });
@@ -8366,7 +8374,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const goals = await storage.getTreatmentGoals(planId);
       res.json(goals);
     } catch (error) {
-      console.error('Error fetching treatment goals:', error);
+      logger.error('Error fetching treatment goals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch treatment goals' });
     }
   });
@@ -8381,7 +8389,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(goal);
     } catch (error) {
-      console.error('Error creating treatment goal:', error);
+      logger.error('Error creating treatment goal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create treatment goal' });
     }
   });
@@ -8398,7 +8406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const progressNotes = await storage.getGoalProgressNotes(id);
       res.json({ ...goal, objectives, progressNotes });
     } catch (error) {
-      console.error('Error fetching goal:', error);
+      logger.error('Error fetching goal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch goal' });
     }
   });
@@ -8420,7 +8428,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(goal);
     } catch (error) {
-      console.error('Error updating goal:', error);
+      logger.error('Error updating goal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update goal' });
     }
   });
@@ -8432,7 +8440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteTreatmentGoal(id);
       res.json({ message: 'Goal deleted' });
     } catch (error) {
-      console.error('Error deleting goal:', error);
+      logger.error('Error deleting goal', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete goal' });
     }
   });
@@ -8446,7 +8454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const objectives = await storage.getTreatmentObjectives(goalId);
       res.json(objectives);
     } catch (error) {
-      console.error('Error fetching objectives:', error);
+      logger.error('Error fetching objectives', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch objectives' });
     }
   });
@@ -8466,7 +8474,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(objective);
     } catch (error) {
-      console.error('Error creating objective:', error);
+      logger.error('Error creating objective', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create objective' });
     }
   });
@@ -8488,7 +8496,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(objective);
     } catch (error) {
-      console.error('Error updating objective:', error);
+      logger.error('Error updating objective', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update objective' });
     }
   });
@@ -8500,7 +8508,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteTreatmentObjective(id);
       res.json({ message: 'Objective deleted' });
     } catch (error) {
-      console.error('Error deleting objective:', error);
+      logger.error('Error deleting objective', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete objective' });
     }
   });
@@ -8514,7 +8522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const interventions = await storage.getTreatmentInterventions(planId);
       res.json(interventions);
     } catch (error) {
-      console.error('Error fetching interventions:', error);
+      logger.error('Error fetching interventions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch interventions' });
     }
   });
@@ -8529,7 +8537,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(intervention);
     } catch (error) {
-      console.error('Error creating intervention:', error);
+      logger.error('Error creating intervention', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create intervention' });
     }
   });
@@ -8544,7 +8552,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(intervention);
     } catch (error) {
-      console.error('Error updating intervention:', error);
+      logger.error('Error updating intervention', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update intervention' });
     }
   });
@@ -8556,7 +8564,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteTreatmentIntervention(id);
       res.json({ message: 'Intervention deleted' });
     } catch (error) {
-      console.error('Error deleting intervention:', error);
+      logger.error('Error deleting intervention', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete intervention' });
     }
   });
@@ -8570,7 +8578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const notes = await storage.getGoalProgressNotes(goalId);
       res.json(notes);
     } catch (error) {
-      console.error('Error fetching progress notes:', error);
+      logger.error('Error fetching progress notes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch progress notes' });
     }
   });
@@ -8587,7 +8595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(note);
     } catch (error) {
-      console.error('Error creating progress note:', error);
+      logger.error('Error creating progress note', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create progress note' });
     }
   });
@@ -8599,7 +8607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const notes = await storage.getSessionProgressNotes(sessionId);
       res.json(notes);
     } catch (error) {
-      console.error('Error fetching session progress notes:', error);
+      logger.error('Error fetching session progress notes', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch session progress notes' });
     }
   });
@@ -8613,7 +8621,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const templates = await storage.getOutcomeMeasureTemplates(practiceId);
       res.json(templates);
     } catch (error) {
-      console.error('Error fetching outcome measure templates:', error);
+      logger.error('Error fetching outcome measure templates', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch outcome measure templates' });
     }
   });
@@ -8626,7 +8634,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const templates = await storage.getTemplatesByCategory(category, practiceId);
       res.json(templates);
     } catch (error) {
-      console.error('Error fetching templates by category:', error);
+      logger.error('Error fetching templates by category', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch templates' });
     }
   });
@@ -8641,7 +8649,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(template);
     } catch (error) {
-      console.error('Error fetching outcome measure template:', error);
+      logger.error('Error fetching outcome measure template', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch template' });
     }
   });
@@ -8652,7 +8660,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const template = await storage.createOutcomeMeasureTemplate(req.body);
       res.status(201).json(template);
     } catch (error) {
-      console.error('Error creating outcome measure template:', error);
+      logger.error('Error creating outcome measure template', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create template' });
     }
   });
@@ -8667,7 +8675,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(template);
     } catch (error) {
-      console.error('Error updating outcome measure template:', error);
+      logger.error('Error updating outcome measure template', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update template' });
     }
   });
@@ -8687,7 +8695,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const assessments = await storage.getPracticeAssessments(practiceId, filters);
       res.json(assessments);
     } catch (error) {
-      console.error('Error fetching assessments:', error);
+      logger.error('Error fetching assessments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch assessments' });
     }
   });
@@ -8700,7 +8708,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getOutcomeMeasureStats(practiceId, templateId);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching outcome measure stats:', error);
+      logger.error('Error fetching outcome measure stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch stats' });
     }
   });
@@ -8719,7 +8727,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ assessment, template });
     } catch (error) {
-      console.error('Error fetching assessment:', error);
+      logger.error('Error fetching assessment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch assessment' });
     }
   });
@@ -8772,7 +8780,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(assessment);
     } catch (error) {
-      console.error('Error creating assessment:', error);
+      logger.error('Error creating assessment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create assessment' });
     }
   });
@@ -8787,7 +8795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(assessment);
     } catch (error) {
-      console.error('Error updating assessment:', error);
+      logger.error('Error updating assessment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update assessment' });
     }
   });
@@ -8800,7 +8808,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const assessments = await storage.getPatientAssessments(patientId, templateId);
       res.json(assessments);
     } catch (error) {
-      console.error('Error fetching patient assessments:', error);
+      logger.error('Error fetching patient assessments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch assessments' });
     }
   });
@@ -8813,7 +8821,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const history = await storage.getPatientAssessmentHistory(patientId, templateId);
       res.json(history);
     } catch (error) {
-      console.error('Error fetching assessment history:', error);
+      logger.error('Error fetching assessment history', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch assessment history' });
     }
   });
@@ -8826,7 +8834,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const assessment = await storage.getLatestPatientAssessment(patientId, templateId);
       res.json(assessment || null);
     } catch (error) {
-      console.error('Error fetching latest assessment:', error);
+      logger.error('Error fetching latest assessment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch latest assessment' });
     }
   });
@@ -8840,7 +8848,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schedules = await storage.getPatientAssessmentSchedules(patientId);
       res.json(schedules);
     } catch (error) {
-      console.error('Error fetching assessment schedules:', error);
+      logger.error('Error fetching assessment schedules', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch assessment schedules' });
     }
   });
@@ -8875,7 +8883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(schedule);
     } catch (error) {
-      console.error('Error creating assessment schedule:', error);
+      logger.error('Error creating assessment schedule', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create assessment schedule' });
     }
   });
@@ -8890,7 +8898,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(schedule);
     } catch (error) {
-      console.error('Error updating assessment schedule:', error);
+      logger.error('Error updating assessment schedule', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update assessment schedule' });
     }
   });
@@ -8902,7 +8910,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteAssessmentSchedule(id);
       res.json({ message: 'Schedule deleted' });
     } catch (error) {
-      console.error('Error deleting assessment schedule:', error);
+      logger.error('Error deleting assessment schedule', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete assessment schedule' });
     }
   });
@@ -8914,7 +8922,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const dueSchedules = await storage.getDueAssessments(practiceId);
       res.json(dueSchedules);
     } catch (error) {
-      console.error('Error fetching due assessments:', error);
+      logger.error('Error fetching due assessments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch due assessments' });
     }
   });
@@ -8932,7 +8940,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sources = await storage.getReferralSources(practiceId, filters);
       res.json(sources);
     } catch (error) {
-      console.error('Error fetching referral sources:', error);
+      logger.error('Error fetching referral sources', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referral sources' });
     }
   });
@@ -8947,7 +8955,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(source);
     } catch (error) {
-      console.error('Error fetching referral source:', error);
+      logger.error('Error fetching referral source', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referral source' });
     }
   });
@@ -8958,7 +8966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const source = await storage.createReferralSource(req.body);
       res.status(201).json(source);
     } catch (error) {
-      console.error('Error creating referral source:', error);
+      logger.error('Error creating referral source', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create referral source' });
     }
   });
@@ -8973,7 +8981,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(source);
     } catch (error) {
-      console.error('Error updating referral source:', error);
+      logger.error('Error updating referral source', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update referral source' });
     }
   });
@@ -8985,7 +8993,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteReferralSource(id);
       res.json({ message: 'Referral source deleted' });
     } catch (error) {
-      console.error('Error deleting referral source:', error);
+      logger.error('Error deleting referral source', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete referral source' });
     }
   });
@@ -9007,7 +9015,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const referralsList = await storage.getReferrals(practiceId, filters);
       res.json(referralsList);
     } catch (error) {
-      console.error('Error fetching referrals:', error);
+      logger.error('Error fetching referrals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referrals' });
     }
   });
@@ -9021,7 +9029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getReferralStats(practiceId, startDate, endDate);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching referral stats:', error);
+      logger.error('Error fetching referral stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referral stats' });
     }
   });
@@ -9033,7 +9041,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pending = await storage.getPendingReferrals(practiceId);
       res.json(pending);
     } catch (error) {
-      console.error('Error fetching pending referrals:', error);
+      logger.error('Error fetching pending referrals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch pending referrals' });
     }
   });
@@ -9045,7 +9053,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const needsFollowUp = await storage.getReferralsNeedingFollowUp(practiceId);
       res.json(needsFollowUp);
     } catch (error) {
-      console.error('Error fetching referrals needing follow-up:', error);
+      logger.error('Error fetching referrals needing follow-up', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referrals needing follow-up' });
     }
   });
@@ -9060,7 +9068,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(referralDetails);
     } catch (error) {
-      console.error('Error fetching referral:', error);
+      logger.error('Error fetching referral', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referral' });
     }
   });
@@ -9071,7 +9079,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const referral = await storage.createReferral(req.body);
       res.status(201).json(referral);
     } catch (error) {
-      console.error('Error creating referral:', error);
+      logger.error('Error creating referral', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create referral' });
     }
   });
@@ -9086,7 +9094,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(referral);
     } catch (error) {
-      console.error('Error updating referral:', error);
+      logger.error('Error updating referral', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update referral' });
     }
   });
@@ -9103,7 +9111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(referral);
     } catch (error) {
-      console.error('Error updating referral status:', error);
+      logger.error('Error updating referral status', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update referral status' });
     }
   });
@@ -9115,7 +9123,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patientReferrals = await storage.getPatientReferrals(patientId);
       res.json(patientReferrals);
     } catch (error) {
-      console.error('Error fetching patient referrals:', error);
+      logger.error('Error fetching patient referrals', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch patient referrals' });
     }
   });
@@ -9129,7 +9137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const communications = await storage.getReferralCommunications(referralId);
       res.json(communications);
     } catch (error) {
-      console.error('Error fetching referral communications:', error);
+      logger.error('Error fetching referral communications', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch referral communications' });
     }
   });
@@ -9146,7 +9154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(communication);
     } catch (error) {
-      console.error('Error creating referral communication:', error);
+      logger.error('Error creating referral communication', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create referral communication' });
     }
   });
@@ -9166,7 +9174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentDueDays: 30,
       });
     } catch (error) {
-      console.error('Error fetching payment settings:', error);
+      logger.error('Error fetching payment settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch payment settings' });
     }
   });
@@ -9177,7 +9185,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.upsertPracticePaymentSettings(req.body);
       res.json(settings);
     } catch (error) {
-      console.error('Error updating payment settings:', error);
+      logger.error('Error updating payment settings', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update payment settings' });
     }
   });
@@ -9191,7 +9199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const methods = await storage.getPatientPaymentMethods(patientId);
       res.json(methods);
     } catch (error) {
-      console.error('Error fetching payment methods:', error);
+      logger.error('Error fetching payment methods', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch payment methods' });
     }
   });
@@ -9203,7 +9211,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const method = await storage.getDefaultPaymentMethod(patientId);
       res.json(method || null);
     } catch (error) {
-      console.error('Error fetching default payment method:', error);
+      logger.error('Error fetching default payment method', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch default payment method' });
     }
   });
@@ -9218,7 +9226,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json(method);
     } catch (error) {
-      console.error('Error creating payment method:', error);
+      logger.error('Error creating payment method', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create payment method' });
     }
   });
@@ -9233,7 +9241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(method);
     } catch (error) {
-      console.error('Error updating payment method:', error);
+      logger.error('Error updating payment method', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update payment method' });
     }
   });
@@ -9250,7 +9258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const method = await storage.setDefaultPaymentMethod(id, existingMethod.patientId);
       res.json(method);
     } catch (error) {
-      console.error('Error setting default payment method:', error);
+      logger.error('Error setting default payment method', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to set default payment method' });
     }
   });
@@ -9262,7 +9270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deletePatientPaymentMethod(id);
       res.json({ message: 'Payment method deleted' });
     } catch (error) {
-      console.error('Error deleting payment method:', error);
+      logger.error('Error deleting payment method', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to delete payment method' });
     }
   });
@@ -9283,7 +9291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transactions = await storage.getPaymentTransactions(practiceId, filters);
       res.json(transactions);
     } catch (error) {
-      console.error('Error fetching payment transactions:', error);
+      logger.error('Error fetching payment transactions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch payment transactions' });
     }
   });
@@ -9297,7 +9305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.getPaymentStats(practiceId, startDate, endDate);
       res.json(stats);
     } catch (error) {
-      console.error('Error fetching payment stats:', error);
+      logger.error('Error fetching payment stats', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch payment stats' });
     }
   });
@@ -9312,7 +9320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(transaction);
     } catch (error) {
-      console.error('Error fetching payment transaction:', error);
+      logger.error('Error fetching payment transaction', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch transaction' });
     }
   });
@@ -9340,7 +9348,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json(transaction);
     } catch (error) {
-      console.error('Error creating payment transaction:', error);
+      logger.error('Error creating payment transaction', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create payment transaction' });
     }
   });
@@ -9355,7 +9363,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(transaction);
     } catch (error) {
-      console.error('Error updating payment transaction:', error);
+      logger.error('Error updating payment transaction', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update transaction' });
     }
   });
@@ -9397,7 +9405,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(refund);
     } catch (error) {
-      console.error('Error refunding transaction:', error);
+      logger.error('Error refunding transaction', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to refund transaction' });
     }
   });
@@ -9409,7 +9417,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transactions = await storage.getPatientPaymentHistory(patientId);
       res.json(transactions);
     } catch (error) {
-      console.error('Error fetching patient transactions:', error);
+      logger.error('Error fetching patient transactions', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch patient transactions' });
     }
   });
@@ -9421,7 +9429,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const balance = await storage.getPatientBalance(patientId);
       res.json({ patientId, balance });
     } catch (error) {
-      console.error('Error fetching patient balance:', error);
+      logger.error('Error fetching patient balance', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch patient balance' });
     }
   });
@@ -9439,7 +9447,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const plans = await storage.getPaymentPlans(practiceId, filters);
       res.json(plans);
     } catch (error) {
-      console.error('Error fetching payment plans:', error);
+      logger.error('Error fetching payment plans', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch payment plans' });
     }
   });
@@ -9454,7 +9462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(planDetails);
     } catch (error) {
-      console.error('Error fetching payment plan:', error);
+      logger.error('Error fetching payment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch payment plan' });
     }
   });
@@ -9497,7 +9505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const planWithInstallments = await storage.getPaymentPlanWithInstallments(plan.id);
       res.status(201).json(planWithInstallments);
     } catch (error) {
-      console.error('Error creating payment plan:', error);
+      logger.error('Error creating payment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create payment plan' });
     }
   });
@@ -9512,7 +9520,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(plan);
     } catch (error) {
-      console.error('Error updating payment plan:', error);
+      logger.error('Error updating payment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update payment plan' });
     }
   });
@@ -9532,7 +9540,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(plan);
     } catch (error) {
-      console.error('Error cancelling payment plan:', error);
+      logger.error('Error cancelling payment plan', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to cancel payment plan' });
     }
   });
@@ -9544,7 +9552,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const plans = await storage.getPatientPaymentPlans(patientId);
       res.json(plans);
     } catch (error) {
-      console.error('Error fetching patient payment plans:', error);
+      logger.error('Error fetching patient payment plans', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch patient payment plans' });
     }
   });
@@ -9558,7 +9566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const installments = await storage.getPaymentPlanInstallments(planId);
       res.json(installments);
     } catch (error) {
-      console.error('Error fetching installments:', error);
+      logger.error('Error fetching installments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch installments' });
     }
   });
@@ -9616,7 +9624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ installment: updated, transaction });
     } catch (error) {
-      console.error('Error paying installment:', error);
+      logger.error('Error paying installment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to pay installment' });
     }
   });
@@ -9629,7 +9637,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const upcoming = await storage.getUpcomingInstallments(practiceId, days);
       res.json(upcoming);
     } catch (error) {
-      console.error('Error fetching upcoming installments:', error);
+      logger.error('Error fetching upcoming installments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch upcoming installments' });
     }
   });
@@ -9641,7 +9649,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const overdue = await storage.getOverdueInstallments(practiceId);
       res.json(overdue);
     } catch (error) {
-      console.error('Error fetching overdue installments:', error);
+      logger.error('Error fetching overdue installments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch overdue installments' });
     }
   });
@@ -9687,9 +9695,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let access = await storage.getPatientPortalAccess(patient.id);
 
       // Generate new magic link token
-      const magicLinkToken = Array.from({ length: 64 }, () =>
-        'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
-      ).join('');
+      const magicLinkToken = crypto.randomBytes(32).toString('hex');
       const magicLinkExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
       if (access) {
@@ -9697,9 +9703,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updatePatientPortalMagicLink(access.id, magicLinkToken, magicLinkExpires);
       } else {
         // Create new portal access
-        const portalToken = Array.from({ length: 64 }, () =>
-          'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
-        ).join('');
+        const portalToken = crypto.randomBytes(32).toString('hex');
         const portalTokenExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
 
         await storage.createPatientPortalAccess({
@@ -9744,12 +9748,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
       } catch (emailError) {
-        console.error('Error sending login email:', emailError);
+        logger.error('Error sending login email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
       }
 
       res.json({ message: 'If an account exists with this email, a login link will be sent.' });
     } catch (error) {
-      console.error('Error requesting login:', error);
+      logger.error('Error requesting login', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to process request' });
     }
   });
@@ -9769,7 +9773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expiresAt: access.portalTokenExpiresAt,
       });
     } catch (error) {
-      console.error('Error logging in:', error);
+      logger.error('Error logging in', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Login failed' });
     }
   });
@@ -9813,7 +9817,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
     } catch (error) {
-      console.error('Error with demo login:', error);
+      logger.error('Error with demo login', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Demo login failed' });
     }
   });
@@ -9899,7 +9903,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasPaymentMethod,
       });
     } catch (error) {
-      console.error('Error fetching dashboard:', error);
+      logger.error('Error fetching dashboard', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch dashboard' });
     }
   });
@@ -9931,7 +9935,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         groupNumber: patient.groupNumber,
       });
     } catch (error) {
-      console.error('Error fetching profile:', error);
+      logger.error('Error fetching profile', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch profile' });
     }
   });
@@ -9970,7 +9974,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedPatient = await storage.updatePatient(patient.id, updates);
       res.json(updatedPatient);
     } catch (error) {
-      console.error('Error updating profile:', error);
+      logger.error('Error updating profile', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to update profile' });
     }
   });
@@ -10010,7 +10014,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ appointments: enrichedAppointments });
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      logger.error('Error fetching appointments', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointments' });
     }
   });
@@ -10028,7 +10032,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ requests });
     } catch (error) {
-      console.error('Error fetching appointment requests:', error);
+      logger.error('Error fetching appointment requests', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointment requests' });
     }
   });
@@ -10055,7 +10059,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         requiresApproval: t.requiresApproval,
       })));
     } catch (error) {
-      console.error('Error fetching appointment types:', error);
+      logger.error('Error fetching appointment types', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointment types' });
     }
   });
@@ -10077,7 +10081,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastName: t.lastName,
       })));
     } catch (error) {
-      console.error('Error fetching therapists:', error);
+      logger.error('Error fetching therapists', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch therapists' });
     }
   });
@@ -10120,7 +10124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         request,
       });
     } catch (error) {
-      console.error('Error creating appointment request:', error);
+      logger.error('Error creating appointment request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to create appointment request' });
     }
   });
@@ -10149,7 +10153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ message: 'Request cancelled successfully' });
     } catch (error) {
-      console.error('Error cancelling request:', error);
+      logger.error('Error cancelling request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to cancel request' });
     }
   });
@@ -10190,7 +10194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedRequests);
     } catch (error) {
-      console.error('Error fetching appointment requests:', error);
+      logger.error('Error fetching appointment requests', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to fetch appointment requests' });
     }
   });
@@ -10277,7 +10281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         } catch (emailError) {
-          console.error('Error sending confirmation email:', emailError);
+          logger.error('Error sending confirmation email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
         }
       }
 
@@ -10286,7 +10290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         appointment,
       });
     } catch (error) {
-      console.error('Error approving request:', error);
+      logger.error('Error approving request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to approve request' });
     }
   });
@@ -10344,13 +10348,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         } catch (emailError) {
-          console.error('Error sending rejection email:', emailError);
+          logger.error('Error sending rejection email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
         }
       }
 
       res.json({ message: 'Appointment request rejected' });
     } catch (error) {
-      console.error('Error rejecting request:', error);
+      logger.error('Error rejecting request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to reject request' });
     }
   });

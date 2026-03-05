@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
@@ -43,6 +44,15 @@ if (isProduction) {
 }
 
 const app = express();
+
+// Request ID middleware for distributed tracing
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Use existing request ID from header (for distributed systems) or generate new one
+  const requestId = (req.headers['x-request-id'] as string) || crypto.randomBytes(16).toString('hex');
+  (req as any).requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+});
 
 // Security: CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
@@ -97,29 +107,49 @@ app.use((req, res, next) => {
   res.setHeader('X-XSS-Protection', '1; mode=block');
   // Referrer policy for PHI protection
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Content Security Policy - prevents XSS and data injection attacks
+  // Note: 'unsafe-inline' for styles needed for some UI libraries; review for stricter CSP
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https: blob:",
+    "connect-src 'self' https://api.stripe.com https://api.openai.com wss:",
+    "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; '));
   next();
 });
 
-// Security: Rate limiting
+// Security: Rate limiting (configurable via environment variables)
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'); // 15 minutes default
+const RATE_LIMIT_MAX_GENERAL = parseInt(process.env.RATE_LIMIT_MAX_GENERAL || '1000');
+const RATE_LIMIT_MAX_AUTH = parseInt(process.env.RATE_LIMIT_MAX_AUTH || '20');
+const RATE_LIMIT_MAX_API = parseInt(process.env.RATE_LIMIT_MAX_API || '100');
+const API_RATE_LIMIT_WINDOW_MS = parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || '60000'); // 1 minute default
+
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // Limit each IP to 1000 requests per windowMs
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX_GENERAL,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Limit auth attempts
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX_AUTH,
   message: { error: 'Too many authentication attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const apiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100, // Limit API calls
+  windowMs: API_RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX_API,
   message: { error: 'Too many API requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
