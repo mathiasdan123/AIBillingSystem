@@ -634,6 +634,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Revenue by location and therapist
+  app.get('/api/analytics/revenue-by-location-therapist', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const startDate = req.query.start ? new Date(req.query.start as string) : undefined;
+      const endDate = req.query.end ? new Date(req.query.end as string) : undefined;
+      const data = await storage.getRevenueByLocationAndTherapist(practiceId, startDate, endDate);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching revenue by location/therapist:', error);
+      res.status(500).json({ message: 'Failed to fetch revenue by location/therapist' });
+    }
+  });
+
   // Enhanced reimbursement estimation with AI predictions (admin/billing only)
   app.post('/api/estimate-reimbursement', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {

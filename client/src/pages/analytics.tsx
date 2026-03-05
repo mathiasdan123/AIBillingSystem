@@ -111,6 +111,12 @@ export default function Analytics() {
     retry: false,
   }) as any;
 
+  const { data: revenueByLocationTherapist } = useQuery({
+    queryKey: [`/api/analytics/revenue-by-location-therapist?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  }) as any;
+
   // NEW QUERIES for enhanced analytics
   const { data: patients = [] } = useQuery<any[]>({
     queryKey: ["/api/patients"],
@@ -669,6 +675,129 @@ export default function Analytics() {
               )}
             </CardContent>
           </Card>
+
+          {/* Revenue by Therapist */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue by Therapist</CardTitle>
+              <CardDescription>Performance metrics for each therapist</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {revenueByLocationTherapist?.byTherapist?.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Therapist</TableHead>
+                      <TableHead className="text-right">Billed</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Claims</TableHead>
+                      <TableHead className="text-right">Paid</TableHead>
+                      <TableHead className="text-right">Collection Rate</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {revenueByLocationTherapist.byTherapist.map((t: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{t.therapistName}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(t.totalBilled)}</TableCell>
+                        <TableCell className="text-right text-green-600">{formatCurrency(t.totalRevenue)}</TableCell>
+                        <TableCell className="text-right">{t.claimCount}</TableCell>
+                        <TableCell className="text-right">{t.paidCount}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={t.totalBilled > 0 && (t.totalRevenue / t.totalBilled) >= 0.9 ? "default" : "secondary"}>
+                            {t.totalBilled > 0 ? ((t.totalRevenue / t.totalBilled) * 100).toFixed(1) : 0}%
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No therapist revenue data available</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Revenue by Location */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue by Location</CardTitle>
+              <CardDescription>Revenue breakdown by treatment location</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {revenueByLocationTherapist?.byLocation?.length > 0 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={revenueByLocationTherapist.byLocation} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" tickFormatter={(value) => `$${value / 1000}k`} />
+                        <YAxis type="category" dataKey="location" width={120} />
+                        <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                        <Bar dataKey="totalRevenue" fill="hsl(142, 71%, 45%)" name="Revenue" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Location</TableHead>
+                          <TableHead className="text-right">Sessions</TableHead>
+                          <TableHead className="text-right">Revenue</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {revenueByLocationTherapist.byLocation.map((loc: any, idx: number) => (
+                          <TableRow key={idx}>
+                            <TableCell className="font-medium">{loc.location}</TableCell>
+                            <TableCell className="text-right">{loc.sessionCount}</TableCell>
+                            <TableCell className="text-right text-green-600">{formatCurrency(loc.totalRevenue)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No location revenue data available</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Revenue by Therapist & Location Combined */}
+          {revenueByLocationTherapist?.byTherapistAndLocation?.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Revenue by Therapist & Location</CardTitle>
+                <CardDescription>Detailed breakdown by therapist at each location</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Therapist</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead className="text-right">Sessions</TableHead>
+                      <TableHead className="text-right">Billed</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {revenueByLocationTherapist.byTherapistAndLocation.slice(0, 20).map((row: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{row.therapistName}</TableCell>
+                        <TableCell>{row.location}</TableCell>
+                        <TableCell className="text-right">{row.sessionCount}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.totalBilled)}</TableCell>
+                        <TableCell className="text-right text-green-600">{formatCurrency(row.totalRevenue)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* ==================== CLAIMS TAB ==================== */}

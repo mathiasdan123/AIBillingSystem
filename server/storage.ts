@@ -349,6 +349,31 @@ export interface IStorage {
     totalReferrals: number;
   }>;
 
+  getRevenueByLocationAndTherapist(practiceId: number, startDate?: Date, endDate?: Date): Promise<{
+    byTherapist: {
+      therapistId: string;
+      therapistName: string;
+      totalRevenue: number;
+      totalBilled: number;
+      claimCount: number;
+      paidCount: number;
+    }[];
+    byLocation: {
+      location: string;
+      totalRevenue: number;
+      totalBilled: number;
+      sessionCount: number;
+    }[];
+    byTherapistAndLocation: {
+      therapistId: string;
+      therapistName: string;
+      location: string;
+      totalRevenue: number;
+      totalBilled: number;
+      sessionCount: number;
+    }[];
+  }>;
+
   // Invite operations
   createInvite(invite: InsertInvite): Promise<Invite>;
   getInvitesByPractice(practiceId: number): Promise<Invite[]>;
@@ -1294,6 +1319,175 @@ export class DatabaseStorage implements IStorage {
     return {
       sources,
       totalReferrals,
+    };
+  }
+
+  async getRevenueByLocationAndTherapist(practiceId: number, startDate?: Date, endDate?: Date): Promise<{
+    byTherapist: {
+      therapistId: string;
+      therapistName: string;
+      totalRevenue: number;
+      totalBilled: number;
+      claimCount: number;
+      paidCount: number;
+    }[];
+    byLocation: {
+      location: string;
+      totalRevenue: number;
+      totalBilled: number;
+      sessionCount: number;
+    }[];
+    byTherapistAndLocation: {
+      therapistId: string;
+      therapistName: string;
+      location: string;
+      totalRevenue: number;
+      totalBilled: number;
+      sessionCount: number;
+    }[];
+  }> {
+    // Get all therapists for this practice
+    const therapistUsers = await db
+      .select()
+      .from(users)
+      .where(eq(users.practiceId, practiceId));
+
+    // Get sessions with claims data
+    const sessionsWithClaims = await db
+      .select({
+        sessionId: treatmentSessions.id,
+        therapistId: treatmentSessions.therapistId,
+        sessionDate: treatmentSessions.sessionDate,
+        claimId: claims.id,
+        claimStatus: claims.status,
+        totalAmount: claims.totalAmount,
+        paidAmount: claims.paidAmount,
+      })
+      .from(treatmentSessions)
+      .leftJoin(claims, eq(claims.sessionId, treatmentSessions.id))
+      .where(eq(treatmentSessions.practiceId, practiceId));
+
+    // Get SOAP notes for location data
+    const soapNotesData = await db
+      .select({
+        sessionId: soapNotes.sessionId,
+        location: soapNotes.location,
+      })
+      .from(soapNotes)
+      .innerJoin(treatmentSessions, eq(soapNotes.sessionId, treatmentSessions.id))
+      .where(eq(treatmentSessions.practiceId, practiceId));
+
+    // Create lookup for session locations
+    const sessionLocations: Record<number, string> = {};
+    soapNotesData.forEach((note: any) => {
+      if (note.location) {
+        sessionLocations[note.sessionId] = note.location;
+      }
+    });
+
+    // Aggregate by therapist
+    const therapistStats: Record<string, {
+      totalRevenue: number;
+      totalBilled: number;
+      claimCount: number;
+      paidCount: number;
+    }> = {};
+
+    // Aggregate by location
+    const locationStats: Record<string, {
+      totalRevenue: number;
+      totalBilled: number;
+      sessionCount: number;
+    }> = {};
+
+    // Aggregate by therapist + location
+    const therapistLocationStats: Record<string, {
+      therapistId: string;
+      location: string;
+      totalRevenue: number;
+      totalBilled: number;
+      sessionCount: number;
+    }> = {};
+
+    sessionsWithClaims.forEach((row: any) => {
+      const therapistId = row.therapistId || 'unknown';
+      const location = sessionLocations[row.sessionId] || 'Unspecified';
+      const billed = Number(row.totalAmount) || 0;
+      const paid = row.claimStatus === 'paid' ? (Number(row.paidAmount) || billed) : 0;
+      const isPaid = row.claimStatus === 'paid';
+
+      // By therapist
+      if (!therapistStats[therapistId]) {
+        therapistStats[therapistId] = { totalRevenue: 0, totalBilled: 0, claimCount: 0, paidCount: 0 };
+      }
+      if (row.claimId) {
+        therapistStats[therapistId].totalBilled += billed;
+        therapistStats[therapistId].totalRevenue += paid;
+        therapistStats[therapistId].claimCount++;
+        if (isPaid) therapistStats[therapistId].paidCount++;
+      }
+
+      // By location
+      if (!locationStats[location]) {
+        locationStats[location] = { totalRevenue: 0, totalBilled: 0, sessionCount: 0 };
+      }
+      locationStats[location].sessionCount++;
+      if (row.claimId) {
+        locationStats[location].totalBilled += billed;
+        locationStats[location].totalRevenue += paid;
+      }
+
+      // By therapist + location
+      const key = `${therapistId}|${location}`;
+      if (!therapistLocationStats[key]) {
+        therapistLocationStats[key] = {
+          therapistId,
+          location,
+          totalRevenue: 0,
+          totalBilled: 0,
+          sessionCount: 0,
+        };
+      }
+      therapistLocationStats[key].sessionCount++;
+      if (row.claimId) {
+        therapistLocationStats[key].totalBilled += billed;
+        therapistLocationStats[key].totalRevenue += paid;
+      }
+    });
+
+    // Format results
+    const byTherapist = Object.entries(therapistStats).map(([therapistId, stats]) => {
+      const therapist = therapistUsers.find((u: any) => u.id === therapistId);
+      const therapistName = therapist
+        ? `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || therapist.email || 'Unknown'
+        : `Therapist ${therapistId}`;
+      return {
+        therapistId,
+        therapistName,
+        ...stats,
+      };
+    }).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    const byLocation = Object.entries(locationStats).map(([location, stats]) => ({
+      location,
+      ...stats,
+    })).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    const byTherapistAndLocation = Object.values(therapistLocationStats).map((stats) => {
+      const therapist = therapistUsers.find((u: any) => u.id === stats.therapistId);
+      const therapistName = therapist
+        ? `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || therapist.email || 'Unknown'
+        : `Therapist ${stats.therapistId}`;
+      return {
+        ...stats,
+        therapistName,
+      };
+    }).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    return {
+      byTherapist,
+      byLocation,
+      byTherapistAndLocation,
     };
   }
 
