@@ -16,6 +16,8 @@ import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBil
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
 import { processSessionRecording, processTranscriptionText } from "./services/sessionRecorderService";
 import { estimatePatientCost, parseInsuranceContract, saveContractRates, getQuickEstimate } from "./services/insuranceCostEstimator";
+import { predictOONReimbursement, predictMultipleOON, getSupportedPayers, getSupportedCPTCodes, type OONPredictionInput } from "./services/oonReimbursementPredictor";
+import { parsePlanDocument, parsePlanDocumentFromPDF, benefitsToInsertFormat } from "./services/planDocumentParser";
 import * as stripeService from "./services/stripeService";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
@@ -655,6 +657,639 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error exporting training data:', error);
       res.status(500).json({ error: 'Failed to export training data' });
+    }
+  });
+
+  // ==========================================
+  // OUT-OF-NETWORK REIMBURSEMENT PREDICTION API
+  // Similar to Sheer Health's prediction model
+  // ==========================================
+
+  // Predict OON reimbursement for a single CPT code
+  app.post('/api/oon-predict', async (req, res) => {
+    try {
+      const {
+        cptCode,
+        insuranceProvider,
+        zipCode,
+        billedAmount,
+        planType,
+        deductibleMet,
+        deductibleRemaining,
+        coinsuranceOverride,
+        providerCredential
+      } = req.body;
+
+      if (!cptCode || !insuranceProvider || !billedAmount) {
+        return res.status(400).json({
+          error: 'Missing required fields: cptCode, insuranceProvider, and billedAmount are required'
+        });
+      }
+
+      const prediction = predictOONReimbursement({
+        cptCode,
+        insuranceProvider,
+        zipCode: zipCode || '00000',
+        billedAmount: parseFloat(billedAmount),
+        planType,
+        deductibleMet,
+        deductibleRemaining: deductibleRemaining ? parseFloat(deductibleRemaining) : undefined,
+        coinsuranceOverride: coinsuranceOverride ? parseFloat(coinsuranceOverride) : undefined,
+        providerCredential
+      });
+
+      res.json({
+        success: true,
+        prediction,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      console.error('Error predicting OON reimbursement:', error);
+      res.status(500).json({ error: 'Failed to predict reimbursement' });
+    }
+  });
+
+  // Predict OON reimbursement for multiple CPT codes (full session)
+  app.post('/api/oon-predict/batch', async (req, res) => {
+    try {
+      const {
+        cptCodes,
+        insuranceProvider,
+        zipCode,
+        billedAmounts,
+        planType,
+        deductibleMet,
+        deductibleRemaining,
+        coinsuranceOverride
+      } = req.body;
+
+      if (!cptCodes || !Array.isArray(cptCodes) || !insuranceProvider || !billedAmounts) {
+        return res.status(400).json({
+          error: 'Missing required fields: cptCodes (array), insuranceProvider, and billedAmounts (object) are required'
+        });
+      }
+
+      const result = predictMultipleOON(
+        cptCodes,
+        insuranceProvider,
+        zipCode || '00000',
+        billedAmounts,
+        {
+          planType,
+          deductibleMet,
+          deductibleRemaining: deductibleRemaining ? parseFloat(deductibleRemaining) : undefined,
+          coinsuranceOverride: coinsuranceOverride ? parseFloat(coinsuranceOverride) : undefined
+        }
+      );
+
+      res.json({
+        success: true,
+        ...result,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      console.error('Error predicting batch OON reimbursement:', error);
+      res.status(500).json({ error: 'Failed to predict batch reimbursement' });
+    }
+  });
+
+  // Get list of supported payers with their typical OON characteristics
+  app.get('/api/oon-predict/payers', async (req, res) => {
+    try {
+      const payers = getSupportedPayers();
+      res.json({
+        success: true,
+        payers,
+        count: payers.length
+      });
+    } catch (error) {
+      console.error('Error getting supported payers:', error);
+      res.status(500).json({ error: 'Failed to get payers' });
+    }
+  });
+
+  // Get list of supported CPT codes with Medicare rates
+  app.get('/api/oon-predict/cpt-codes', async (req, res) => {
+    try {
+      const codes = getSupportedCPTCodes();
+      res.json({
+        success: true,
+        codes,
+        count: codes.length
+      });
+    } catch (error) {
+      console.error('Error getting supported CPT codes:', error);
+      res.status(500).json({ error: 'Failed to get CPT codes' });
+    }
+  });
+
+  // Quick estimate endpoint for patient-facing use (no auth required for patient portal)
+  app.get('/api/oon-estimate', async (req, res) => {
+    try {
+      const { cptCode, insuranceProvider, billedAmount, zipCode } = req.query;
+
+      if (!cptCode || !insuranceProvider || !billedAmount) {
+        return res.status(400).json({
+          error: 'Missing required query params: cptCode, insuranceProvider, billedAmount'
+        });
+      }
+
+      const prediction = predictOONReimbursement({
+        cptCode: cptCode as string,
+        insuranceProvider: insuranceProvider as string,
+        zipCode: (zipCode as string) || '00000',
+        billedAmount: parseFloat(billedAmount as string)
+      });
+
+      // Simplified response for patient-facing use
+      res.json({
+        estimatedInsurancePays: prediction.estimatedReimbursement,
+        estimatedYouPay: prediction.estimatedPatientResponsibility,
+        confidence: prediction.confidenceLevel,
+        range: {
+          lowEstimate: prediction.range.low,
+          highEstimate: prediction.range.high
+        },
+        note: 'This is an estimate only. Actual reimbursement may vary based on your specific plan benefits.'
+      });
+
+    } catch (error) {
+      console.error('Error getting quick OON estimate:', error);
+      res.status(500).json({ error: 'Failed to get estimate' });
+    }
+  });
+
+  // Record claim outcome for ML training (authenticated)
+  app.post('/api/claim-outcomes', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      const outcomeData = {
+        ...req.body,
+        practiceId: user.practiceId
+      };
+
+      // Validate required fields
+      if (!outcomeData.cptCode || !outcomeData.insuranceProvider || !outcomeData.billedAmount || !outcomeData.serviceDate) {
+        return res.status(400).json({
+          error: 'Missing required fields: cptCode, insuranceProvider, billedAmount, serviceDate'
+        });
+      }
+
+      const outcome = await storage.createClaimOutcome(outcomeData);
+
+      res.json({
+        success: true,
+        outcome,
+        message: 'Claim outcome recorded. Thank you for helping improve our predictions!'
+      });
+
+    } catch (error) {
+      console.error('Error recording claim outcome:', error);
+      res.status(500).json({ error: 'Failed to record claim outcome' });
+    }
+  });
+
+  // Get claim outcomes for practice (authenticated, admin/billing only)
+  app.get('/api/claim-outcomes', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      const outcomes = await storage.getClaimOutcomes(user.practiceId);
+
+      res.json({
+        success: true,
+        outcomes,
+        count: outcomes.length
+      });
+
+    } catch (error) {
+      console.error('Error fetching claim outcomes:', error);
+      res.status(500).json({ error: 'Failed to fetch claim outcomes' });
+    }
+  });
+
+  // ============================================
+  // Patient Plan Document & Benefits Routes
+  // ============================================
+
+  // Test endpoint to verify plan parser works (DEV ONLY)
+  app.post('/api/test-plan-parser', async (req, res) => {
+    try {
+      const { documentText } = req.body;
+      if (!documentText) {
+        return res.status(400).json({ error: 'documentText required' });
+      }
+      const result = await parsePlanDocument(documentText, 'sbc');
+      res.json(result);
+    } catch (error) {
+      console.error('Test parser error:', error);
+      res.status(500).json({ error: 'Parser test failed', details: String(error) });
+    }
+  });
+
+  // Upload plan document for parsing
+  const planDocUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    fileFilter: (req, file, cb) => {
+      const allowedMimes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+      if (allowedMimes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Invalid file type. Only PDF and images are allowed.'));
+      }
+    }
+  });
+
+  // Public endpoint: Upload plan document during patient intake (no auth required)
+  // This allows patients to upload their SBC during registration
+  app.post('/api/patients/:patientId/plan-documents/public', planDocUpload.single('document'), async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.patientId);
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      // Verify patient exists
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      const { documentType = 'sbc', consentGiven = 'false' } = req.body;
+
+      if (consentGiven !== 'true') {
+        return res.status(400).json({ error: 'Patient consent is required to process document' });
+      }
+
+      // Create document record
+      const document = await storage.createPlanDocument({
+        patientId,
+        practiceId: patient.practiceId,
+        documentType,
+        fileName: req.file.originalname,
+        fileUrl: 'patient-upload',
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        status: 'processing',
+        patientConsentGiven: true,
+        consentDate: new Date(),
+        consentMethod: 'portal',
+        uploadedBy: null // Uploaded by patient, no user ID
+      });
+
+      // Parse the document
+      let parseResult;
+      if (req.file.mimetype === 'application/pdf') {
+        const base64Content = req.file.buffer.toString('base64');
+        parseResult = await parsePlanDocumentFromPDF(base64Content, documentType as any);
+      } else {
+        // For images, we'd need OCR - for now just note it needs manual review
+        parseResult = {
+          success: false,
+          error: 'Image documents require manual review',
+          documentType,
+          processingTimeMs: 0
+        };
+      }
+
+      if (parseResult.success && parseResult.benefits) {
+        // Deactivate old benefits and create new ones
+        await storage.deactivatePlanBenefits(patientId);
+
+        const benefitsData = benefitsToInsertFormat(
+          parseResult.benefits,
+          patientId,
+          patient.practiceId,
+          document.id
+        );
+
+        const benefits = await storage.createPlanBenefits(benefitsData as any);
+
+        // Update document status
+        await storage.updatePlanDocument(document.id, {
+          status: 'completed',
+          parsedAt: new Date()
+        });
+
+        res.json({
+          success: true,
+          message: 'Document uploaded and benefits extracted successfully',
+          documentId: document.id,
+          extractionConfidence: parseResult.benefits.extractionConfidence
+        });
+      } else {
+        // Update document with pending status for manual review
+        await storage.updatePlanDocument(document.id, {
+          status: 'pending',
+          parseError: parseResult.error || 'Needs manual review'
+        });
+
+        res.json({
+          success: true,
+          message: 'Document uploaded. Benefits will be reviewed by staff.',
+          documentId: document.id,
+          needsReview: true
+        });
+      }
+
+    } catch (error) {
+      console.error('Error in public document upload:', error);
+      res.status(500).json({ error: 'Failed to process document' });
+    }
+  });
+
+  // Upload and parse a plan document (admin/staff authenticated)
+  app.post('/api/patients/:patientId/plan-documents', isAuthenticated, planDocUpload.single('document'), async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+      const patientId = parseInt(req.params.patientId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      // Admin, billing, and therapists can upload plan documents
+      if (!['admin', 'billing', 'therapist'].includes(user.role || '')) {
+        return res.status(403).json({ error: 'Staff members can upload plan documents' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const { documentType = 'sbc', consentGiven = 'false' } = req.body;
+
+      // Create document record first
+      const document = await storage.createPlanDocument({
+        patientId,
+        practiceId: user.practiceId,
+        documentType,
+        fileName: req.file.originalname,
+        fileUrl: 'processing', // Will update after storage
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        status: 'processing',
+        patientConsentGiven: consentGiven === 'true',
+        consentDate: consentGiven === 'true' ? new Date() : null,
+        consentMethod: 'portal',
+        uploadedBy: userId
+      });
+
+      // Parse the document using Claude
+      let parseResult;
+      if (req.file.mimetype === 'application/pdf') {
+        const base64Content = req.file.buffer.toString('base64');
+        parseResult = await parsePlanDocumentFromPDF(base64Content, documentType as any);
+      } else {
+        // For images, convert to text first (simplified for MVP)
+        const textContent = `Image document: ${req.file.originalname}`;
+        parseResult = await parsePlanDocument(textContent, documentType as any);
+      }
+
+      if (parseResult.success && parseResult.benefits) {
+        // Deactivate old benefits and create new ones
+        await storage.deactivatePlanBenefits(patientId);
+
+        const benefitsData = benefitsToInsertFormat(
+          parseResult.benefits,
+          patientId,
+          user.practiceId,
+          document.id
+        );
+
+        const benefits = await storage.createPlanBenefits(benefitsData as any);
+
+        // Update document status
+        await storage.updatePlanDocument(document.id, {
+          status: 'completed',
+          parsedAt: new Date()
+        });
+
+        res.json({
+          success: true,
+          document,
+          benefits,
+          parseResult: {
+            extractionConfidence: parseResult.benefits.extractionConfidence,
+            processingTimeMs: parseResult.processingTimeMs
+          }
+        });
+      } else {
+        // Update document with error
+        await storage.updatePlanDocument(document.id, {
+          status: 'failed',
+          parseError: parseResult.error
+        });
+
+        res.status(422).json({
+          success: false,
+          error: parseResult.error || 'Failed to parse document',
+          document
+        });
+      }
+
+    } catch (error) {
+      console.error('Error uploading plan document:', error);
+      res.status(500).json({ error: 'Failed to upload and parse document' });
+    }
+  });
+
+  // Get patient's plan documents
+  app.get('/api/patients/:patientId/plan-documents', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+      const patientId = parseInt(req.params.patientId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      // Only admin can view plan documents
+      if (user.role !== 'admin') {
+        return res.status(403).json({ error: 'Only administrators can view plan documents' });
+      }
+
+      const documents = await storage.getPlanDocuments(patientId);
+      res.json({ success: true, documents });
+
+    } catch (error) {
+      console.error('Error fetching plan documents:', error);
+      res.status(500).json({ error: 'Failed to fetch plan documents' });
+    }
+  });
+
+  // Get patient's parsed plan benefits
+  app.get('/api/patients/:patientId/plan-benefits', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+      const patientId = parseInt(req.params.patientId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      // Only admin can view plan benefits
+      if (user.role !== 'admin') {
+        return res.status(403).json({ error: 'Only administrators can view plan benefits' });
+      }
+
+      const benefits = await storage.getPatientPlanBenefits(patientId);
+
+      if (!benefits) {
+        return res.json({
+          success: true,
+          benefits: null,
+          message: 'No plan benefits found. Upload a plan document to extract benefits.'
+        });
+      }
+
+      res.json({ success: true, benefits });
+
+    } catch (error) {
+      console.error('Error fetching plan benefits:', error);
+      res.status(500).json({ error: 'Failed to fetch plan benefits' });
+    }
+  });
+
+  // Verify plan benefits (admin marks as verified)
+  app.post('/api/patients/:patientId/plan-benefits/:benefitsId/verify', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+      const benefitsId = parseInt(req.params.benefitsId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      if (user.role !== 'admin') {
+        return res.status(403).json({ error: 'Only administrators can verify benefits' });
+      }
+
+      const verified = await storage.verifyPlanBenefits(benefitsId, userId);
+      res.json({ success: true, benefits: verified });
+
+    } catch (error) {
+      console.error('Error verifying plan benefits:', error);
+      res.status(500).json({ error: 'Failed to verify plan benefits' });
+    }
+  });
+
+  // Update plan benefits manually
+  app.patch('/api/patients/:patientId/plan-benefits/:benefitsId', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+      const benefitsId = parseInt(req.params.benefitsId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      if (user.role !== 'admin') {
+        return res.status(403).json({ error: 'Only administrators can update benefits' });
+      }
+
+      const updated = await storage.updatePlanBenefits(benefitsId, req.body);
+      res.json({ success: true, benefits: updated });
+
+    } catch (error) {
+      console.error('Error updating plan benefits:', error);
+      res.status(500).json({ error: 'Failed to update plan benefits' });
+    }
+  });
+
+  // OON prediction using patient's actual plan benefits (admin only)
+  app.post('/api/patients/:patientId/oon-predict', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+      const patientId = parseInt(req.params.patientId);
+
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User not associated with a practice' });
+      }
+
+      if (user.role !== 'admin') {
+        return res.status(403).json({ error: 'Only administrators can access OON predictions' });
+      }
+
+      const { cptCode, billedAmount } = req.body;
+
+      if (!cptCode || !billedAmount) {
+        return res.status(400).json({ error: 'cptCode and billedAmount are required' });
+      }
+
+      // Get patient's parsed plan benefits
+      const benefits = await storage.getPatientPlanBenefits(patientId);
+      const patient = await storage.getPatient(patientId);
+
+      if (!patient) {
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      // Build prediction input using actual plan data if available
+      const predictionInput: OONPredictionInput = {
+        cptCode,
+        insuranceProvider: benefits?.insuranceProvider || patient.insuranceProvider || 'Unknown',
+        zipCode: patient.address?.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || '00000',
+        billedAmount: parseFloat(billedAmount),
+        planType: benefits?.planType,
+        deductibleMet: benefits?.oonDeductibleMet ? parseFloat(benefits.oonDeductibleMet) > 0 : undefined,
+        deductibleRemaining: benefits?.oonDeductibleMet && benefits?.oonDeductibleIndividual
+          ? parseFloat(benefits.oonDeductibleIndividual) - parseFloat(benefits.oonDeductibleMet)
+          : undefined,
+        coinsuranceOverride: benefits?.oonCoinsurancePercent
+          ? parseFloat(benefits.oonCoinsurancePercent)
+          : undefined
+      };
+
+      const prediction = predictOONReimbursement(predictionInput);
+
+      // Enhance prediction with plan-specific data
+      const enhancedPrediction = {
+        ...prediction,
+        dataSource: benefits ? 'patient_plan' : 'estimate',
+        planBenefits: benefits ? {
+          oonDeductible: benefits.oonDeductibleIndividual,
+          oonDeductibleMet: benefits.oonDeductibleMet,
+          oonCoinsurance: benefits.oonCoinsurancePercent,
+          oonOutOfPocketMax: benefits.oonOutOfPocketMax,
+          allowedAmountMethod: benefits.allowedAmountMethod,
+          allowedAmountPercent: benefits.allowedAmountPercent,
+          mentalHealthVisitLimit: benefits.mentalHealthVisitLimit,
+          verified: !!benefits.verifiedAt
+        } : null
+      };
+
+      res.json({
+        success: true,
+        prediction: enhancedPrediction,
+        hasPatientPlanData: !!benefits,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      console.error('Error predicting OON with patient data:', error);
+      res.status(500).json({ error: 'Failed to generate prediction' });
     }
   });
 

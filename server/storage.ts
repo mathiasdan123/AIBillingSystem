@@ -190,6 +190,15 @@ import {
   appointmentRequests,
   type AppointmentRequest,
   type InsertAppointmentRequest,
+  claimOutcomes,
+  type ClaimOutcome,
+  type InsertClaimOutcome,
+  patientPlanDocuments,
+  type PatientPlanDocument,
+  type InsertPatientPlanDocument,
+  patientPlanBenefits,
+  type PatientPlanBenefits,
+  type InsertPatientPlanBenefits,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -5408,6 +5417,176 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(exerciseBank)
       .where(eq(exerciseBank.id, id));
+  }
+
+  // Claim Outcomes operations (for OON reimbursement ML training)
+  async createClaimOutcome(outcome: InsertClaimOutcome): Promise<ClaimOutcome> {
+    const [newOutcome] = await db
+      .insert(claimOutcomes)
+      .values(outcome)
+      .returning();
+    return newOutcome;
+  }
+
+  async getClaimOutcomes(practiceId: number, filters?: {
+    insuranceProvider?: string;
+    cptCode?: string;
+    startDate?: Date;
+    endDate?: Date;
+    hasOutcome?: boolean;
+  }): Promise<ClaimOutcome[]> {
+    let conditions = [eq(claimOutcomes.practiceId, practiceId)];
+
+    if (filters?.insuranceProvider) {
+      conditions.push(eq(claimOutcomes.insuranceProvider, filters.insuranceProvider));
+    }
+    if (filters?.cptCode) {
+      conditions.push(eq(claimOutcomes.cptCode, filters.cptCode));
+    }
+    if (filters?.hasOutcome === true) {
+      conditions.push(sql`${claimOutcomes.allowedAmount} IS NOT NULL`);
+    }
+    if (filters?.hasOutcome === false) {
+      conditions.push(sql`${claimOutcomes.allowedAmount} IS NULL`);
+    }
+
+    return await db
+      .select()
+      .from(claimOutcomes)
+      .where(and(...conditions))
+      .orderBy(desc(claimOutcomes.createdAt));
+  }
+
+  async updateClaimOutcome(id: number, outcome: Partial<InsertClaimOutcome>): Promise<ClaimOutcome> {
+    const [updated] = await db
+      .update(claimOutcomes)
+      .set({ ...outcome, updatedAt: new Date() })
+      .where(eq(claimOutcomes.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getClaimOutcomeById(id: number): Promise<ClaimOutcome | undefined> {
+    const [outcome] = await db
+      .select()
+      .from(claimOutcomes)
+      .where(eq(claimOutcomes.id, id));
+    return outcome;
+  }
+
+  // Get training data for ML model
+  async getClaimOutcomesForTraining(minDataPoints: number = 100): Promise<ClaimOutcome[]> {
+    return await db
+      .select()
+      .from(claimOutcomes)
+      .where(and(
+        eq(claimOutcomes.isTrainingData, true),
+        sql`${claimOutcomes.allowedAmount} IS NOT NULL`,
+        sql`${claimOutcomes.paidAmount} IS NOT NULL`
+      ))
+      .orderBy(desc(claimOutcomes.serviceDate))
+      .limit(minDataPoints);
+  }
+
+  // ============================================
+  // Patient Plan Documents & Benefits
+  // ============================================
+
+  async createPlanDocument(document: InsertPatientPlanDocument): Promise<PatientPlanDocument> {
+    const [created] = await db
+      .insert(patientPlanDocuments)
+      .values(document)
+      .returning();
+    return created;
+  }
+
+  async getPlanDocuments(patientId: number): Promise<PatientPlanDocument[]> {
+    return await db
+      .select()
+      .from(patientPlanDocuments)
+      .where(eq(patientPlanDocuments.patientId, patientId))
+      .orderBy(desc(patientPlanDocuments.createdAt));
+  }
+
+  async getPlanDocument(id: number): Promise<PatientPlanDocument | undefined> {
+    const [document] = await db
+      .select()
+      .from(patientPlanDocuments)
+      .where(eq(patientPlanDocuments.id, id));
+    return document;
+  }
+
+  async updatePlanDocument(id: number, data: Partial<InsertPatientPlanDocument>): Promise<PatientPlanDocument> {
+    const [updated] = await db
+      .update(patientPlanDocuments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(patientPlanDocuments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePlanDocument(id: number): Promise<void> {
+    await db.delete(patientPlanDocuments).where(eq(patientPlanDocuments.id, id));
+  }
+
+  async createPlanBenefits(benefits: InsertPatientPlanBenefits): Promise<PatientPlanBenefits> {
+    const [created] = await db
+      .insert(patientPlanBenefits)
+      .values(benefits)
+      .returning();
+    return created;
+  }
+
+  async getPatientPlanBenefits(patientId: number): Promise<PatientPlanBenefits | undefined> {
+    // Get the most recent active benefits for a patient
+    const [benefits] = await db
+      .select()
+      .from(patientPlanBenefits)
+      .where(and(
+        eq(patientPlanBenefits.patientId, patientId),
+        eq(patientPlanBenefits.isActive, true)
+      ))
+      .orderBy(desc(patientPlanBenefits.createdAt))
+      .limit(1);
+    return benefits;
+  }
+
+  async getAllPatientPlanBenefits(patientId: number): Promise<PatientPlanBenefits[]> {
+    return await db
+      .select()
+      .from(patientPlanBenefits)
+      .where(eq(patientPlanBenefits.patientId, patientId))
+      .orderBy(desc(patientPlanBenefits.createdAt));
+  }
+
+  async updatePlanBenefits(id: number, data: Partial<InsertPatientPlanBenefits>): Promise<PatientPlanBenefits> {
+    const [updated] = await db
+      .update(patientPlanBenefits)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(patientPlanBenefits.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deactivatePlanBenefits(patientId: number): Promise<void> {
+    // Deactivate all existing benefits for a patient (when new ones are added)
+    await db
+      .update(patientPlanBenefits)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(patientPlanBenefits.patientId, patientId));
+  }
+
+  async verifyPlanBenefits(id: number, verifiedBy: string): Promise<PatientPlanBenefits> {
+    const [updated] = await db
+      .update(patientPlanBenefits)
+      .set({
+        verifiedBy,
+        verifiedAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(eq(patientPlanBenefits.id, id))
+      .returning();
+    return updated;
   }
 }
 

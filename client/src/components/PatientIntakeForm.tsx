@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -7,9 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { Upload, FileText, CheckCircle, Loader2, Info } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 const patientSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
@@ -34,6 +38,13 @@ interface PatientIntakeFormProps {
 export default function PatientIntakeForm({ practiceId, onSuccess }: PatientIntakeFormProps) {
   const { toast } = useToast();
   const [step, setStep] = useState(1);
+  const [planDocument, setPlanDocument] = useState<File | null>(null);
+  const [documentType, setDocumentType] = useState<string>("sbc");
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [documentUploaded, setDocumentUploaded] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const totalSteps = 4;
 
   const form = useForm<PatientFormData>({
     resolver: zodResolver(patientSchema),
@@ -60,10 +71,48 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
       });
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async (patient) => {
+      // If a plan document was selected, upload it
+      if (planDocument && consentGiven && patient?.id) {
+        setUploadingDocument(true);
+        try {
+          const formData = new FormData();
+          formData.append('document', planDocument);
+          formData.append('documentType', documentType);
+          formData.append('consentGiven', 'true');
+
+          const response = await fetch(`/api/patients/${patient.id}/plan-documents/public`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          const result = await response.json();
+          if (result.success) {
+            setDocumentUploaded(true);
+            toast({
+              title: "Insurance Document Uploaded",
+              description: "Your plan benefits have been extracted successfully.",
+            });
+          }
+        } catch (error) {
+          console.error("Failed to upload document:", error);
+          // Don't fail the whole form if document upload fails
+          toast({
+            title: "Document Upload Issue",
+            description: "Patient created, but document processing had an issue. The office will follow up.",
+            variant: "destructive",
+          });
+        } finally {
+          setUploadingDocument(false);
+        }
+      }
+
       onSuccess();
       form.reset();
       setStep(1);
+      setPlanDocument(null);
+      setConsentGiven(false);
+      setDocumentUploaded(false);
     },
     onError: (error) => {
       if (isUnauthorizedError(error)) {
@@ -90,11 +139,18 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
   };
 
   const nextStep = () => {
-    if (step < 3) setStep(step + 1);
+    if (step < totalSteps) setStep(step + 1);
   };
 
   const prevStep = () => {
     if (step > 1) setStep(step - 1);
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setPlanDocument(file);
+    }
   };
 
   return (
@@ -103,7 +159,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
         {/* Progress Indicator */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center space-x-2">
-            {[1, 2, 3].map((i) => (
+            {[1, 2, 3, 4].map((i) => (
               <div
                 key={i}
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
@@ -117,7 +173,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
             ))}
           </div>
           <div className="text-sm text-slate-600">
-            Step {step} of 3
+            Step {step} of {totalSteps}
           </div>
         </div>
 
@@ -304,12 +360,125 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
               <Button type="button" variant="outline" onClick={prevStep}>
                 Previous
               </Button>
-              <Button 
-                type="submit" 
-                disabled={createPatientMutation.isPending}
+              <Button type="button" onClick={nextStep}>
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-slate-900">Insurance Plan Document (Optional)</h3>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <Info className="w-5 h-5 text-blue-600 mt-0.5" />
+                <div className="text-sm text-blue-800">
+                  <p className="font-medium mb-1">Why upload your plan document?</p>
+                  <p>Uploading your Summary of Benefits and Coverage (SBC) or plan document helps us understand your exact out-of-network benefits, so we can give you accurate cost estimates before your appointments.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Document Type</Label>
+              <Select value={documentType} onValueChange={setDocumentType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select document type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sbc">Summary of Benefits (SBC)</SelectItem>
+                  <SelectItem value="eob">Explanation of Benefits (EOB)</SelectItem>
+                  <SelectItem value="plan_contract">Plan Contract / SPD</SelectItem>
+                  <SelectItem value="insurance_card">Insurance Card</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Upload Document</Label>
+              <div
+                className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                  planDocument
+                    ? "border-green-300 bg-green-50"
+                    : "border-slate-300 hover:border-medical-blue-400 hover:bg-slate-50"
+                }`}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                {planDocument ? (
+                  <div className="flex items-center justify-center gap-2 text-green-700">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-medium">{planDocument.name}</span>
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                    <p className="text-sm text-slate-600">
+                      Click to upload or drag and drop
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      PDF or image files up to 10MB
+                    </p>
+                  </>
+                )}
+              </div>
+              {planDocument && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setPlanDocument(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                >
+                  Remove file
+                </Button>
+              )}
+            </div>
+
+            {planDocument && (
+              <div className="flex items-start space-x-2 p-3 bg-slate-50 rounded-lg">
+                <Checkbox
+                  id="consent"
+                  checked={consentGiven}
+                  onCheckedChange={(checked) => setConsentGiven(checked === true)}
+                />
+                <Label htmlFor="consent" className="text-sm text-slate-700 leading-tight">
+                  I consent to having my insurance plan document analyzed to extract benefit information for cost estimation purposes. This information will be kept confidential and used only by this practice.
+                </Label>
+              </div>
+            )}
+
+            <div className="flex justify-between pt-4">
+              <Button type="button" variant="outline" onClick={prevStep}>
+                Previous
+              </Button>
+              <Button
+                type="submit"
+                disabled={createPatientMutation.isPending || uploadingDocument || (planDocument && !consentGiven)}
                 className="bg-medical-blue-500 hover:bg-medical-blue-600"
               >
-                {createPatientMutation.isPending ? "Creating..." : "Create Patient"}
+                {uploadingDocument ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Processing Document...
+                  </>
+                ) : createPatientMutation.isPending ? (
+                  "Creating..."
+                ) : planDocument ? (
+                  "Submit & Upload Document"
+                ) : (
+                  "Complete Registration"
+                )}
               </Button>
             </div>
           </div>

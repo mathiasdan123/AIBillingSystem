@@ -8,7 +8,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
@@ -34,7 +36,7 @@ interface EligibilityCheck {
 }
 
 export default function Patients() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [practiceId] = useState(1);
@@ -43,6 +45,10 @@ export default function Patients() {
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [eligibilityResults, setEligibilityResults] = useState<Record<number, EligibilityCheck>>({});
   const [checkingEligibility, setCheckingEligibility] = useState<number | null>(null);
+  const [oonEstimate, setOonEstimate] = useState<any>(null);
+  const [loadingOonEstimate, setLoadingOonEstimate] = useState(false);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [documentType, setDocumentType] = useState<string>("sbc");
 
   const { data: insuranceData } = useQuery({
     queryKey: [`/api/patients/${selectedPatient?.id}/insurance-data`],
@@ -54,6 +60,13 @@ export default function Patients() {
   const { data: storedEligibility, refetch: refetchEligibility } = useQuery({
     queryKey: [`/api/patients/${selectedPatient?.id}/eligibility`],
     enabled: !!selectedPatient?.id,
+    retry: false,
+  }) as any;
+
+  // Fetch plan benefits for selected patient (admin only)
+  const { data: planBenefitsData, refetch: refetchPlanBenefits } = useQuery({
+    queryKey: [`/api/patients/${selectedPatient?.id}/plan-benefits`],
+    enabled: !!selectedPatient?.id && isAdmin,
     retry: false,
   }) as any;
 
@@ -130,6 +143,104 @@ export default function Patients() {
       });
     },
   });
+
+  // Fetch OON estimate for selected patient (admin only)
+  // Uses patient-specific plan data if available
+  const fetchOonEstimate = async (patient: any) => {
+    if (!isAdmin || !patient?.insuranceProvider) return;
+
+    setLoadingOonEstimate(true);
+    try {
+      // Use patient-specific endpoint if plan benefits exist
+      const hasPlanBenefits = planBenefitsData?.benefits;
+
+      if (hasPlanBenefits) {
+        // Use patient-specific prediction with actual plan data
+        const response = await apiRequest("POST", `/api/patients/${patient.id}/oon-predict`, {
+          cptCode: "90837",
+          billedAmount: 200,
+        });
+        const data = await response.json();
+        setOonEstimate(data);
+      } else {
+        // Fall back to generic estimate
+        const zipMatch = patient.address?.match(/\b(\d{5})(?:-\d{4})?\b/);
+        const zipCode = zipMatch ? zipMatch[1] : '10001';
+
+        const response = await apiRequest("POST", "/api/oon-predict", {
+          cptCode: "90837",
+          insuranceProvider: patient.insuranceProvider,
+          zipCode: zipCode,
+          billedAmount: 200,
+        });
+        const data = await response.json();
+        setOonEstimate(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch OON estimate:", error);
+      setOonEstimate(null);
+    } finally {
+      setLoadingOonEstimate(false);
+    }
+  };
+
+  // Upload plan document handler
+  const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedPatient) return;
+
+    setUploadingDocument(true);
+    try {
+      const formData = new FormData();
+      formData.append('document', file);
+      formData.append('documentType', documentType);
+      formData.append('consentGiven', 'true');
+
+      const response = await fetch(`/api/patients/${selectedPatient.id}/plan-documents`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast({
+          title: "Document Parsed Successfully",
+          description: `Extracted benefits with ${Math.round((data.parseResult?.extractionConfidence || 0.7) * 100)}% confidence`,
+        });
+        refetchPlanBenefits();
+        // Re-fetch OON estimate with new plan data
+        setTimeout(() => fetchOonEstimate(selectedPatient), 500);
+      } else {
+        toast({
+          title: "Parsing Failed",
+          description: data.error || "Could not extract benefits from document",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to upload document:", error);
+      toast({
+        title: "Upload Failed",
+        description: "Failed to upload document",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingDocument(false);
+      // Reset file input
+      event.target.value = '';
+    }
+  };
+
+  // Fetch OON estimate when patient is selected (admin only)
+  useEffect(() => {
+    if (selectedPatient && isAdmin) {
+      fetchOonEstimate(selectedPatient);
+    } else {
+      setOonEstimate(null);
+    }
+  }, [selectedPatient, isAdmin, planBenefitsData]);
 
   // Helper function to get eligibility status badge
   const getEligibilityBadge = (patientId: number) => {
@@ -484,6 +595,190 @@ export default function Patients() {
                   }
                 />
               </div>
+
+              {/* Admin-Only: Plan Document Upload & Parsed Benefits */}
+              {isAdmin && (
+                <div className="border-t pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <FileText className="w-4 h-4 text-blue-600" />
+                    <h4 className="font-medium text-slate-900">Plan Document Analysis</h4>
+                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                      Admin Only
+                    </Badge>
+                  </div>
+
+                  {/* Show parsed benefits if available */}
+                  {planBenefitsData?.benefits ? (
+                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-100 mb-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                          <span className="text-sm font-medium text-slate-700">Plan Benefits Extracted</span>
+                        </div>
+                        {planBenefitsData.benefits.verifiedAt && (
+                          <Badge className="bg-green-100 text-green-700">Verified</Badge>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <span className="text-slate-500">OON Deductible:</span>
+                          <span className="ml-2 font-medium">${planBenefitsData.benefits.oonDeductibleIndividual || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">OON Coinsurance:</span>
+                          <span className="ml-2 font-medium">{planBenefitsData.benefits.oonCoinsurancePercent || '—'}%</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">OON OOP Max:</span>
+                          <span className="ml-2 font-medium">${planBenefitsData.benefits.oonOutOfPocketMax || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Allowed Amt Method:</span>
+                          <span className="ml-2 font-medium capitalize">{planBenefitsData.benefits.allowedAmountMethod?.replace('_', ' ') || '—'}</span>
+                        </div>
+                        {planBenefitsData.benefits.allowedAmountPercent && (
+                          <div>
+                            <span className="text-slate-500">Medicare %:</span>
+                            <span className="ml-2 font-medium">{planBenefitsData.benefits.allowedAmountPercent}%</span>
+                          </div>
+                        )}
+                        {planBenefitsData.benefits.mentalHealthVisitLimit && (
+                          <div>
+                            <span className="text-slate-500">MH Visit Limit:</span>
+                            <span className="ml-2 font-medium">{planBenefitsData.benefits.mentalHealthVisitLimit}/year</span>
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">
+                        Confidence: {Math.round((planBenefitsData.benefits.extractionConfidence || 0.7) * 100)}%
+                        {planBenefitsData.benefits.planName && ` | Plan: ${planBenefitsData.benefits.planName}`}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 mb-4">
+                      <p className="text-sm text-slate-600 mb-3">
+                        Upload an insurance plan document (SBC, EOB, or plan contract) to extract exact OON benefits.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Upload section */}
+                  <div className="flex items-center gap-3">
+                    <Select value={documentType} onValueChange={setDocumentType}>
+                      <SelectTrigger className="w-40">
+                        <SelectValue placeholder="Document type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="sbc">SBC (Summary)</SelectItem>
+                        <SelectItem value="eob">EOB</SelectItem>
+                        <SelectItem value="plan_contract">Plan Contract</SelectItem>
+                        <SelectItem value="insurance_card">Insurance Card</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Label className="flex-1">
+                      <input
+                        type="file"
+                        accept=".pdf,image/*"
+                        onChange={handleDocumentUpload}
+                        className="hidden"
+                        disabled={uploadingDocument}
+                      />
+                      <Button
+                        variant="outline"
+                        className="w-full cursor-pointer"
+                        disabled={uploadingDocument}
+                        asChild
+                      >
+                        <span>
+                          {uploadingDocument ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Parsing Document...
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-4 h-4 mr-2" />
+                              Upload & Parse Document
+                            </>
+                          )}
+                        </span>
+                      </Button>
+                    </Label>
+                  </div>
+                </div>
+              )}
+
+              {/* Admin-Only: OON Reimbursement Estimate */}
+              {isAdmin && selectedPatient.insuranceProvider && (
+                <div className="border-t pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <DollarSign className="w-4 h-4 text-green-600" />
+                    <h4 className="font-medium text-slate-900">Out-of-Network Reimbursement Estimate</h4>
+                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                      Admin Only
+                    </Badge>
+                    {oonEstimate?.hasPatientPlanData && (
+                      <Badge className="bg-blue-100 text-blue-700 text-xs">Using Plan Data</Badge>
+                    )}
+                  </div>
+
+                  {loadingOonEstimate ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                      <span className="ml-2 text-sm text-slate-500">Calculating estimate...</span>
+                    </div>
+                  ) : oonEstimate?.prediction ? (
+                    <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-100">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Expected Allowed</p>
+                          <p className="text-xl font-bold text-green-700">
+                            ${oonEstimate.prediction.estimatedAllowedAmount?.toFixed(2) || '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Est. Reimbursement</p>
+                          <p className="text-xl font-bold text-emerald-700">
+                            ${oonEstimate.prediction.estimatedReimbursement?.toFixed(2) || '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Patient Responsibility</p>
+                          <p className="text-lg font-semibold text-amber-700">
+                            ${oonEstimate.prediction.estimatedPatientResponsibility?.toFixed(2) || '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Confidence</p>
+                          <Badge
+                            className={
+                              oonEstimate.prediction.confidenceLevel === 'high'
+                                ? 'bg-green-100 text-green-700'
+                                : oonEstimate.prediction.confidenceLevel === 'medium'
+                                ? 'bg-yellow-100 text-yellow-700'
+                                : 'bg-red-100 text-red-700'
+                            }
+                          >
+                            <TrendingUp className="w-3 h-3 mr-1" />
+                            {oonEstimate.prediction.confidenceLevel || 'Unknown'}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-green-200">
+                        <p className="text-xs text-slate-500">
+                          <strong>CPT:</strong> 90837 (60-min therapy) |
+                          <strong> Payer:</strong> {selectedPatient.insuranceProvider} |
+                          <strong> Method:</strong> {oonEstimate.prediction.methodology?.replace('_', ' ') || 'Medicare multiplier'}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50 rounded-lg p-4 text-center">
+                      <p className="text-sm text-slate-500">Unable to calculate OON estimate</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>

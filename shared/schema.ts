@@ -2307,3 +2307,148 @@ export const insertExerciseBankSchema = createInsertSchema(exerciseBank).omit({ 
 export type ExerciseBank = typeof exerciseBank.$inferSelect;
 export type InsertExerciseBank = z.infer<typeof insertExerciseBankSchema>;
 
+// Claim Outcomes - tracks actual reimbursements for ML model training
+// Used to improve OON reimbursement predictions over time
+export const claimOutcomes = pgTable("claim_outcomes", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+
+  // Link to existing claim if available
+  claimId: integer("claim_id").references(() => claims.id),
+
+  // Input features for prediction model
+  cptCode: varchar("cpt_code").notNull(),
+  insuranceProvider: varchar("insurance_provider").notNull(),
+  insurancePlanType: varchar("insurance_plan_type"), // PPO, HMO, EPO, POS, HDHP
+  zipCode: varchar("zip_code"),
+  billedAmount: decimal("billed_amount", { precision: 10, scale: 2 }).notNull(),
+  providerCredential: varchar("provider_credential"), // PhD, LCSW, LMFT, etc.
+  serviceDate: date("service_date").notNull(),
+  networkStatus: varchar("network_status").default("out_of_network"), // in_network, out_of_network
+
+  // Outcome data (filled when EOB/ERA received)
+  allowedAmount: decimal("allowed_amount", { precision: 10, scale: 2 }),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
+  patientResponsibility: decimal("patient_responsibility", { precision: 10, scale: 2 }),
+  coinsuranceApplied: decimal("coinsurance_applied", { precision: 5, scale: 2 }), // percentage
+  deductibleApplied: decimal("deductible_applied", { precision: 10, scale: 2 }),
+  denialReason: text("denial_reason"),
+  adjustmentReasonCode: varchar("adjustment_reason_code"), // CARC/RARC codes
+
+  // Timing metadata
+  daysToPayment: integer("days_to_payment"),
+  submissionDate: timestamp("submission_date"),
+  paymentDate: timestamp("payment_date"),
+
+  // For model training
+  isTrainingData: boolean("is_training_data").default(true),
+  predictionAccuracy: decimal("prediction_accuracy", { precision: 5, scale: 4 }), // How close was our prediction
+
+  // Our prediction at time of service (for accuracy tracking)
+  predictedAllowedAmount: decimal("predicted_allowed_amount", { precision: 10, scale: 2 }),
+  predictedReimbursement: decimal("predicted_reimbursement", { precision: 10, scale: 2 }),
+  predictionConfidence: varchar("prediction_confidence"), // high, medium, low
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertClaimOutcomeSchema = createInsertSchema(claimOutcomes).omit({ id: true, createdAt: true, updatedAt: true });
+export type ClaimOutcome = typeof claimOutcomes.$inferSelect;
+export type InsertClaimOutcome = z.infer<typeof insertClaimOutcomeSchema>;
+
+// Patient Plan Documents - stores uploaded insurance plan documents for parsing
+export const patientPlanDocuments = pgTable("patient_plan_documents", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+
+  // Document metadata
+  documentType: varchar("document_type").notNull(), // 'sbc', 'eob', 'plan_contract', 'insurance_card', 'other'
+  fileName: varchar("file_name").notNull(),
+  fileUrl: varchar("file_url").notNull(), // S3/storage URL
+  fileSize: integer("file_size"),
+  mimeType: varchar("mime_type"),
+
+  // Processing status
+  status: varchar("status").default("pending"), // 'pending', 'processing', 'completed', 'failed'
+  parsedAt: timestamp("parsed_at"),
+  parseError: text("parse_error"),
+
+  // Consent tracking
+  patientConsentGiven: boolean("patient_consent_given").default(false),
+  consentDate: timestamp("consent_date"),
+  consentMethod: varchar("consent_method"), // 'portal', 'email', 'in_person'
+
+  // Audit
+  uploadedBy: varchar("uploaded_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientPlanDocumentSchema = createInsertSchema(patientPlanDocuments).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientPlanDocument = typeof patientPlanDocuments.$inferSelect;
+export type InsertPatientPlanDocument = z.infer<typeof insertPatientPlanDocumentSchema>;
+
+// Patient Plan Benefits - stores parsed benefit data from insurance documents
+export const patientPlanBenefits = pgTable("patient_plan_benefits", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  documentId: integer("document_id").references(() => patientPlanDocuments.id),
+
+  // Plan identification
+  planName: varchar("plan_name"),
+  planType: varchar("plan_type"), // 'PPO', 'HMO', 'EPO', 'POS', 'HDHP', 'Indemnity'
+  insuranceProvider: varchar("insurance_provider"),
+  groupNumber: varchar("group_number"),
+  policyNumber: varchar("policy_number"),
+  effectiveDate: date("effective_date"),
+  terminationDate: date("termination_date"),
+
+  // OON Benefit Details (the key data we need!)
+  oonDeductibleIndividual: decimal("oon_deductible_individual", { precision: 10, scale: 2 }),
+  oonDeductibleFamily: decimal("oon_deductible_family", { precision: 10, scale: 2 }),
+  oonDeductibleMet: decimal("oon_deductible_met", { precision: 10, scale: 2 }),
+  oonCoinsurancePercent: decimal("oon_coinsurance_percent", { precision: 5, scale: 2 }), // What patient pays (e.g., 40%)
+  oonOutOfPocketMax: decimal("oon_out_of_pocket_max", { precision: 10, scale: 2 }),
+  oonOutOfPocketMet: decimal("oon_out_of_pocket_met", { precision: 10, scale: 2 }),
+
+  // Allowed Amount Methodology (critical for predictions)
+  allowedAmountMethod: varchar("allowed_amount_method"), // 'ucr', 'medicare_percent', 'fair_health', 'plan_schedule', 'unknown'
+  allowedAmountPercent: decimal("allowed_amount_percent", { precision: 5, scale: 2 }), // e.g., 150% of Medicare
+  allowedAmountSource: varchar("allowed_amount_source"), // e.g., 'Fair Health', 'HIAA', 'Medicare'
+
+  // Mental Health Specific
+  mentalHealthParity: boolean("mental_health_parity"), // Is MH covered same as medical?
+  mentalHealthVisitLimit: integer("mental_health_visit_limit"), // Annual visit cap
+  mentalHealthVisitsUsed: integer("mental_health_visits_used"),
+  mentalHealthPriorAuthRequired: boolean("mental_health_prior_auth_required"),
+  mentalHealthCopay: decimal("mental_health_copay", { precision: 10, scale: 2 }),
+
+  // In-Network comparison (useful context)
+  innDeductibleIndividual: decimal("inn_deductible_individual", { precision: 10, scale: 2 }),
+  innCoinsurancePercent: decimal("inn_coinsurance_percent", { precision: 5, scale: 2 }),
+  innOutOfPocketMax: decimal("inn_out_of_pocket_max", { precision: 10, scale: 2 }),
+
+  // Coverage specifics
+  teleHealthCovered: boolean("telehealth_covered"),
+  teleHealthOonSameAsInPerson: boolean("telehealth_oon_same_as_in_person"),
+
+  // Raw extracted data (for debugging/reprocessing)
+  rawExtractedData: jsonb("raw_extracted_data"),
+  extractionConfidence: decimal("extraction_confidence", { precision: 3, scale: 2 }), // 0-1 confidence score
+
+  // Status
+  isActive: boolean("is_active").default(true),
+  verifiedBy: varchar("verified_by").references(() => users.id), // Admin who verified accuracy
+  verifiedAt: timestamp("verified_at"),
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPatientPlanBenefitsSchema = createInsertSchema(patientPlanBenefits).omit({ id: true, createdAt: true, updatedAt: true });
+export type PatientPlanBenefits = typeof patientPlanBenefits.$inferSelect;
+export type InsertPatientPlanBenefits = z.infer<typeof insertPatientPlanBenefitsSchema>;
+
