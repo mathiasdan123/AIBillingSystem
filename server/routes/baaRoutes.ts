@@ -5,6 +5,26 @@ import { eq, and } from 'drizzle-orm';
 import { isAuthenticated } from '../supabaseAuth';
 import { storage } from '../storage';
 
+// Helper to get practice ID from authenticated user
+function getAuthorizedPracticeId(req: any): number {
+  const userRole = req.user?.claims?.role || req.user?.role;
+  const userPracticeId = req.user?.claims?.practiceId || req.user?.practiceId;
+  const requestedPracticeId = req.query?.practiceId ? parseInt(req.query.practiceId as string) : undefined;
+
+  if (userRole === 'admin') {
+    const practiceId = requestedPracticeId || userPracticeId;
+    if (!practiceId) {
+      throw new Error('Practice ID required. Admin must specify practiceId or be assigned to a practice.');
+    }
+    return practiceId;
+  }
+
+  if (!userPracticeId) {
+    throw new Error('User not assigned to a practice. Contact administrator.');
+  }
+  return userPracticeId;
+}
+
 export function registerBaaRoutes(app: Express) {
   const requireAdmin = async (req: any, res: Response, next: NextFunction) => {
     try {
@@ -25,7 +45,7 @@ export function registerBaaRoutes(app: Express) {
   // GET /api/baa - List all BAA records for practice
   app.get('/api/baa', isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const records = await storage.getBaaRecords(practiceId);
       res.json(records);
     } catch (err) {
@@ -36,7 +56,7 @@ export function registerBaaRoutes(app: Express) {
   // POST /api/baa - Create new BAA record
   app.post('/api/baa', isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const record = await storage.createBaaRecord({ ...req.body, practiceId });
       res.status(201).json(record);
     } catch (err) {

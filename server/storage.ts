@@ -472,6 +472,13 @@ export class DatabaseStorage implements IStorage {
     return practice;
   }
 
+  async getAllPracticeIds(): Promise<number[]> {
+    const result = await db
+      .select({ id: practices.id })
+      .from(practices);
+    return result.map((p: { id: number }) => p.id);
+  }
+
   async updatePractice(id: number, practice: Partial<InsertPractice>): Promise<Practice> {
     const [updatedPractice] = await db
       .update(practices)

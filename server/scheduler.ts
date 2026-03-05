@@ -489,8 +489,8 @@ export function startScheduler() {
     try {
       logger.info('Starting pre-appointment eligibility verification');
 
-      // Check for all practices (TODO: iterate through actual practices)
-      const practiceIds = [1];
+      // Check for all practices
+      const practiceIds = await storage.getAllPracticeIds();
 
       for (const practiceId of practiceIds) {
         const appointmentsToCheck = await storage.getAppointmentsNeedingEligibilityCheck(practiceId, 24);
@@ -625,7 +625,7 @@ export function startScheduler() {
       logger.info('Starting automated review request processing');
       const crypto = await import('crypto');
 
-      const practiceIds = [1]; // TODO: iterate through actual practices
+      const practiceIds = await storage.getAllPracticeIds();
 
       for (const practiceId of practiceIds) {
         // Get practice settings

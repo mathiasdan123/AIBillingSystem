@@ -667,7 +667,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/invites', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
-      const practiceId = 1; // Default practice for now
+      const practiceId = getAuthorizedPracticeId(req);
       const invites = await storage.getInvitesByPractice(practiceId);
       res.json(invites);
     } catch (error) {
@@ -3360,7 +3360,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/superbills', isAuthenticated, async (req: any, res) => {
     try {
       const { patientId, insuranceId, dateOfService, lineItems, sessionId } = req.body;
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
 
       if (!patientId || !lineItems || lineItems.length === 0) {
         return res.status(400).json({ message: 'Patient ID and at least one line item are required' });
@@ -3446,7 +3446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const sessionId = parseInt(req.params.id);
       const { insuranceId } = req.body;
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
 
       // Get session details
       const sessions = await storage.getAllSessions();
@@ -3528,7 +3528,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/superbills', isAuthenticated, async (req: any, res) => {
     try {
       const { patientId, insuranceId, dateOfService, lineItems } = req.body;
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
 
       if (!patientId) {
         return res.status(400).json({ message: 'Patient ID is required' });
@@ -3611,7 +3611,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all claims for practice
   app.get('/api/claims', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1; // Default practice for now
+      const practiceId = getAuthorizedPracticeId(req);
       const claims = await storage.getClaims(practiceId);
       res.json(claims);
     } catch (error) {
@@ -3764,7 +3764,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/claims', isAuthenticated, async (req: any, res) => {
     try {
       const { patientId, insuranceId, totalAmount, submittedAmount, sessionId } = req.body;
-      const practiceId = 1; // Default practice for now
+      const practiceId = getAuthorizedPracticeId(req);
 
       if (!patientId || !totalAmount) {
         return res.status(400).json({ message: 'Patient ID and total amount are required' });
@@ -4157,7 +4157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const claimId = parseInt(req.params.id);
       const { denialReason } = req.body;
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
 
       const claim = await storage.getClaim(claimId);
       if (!claim) {
@@ -4333,7 +4333,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/claims/:id/regenerate-appeal', isAuthenticated, async (req: any, res) => {
     try {
       const claimId = parseInt(req.params.id);
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
 
       const claim = await storage.getClaim(claimId);
       if (!claim) {
@@ -4409,7 +4409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get appeals dashboard metrics
   app.get('/api/appeals/dashboard', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const dashboard = await storage.getAppealsDashboard(practiceId);
       res.json(dashboard);
     } catch (error) {
@@ -4421,7 +4421,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get upcoming deadlines
   app.get('/api/appeals/deadlines', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const days = parseInt(req.query.days as string) || 30;
       const deadlines = await storage.getUpcomingDeadlines(practiceId, days);
       res.json(deadlines);
@@ -4434,7 +4434,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get denied claims available for appeal
   app.get('/api/appeals/denied-claims', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const deniedClaims = await storage.getDeniedClaimsForAppeals(practiceId);
 
       // Enrich with patient info
@@ -4456,7 +4456,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all appeals with filters
   app.get('/api/appeals', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters: any = {};
 
       if (req.query.status) filters.status = req.query.status;
@@ -4528,7 +4528,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create new appeal from denied claim
   app.post('/api/appeals', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const { claimId, deadlineDate, notes } = req.body;
 
       if (!claimId) {
@@ -4836,7 +4836,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Claims analytics
   app.get('/api/claims/analytics/by-status', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const statusData = await storage.getClaimsByStatus(practiceId);
       res.json(statusData);
     } catch (error) {
@@ -4847,7 +4847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/claims/analytics/denial-reasons', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const denialData = await storage.getTopDenialReasons(practiceId);
       res.json(denialData);
     } catch (error) {
@@ -4859,7 +4859,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Denied Claims Report endpoints
   app.get('/api/reports/denied-claims', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const period = req.query.period || 'today';
       const customStartDate = req.query.startDate;
       const customEndDate = req.query.endDate;
@@ -4941,7 +4941,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Export denied claims report as CSV
   app.get('/api/reports/denied-claims/export', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const period = req.query.period || 'month';
       const customStartDate = req.query.startDate;
       const customEndDate = req.query.endDate;
@@ -5067,7 +5067,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/reports/send-report-now', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const practiceId = 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const { period = 'today', email } = req.body;
 
       // Get date range based on period
@@ -5531,9 +5531,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/admin/payer-credentials', isAuthenticated, isAdminOrBilling, async (req, res) => {
+  app.post('/api/admin/payer-credentials', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
     try {
-      const { payerName, apiKey, practiceId = 1 } = req.body;
+      const practiceId = getAuthorizedPracticeId(req);
+      const { payerName, apiKey } = req.body;
       await storage.upsertPayerCredentials(practiceId, { payerName, apiKey });
       res.json({ success: true });
     } catch (error) {
@@ -7083,7 +7084,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all conversations for a therapist
   app.get('/api/messages/conversations', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1; // TODO: get from user
+      const practiceId = getAuthorizedPracticeId(req);
       const therapistId = req.user?.claims?.sub;
       const status = req.query.status as string | undefined;
       const patientId = req.query.patientId ? parseInt(req.query.patientId as string) : undefined;
@@ -7124,7 +7125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create a new conversation
   app.post('/api/messages/conversations', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1; // TODO: get from user
+      const practiceId = getAuthorizedPracticeId(req);
       const therapistId = req.user?.claims?.sub;
       const { patientId, subject, initialMessage } = req.body;
 
@@ -7252,7 +7253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get unread count for therapist
   app.get('/api/messages/unread-count', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = 1; // TODO: get from user
+      const practiceId = getAuthorizedPracticeId(req);
       const therapistId = req.user?.claims?.sub;
       const count = await storage.getUnreadCount(practiceId, therapistId);
       res.json({ count });
