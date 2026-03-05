@@ -27,6 +27,7 @@ import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
 import { registerBaaRoutes } from "./routes/baaRoutes";
 import { registerBreachNotificationRoutes } from "./routes/breachNotificationRoutes";
 import { StediAdapter } from "./payer-integrations/adapters/payers/StediAdapter";
+import type { ClaimSubmission } from "./services/stediService";
 
 // Initialize AI predictor (in production, this would load from database)
 const reimbursementPredictor = new AIReimbursementPredictor();
@@ -1669,7 +1670,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         insuranceProvider: benefits?.insuranceProvider || patient.insuranceProvider || 'Unknown',
         zipCode: patient.address?.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || '00000',
         billedAmount: parseFloat(billedAmount),
-        planType: benefits?.planType,
+        planType: (benefits?.planType as "unknown" | "PPO" | "HMO" | "POS" | "EPO" | "HDHP" | undefined) || undefined,
         deductibleMet: benefits?.oonDeductibleMet ? parseFloat(benefits.oonDeductibleMet) > 0 : undefined,
         deductibleRemaining: benefits?.oonDeductibleMet && benefits?.oonDeductibleIndividual
           ? parseFloat(benefits.oonDeductibleIndividual) - parseFloat(benefits.oonDeductibleMet)
@@ -1857,7 +1858,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 claimNumber,
                 totalAmount: optimization.estimatedAmount.toFixed(2),
                 status: 'draft',
-                serviceDate: session.sessionDate,
                 aiReviewNotes: `AI Billing Optimization (${optimization.complianceScore}% compliance): ${optimization.optimizationNotes}`,
               });
 
@@ -2841,11 +2841,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const adapter = new StediAdapter(stediApiKey);
 
           const result = await adapter.checkEligibility({
-            providerNpi: practice?.npiNumber || '1234567890',
+            providerNpi: practice?.npi || '1234567890',
             providerName: practice?.name || 'Practice',
             memberFirstName: patient.firstName,
             memberLastName: patient.lastName,
-            memberDob: patient.dateOfBirth,
+            memberDob: patient.dateOfBirth || '',
             memberId: patient.insuranceId || '',
             groupNumber: patient.groupNumber || undefined,
             payerName: insurance?.name || 'Unknown',
@@ -2875,13 +2875,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           logger.error('Stedi eligibility check failed, falling back to mock', { error: stediError.message });
           // Fall back to mock if Stedi fails
           eligibilityResult = generateMockEligibility(patient, insurance);
-          eligibilityResult.source = 'mock_fallback';
-          eligibilityResult.stediError = stediError.message;
+          (eligibilityResult as any).source = 'mock_fallback';
+          (eligibilityResult as any).stediError = stediError.message;
         }
       } else {
         // Generate mock eligibility response
         eligibilityResult = generateMockEligibility(patient, insurance);
-        eligibilityResult.source = 'mock';
+        (eligibilityResult as any).source = 'mock';
       }
 
       // Store the result in the database
@@ -3919,18 +3919,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
 
           // Get all diagnosis codes from line items
-          const diagnosisCodes = [...new Set(
+          const diagnosisCodeSet = new Set(
             lineItems
               .filter((item: any) => item.icd10CodeId)
               .map((item: any) => {
                 const icd = icd10Codes.find((c: any) => c.id === item.icd10CodeId);
                 return icd?.code;
               })
-              .filter(Boolean)
-          )] as string[];
+              .filter(Boolean) as string[]
+          );
+          const diagnosisCodes = Array.from(diagnosisCodeSet);
 
           // Build claim submission
-          const claimSubmission: stediService.ClaimSubmission = {
+          // Note: Patient/Practice schemas store address as single text field; extract parts if possible
+          const parseAddress = (addr: string | null) => {
+            // Simple address parser - in production would use a proper address parsing library
+            const parts = (addr || '').split(',').map(p => p.trim());
+            return {
+              line1: parts[0] || '',
+              city: parts[1] || '',
+              state: parts[2]?.split(' ')[0] || '',
+              zip: parts[2]?.split(' ')[1] || parts[3] || '',
+            };
+          };
+          const patientAddr = parseAddress(patient.address);
+          const practiceAddr = parseAddress(practice.address);
+
+          const claimSubmission: ClaimSubmission = {
             claimId: claim.claimNumber || `CLM${claim.id}`,
             totalAmount: parseFloat(claim.totalAmount as any) || 0,
             placeOfService: '11', // Office (most common for therapy)
@@ -3938,30 +3953,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             patient: {
               firstName: patient.firstName,
               lastName: patient.lastName,
-              dateOfBirth: patient.dateOfBirth,
-              gender: (patient.gender?.charAt(0)?.toUpperCase() as 'M' | 'F') || 'U',
-              address: {
-                line1: patient.address || '',
-                city: patient.city || '',
-                state: patient.state || '',
-                zip: patient.zipCode || '',
-              },
+              dateOfBirth: patient.dateOfBirth || '',
+              gender: 'U', // Gender not stored in patient schema
+              address: patientAddr,
               memberId: patient.insuranceId || '',
             },
             provider: {
-              npi: practice.npiNumber || '',
+              npi: practice.npi || '',
               taxId: practice.taxId || '',
               organizationName: practice.name,
-              address: {
-                line1: practice.address || '',
-                city: practice.city || '',
-                state: practice.state || '',
-                zip: practice.zipCode || '',
-              },
+              address: practiceAddr,
               taxonomy: '101YM0800X', // Mental health counselor
             },
             payer: {
-              id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerId || '00000',
+              id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerCode || '00000',
               name: insurance.name || 'Unknown',
             },
             serviceLines,
@@ -4060,17 +4065,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const statusResult = await stediService.checkClaimStatus({
           claimId: claim.claimNumber || `CLM${claim.id}`,
           payer: {
-            id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerId || '00000',
+            id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerCode || '00000',
           },
           provider: {
-            npi: practice?.npiNumber || '',
-            taxId: practice?.taxId,
+            npi: practice?.npi || '',
+            taxId: practice?.taxId || '',
           },
           subscriber: {
             memberId: patient.insuranceId || '',
             firstName: patient.firstName,
             lastName: patient.lastName,
-            dateOfBirth: patient.dateOfBirth,
+            dateOfBirth: patient.dateOfBirth || '',
           },
           dateOfService,
           claimAmount: parseFloat(claim.totalAmount as any),
@@ -9921,7 +9926,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const crypto = await import('crypto');
         access = await storage.createPatientPortalAccess({
           patientId: patient.id,
-          email: patient.email || `demo-${patient.id}@example.com`,
+          practiceId: patient.practiceId,
           magicLinkToken: crypto.randomBytes(32).toString('hex'),
           magicLinkExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
           portalToken: crypto.randomBytes(32).toString('hex'),
