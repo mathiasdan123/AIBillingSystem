@@ -33,87 +33,87 @@ export default function Analytics() {
   }, [isAuthenticated, isLoading, toast]);
 
   const { data: dashboardStats, isLoading: statsLoading } = useQuery({
-    queryKey: ['/api/analytics/dashboard', practiceId],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/dashboard'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: revenueData, isLoading: revenueLoading } = useQuery({
-    queryKey: ['/api/analytics/revenue', practiceId, timeRange],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: [`/api/analytics/revenue?timeRange=${timeRange}`],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: claimsByStatus, isLoading: claimsStatusLoading } = useQuery({
-    queryKey: ['/api/analytics/claims-by-status', practiceId],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/claims-by-status'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: denialReasons, isLoading: denialReasonsLoading } = useQuery({
-    queryKey: ['/api/analytics/denial-reasons', practiceId],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/denial-reasons'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: cancellationStats } = useQuery({
-    queryKey: [`/api/analytics/cancellations?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/cancellations'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: cancellationTrend } = useQuery({
-    queryKey: [`/api/analytics/cancellations/trend?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/cancellations/trend'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: cancellationsByPatient } = useQuery({
-    queryKey: [`/api/analytics/cancellations/by-patient?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/cancellations/by-patient'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   // Enhanced analytics queries
   const { data: collectionRate } = useQuery({
-    queryKey: [`/api/analytics/collection-rate?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/collection-rate'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: cleanClaimsRate } = useQuery({
-    queryKey: [`/api/analytics/clean-claims-rate?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/clean-claims-rate'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: capacityUtilization } = useQuery({
-    queryKey: [`/api/analytics/capacity?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/capacity'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: arAging } = useQuery({
-    queryKey: [`/api/analytics/ar-aging?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/ar-aging'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: revenueForecast } = useQuery({
-    queryKey: [`/api/analytics/revenue/forecast?practiceId=${practiceId}&months=3`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/revenue/forecast?months=3'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: referrals } = useQuery({
-    queryKey: [`/api/analytics/referrals?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/referrals'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
   const { data: revenueByLocationTherapist } = useQuery({
-    queryKey: [`/api/analytics/revenue-by-location-therapist?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
+    queryKey: ['/api/analytics/revenue-by-location-therapist'],
+    enabled: isAuthenticated,
     retry: false,
   }) as any;
 
@@ -426,7 +426,7 @@ export default function Analytics() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={mockRevenueData}>
+              <LineChart data={revenueData || mockRevenueData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="month" 
@@ -493,7 +493,7 @@ export default function Analytics() {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={mockRevenueData}>
+            <BarChart data={revenueData || mockRevenueData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis 
                 dataKey="month" 
