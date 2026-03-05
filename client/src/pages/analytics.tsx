@@ -133,8 +133,8 @@ export default function Analytics() {
   });
 
   // Calculate patient payment stats
-  const patientPaymentStats = patients.map((patient: any) => {
-    const patientClaims = claims.filter((c: any) => c.patientId === patient.id);
+  const patientPaymentStats = (patients || []).map((patient: any) => {
+    const patientClaims = (claims || []).filter((c: any) => c.patientId === patient.id);
     const totalBilled = patientClaims.reduce((sum: number, c: any) => sum + parseFloat(c.totalAmount || 0), 0);
     const paidClaims = patientClaims.filter((c: any) => c.status === 'paid');
     const totalPaid = paidClaims.reduce((sum: number, c: any) => sum + parseFloat(c.paidAmount || c.totalAmount || 0), 0);
@@ -155,9 +155,9 @@ export default function Analytics() {
   }).sort((a: any, b: any) => b.totalPaid - a.totalPaid);
 
   // Calculate therapist revenue stats
-  const therapistStats = therapists.map((therapist: any) => {
+  const therapistStats = (therapists || []).map((therapist: any) => {
     // Find claims/sessions for this therapist
-    const therapistClaims = claims.filter((c: any) => c.therapistId === therapist.id);
+    const therapistClaims = (claims || []).filter((c: any) => c.therapistId === therapist.id);
     const totalRevenue = therapistClaims.reduce((sum: number, c: any) => {
       if (c.status === 'paid') return sum + parseFloat(c.paidAmount || c.totalAmount || 0);
       return sum;
@@ -176,10 +176,10 @@ export default function Analytics() {
   }).filter((t: any) => t.name).sort((a: any, b: any) => b.totalRevenue - a.totalRevenue);
 
   // Patients approaching visit limits
-  const patientsNearVisitLimit = patients
+  const patientsNearVisitLimit = (patients || [])
     .map((patient: any) => {
       // Get latest eligibility for this patient
-      const patientEligibility = eligibilityData.find((e: any) => e.patientId === patient.id);
+      const patientEligibility = (eligibilityData || []).find((e: any) => e.patientId === patient.id);
       if (!patientEligibility || !patientEligibility.visitsAllowed) return null;
 
       const visitsAllowed = patientEligibility.visitsAllowed || 0;
@@ -201,9 +201,9 @@ export default function Analytics() {
     .sort((a: any, b: any) => a.visitsRemaining - b.visitsRemaining);
 
   // Summary stats
-  const totalPatients = patients.length;
-  const activePatients = patients.filter((p: any) => {
-    const patientClaims = claims.filter((c: any) => c.patientId === p.id);
+  const totalPatients = (patients || []).length;
+  const activePatients = (patients || []).filter((p: any) => {
+    const patientClaims = (claims || []).filter((c: any) => c.patientId === p.id);
     const recentClaim = patientClaims.find((c: any) => {
       const claimDate = new Date(c.serviceDate || c.createdAt);
       const threeMonthsAgo = new Date();
@@ -1210,7 +1210,7 @@ export default function Analytics() {
                 <UserCog className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{therapists.length}</div>
+                <div className="text-2xl font-bold">{(therapists || []).length}</div>
                 <p className="text-xs text-muted-foreground">active in practice</p>
               </CardContent>
             </Card>
