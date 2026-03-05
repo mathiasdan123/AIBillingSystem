@@ -45,12 +45,23 @@ export interface AiSoapBillingRequest {
     strength: string;
     motorPlanning: string;
     sensoryRegulation: string;
+    // Enhanced clinical observations
+    posturalControl?: string;
+    primitiveReflexes?: string;
+    fineMotor?: string;
+    grossMotor?: string;
+    bilateralCoordination?: string;
+    endurance?: string;
+    engagement?: string;
   };
   planNextSteps: string;
   nextSessionFocus?: string;
   homeProgram?: string;
   // Manual rate override - if set, uses this rate instead of default $289/unit
   ratePerUnit?: number;
+  // Enhanced context
+  therapistName?: string;
+  sessionType?: string; // 'OT', 'PT', 'ST'
 }
 
 export interface GeneratedCptCode {
@@ -114,6 +125,26 @@ export async function generateSoapNoteAndBilling(
     // No cached insurance data available
   }
 
+  // Get treatment plan and goals for enhanced clinical context
+  let treatmentPlan = null;
+  let treatmentGoals: any[] = [];
+  try {
+    // Try to get active treatment plan first
+    treatmentPlan = await storage.getActiveTreatmentPlan(request.patientId);
+    if (!treatmentPlan) {
+      // Fall back to any treatment plan
+      const plans = await storage.getPatientTreatmentPlans(request.patientId);
+      if (plans && plans.length > 0) {
+        treatmentPlan = plans[0];
+      }
+    }
+    if (treatmentPlan) {
+      treatmentGoals = await storage.getTreatmentGoals(treatmentPlan.id);
+    }
+  } catch (e) {
+    // No treatment plan available
+  }
+
   // Calculate available billing units
   const billingUnits = Math.floor(request.duration / 15);
 
@@ -127,7 +158,7 @@ export async function generateSoapNoteAndBilling(
 
   // Build the AI prompt
   const systemPrompt = buildSystemPrompt(insuranceData);
-  const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData);
+  const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals);
 
   try {
     const completion = await client.chat.completions.create({
@@ -158,35 +189,89 @@ export async function generateSoapNoteAndBilling(
 }
 
 function buildSystemPrompt(insuranceData: any): string {
-  let prompt = `You are an expert pediatric occupational therapy billing specialist. Your role is to:
+  let prompt = `You are an expert pediatric occupational therapy clinical documentation specialist. Your role is to:
 
-1. Generate professional SOAP notes based on therapy activities
-2. Determine optimal CPT code assignments to MAXIMIZE reimbursement while remaining:
-   - Clinically accurate
-   - Audit defensible
-   - Compliant with insurance requirements
+1. Generate HIGHLY DETAILED, PROFESSIONAL SOAP notes that meet medical documentation standards
+2. Determine optimal CPT code assignments to MAXIMIZE reimbursement while remaining audit defensible
 
-CRITICAL BILLING RULES:
-- Many activities can legitimately fall under multiple CPT codes
-- Always assign activities to the HIGHEST-PAYING code that can defend them in an audit
+SOAP NOTE REQUIREMENTS:
+
+SUBJECTIVE SECTION:
+- Brief but specific observations about patient's presentation, mood, and engagement
+- Include any relevant caregiver reports or concerns
+- Note any social interactions or behavioral observations
+
+OBJECTIVE SECTION:
+- List all activities/exercises performed in a structured format
+- Include specific therapeutic interventions used
+- Document equipment/materials used (swings, putty, etc.)
+
+ASSESSMENT SECTION - THIS IS CRITICAL - MUST BE COMPREHENSIVE AND DETAILED:
+Write 4-6 detailed paragraphs covering:
+
+1. ENGAGEMENT & PARTICIPATION:
+   - Overall session engagement level
+   - Tolerance for movement demands and challenging activities
+   - Response to structured activities and graded sensory input
+
+2. CORE & POSTURAL STRENGTH:
+   - Ability to sustain prone extension
+   - Upright postural control during dynamic activities
+   - Need for verbal cueing or physical support
+   - Weight-bearing through upper extremities
+   - Alignment during anti-gravity positions
+
+3. MOTOR PLANNING & COORDINATION:
+   - Performance during multi-step gross-motor tasks
+   - Response to modeling and repetition
+   - Bilateral coordination observations
+   - Efficiency of movement patterns
+
+4. PRIMITIVE REFLEX INTEGRATION (if applicable):
+   - Observations related to TLR (Tonic Labyrinthine Reflex)
+   - STNR (Symmetric Tonic Neck Reflex) patterns
+   - ATNR (Asymmetric Tonic Neck Reflex) observations
+   - Moro reflex indicators
+   - Impact on separation of upper/lower body movements
+   - Compensatory movement strategies observed
+
+5. FINE MOTOR SKILLS:
+   - Performance on fine-motor tasks
+   - Impact of proximal weakness on distal control
+   - Endurance and precision observations
+   - Response to external postural support
+
+6. SENSORY PROCESSING & REGULATION:
+   - Response to vestibular input
+   - Proprioceptive processing observations
+   - Impact on motor organization and task engagement
+   - Adaptability to sensory and motor demands
+
+7. MEDICAL NECESSITY STATEMENT (REQUIRED):
+   - Summarize key deficits observed
+   - State why continued skilled OT services remain medically necessary
+   - Connect deficits to functional participation goals
+
+PLAN SECTION:
+- List specific focus areas for continued treatment as bullet points
+- Include: core strengthening, reflex integration, motor planning, coordination, fine motor
+
+CLINICAL TERMINOLOGY TO USE:
+- "demonstrates improved/decreased..."
+- "benefited from graded vestibular/proprioceptive input"
+- "required verbal cueing and physical support"
+- "emerging adaptability to sensory and motor demands"
+- "compensatory movement strategies"
+- "proximal stability/weakness"
+- "anti-gravity positions"
+- "skilled occupational therapy services remain medically necessary"
+
+BILLING CODE ASSIGNMENT:
 - CPT code rates (highest to lowest):
   * 97533 Sensory Integration: $62.25/unit - Use for sensory-based interventions
   * 97530 Therapeutic Activities: $58.50/unit - Use for functional, dynamic activities
   * 97112 Neuromuscular Re-ed: $55.00/unit - Use for balance, coordination, motor control
-  * 97110 Therapeutic Exercise: $48.00/unit - Use for pure strengthening/ROM (lowest priority)
-
-AUDIT DEFENSIBILITY:
-- Each CPT code must have documented activities that support it
-- Sensory Integration (97533) requires sensory-based interventions (swings, crash pads, tactile play, proprioceptive input)
-- Therapeutic Activities (97530) covers functional tasks, obstacle courses, fine motor with purpose
-- Neuromuscular (97112) covers balance training, coordination, motor planning activities
-- Therapeutic Exercise (97110) is for pure exercise/strengthening only
-
-OPTIMIZATION STRATEGY:
-1. First, identify all activities that can support 97533 (highest rate)
-2. Then, assign remaining activities to 97530 (second highest)
-3. Use 97112 for balance/coordination activities not covered above
-4. Only use 97110 as last resort for pure exercise activities
+  * 97110 Therapeutic Exercise: $48.00/unit - Use for pure strengthening/ROM
 
 You must respond with a JSON object.`;
 
@@ -207,64 +292,127 @@ function buildUserPrompt(
   request: AiSoapBillingRequest,
   patient: any,
   billingUnits: number,
-  insuranceData: any
+  insuranceData: any,
+  treatmentPlan?: any,
+  treatmentGoals?: any[]
 ): string {
-  return `Generate a SOAP note and optimal billing codes for this pediatric OT session.
+  // Calculate patient age
+  const dob = new Date(patient.dateOfBirth);
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const monthDiff = today.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+    age--;
+  }
+
+  let prompt = `Generate a COMPREHENSIVE, DETAILED SOAP note for this pediatric OT session.
 
 PATIENT INFORMATION:
 - Name: ${patient.firstName} ${patient.lastName}
-- DOB: ${patient.dateOfBirth}
-- Insurance: ${patient.insuranceProvider}
-- Policy: ${patient.policyNumber}
+- DOB: ${patient.dateOfBirth} (Age: ${age} years)
+- Insurance: ${patient.insuranceProvider || 'Not specified'}
+- Policy: ${patient.policyNumber || 'Not specified'}`;
+
+  // Add diagnosis information if available
+  if (treatmentPlan?.diagnosisCodes && Array.isArray(treatmentPlan.diagnosisCodes)) {
+    prompt += `\n\nDIAGNOSES (ICD-10):`;
+    for (const dx of treatmentPlan.diagnosisCodes) {
+      prompt += `\n- ${dx.code}: ${dx.description}`;
+    }
+  } else if (treatmentPlan?.diagnosis) {
+    prompt += `\n\nDIAGNOSIS: ${treatmentPlan.diagnosis}`;
+  }
+
+  // Add treatment goals if available
+  if (treatmentGoals && treatmentGoals.length > 0) {
+    prompt += `\n\nACTIVE TREATMENT GOALS:`;
+    for (const goal of treatmentGoals) {
+      prompt += `\n- ${goal.description} (Status: ${goal.status}, Progress: ${goal.currentProgress || 'N/A'})`;
+    }
+  }
+
+  prompt += `
 
 SESSION DETAILS:
 - Date: ${new Date().toLocaleDateString()}
 - Duration: ${request.duration} minutes (${billingUnits} billable units)
 - Location: ${request.location}
+- Session Type: ${request.sessionType || 'OT'}
+${request.therapistName ? `- Treating Therapist: ${request.therapistName}` : ''}
 
 SUBJECTIVE DATA:
-- Mood/Behavior: ${request.mood}
-- Caregiver Report: ${request.caregiverReport || "No specific concerns reported"}
+- Mood/Presentation: ${request.mood}
+- Caregiver Report: ${request.caregiverReport || "No specific concerns reported today"}
 
-ACTIVITIES PERFORMED:
+ACTIVITIES/EXERCISES PERFORMED:
 ${request.activities.map(a => `- ${a}`).join('\n')}
 
-ASSESSMENT OBSERVATIONS:
+CLINICAL OBSERVATIONS:
 - Overall Performance: ${request.assessment.performance}
-- Assistance Level: ${request.assessment.assistance}
-- Strength/Endurance: ${request.assessment.strength}
+- Assistance Level Required: ${request.assessment.assistance}
+- Core Strength/Endurance: ${request.assessment.strength}
 - Motor Planning: ${request.assessment.motorPlanning}
-- Sensory Regulation: ${request.assessment.sensoryRegulation}
+- Sensory Regulation: ${request.assessment.sensoryRegulation}`;
 
-PLAN:
+  // Add enhanced observations if provided
+  if (request.assessment.posturalControl) {
+    prompt += `\n- Postural Control: ${request.assessment.posturalControl}`;
+  }
+  if (request.assessment.primitiveReflexes) {
+    prompt += `\n- Primitive Reflex Observations: ${request.assessment.primitiveReflexes}`;
+  }
+  if (request.assessment.fineMotor) {
+    prompt += `\n- Fine Motor: ${request.assessment.fineMotor}`;
+  }
+  if (request.assessment.grossMotor) {
+    prompt += `\n- Gross Motor: ${request.assessment.grossMotor}`;
+  }
+  if (request.assessment.bilateralCoordination) {
+    prompt += `\n- Bilateral Coordination: ${request.assessment.bilateralCoordination}`;
+  }
+  if (request.assessment.engagement) {
+    prompt += `\n- Engagement/Participation: ${request.assessment.engagement}`;
+  }
+
+  prompt += `
+
+PLAN NOTES:
 - Next Steps: ${request.planNextSteps}
 - Next Session Focus: ${request.nextSessionFocus || "Continue current goals"}
-- Home Program: ${request.homeProgram || "Recommendations provided"}
+- Home Program: ${request.homeProgram || "Recommendations provided to caregiver"}
 
-RESPOND WITH THIS EXACT JSON STRUCTURE:
+RESPOND WITH THIS JSON STRUCTURE:
 {
-  "subjective": "Complete subjective section text",
-  "objective": "Complete objective section with activities documented",
-  "assessment": "Complete assessment with clinical reasoning and medical necessity",
-  "plan": "Complete plan section",
+  "subjective": "1-2 sentences about patient presentation and any relevant caregiver reports or social observations",
+
+  "objective": "Structured list of activities performed with categories (Fine Motor, Sensory Processing, Muscle-strengthening Exercises, Primitive Reflex Exercises, etc.)",
+
+  "assessment": "WRITE 4-6 DETAILED PARAGRAPHS covering: (1) Engagement and participation observations, (2) Core and postural strength with specific clinical observations about prone extension, weight-bearing, anti-gravity positions, (3) Motor planning challenges with examples from the session, (4) Primitive reflex integration observations mentioning specific reflexes like TLR, STNR, ATNR, Moro if relevant, (5) Fine motor skill observations including impact of proximal stability, (6) Sensory processing observations about vestibular/proprioceptive input response, (7) Summary statement about deficits impacting functional participation and medical necessity for continued skilled OT services. USE CLINICAL TERMINOLOGY throughout.",
+
+  "plan": "Continue occupational therapy services to address:\\n- Core and postural strengthening\\n- Primitive reflex integration (list specific reflexes)\\n- Motor planning and bilateral coordination\\n- Upper-extremity weight-bearing and stability\\n- Fine motor strength and dexterity",
+
   "cptCodes": [
     {
       "code": "97533",
       "name": "Sensory Integration",
       "units": 2,
-      "rationale": "Explanation of why these activities support this code",
+      "rationale": "Clinical justification for this code",
       "activitiesAssigned": ["Activity 1", "Activity 2"]
     }
   ],
-  "billingRationale": "Overall explanation of billing strategy and why it maximizes reimbursement",
-  "auditNotes": ["Note 1 about documentation supporting the codes", "Note 2"]
+  "billingRationale": "Explanation of code assignment strategy",
+  "auditNotes": ["Documentation points supporting the billing codes"]
 }
 
-IMPORTANT:
-- Distribute all ${billingUnits} units across the codes
-- Prioritize higher-paying codes when activities support them
-- Include medical necessity language in assessment
-- Each code must have activities assigned that justify it`;
+CRITICAL REQUIREMENTS:
+1. The ASSESSMENT section MUST be 4-6 detailed paragraphs with specific clinical observations
+2. Use professional OT clinical terminology throughout
+3. Include observations about primitive reflexes if relevant to the activities
+4. End assessment with a medical necessity statement
+5. Distribute all ${billingUnits} units across the CPT codes
+6. Each code must have documented activities that justify it`;
+
+  return prompt;
 }
 
 function validateAndEnhanceResponse(
