@@ -5967,6 +5967,46 @@ export class DatabaseStorage implements IStorage {
     return query.orderBy(desc(patientConsents.createdAt));
   }
 
+  /**
+   * HIPAA Compliance: Verify patient has required consents for PHI access
+   * Returns true if patient has active (non-revoked, non-expired) consent of required type
+   */
+  async hasActiveConsent(patientId: number, consentType: string): Promise<boolean> {
+    const consent = await this.getActiveConsent(patientId, consentType);
+    if (!consent) return false;
+
+    // Check if consent has expired
+    if (consent.expirationDate && new Date(consent.expirationDate) < new Date()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * HIPAA Compliance: Check if patient has all required consents for treatment
+   * Required consents: 'hipaa_release', 'treatment'
+   */
+  async hasRequiredTreatmentConsents(patientId: number): Promise<{
+    hasConsent: boolean;
+    missingConsents: string[];
+  }> {
+    const requiredConsents = ['hipaa_release', 'treatment'];
+    const missingConsents: string[] = [];
+
+    for (const consentType of requiredConsents) {
+      const hasConsent = await this.hasActiveConsent(patientId, consentType);
+      if (!hasConsent) {
+        missingConsents.push(consentType);
+      }
+    }
+
+    return {
+      hasConsent: missingConsents.length === 0,
+      missingConsents,
+    };
+  }
+
   // Therapy Bank operations
   async getTherapyBank(practiceId: number): Promise<TherapyBank[]> {
     return await db

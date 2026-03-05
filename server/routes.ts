@@ -149,6 +149,35 @@ const getAuthorizedPracticeId = (req: any): number => {
   return requestedPracticeId || userPracticeId;
 };
 
+/**
+ * HIPAA Compliance: Verify patient consent before returning PHI
+ * Logs warning if consent is missing but allows access (for emergency treatment scenarios)
+ * In strict mode, would deny access - but this could block treatment
+ */
+const verifyPatientConsent = async (patientId: number, accessReason: string = 'treatment'): Promise<{
+  hasConsent: boolean;
+  missingConsents: string[];
+}> => {
+  try {
+    const result = await storage.hasRequiredTreatmentConsents(patientId);
+
+    if (!result.hasConsent) {
+      logger.warn('PHI access without complete consent', {
+        patientId,
+        accessReason,
+        missingConsents: result.missingConsents,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return result;
+  } catch (error) {
+    logger.error('Error verifying patient consent', { patientId, error });
+    // Default to allowing access in case of error (fail-open for treatment continuity)
+    return { hasConsent: false, missingConsents: ['unknown'] };
+  }
+};
+
 // Configure multer for file uploads (in-memory storage)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -1506,7 +1535,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/patients', isAuthenticated, async (req: any, res) => {
     try {
       const patients = await storage.getAllPatients();
-      res.json(patients);
+
+      // HIPAA: Include consent status for each patient (for UI indicators)
+      const patientsWithConsent = await Promise.all(
+        patients.map(async (patient: any) => {
+          const consentStatus = await storage.hasRequiredTreatmentConsents(patient.id);
+          return {
+            ...patient,
+            consentStatus: {
+              hasRequiredConsents: consentStatus.hasConsent,
+              missingConsents: consentStatus.missingConsents,
+            },
+          };
+        })
+      );
+
+      res.json(patientsWithConsent);
     } catch (error) {
       console.error('Error fetching patients:', error);
       res.status(500).json({ error: 'Failed to fetch patients' });
@@ -1547,6 +1591,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/soap-notes', isAuthenticated, async (req: any, res) => {
     try {
+      // HIPAA: Verify patient consent before creating PHI record
+      if (req.body.patientId) {
+        const consentStatus = await verifyPatientConsent(req.body.patientId, 'soap_note_creation');
+        if (!consentStatus.hasConsent) {
+          // Log but don't block - treatment continuity is critical
+          // The warning is logged in verifyPatientConsent
+        }
+      }
+
       const soapNote = await storage.createSoapNote(req.body);
 
       // Auto-generate AI-optimized superbill from the session
@@ -2352,7 +2405,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Stripe webhook handler
+  // Stripe webhook handler - requires raw body for signature verification
+  // Raw body is provided by express.raw() middleware in index.ts
   app.post('/api/webhooks/stripe', async (req: any, res) => {
     if (!stripeService.isStripeConfigured()) {
       return res.status(503).json({ message: 'Stripe not configured' });
@@ -2361,17 +2415,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const sig = req.headers['stripe-signature'];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+    if (!sig) {
+      logger.warn('Stripe webhook received without signature');
+      return res.status(400).json({ message: 'Missing stripe-signature header' });
+    }
+
     if (!webhookSecret) {
-      console.error('Stripe webhook secret not configured');
+      logger.error('Stripe webhook secret not configured');
       return res.status(500).json({ message: 'Webhook not configured' });
     }
 
     try {
+      // req.body is a Buffer when using express.raw()
       const event = stripeService.verifyWebhookSignature(
         req.body,
         sig,
         webhookSecret
       );
+
+      logger.info('Stripe webhook verified', { eventType: event.type, eventId: event.id });
 
       // Handle different event types
       switch (event.type) {
@@ -2398,9 +2460,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({ received: true });
-    } catch (error) {
-      console.error('Webhook error:', error);
-      res.status(400).json({ message: 'Webhook error' });
+    } catch (error: any) {
+      logger.error('Stripe webhook verification failed', {
+        error: error.message,
+        type: error.type,
+      });
+      res.status(400).json({ message: 'Webhook signature verification failed' });
     }
   });
 

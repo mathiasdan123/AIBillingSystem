@@ -6,6 +6,42 @@ import { setupVite, serveStatic, log } from "./vite";
 import { seedDatabase } from "./seeds";
 import { startScheduler } from "./scheduler";
 
+// =============================================================================
+// SECURITY: Production environment validation
+// =============================================================================
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isProduction) {
+  const requiredEnvVars = [
+    'DATABASE_URL',
+    'SESSION_SECRET',
+    'PHI_ENCRYPTION_KEY',
+  ];
+
+  const missingVars = requiredEnvVars.filter(v => !process.env[v]);
+  if (missingVars.length > 0) {
+    console.error('FATAL: Missing required environment variables for production:');
+    missingVars.forEach(v => console.error(`  - ${v}`));
+    process.exit(1);
+  }
+
+  // Validate PHI encryption key format (should be 64 hex chars for 32-byte key)
+  const phiKey = process.env.PHI_ENCRYPTION_KEY!;
+  if (phiKey.length !== 64 || !/^[0-9a-fA-F]+$/.test(phiKey)) {
+    console.error('FATAL: PHI_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)');
+    console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+    process.exit(1);
+  }
+
+  // Validate session secret is strong enough
+  if (process.env.SESSION_SECRET!.length < 32) {
+    console.error('FATAL: SESSION_SECRET must be at least 32 characters');
+    process.exit(1);
+  }
+
+  console.log('✓ Production security checks passed');
+}
+
 const app = express();
 
 // Security: CORS configuration
@@ -33,6 +69,36 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
+
+// Security: HTTPS enforcement in production
+if (isProduction) {
+  // HSTS header - tell browsers to only use HTTPS for 1 year
+  app.use((req, res, next) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    next();
+  });
+
+  // Redirect HTTP to HTTPS (when behind a proxy that sets x-forwarded-proto)
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] === 'http') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
+// Security: Additional headers
+app.use((req, res, next) => {
+  // Prevent clickjacking
+  res.setHeader('X-Frame-Options', 'DENY');
+  // Prevent MIME type sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // XSS protection
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Referrer policy for PHI protection
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 // Security: Rate limiting
 const generalLimiter = rateLimit({
@@ -68,7 +134,10 @@ app.use('/api/ai', apiLimiter);
 app.use('/api/public/book', apiLimiter);
 app.use(generalLimiter);
 
-// Body parsing with size limits
+// Stripe webhook needs raw body for signature verification - must be before JSON parser
+app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
+
+// Body parsing with size limits (for all other routes)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
