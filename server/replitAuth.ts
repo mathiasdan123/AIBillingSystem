@@ -9,7 +9,21 @@ import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 
 // Allow local development without Replit auth
-const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
+// SECURITY: Multiple safeguards to prevent dev mode in production
+const isLocalDev =
+  process.env.NODE_ENV === 'development' &&
+  !process.env.REPLIT_DOMAINS &&
+  !process.env.PRODUCTION &&
+  !process.env.RAILWAY_ENVIRONMENT &&
+  !process.env.VERCEL_ENV &&
+  !process.env.HEROKU_APP_NAME &&
+  !process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+// Log warning if dev mode is active
+if (isLocalDev) {
+  console.warn('⚠️  WARNING: Running in local development mode with mock authentication');
+  console.warn('⚠️  This should NEVER appear in production logs');
+}
 
 if (!isLocalDev && !process.env.REPLIT_DOMAINS) {
   throw new Error("Environment variable REPLIT_DOMAINS not provided");
@@ -237,7 +251,7 @@ export async function setupAuth(app: Express) {
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
   const user = req.user as any;
-  
+
   console.log('Auth check - isAuthenticated:', req.isAuthenticated());
   console.log('Auth check - user:', user);
   console.log('Auth check - session:', (req as any).session);
@@ -246,9 +260,27 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  // Fetch user from storage to get practiceId and role for authorization
+  const userId = user.claims?.sub;
+  if (userId) {
+    try {
+      const dbUser = await storage.getUser(userId);
+      if (dbUser) {
+        // Attach user practice info for multi-tenancy authorization
+        (req as any).userPracticeId = dbUser.practiceId;
+        (req as any).userRole = dbUser.role;
+      }
+    } catch (error) {
+      console.error('Error fetching user practice info:', error);
+    }
+  }
+
   // For development user, skip token expiration checks
   if (user.claims?.sub === 'dev-user-123') {
     console.log('Development user authenticated');
+    // Set practice ID for dev user (admin has access to all)
+    (req as any).userPracticeId = 1;
+    (req as any).userRole = 'admin';
     return next();
   }
 

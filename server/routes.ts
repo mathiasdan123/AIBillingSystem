@@ -69,6 +69,86 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
   }
 };
 
+// Middleware to authorize practice access and attach practiceId to request
+// This ensures users can only access data from their own practice (multi-tenancy)
+const authorizePractice = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.claims?.sub) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const user = await storage.getUser(req.user.claims.sub);
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    // Get requested practiceId from query params
+    const requestedPracticeId = req.query.practiceId
+      ? parseInt(req.query.practiceId as string)
+      : undefined;
+
+    // Admin users can access any practice
+    if (user.role === 'admin') {
+      // If admin requests a specific practice, use that; otherwise use their default
+      req.authorizedPracticeId = requestedPracticeId || user.practiceId || 1;
+      return next();
+    }
+
+    // Non-admin users must use their assigned practice
+    if (!user.practiceId) {
+      return res.status(403).json({ message: "User not assigned to a practice" });
+    }
+
+    // If user tries to access a different practice, deny access
+    if (requestedPracticeId && requestedPracticeId !== user.practiceId) {
+      logger.warn(`Unauthorized practice access attempt: User ${user.id} tried to access practice ${requestedPracticeId}`);
+      return res.status(403).json({ message: "Access denied to this practice" });
+    }
+
+    // Attach authorized practiceId to request
+    req.authorizedPracticeId = user.practiceId;
+    next();
+  } catch (error) {
+    console.error("Error authorizing practice access:", error);
+    res.status(500).json({ message: "Failed to verify practice access" });
+  }
+};
+
+// Helper to get authorized practiceId from request with multi-tenancy validation
+// Returns the authorized practiceId or throws an error if access is denied
+const getAuthorizedPracticeId = (req: any): number => {
+  // If authorizePractice middleware was used, use its result
+  if (req.authorizedPracticeId) {
+    return req.authorizedPracticeId;
+  }
+
+  // Get user's practice from isAuthenticated middleware
+  const userPracticeId = req.userPracticeId;
+  const userRole = req.userRole;
+  const requestedPracticeId = req.query.practiceId
+    ? parseInt(req.query.practiceId as string)
+    : undefined;
+
+  // Admin users can access any practice
+  if (userRole === 'admin') {
+    return requestedPracticeId || userPracticeId || 1;
+  }
+
+  // If user has no practice assigned, default to 1 (for backward compatibility)
+  if (!userPracticeId) {
+    return requestedPracticeId || 1;
+  }
+
+  // Non-admin users: if requesting a different practice, log and use their assigned practice
+  if (requestedPracticeId && requestedPracticeId !== userPracticeId) {
+    logger.warn(`Practice access restricted: User requested practice ${requestedPracticeId} but assigned to ${userPracticeId}`);
+    // Return their actual practice instead of requested (secure default)
+    return userPracticeId;
+  }
+
+  return requestedPracticeId || userPracticeId;
+};
+
 // Configure multer for file uploads (in-memory storage)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -522,7 +602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Revenue analytics
   app.get('/api/analytics/revenue', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const timeRange = req.query.timeRange as string || '12months';
       const months = { '3months': 3, '6months': 6, '12months': 12 }[timeRange] || 12;
       const startDate = new Date();
@@ -538,7 +618,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Claims by status
   app.get('/api/analytics/claims-by-status', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const data = await storage.getClaimsByStatus(practiceId);
       res.json(data);
     } catch (error) {
@@ -550,7 +630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Denial reasons
   app.get('/api/analytics/denial-reasons', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const data = await storage.getTopDenialReasons(practiceId);
       res.json(data);
     } catch (error) {
@@ -562,7 +642,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Collection rate analytics
   app.get('/api/analytics/collection-rate', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const data = await storage.getCollectionRate(practiceId);
       res.json(data);
     } catch (error) {
@@ -574,7 +654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Clean claims rate analytics
   app.get('/api/analytics/clean-claims-rate', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const data = await storage.getCleanClaimsRate(practiceId);
       res.json(data);
     } catch (error) {
@@ -586,7 +666,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Capacity utilization analytics
   app.get('/api/analytics/capacity', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 1));
       const end = req.query.end ? new Date(req.query.end as string) : new Date();
       const data = await storage.getCapacityUtilization(practiceId, start, end);
@@ -600,7 +680,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // AR aging analytics
   app.get('/api/analytics/ar-aging', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const data = await storage.getDaysInAR(practiceId);
       res.json(data);
     } catch (error) {
@@ -612,7 +692,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Revenue forecast analytics
   app.get('/api/analytics/revenue/forecast', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const months = parseInt(req.query.months as string) || 3;
       const data = await storage.getRevenueForecast(practiceId, months);
       res.json(data);
@@ -625,7 +705,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Referrals analytics
   app.get('/api/analytics/referrals', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const data = await storage.getTopReferringProviders(practiceId);
       res.json(data);
     } catch (error) {
@@ -637,7 +717,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Revenue by location and therapist
   app.get('/api/analytics/revenue-by-location-therapist', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const startDate = req.query.start ? new Date(req.query.start as string) : undefined;
       const endDate = req.query.end ? new Date(req.query.end as string) : undefined;
       const data = await storage.getRevenueByLocationAndTherapist(practiceId, startDate, endDate);
@@ -1423,7 +1503,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Patients API routes
-  app.get('/api/patients', async (req, res) => {
+  app.get('/api/patients', isAuthenticated, async (req: any, res) => {
     try {
       const patients = await storage.getAllPatients();
       res.json(patients);
@@ -1433,7 +1513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/patients', async (req, res) => {
+  app.post('/api/patients', isAuthenticated, async (req: any, res) => {
     try {
       const patient = await storage.createPatient(req.body);
       res.json(patient);
@@ -1455,7 +1535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // SOAP Notes API routes
-  app.get('/api/soap-notes', async (req, res) => {
+  app.get('/api/soap-notes', isAuthenticated, async (req: any, res) => {
     try {
       const soapNotes = await storage.getAllSoapNotes();
       res.json(soapNotes);
@@ -1465,7 +1545,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/soap-notes', async (req, res) => {
+  app.post('/api/soap-notes', isAuthenticated, async (req: any, res) => {
     try {
       const soapNote = await storage.createSoapNote(req.body);
 
@@ -1759,7 +1839,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Treatment Sessions API routes
-  app.get('/api/sessions', async (req, res) => {
+  app.get('/api/sessions', isAuthenticated, async (req: any, res) => {
     try {
       const sessions = await storage.getAllSessions();
       res.json(sessions);
@@ -1769,7 +1849,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/sessions', async (req, res) => {
+  app.post('/api/sessions', isAuthenticated, async (req: any, res) => {
     try {
       // Ensure therapist user exists before creating session (foreign key constraint)
       if (req.body.therapistId) {
@@ -2040,8 +2120,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create patient consent
-  app.post('/api/patient-consents', async (req: any, res) => {
+  // Create patient consent (requires auth - use /api/public/portal for patient self-service)
+  app.post('/api/patient-consents', isAuthenticated, async (req: any, res) => {
     try {
       const consent = await storage.createPatientConsent({
         ...req.body,
@@ -2142,7 +2222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ paymentMethods: [] });
       }
 
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const practice = await storage.getPractice(practiceId);
 
       if (!practice?.stripeCustomerId) {
@@ -2186,7 +2266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get billing info for practice
   app.get('/api/billing/info', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const practice = await storage.getPractice(practiceId);
 
       if (!practice) {
@@ -2218,7 +2298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ payments: [] });
       }
 
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const practice = await storage.getPractice(practiceId);
 
       if (!practice?.stripeCustomerId) {
@@ -2543,7 +2623,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get eligibility alerts for practice
   app.get('/api/eligibility-alerts', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         status: req.query.status as string | undefined,
         severity: req.query.severity as string | undefined,
@@ -2562,7 +2642,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get eligibility alert stats
   app.get('/api/eligibility-alerts/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const stats = await storage.getEligibilityAlertStats(practiceId);
       res.json(stats);
     } catch (error) {
@@ -2899,7 +2979,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all sessions for practice
   app.get('/api/sessions', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const sessions = await storage.getAllSessions();
       const practiceSessions = sessions.filter((s: any) => s.practiceId === practiceId);
       res.json(practiceSessions);
@@ -2912,7 +2992,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get unbilled sessions (sessions without a claim)
   app.get('/api/sessions/unbilled', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const sessions = await storage.getAllSessions();
       const claims = await storage.getClaims(practiceId);
 
@@ -4701,7 +4781,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI SOAP Note and Billing Generation
-  app.post('/api/ai/generate-soap-billing', async (req, res) => {
+  app.post('/api/ai/generate-soap-billing', isAuthenticated, async (req: any, res) => {
     try {
       const {
         patientId,
@@ -4770,7 +4850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  app.post('/api/voice/transcribe', async (req, res) => {
+  app.post('/api/voice/transcribe', isAuthenticated, async (req: any, res) => {
     try {
       const { audio, mimeType, language } = req.body;
 
@@ -4921,7 +5001,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get available voices from Eleven Labs
-  app.get('/api/tts/voices', async (req, res) => {
+  app.get('/api/tts/voices', isAuthenticated, async (req: any, res) => {
     try {
       const voices = await getAvailableVoices();
       res.json({ voices });
@@ -4932,7 +5012,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Convert text to speech
-  app.post('/api/tts/speak', async (req, res) => {
+  app.post('/api/tts/speak', isAuthenticated, async (req: any, res) => {
     try {
       const { text, voiceId, stability, similarityBoost } = req.body;
 
@@ -4963,7 +5043,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Convert SOAP note to speech
-  app.post('/api/tts/soap-note', async (req, res) => {
+  app.post('/api/tts/soap-note', isAuthenticated, async (req: any, res) => {
     try {
       const { subjective, objective, assessment, plan, voiceId } = req.body;
 
@@ -4989,7 +5069,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Convert appeal letter to speech
-  app.post('/api/tts/appeal', async (req, res) => {
+  app.post('/api/tts/appeal', isAuthenticated, async (req: any, res) => {
     try {
       const { appealLetter, voiceId } = req.body;
 
@@ -5195,7 +5275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/appointments', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const start = req.query.start ? new Date(req.query.start as string) : undefined;
       const end = req.query.end ? new Date(req.query.end as string) : undefined;
 
@@ -5273,7 +5353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get upcoming appointments that need reminders
   app.get('/api/reminders/upcoming', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const hours = parseInt(req.query.hours as string) || 48;
       const appointments = await storage.getUpcomingAppointments(practiceId, hours);
       res.json(appointments);
@@ -5366,7 +5446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all waitlist entries
   app.get('/api/waitlist', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         status: req.query.status as string | undefined,
         therapistId: req.query.therapistId as string | undefined,
@@ -5384,7 +5464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get waitlist statistics
   app.get('/api/waitlist/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const stats = await storage.getWaitlistStats(practiceId);
       res.json(stats);
     } catch (error) {
@@ -5592,7 +5672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get review request statistics
   app.get('/api/reviews/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const requestStats = await storage.getReviewRequestStats(practiceId);
       const reviewStats = await storage.getReviewStats(practiceId);
       res.json({ requests: requestStats, reviews: reviewStats });
@@ -5605,7 +5685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all review requests
   app.get('/api/reviews/requests', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         status: req.query.status as string | undefined,
         patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
@@ -5621,7 +5701,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get patients eligible for review requests
   app.get('/api/reviews/eligible-patients', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const days = parseInt(req.query.days as string) || 1;
       const eligible = await storage.getPatientsEligibleForReview(practiceId, days);
       res.json(eligible);
@@ -5767,7 +5847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all Google reviews
   app.get('/api/reviews/google', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         responseStatus: req.query.responseStatus as string | undefined,
         sentiment: req.query.sentiment as string | undefined,
@@ -5893,7 +5973,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Appointment Types ---
   app.get('/api/booking/appointment-types', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const activeOnly = req.query.activeOnly === 'true';
       const types = await storage.getAppointmentTypes(practiceId, activeOnly);
       res.json(types);
@@ -5942,7 +6022,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const availability = await storage.getTherapistAvailability(therapistId);
         res.json(availability);
       } else {
-        const practiceId = parseInt(req.query.practiceId as string) || 1;
+        const practiceId = getAuthorizedPracticeId(req);
         const availability = await storage.getPracticeAvailability(practiceId);
         res.json(availability);
       }
@@ -6011,7 +6091,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Booking Settings ---
   app.get('/api/booking/settings', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const settings = await storage.getBookingSettings(practiceId);
       res.json(settings || {});
     } catch (error) {
@@ -6034,7 +6114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Online Bookings (Admin) ---
   app.get('/api/booking/bookings', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         status: req.query.status as string | undefined,
         therapistId: req.query.therapistId as string | undefined,
@@ -6297,7 +6377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get telehealth settings
   app.get('/api/telehealth/settings', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const settings = await storage.getTelehealthSettings(practiceId);
       res.json(settings || { isEnabled: true, practiceId });
     } catch (error) {
@@ -6321,7 +6401,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get telehealth sessions
   app.get('/api/telehealth/sessions', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         status: req.query.status as string | undefined,
         therapistId: req.query.therapistId as string | undefined,
@@ -6340,7 +6420,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get today's telehealth sessions
   app.get('/api/telehealth/sessions/today', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const therapistId = req.query.therapistId as string | undefined;
       const sessions = await storage.getTodaysTelehealthSessions(practiceId, therapistId);
 
@@ -6564,7 +6644,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/analytics/cancellations', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
       const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
       const stats = await storage.getCancellationStats(practiceId, start, end);
@@ -6577,7 +6657,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/analytics/cancellations/by-patient', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
       const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
       const data = await storage.getCancellationsByPatient(practiceId, start, end);
@@ -6590,7 +6670,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/analytics/cancellations/trend', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 12));
       const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
       const data = await storage.getCancellationTrend(practiceId, start, end);
@@ -7675,7 +7755,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all patient feedback for practice
   app.get('/api/feedback', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         sentiment: req.query.sentiment as string | undefined,
         isAddressed: req.query.isAddressed === 'true' ? true : req.query.isAddressed === 'false' ? false : undefined,
@@ -7704,7 +7784,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get feedback stats
   app.get('/api/feedback/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const stats = await storage.getPatientFeedbackStats(practiceId);
       res.json(stats);
     } catch (error) {
@@ -7896,7 +7976,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get treatment plans for practice
   app.get('/api/treatment-plans', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
         therapistId: req.query.therapistId as string | undefined,
@@ -7913,7 +7993,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get treatment plan stats
   app.get('/api/treatment-plans/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const stats = await storage.getTreatmentPlanStats(practiceId);
       res.json(stats);
     } catch (error) {
@@ -7925,7 +8005,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get plans needing review
   app.get('/api/treatment-plans/needs-review', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const daysAhead = parseInt(req.query.daysAhead as string) || 7;
       const plans = await storage.getPlansNeedingReview(practiceId, daysAhead);
       res.json(plans);
@@ -8362,7 +8442,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get practice assessments with filters
   app.get('/api/outcome-measures/assessments', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         templateId: req.query.templateId ? parseInt(req.query.templateId as string) : undefined,
         startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
@@ -8380,7 +8460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get outcome measure stats
   app.get('/api/outcome-measures/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const templateId = req.query.templateId ? parseInt(req.query.templateId as string) : undefined;
       const stats = await storage.getOutcomeMeasureStats(practiceId, templateId);
       res.json(stats);
@@ -8595,7 +8675,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get due assessments for practice
   app.get('/api/assessment-schedules/due', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const dueSchedules = await storage.getDueAssessments(practiceId);
       res.json(dueSchedules);
     } catch (error) {
@@ -8609,7 +8689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get referral sources
   app.get('/api/referral-sources', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         type: req.query.type as string | undefined,
         isActive: req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined,
@@ -8680,7 +8760,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get referrals with filters
   app.get('/api/referrals', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         direction: req.query.direction as string | undefined,
         status: req.query.status as string | undefined,
@@ -8700,7 +8780,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get referral stats
   app.get('/api/referrals/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
       const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
       const stats = await storage.getReferralStats(practiceId, startDate, endDate);
@@ -8714,7 +8794,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get pending referrals
   app.get('/api/referrals/pending', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const pending = await storage.getPendingReferrals(practiceId);
       res.json(pending);
     } catch (error) {
@@ -8726,7 +8806,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get referrals needing follow-up
   app.get('/api/referrals/needs-followup', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const needsFollowUp = await storage.getReferralsNeedingFollowUp(practiceId);
       res.json(needsFollowUp);
     } catch (error) {
@@ -8841,7 +8921,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get practice payment settings
   app.get('/api/payment-settings', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const settings = await storage.getPracticePaymentSettings(practiceId);
       res.json(settings || {
         practiceId,
@@ -8957,7 +9037,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get transactions with filters
   app.get('/api/payment-transactions', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
         status: req.query.status as string | undefined,
@@ -8976,7 +9056,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get payment stats
   app.get('/api/payment-transactions/stats', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
       const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
       const stats = await storage.getPaymentStats(practiceId, startDate, endDate);
@@ -9116,7 +9196,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get payment plans
   app.get('/api/payment-plans', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const filters = {
         patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
         status: req.query.status as string | undefined,
@@ -9309,7 +9389,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get upcoming due installments
   app.get('/api/installments/upcoming', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const days = parseInt(req.query.days as string) || 7;
       const upcoming = await storage.getUpcomingInstallments(practiceId, days);
       res.json(upcoming);
@@ -9322,7 +9402,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get overdue installments
   app.get('/api/installments/overdue', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const overdue = await storage.getOverdueInstallments(practiceId);
       res.json(overdue);
     } catch (error) {
@@ -9844,7 +9924,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all pending appointment requests (for admin/staff)
   app.get('/api/appointment-requests', isAuthenticated, async (req: any, res) => {
     try {
-      const practiceId = parseInt(req.query.practiceId as string) || 1;
+      const practiceId = getAuthorizedPracticeId(req);
       const status = req.query.status as string || undefined;
       const requests = await storage.getPracticeAppointmentRequests(practiceId, status);
 
