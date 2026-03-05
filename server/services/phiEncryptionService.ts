@@ -89,7 +89,7 @@ export function decryptField(encrypted: EncryptedField | string | null | undefin
 // PHI fields on each table that need encryption
 const PATIENT_PHI_FIELDS = [
   'firstName', 'lastName', 'dateOfBirth', 'email', 'phone',
-  'address', 'insuranceId', 'policyNumber', 'groupNumber',
+  'address', 'insuranceId', 'policyNumber', 'groupNumber', 'intakeData',
 ] as const;
 
 const SOAP_NOTE_PHI_FIELDS = [

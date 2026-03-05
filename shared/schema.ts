@@ -111,6 +111,9 @@ export const patients = pgTable("patients", {
   preferredContactMethod: varchar("preferred_contact_method").default("email"), // email, sms, both
   smsConsentGiven: boolean("sms_consent_given").default(false),
   smsConsentDate: timestamp("sms_consent_date"),
+  // Comprehensive intake form data (HIPAA, medical history, developmental, sensory, consents)
+  intakeData: jsonb("intake_data"),
+  intakeCompletedAt: timestamp("intake_completed_at"),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
