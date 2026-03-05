@@ -19,25 +19,53 @@ DROP FUNCTION IF EXISTS public.rls_user_role();
 CREATE OR REPLACE FUNCTION public.rls_user_practice_id()
 RETURNS INTEGER AS $$
   SELECT practice_id::INTEGER
-  FROM users
+  FROM public.users
   WHERE id = auth.uid()::TEXT
-$$ LANGUAGE SQL SECURITY DEFINER STABLE;
+$$ LANGUAGE SQL SECURITY DEFINER STABLE
+SET search_path = '';
 
 -- Check if user is admin
 CREATE OR REPLACE FUNCTION public.rls_is_admin()
 RETURNS BOOLEAN AS $$
   SELECT COALESCE(role = 'admin', false)
-  FROM users
+  FROM public.users
   WHERE id = auth.uid()::TEXT
-$$ LANGUAGE SQL SECURITY DEFINER STABLE;
+$$ LANGUAGE SQL SECURITY DEFINER STABLE
+SET search_path = '';
 
 -- Get user's role
 CREATE OR REPLACE FUNCTION public.rls_user_role()
 RETURNS TEXT AS $$
   SELECT COALESCE(role, 'therapist')
-  FROM users
+  FROM public.users
   WHERE id = auth.uid()::TEXT
-$$ LANGUAGE SQL SECURITY DEFINER STABLE;
+$$ LANGUAGE SQL SECURITY DEFINER STABLE
+SET search_path = '';
+
+-- Fix existing functions to have secure search_path
+DROP FUNCTION IF EXISTS public.get_user_practice_id();
+CREATE OR REPLACE FUNCTION public.get_user_practice_id()
+RETURNS INTEGER
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT practice_id::INTEGER
+  FROM public.users
+  WHERE id = auth.uid()::TEXT
+  LIMIT 1
+$$;
+
+DROP FUNCTION IF EXISTS public.prevent_audit_log_mutation() CASCADE;
+CREATE OR REPLACE FUNCTION public.prevent_audit_log_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_log rows cannot be modified or deleted';
+END;
+$$;
 
 -- =====================================================
 -- STEP 2: Drop all existing policies (clean slate)
