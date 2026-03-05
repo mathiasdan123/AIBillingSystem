@@ -80,6 +80,10 @@ export function getSession() {
       httpOnly: true,
       secure: true,
       maxAge: sessionTtl,
+      // CSRF Protection: 'lax' provides protection while allowing OAuth redirects
+      // - Cookies not sent on cross-site POST requests (blocks CSRF attacks)
+      // - Cookies sent on top-level navigations (allows OAuth callback)
+      // - Additional protection via OAuth state parameter validation
       sameSite: 'lax',
     },
   });

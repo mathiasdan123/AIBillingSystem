@@ -31,6 +31,34 @@ import { StediAdapter } from "./payer-integrations/adapters/payers/StediAdapter"
 const reimbursementPredictor = new AIReimbursementPredictor();
 const claimOptimizer = new AiClaimOptimizer();
 
+// Security: Safe error response helper - never expose internal error details
+const safeErrorResponse = (res: Response, statusCode: number, publicMessage: string, error?: any) => {
+  // Log the full error internally for debugging
+  if (error) {
+    logger.error(publicMessage, {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  }
+  // Return only the public-safe message to the client
+  return res.status(statusCode).json({ message: publicMessage });
+};
+
+// Security: Input validation helpers
+const validatePositiveInt = (value: string | undefined, defaultValue: number = 0): number | null => {
+  if (!value) return defaultValue;
+  const parsed = parseInt(value, 10);
+  if (isNaN(parsed) || parsed < 0) return null;
+  return parsed;
+};
+
+const validateDate = (value: string | undefined): Date | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return null;
+  return date;
+};
+
 // Middleware to check if user has admin or billing role
 const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => {
   try {
@@ -178,6 +206,76 @@ const verifyPatientConsent = async (patientId: number, accessReason: string = 't
   }
 };
 
+/**
+ * Security: Verify user has access to the specified patient
+ * Prevents IDOR attacks by checking patient belongs to user's practice
+ * Returns the patient if access is granted, null otherwise
+ */
+const verifyPatientAccess = async (req: any, patientId: number): Promise<{
+  patient: any | null;
+  authorized: boolean;
+  error?: string;
+}> => {
+  try {
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return { patient: null, authorized: false, error: 'Patient not found' };
+    }
+
+    // Get user's practice ID from request (set by isAuthenticated middleware)
+    const userPracticeId = req.userPracticeId;
+    const userRole = req.userRole;
+
+    // Admin users can access any patient
+    if (userRole === 'admin') {
+      return { patient, authorized: true };
+    }
+
+    // Non-admin users can only access patients in their practice
+    if (!userPracticeId) {
+      logger.warn('User has no practice assigned', { userId: req.user?.claims?.sub });
+      return { patient: null, authorized: false, error: 'User not assigned to a practice' };
+    }
+
+    if (patient.practiceId !== userPracticeId) {
+      logger.warn('Unauthorized patient access attempt', {
+        userId: req.user?.claims?.sub,
+        userPracticeId,
+        patientPracticeId: patient.practiceId,
+        patientId,
+      });
+      return { patient: null, authorized: false, error: 'Access denied' };
+    }
+
+    return { patient, authorized: true };
+  } catch (error) {
+    logger.error('Error verifying patient access', { patientId, error });
+    return { patient: null, authorized: false, error: 'Failed to verify access' };
+  }
+};
+
+// Security: File magic number validation
+const FILE_SIGNATURES: Record<string, number[][]> = {
+  'application/pdf': [[0x25, 0x50, 0x44, 0x46]], // %PDF
+  'application/msword': [[0xD0, 0xCF, 0x11, 0xE0]], // DOC (OLE)
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [[0x50, 0x4B, 0x03, 0x04]], // DOCX (ZIP)
+  'image/png': [[0x89, 0x50, 0x4E, 0x47]], // PNG
+  'image/jpeg': [[0xFF, 0xD8, 0xFF]], // JPEG
+};
+
+const validateFileSignature = (buffer: Buffer, mimeType: string): boolean => {
+  const signatures = FILE_SIGNATURES[mimeType];
+  if (!signatures) {
+    // For text files, we can't validate by magic number
+    if (mimeType === 'text/plain') return true;
+    return false;
+  }
+
+  return signatures.some(sig =>
+    sig.every((byte, index) => buffer[index] === byte)
+  );
+};
+
 // Configure multer for file uploads (in-memory storage)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -192,6 +290,30 @@ const upload = multer({
     }
   }
 });
+
+// Middleware to validate file content after upload (magic number check)
+const validateFileContent = (allowedTypes: string[]) => {
+  return (req: any, res: any, next: any) => {
+    if (!req.file) return next();
+
+    const buffer = req.file.buffer;
+    const mimeType = req.file.mimetype;
+
+    // Skip validation for text files (no magic number)
+    if (mimeType === 'text/plain') return next();
+
+    if (!validateFileSignature(buffer, mimeType)) {
+      logger.warn('File signature mismatch', {
+        claimed: mimeType,
+        filename: req.file.originalname,
+        firstBytes: buffer.slice(0, 8).toString('hex'),
+      });
+      return res.status(400).json({ error: 'File content does not match declared type' });
+    }
+
+    next();
+  };
+};
 
 // Generate mock eligibility data for testing
 // In production, this would be replaced by real API calls
@@ -511,8 +633,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error creating invite:", error);
-      console.error("Error details:", error?.message, error?.code, error?.detail);
-      res.status(500).json({ message: error?.message || "Failed to create invite" });
+      safeErrorResponse(res, 500, "Failed to create invite", error);
     }
   });
 
@@ -696,8 +817,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/analytics/capacity', isAuthenticated, async (req: any, res) => {
     try {
       const practiceId = getAuthorizedPracticeId(req);
-      const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 1));
-      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+
+      // Validate date parameters
+      const defaultStart = new Date();
+      defaultStart.setMonth(defaultStart.getMonth() - 1);
+      const start = validateDate(req.query.start as string) || defaultStart;
+      const end = validateDate(req.query.end as string) || new Date();
+
+      // Validate date range
+      if (start > end) {
+        return res.status(400).json({ message: 'Start date must be before end date' });
+      }
+
       const data = await storage.getCapacityUtilization(practiceId, start, end);
       res.json(data);
     } catch (error) {
@@ -1123,8 +1254,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Patient Plan Document & Benefits Routes
   // ============================================
 
-  // Test endpoint to verify plan parser works (DEV ONLY)
-  app.post('/api/test-plan-parser', async (req, res) => {
+  // Test endpoint to verify plan parser works (DEV ONLY - requires admin auth)
+  app.post('/api/test-plan-parser', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
       const { documentText } = req.body;
       if (!documentText) {
@@ -1133,8 +1264,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await parsePlanDocument(documentText, 'sbc');
       res.json(result);
     } catch (error) {
-      console.error('Test parser error:', error);
-      res.status(500).json({ error: 'Parser test failed', details: String(error) });
+      logger.error('Test parser error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Parser test failed' });
     }
   });
 
@@ -1152,20 +1283,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Public endpoint: Upload plan document during patient intake (no auth required)
-  // This allows patients to upload their SBC during registration
+  // Public endpoint: Upload plan document during patient intake
+  // Requires valid portal token to prevent unauthorized uploads
   app.post('/api/patients/:patientId/plan-documents/public', planDocUpload.single('document'), async (req: any, res) => {
     try {
       const patientId = parseInt(req.params.patientId);
+      const portalToken = req.headers['x-portal-token'] || req.body.portalToken;
 
-      if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
+      // Security: Validate portal token to prevent IDOR attacks
+      if (!portalToken) {
+        return res.status(401).json({ error: 'Portal token required' });
       }
 
       // Verify patient exists
       const patient = await storage.getPatient(patientId);
       if (!patient) {
         return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      // Verify portal token is valid and belongs to this patient
+      const portalAccess = await storage.getPatientPortalByToken(portalToken);
+      if (!portalAccess || portalAccess.patientId !== patientId) {
+        logger.warn('Invalid portal token for plan document upload', {
+          patientId,
+          providedToken: typeof portalToken === 'string' ? portalToken.substring(0, 8) + '...' : 'invalid',
+        });
+        return res.status(403).json({ error: 'Invalid portal token' });
+      }
+
+      // Check token expiration
+      if (new Date(portalAccess.portalTokenExpiresAt) < new Date()) {
+        return res.status(403).json({ error: 'Portal token expired' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
       }
 
       const { documentType = 'sbc', consentGiven = 'false' } = req.body;
@@ -2655,7 +2807,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error('Error checking eligibility:', error);
-      res.status(500).json({ message: error.message || 'Failed to check eligibility' });
+      safeErrorResponse(res, 500, 'Failed to check eligibility', error);
     }
   });
 
@@ -3172,7 +3324,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error('Error creating superbill:', error);
-      res.status(500).json({ message: error.message || 'Failed to create superbill' });
+      safeErrorResponse(res, 500, 'Failed to create superbill', error);
     }
   });
 
@@ -3337,7 +3489,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error('Error creating superbill:', error);
-      res.status(500).json({ message: error.message || 'Failed to create superbill' });
+      safeErrorResponse(res, 500, 'Failed to create superbill', error);
     }
   });
 
@@ -3358,9 +3510,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get single claim with line items
   app.get('/api/claims/:id', isAuthenticated, async (req: any, res) => {
     try {
-      const claim = await storage.getClaim(parseInt(req.params.id));
+      const claimId = validatePositiveInt(req.params.id);
+      if (claimId === null) {
+        return res.status(400).json({ message: 'Invalid claim ID' });
+      }
+
+      const claim = await storage.getClaim(claimId);
       if (!claim) {
         return res.status(404).json({ message: 'Claim not found' });
+      }
+
+      // Security: Verify user has access to this claim's practice
+      const userPracticeId = req.userPracticeId;
+      const userRole = req.userRole;
+      if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+        logger.warn('Unauthorized claim access attempt', {
+          userId: req.user?.claims?.sub,
+          userPracticeId,
+          claimPracticeId: claim.practiceId,
+          claimId,
+        });
+        return res.status(403).json({ message: 'Access denied' });
       }
 
       // Get line items for this claim
@@ -3393,7 +3563,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get line items for a claim
   app.get('/api/claims/:id/line-items', isAuthenticated, async (req: any, res) => {
     try {
-      const claimId = parseInt(req.params.id);
+      const claimId = validatePositiveInt(req.params.id);
+      if (claimId === null) {
+        return res.status(400).json({ message: 'Invalid claim ID' });
+      }
+
+      // Security: Verify user has access to this claim
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+      const userPracticeId = req.userPracticeId;
+      const userRole = req.userRole;
+      if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
       const lineItems = await storage.getClaimLineItems(claimId);
 
       // Enrich with CPT and ICD-10 details
@@ -3521,7 +3706,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error('Error creating claim:', error);
-      res.status(500).json({ message: error?.message || 'Failed to create claim' });
+      safeErrorResponse(res, 500, 'Failed to create claim', error);
     }
   });
 
@@ -3711,7 +3896,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error('Error submitting claim:', error);
-      res.status(500).json({ message: error.message || 'Failed to submit claim' });
+      safeErrorResponse(res, 500, 'Failed to submit claim', error);
     }
   });
 
@@ -3814,7 +3999,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error('Error checking claim status:', error);
-      res.status(500).json({ message: error.message || 'Failed to check claim status' });
+      safeErrorResponse(res, 500, 'Failed to check claim status', error);
     }
   });
 
@@ -4899,11 +5084,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
 
     } catch (error) {
-      console.error('Error generating AI SOAP note:', error);
-      res.status(500).json({
-        error: 'Failed to generate SOAP note and billing',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      });
+      logger.error('Error generating AI SOAP note', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Failed to generate SOAP note and billing' });
     }
   });
 
@@ -4937,10 +5119,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
     } catch (error) {
-      console.error('Voice transcription error:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Transcription failed'
-      });
+      logger.error('Voice transcription error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Transcription failed' });
     }
   });
 
@@ -4989,10 +5169,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Session recording processing error:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Failed to process recording'
-      });
+      logger.error('Session recording processing error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Failed to process recording' });
     }
   });
 
@@ -5036,10 +5214,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Transcription processing error:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Failed to process transcription'
-      });
+      logger.error('Transcription processing error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Failed to process transcription' });
     }
   });
 
@@ -5100,10 +5276,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ error: result.error });
       }
     } catch (error) {
-      console.error('TTS error:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Text-to-speech failed',
-      });
+      logger.error('TTS error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Text-to-speech failed' });
     }
   });
 
@@ -5126,10 +5300,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ error: result.error });
       }
     } catch (error) {
-      console.error('SOAP note TTS error:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Text-to-speech failed',
-      });
+      logger.error('SOAP note TTS error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Text-to-speech failed' });
     }
   });
 
@@ -5153,10 +5325,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ error: result.error });
       }
     } catch (error) {
-      console.error('Appeal TTS error:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Text-to-speech failed',
-      });
+      logger.error('Appeal TTS error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ error: 'Text-to-speech failed' });
     }
   });
 
@@ -6782,7 +6952,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       logger.error('Manual hard deletion failed', { error: error.message });
-      res.status(500).json({ message: 'Hard deletion failed', error: error.message });
+      res.status(500).json({ message: 'Hard deletion failed' });
     }
   });
 
