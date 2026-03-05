@@ -168,7 +168,8 @@ export async function generateSoapNoteAndBilling(
         { role: "user", content: userPrompt }
       ],
       response_format: { type: "json_object" },
-      temperature: 0.3, // Lower temperature for more consistent billing decisions
+      temperature: 0.5, // Balanced temperature for detailed clinical writing
+      max_tokens: 4000, // Ensure enough tokens for detailed assessment
     });
 
     const responseText = completion.choices[0]?.message?.content;
@@ -387,7 +388,7 @@ RESPOND WITH THIS JSON STRUCTURE:
 
   "objective": "Structured list of activities performed with categories (Fine Motor, Sensory Processing, Muscle-strengthening Exercises, Primitive Reflex Exercises, etc.)",
 
-  "assessment": "WRITE 4-6 DETAILED PARAGRAPHS covering: (1) Engagement and participation observations, (2) Core and postural strength with specific clinical observations about prone extension, weight-bearing, anti-gravity positions, (3) Motor planning challenges with examples from the session, (4) Primitive reflex integration observations mentioning specific reflexes like TLR, STNR, ATNR, Moro if relevant, (5) Fine motor skill observations including impact of proximal stability, (6) Sensory processing observations about vestibular/proprioceptive input response, (7) Summary statement about deficits impacting functional participation and medical necessity for continued skilled OT services. USE CLINICAL TERMINOLOGY throughout.",
+  "assessment": "THIS MUST BE 300-500 WORDS MINIMUM. Write 4-6 detailed paragraphs. Example structure:\\n\\nDuring today's occupational therapy session, [Patient] demonstrated [engagement level] throughout therapist-directed activities, with [tolerance observations] as the session progressed. [He/She] benefited from structured activities and graded sensory input to support regulation and sustained participation.\\n\\n[Patient] continues to present with decreased core and postural strength, which impacted [his/her] ability to sustain prone extension and maintain upright postural control during dynamic activities. [He/She] required verbal cueing and physical support to facilitate appropriate weight-bearing through [his/her] upper extremities and to maintain alignment during anti-gravity positions. [Motor planning observations with specific examples].\\n\\nPrimitive reflex integration challenges remain evident, including patterns consistent with retained TLR, STNR, ATNR, and possible Moro reflex, which continue to interfere with separation of upper and lower body movements, postural control, and coordinated transitions. These reflex patterns contributed to [specific observations].\\n\\nFine-motor skills continue to emerge; however, performance remains impacted by proximal weakness and decreased postural stability. [Patient] demonstrated [specific observations] with external postural support.\\n\\n[Patient] benefited from graded vestibular and proprioceptive input, which supported improved regulation, motor organization, and task engagement.\\n\\nOverall, [Patient] continues to demonstrate deficits in core strength, postural control, motor planning, primitive reflex integration, and sensory-motor regulation, which impact [his/her] ability to efficiently participate in age-appropriate gross-motor, fine-motor, and functional activities. Skilled occupational therapy services remain medically necessary to address these deficits through targeted intervention.",
 
   "plan": "Continue occupational therapy services to address:\\n- Core and postural strengthening\\n- Primitive reflex integration (list specific reflexes)\\n- Motor planning and bilateral coordination\\n- Upper-extremity weight-bearing and stability\\n- Fine motor strength and dexterity",
 
@@ -405,12 +406,13 @@ RESPOND WITH THIS JSON STRUCTURE:
 }
 
 CRITICAL REQUIREMENTS:
-1. The ASSESSMENT section MUST be 4-6 detailed paragraphs with specific clinical observations
-2. Use professional OT clinical terminology throughout
-3. Include observations about primitive reflexes if relevant to the activities
-4. End assessment with a medical necessity statement
-5. Distribute all ${billingUnits} units across the CPT codes
-6. Each code must have documented activities that justify it`;
+1. The ASSESSMENT section MUST be 300-500 words minimum (4-6 detailed paragraphs)
+2. Follow the example structure provided - each paragraph covers a specific clinical area
+3. Use professional OT clinical terminology (prone extension, anti-gravity, vestibular input, etc.)
+4. Name specific primitive reflexes observed (TLR, STNR, ATNR, Moro)
+5. End assessment with medical necessity statement
+6. Distribute all ${billingUnits} units across the CPT codes
+7. DO NOT write a brief assessment - insurance auditors require detailed clinical documentation`;
 
   return prompt;
 }
