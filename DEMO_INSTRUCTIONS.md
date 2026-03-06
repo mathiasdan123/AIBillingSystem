@@ -1,7 +1,7 @@
 # AIBillingSystem Demo Instructions
 
 ## Demo URL
-**https://empty-ducks-invite.loca.lt**
+**https://aibilling-demo.loca.lt**
 
 ---
 
@@ -51,7 +51,7 @@ Simply go to the main URL above. You'll be automatically logged in as a demo adm
 1. **Get Demo Token:**
    Open this URL in your browser:
    ```
-   https://empty-ducks-invite.loca.lt/api/patient-portal/demo-login
+   https://aibilling-demo.loca.lt/api/patient-portal/demo-login
    ```
 
    You'll see a response like:
@@ -65,7 +65,7 @@ Simply go to the main URL above. You'll be automatically logged in as a demo adm
 2. **Access Patient Portal:**
    Go to:
    ```
-   https://empty-ducks-invite.loca.lt/patient-portal
+   https://aibilling-demo.loca.lt/patient-portal
    ```
 
 ### Patient Portal Features
