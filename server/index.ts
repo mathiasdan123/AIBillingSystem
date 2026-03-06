@@ -76,8 +76,18 @@ app.use(cors({
       return callback(null, true);
     }
 
+    // Allow Railway domains (same-origin requests from deployed app)
+    if (isRailwayDemo && origin?.includes('.railway.app')) {
+      return callback(null, true);
+    }
+
     // In production, check against allowed origins
     if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // If no explicit origins set and we're in demo mode, allow
+    if (isRailwayDemo && allowedOrigins.length === 0) {
       return callback(null, true);
     }
 
@@ -117,18 +127,32 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Content Security Policy - prevents XSS and data injection attacks
   // Note: 'unsafe-inline' for styles needed for some UI libraries; review for stricter CSP
-  res.setHeader('Content-Security-Policy', [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
-    "img-src 'self' data: https: blob:",
-    "connect-src 'self' https://api.stripe.com https://api.openai.com wss:",
-    "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-  ].join('; '));
+  // For Railway demo, we use a more permissive CSP
+  if (isRailwayDemo) {
+    // Demo mode: permissive CSP for easier testing
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self' https: wss:",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+      "style-src 'self' 'unsafe-inline' https:",
+      "font-src 'self' https: data:",
+      "img-src 'self' data: https: blob:",
+      "connect-src 'self' https: wss:",
+      "frame-src 'self' https:",
+    ].join('; '));
+  } else {
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: https: blob:",
+      "connect-src 'self' https://api.stripe.com https://api.openai.com wss:",
+      "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; '));
+  }
   next();
 });
 
@@ -239,16 +263,8 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || '5000', 10);
   const isDev = process.env.NODE_ENV === 'development';
 
-  // reusePort is not supported on macOS, only use in production (Replit)
-  const listenOptions: any = {
-    port,
-    host: "0.0.0.0",
-  };
-  if (!isDev) {
-    listenOptions.reusePort = true;
-  }
-
-  server.listen(listenOptions, () => {
+  // reusePort causes issues on many platforms - just use standard options
+  server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
 
     // Start the scheduler for daily reports
