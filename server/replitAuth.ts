@@ -19,13 +19,21 @@ const isLocalDev =
   !process.env.HEROKU_APP_NAME &&
   !process.env.AWS_LAMBDA_FUNCTION_NAME;
 
+// Railway demo mode - use simple session auth instead of Replit OAuth
+const isRailwayDemo = !!process.env.RAILWAY_ENVIRONMENT;
+
 // Log warning if dev mode is active
 if (isLocalDev) {
   console.warn('⚠️  WARNING: Running in local development mode with mock authentication');
   console.warn('⚠️  This should NEVER appear in production logs');
 }
 
-if (!isLocalDev && !process.env.REPLIT_DOMAINS) {
+if (isRailwayDemo) {
+  console.log('🚂 Running on Railway - using demo authentication mode');
+}
+
+// Only require REPLIT_DOMAINS when on Replit (not local dev, not Railway)
+if (!isLocalDev && !isRailwayDemo && !process.env.REPLIT_DOMAINS) {
   throw new Error("Environment variable REPLIT_DOMAINS not provided");
 }
 
@@ -117,9 +125,9 @@ export async function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Local development mode - bypass Replit OAuth
-  if (isLocalDev) {
-    console.log('Running in local development mode - using mock auth');
+  // Local development mode or Railway demo - bypass Replit OAuth
+  if (isLocalDev || isRailwayDemo) {
+    console.log(isRailwayDemo ? 'Running on Railway - using demo auth' : 'Running in local development mode - using mock auth');
 
     passport.serializeUser((user: Express.User, cb) => {
       cb(null, user);
@@ -128,33 +136,33 @@ export async function setupAuth(app: Express) {
       cb(null, user);
     });
 
-    // Mock login for local dev - automatically log in as admin
+    // Mock login for dev/demo - automatically log in as admin
     app.get("/api/login", async (req, res) => {
       const devUser = {
         claims: {
-          sub: 'dev-user-123',
-          email: 'admin@local.dev',
-          first_name: 'Dev',
+          sub: 'demo-user-123',
+          email: 'admin@demo.therapybill',
+          first_name: 'Demo',
           last_name: 'Admin',
         },
-        access_token: 'dev-token',
+        access_token: 'demo-token',
         expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours
       };
 
-      // Upsert the dev user in storage with admin role
+      // Upsert the demo user in storage with admin role
       await storage.upsertUser({
-        id: 'dev-user-123',
-        email: 'admin@local.dev',
-        firstName: 'Dev',
+        id: 'demo-user-123',
+        email: 'admin@demo.therapybill',
+        firstName: 'Demo',
         lastName: 'Admin',
         profileImageUrl: null,
       });
       // Update role to admin for full access
-      await storage.updateUserRole('dev-user-123', 'admin');
+      await storage.updateUserRole('demo-user-123', 'admin');
 
       req.login(devUser, (err) => {
         if (err) {
-          console.error('Dev login error:', err);
+          console.error('Demo login error:', err);
           return res.status(500).json({ error: 'Login failed' });
         }
         res.redirect('/');
@@ -279,10 +287,10 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     }
   }
 
-  // For development user, skip token expiration checks
-  if (user.claims?.sub === 'dev-user-123') {
-    console.log('Development user authenticated');
-    // Set practice ID for dev user (admin has access to all)
+  // For development/demo user, skip token expiration checks
+  if (user.claims?.sub === 'dev-user-123' || user.claims?.sub === 'demo-user-123') {
+    console.log('Development/demo user authenticated');
+    // Set practice ID for dev/demo user (admin has access to all)
     (req as any).userPracticeId = 1;
     (req as any).userRole = 'admin';
     return next();
