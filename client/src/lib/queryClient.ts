@@ -10,6 +10,11 @@ async function throwIfResNotOk(res: Response) {
 
 // Get auth headers from Supabase session
 async function getAuthHeaders(): Promise<HeadersInit> {
+  // If Supabase isn't configured, skip auth headers (demo/dev mode)
+  if (!supabase) {
+    return {};
+  }
+
   const { data: { session } } = await supabase.auth.getSession();
 
   if (session?.access_token) {
