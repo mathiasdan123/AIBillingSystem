@@ -9,24 +9,22 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase credentials not configured. Auth will use dev mode.');
 }
 
-// Server-side Supabase client
-export const supabase = createClient(
-  supabaseUrl || '',
-  supabaseAnonKey || '',
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  }
-);
+// Server-side Supabase client - only create if credentials are available
+export const supabase = (supabaseUrl && supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    })
+  : null;
 
-// Check if we're in local development mode without Supabase
-const isLocalDevWithoutSupabase = process.env.NODE_ENV === 'development' && (!supabaseUrl || !supabaseAnonKey);
+// Check if we're running without Supabase (dev mode, Railway demo, etc.)
+const isWithoutSupabase = !supabaseUrl || !supabaseAnonKey || !supabase;
 
 export async function setupAuth(app: Express) {
   // Local development mode - mock auth
-  if (isLocalDevWithoutSupabase) {
+  if (isWithoutSupabase) {
     console.log('Running in local development mode - using mock auth');
 
     app.get('/api/login', async (req, res) => {
@@ -54,7 +52,7 @@ export async function setupAuth(app: Express) {
   app.get('/api/auth/callback', async (req, res) => {
     const code = req.query.code as string;
 
-    if (code) {
+    if (code && supabase) {
       try {
         await supabase.auth.exchangeCodeForSession(code);
       } catch (error) {
@@ -69,7 +67,7 @@ export async function setupAuth(app: Express) {
 // Middleware to verify Supabase JWT token
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
   // Local dev mode - auto-authenticate as dev user
-  if (isLocalDevWithoutSupabase) {
+  if (isWithoutSupabase) {
     // Create/update dev user in storage
     const devUser = {
       id: 'dev-user-123',
@@ -102,6 +100,9 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
 
   try {
     // Verify the JWT with Supabase
+    if (!supabase) {
+      return res.status(401).json({ message: 'Unauthorized - Auth not configured' });
+    }
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (error || !user) {
