@@ -6,8 +6,10 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// Use regular pg for local development, neon-serverless for production
+// Use regular pg for local development and Railway, neon-serverless only for Replit/Neon
 const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
+const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
+const useRegularPg = isLocalDev || isRailway;
 
 let pool: any;
 let db: any;
@@ -15,12 +17,13 @@ let dbReady: Promise<void>;
 
 // Initialize database connection
 dbReady = (async () => {
-  if (isLocalDev) {
-    // Use regular pg driver for local PostgreSQL
+  if (useRegularPg) {
+    // Use regular pg driver for local PostgreSQL and Railway
     const pg = await import('pg');
     const { drizzle: drizzlePg } = await import('drizzle-orm/node-postgres');
     pool = new pg.default.Pool({ connectionString: process.env.DATABASE_URL });
     db = drizzlePg({ client: pool, schema });
+    console.log('Using regular PostgreSQL driver');
   } else {
     // Use neon-serverless for production (Replit/Neon)
     const { Pool, neonConfig } = await import('@neondatabase/serverless');
@@ -29,6 +32,7 @@ dbReady = (async () => {
     neonConfig.webSocketConstructor = ws.default;
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
     db = drizzleNeon({ client: pool, schema });
+    console.log('Using Neon serverless driver');
   }
 })();
 
