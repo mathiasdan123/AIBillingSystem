@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,14 @@ import { AuthModal } from "@/components/AuthModal";
 
 export default function Landing() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
+
+  // Auto-login for demo mode
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('demo') === 'true') {
+      window.location.href = '/api/login';
+    }
+  }, []);
 
   const handleLogin = () => {
     setAuthModalOpen(true);
