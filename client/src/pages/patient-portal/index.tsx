@@ -36,6 +36,26 @@ export default function PatientPortalPage() {
     return localStorage.getItem("patientPortalToken");
   });
 
+  // Demo mode auto-login
+  const [demoLoading, setDemoLoading] = useState(false);
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('demo') === 'true' && !portalToken) {
+      setDemoLoading(true);
+      fetch('/api/patient-portal/demo-login')
+        .then(res => res.json())
+        .then(data => {
+          if (data.portalToken) {
+            localStorage.setItem("patientPortalToken", data.portalToken);
+            setPortalToken(data.portalToken);
+            window.history.replaceState({}, '', window.location.pathname);
+          }
+        })
+        .catch(console.error)
+        .finally(() => setDemoLoading(false));
+    }
+  }, [portalToken]);
+
   const [activeTab, setActiveTab] = useState(params.tab || "dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -61,6 +81,18 @@ export default function PatientPortalPage() {
     setActiveTab(tab);
     setMobileMenuOpen(false);
   };
+
+  // Demo loading state
+  if (demoLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading demo patient portal...</p>
+        </div>
+      </div>
+    );
+  }
 
   // If no token and not on login path, show login
   if (!portalToken) {
