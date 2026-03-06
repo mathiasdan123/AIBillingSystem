@@ -3,6 +3,9 @@
 ## Demo URL
 **https://aibilling-demo.loca.lt**
 
+**Tunnel Password:** `68.173.239.185`
+(Enter this when prompted on first visit)
+
 ---
 
 ## Admin/Therapist Portal
@@ -82,7 +85,7 @@ Simply go to the main URL above. You'll be automatically logged in as a demo adm
 
 ## Notes
 
-- **First Visit:** You may see a "Click to Continue" security page from localtunnel - just click through it
+- **First Visit:** Enter tunnel password `68.173.239.185` when prompted (only needed once per IP)
 - **Mock Data:** The demo uses pre-seeded sample data for patients, appointments, and claims
 - **No Real PHI:** All data shown is fictional test data
 - **Session:** Your session will persist in the browser
