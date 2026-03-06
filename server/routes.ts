@@ -9812,9 +9812,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Email is required' });
       }
 
-      // Find patient by email
-      const patients = await storage.getPatients(1); // TODO: Support multiple practices
-      const patient = patients.find(p => p.email?.toLowerCase() === email.toLowerCase());
+      // Find patient by email across all practices
+      const patient = await storage.getPatientByEmail(email);
 
       if (!patient) {
         // For security, don't reveal whether the email exists
@@ -9911,8 +9910,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Demo login for patient portal (development/demo only)
   app.get('/api/patient-portal/demo-login', async (req, res) => {
     try {
-      // Find first patient with portal access
-      const patients = await storage.getPatients(1); // Practice ID 1
+      // Find first patient with portal access from first available practice
+      const practiceIds = await storage.getAllPracticeIds();
+      if (!practiceIds.length) {
+        return res.status(404).json({ message: 'No practices found for demo' });
+      }
+      const patients = await storage.getPatients(practiceIds[0]);
       if (!patients.length) {
         return res.status(404).json({ message: 'No patients found for demo' });
       }

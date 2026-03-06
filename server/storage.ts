@@ -515,6 +515,23 @@ export class DatabaseStorage implements IStorage {
     return patient ? decryptPatientRecord(patient) as Patient : undefined;
   }
 
+  async getPatientByEmail(email: string): Promise<Patient | undefined> {
+    // Search across all practices for patient portal login
+    const allPatients = await db
+      .select()
+      .from(patients)
+      .where(isNull(patients.deletedAt));
+
+    // Decrypt and find matching email (email is encrypted)
+    for (const patient of allPatients) {
+      const decrypted = decryptPatientRecord(patient) as Patient;
+      if (decrypted.email?.toLowerCase() === email.toLowerCase()) {
+        return decrypted;
+      }
+    }
+    return undefined;
+  }
+
   async updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient> {
     const encrypted = encryptPatientRecord(patient as any);
     const [updatedPatient] = await db
