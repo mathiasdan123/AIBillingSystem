@@ -11,8 +11,16 @@ import { startScheduler } from "./scheduler";
 // SECURITY: Production environment validation
 // =============================================================================
 const isProduction = process.env.NODE_ENV === 'production';
+const isRailwayDemo = !!process.env.RAILWAY_ENVIRONMENT;
 
-if (isProduction) {
+// For Railway demo, provide defaults for non-critical demo environment
+if (isRailwayDemo && !process.env.PHI_ENCRYPTION_KEY) {
+  // Demo key - only for demo with fake data, never for real PHI
+  process.env.PHI_ENCRYPTION_KEY = '0'.repeat(64);
+  console.warn('⚠️  Using demo PHI encryption key - NOT FOR REAL DATA');
+}
+
+if (isProduction && !isRailwayDemo) {
   const requiredEnvVars = [
     'DATABASE_URL',
     'SESSION_SECRET',
