@@ -1,7 +1,18 @@
 import OpenAI from "openai";
 import { storage } from "../storage";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('OPENAI_API_KEY not set - insurance cost estimation AI disabled');
+    return null;
+  }
+  if (!openai) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 // Your standard session rate
 const STANDARD_SESSION_RATE = 300;
@@ -214,7 +225,11 @@ RESPOND WITH THIS JSON STRUCTURE:
 If a rate is not specified, use null. Be precise with the numbers found in the document.`;
 
   try {
-    const response = await openai.chat.completions.create({
+    const client = getOpenAI();
+    if (!client) {
+      throw new Error("OpenAI not configured");
+    }
+    const response = await client.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {

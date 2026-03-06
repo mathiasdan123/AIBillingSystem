@@ -2,7 +2,18 @@ import OpenAI from "openai";
 import { transcribeAudioBase64 } from "./voiceService";
 import { optimizeBillingCodes } from "./aiBillingOptimizer";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('OPENAI_API_KEY not set - session recording AI disabled');
+    return null;
+  }
+  if (!openai) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 export interface SessionRecordingData {
   audioBase64: string;
@@ -125,7 +136,11 @@ IMPORTANT DOCUMENTATION GUIDELINES:
 - If information is not mentioned in the transcription, make reasonable clinical inferences based on the session type and activities`;
 
   try {
-    const response = await openai.chat.completions.create({
+    const client = getOpenAI();
+    if (!client) {
+      throw new Error("OpenAI not configured");
+    }
+    const response = await client.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
@@ -255,7 +270,11 @@ RESPOND WITH JSON:
   "notes": "Overall billing strategy explanation"
 }`;
 
-  const response = await openai.chat.completions.create({
+  const client = getOpenAI();
+  if (!client) {
+    throw new Error("OpenAI not configured");
+  }
+  const response = await client.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {

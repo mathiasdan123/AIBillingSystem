@@ -1,105 +1,54 @@
-# AIBillingSystem Demo Instructions
+# TherapyBill AI - Demo Access
 
-## Demo URL
-**https://aibilling-demo.loca.lt**
+## Therapist/Admin Portal
 
-**Tunnel Password:** `68.173.239.185`
-(Enter this when prompted on first visit)
+**URL:** https://aibillingsystem-production-e60c.up.railway.app
 
----
+1. Open the link above
+2. Click **"Login"** in the top right
+3. You'll be logged in as a demo admin with full access
 
-## Admin/Therapist Portal
+### What to Explore
 
-### Access
-Simply go to the main URL above. You'll be automatically logged in as a demo admin user.
-
-### Features to Explore
-
-| Feature | Navigation |
-|---------|------------|
-| Dashboard | Home page - overview of practice metrics |
-| Patients | View and manage patient records |
-| Calendar | Appointment scheduling |
-| SOAP Notes | Clinical documentation |
-| Claims | Insurance claim management |
-| Analytics | Revenue and claims analytics |
-| Appeals | Denial management and appeals |
-
-### Key Workflows to Demo
-
-1. **Patient Intake**
-   - Click "Patient Intake" in sidebar
-   - Fill out the comprehensive intake form
-   - See HIPAA-compliant data collection
-
-2. **SOAP Note Creation**
-   - Go to "SOAP Notes"
-   - Create a new note with AI-assisted billing code suggestions
-
-3. **Claims Management**
-   - View claims by status (draft, submitted, paid, denied)
-   - See AI-optimized billing recommendations
-
-4. **Analytics Dashboard**
-   - View revenue trends
-   - See denial reasons breakdown
-   - Track collection rates
+| Feature | Description |
+|---------|-------------|
+| **Dashboard** | Practice overview with key metrics |
+| **Patients** | Patient records and intake forms |
+| **Calendar** | Appointment scheduling |
+| **SOAP Notes** | Clinical documentation with AI-assisted billing codes |
+| **Claims** | Insurance claim management and submission |
+| **Analytics** | Revenue trends and denial analytics |
+| **Appeals** | Denial management and appeal workflows |
 
 ---
 
 ## Patient Portal
 
-### Access
+**Step 1:** Open this link to get your demo login token:
+https://aibillingsystem-production-e60c.up.railway.app/api/patient-portal/demo-login
 
-1. **Get Demo Token:**
-   Open this URL in your browser:
-   ```
-   https://aibilling-demo.loca.lt/api/patient-portal/demo-login
-   ```
+**Step 2:** Copy the `portalToken` value from the response
 
-   You'll see a response like:
-   ```json
-   {
-     "portalToken": "abc123...",
-     "patient": {"firstName": "John", "lastName": "Smith"}
-   }
-   ```
-
-2. **Access Patient Portal:**
-   Go to:
-   ```
-   https://aibilling-demo.loca.lt/patient-portal
-   ```
+**Step 3:** Go to the Patient Portal:
+https://aibillingsystem-production-e60c.up.railway.app/patient-portal
 
 ### Patient Portal Features
 
-| Feature | Description |
-|---------|-------------|
-| Appointments | View upcoming and past appointments |
-| Statements | See billing statements and balances |
-| Documents | Access intake forms and consents |
-| Messages | Secure messaging with therapist |
-| Profile | Update contact information |
+- View upcoming and past appointments
+- Access billing statements
+- Complete intake forms
+- Secure messaging with provider
 
 ---
 
-## Notes
+## About This Demo
 
-- **First Visit:** Enter tunnel password `68.173.239.185` when prompted (only needed once per IP)
-- **Mock Data:** The demo uses pre-seeded sample data for patients, appointments, and claims
-- **No Real PHI:** All data shown is fictional test data
-- **Session:** Your session will persist in the browser
-
----
-
-## Technical Details
-
-- **Stack:** React + TypeScript frontend, Express + PostgreSQL backend
-- **Security:** HIPAA-compliant encryption, role-based access control
-- **AI Features:** OpenAI-powered SOAP note generation and billing optimization
+- All data shown is fictional sample data (no real PHI)
+- The system demonstrates HIPAA-compliant workflows
+- AI features include: SOAP note generation, billing code optimization, and denial prediction
 
 ---
 
-## Questions?
+**Built with:** React, TypeScript, PostgreSQL, OpenAI
 
-Contact: [Your contact info here]
+Questions? Contact Daniel Kramer

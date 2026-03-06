@@ -11,10 +11,19 @@
 import OpenAI from 'openai';
 import { InsertPatientPlanBenefits } from '../../shared/schema';
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialize OpenAI client
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('OPENAI_API_KEY not set - plan document parsing AI disabled');
+    return null;
+  }
+  if (!openai) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 export interface ParsedBenefits {
   // Plan identification
@@ -76,10 +85,14 @@ export async function parsePlanDocument(
   const startTime = Date.now();
 
   try {
+    const client = getOpenAI();
+    if (!client) {
+      throw new Error('OpenAI not configured');
+    }
     const systemPrompt = getSystemPrompt(documentType);
     const userPrompt = getUserPrompt(documentContent, documentType);
 
-    const response = await openai.chat.completions.create({
+    const response = await client.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
@@ -137,10 +150,14 @@ export async function parsePlanDocumentFromPDF(
   const startTime = Date.now();
 
   try {
+    const client = getOpenAI();
+    if (!client) {
+      throw new Error('OpenAI not configured');
+    }
     const systemPrompt = getSystemPrompt(documentType);
 
     // Use GPT-4 Vision to analyze the PDF (as image)
-    const response = await openai.chat.completions.create({
+    const response = await client.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },

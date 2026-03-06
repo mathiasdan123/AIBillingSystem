@@ -5,9 +5,18 @@
 
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('OPENAI_API_KEY not set - review response AI disabled');
+    return null;
+  }
+  if (!openai) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 interface ReviewResponseOptions {
   reviewerName: string;
@@ -73,7 +82,11 @@ ${isNegative ? 'This is a negative review - be apologetic and solution-focused.'
 ${isPositive ? 'This is a positive review - express genuine gratitude.' : ''}`;
 
   try {
-    const completion = await openai.chat.completions.create({
+    const client = getOpenAI();
+    if (!client) {
+      return { success: false, error: 'OpenAI not configured' };
+    }
+    const completion = await client.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
@@ -119,7 +132,11 @@ export async function analyzeReview(reviewText: string, rating: number): Promise
   }
 
   try {
-    const completion = await openai.chat.completions.create({
+    const client = getOpenAI();
+    if (!client) {
+      throw new Error('OpenAI not configured');
+    }
+    const completion = await client.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         {
@@ -368,7 +385,11 @@ ${feedbackText ? `Their feedback: "${feedbackText}"` : 'No written feedback prov
 ${practicePhone ? `Practice phone: ${practicePhone}` : ''}
 ${practiceEmail ? `Practice email: ${practiceEmail}` : ''}`;
 
-      const completion = await openai.chat.completions.create({
+      const client = getOpenAI();
+      if (!client) {
+        throw new Error('OpenAI not configured');
+      }
+      const completion = await client.chat.completions.create({
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },

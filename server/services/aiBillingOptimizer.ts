@@ -7,7 +7,18 @@ import {
   getPayerRatesSummary
 } from "./reimbursementOptimizer";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('OPENAI_API_KEY not set - AI billing optimization disabled');
+    return null;
+  }
+  if (!openai) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 interface SessionDetails {
   duration: number; // in minutes
@@ -155,7 +166,11 @@ Based on the session documentation, recommend the optimal billing codes. Return 
 Focus on accuracy and compliance. When multiple codes are clinically valid for the documented service, choose the one that reimburses better.`;
 
   try {
-    const response = await openai.chat.completions.create({
+    const client = getOpenAI();
+    if (!client) {
+      throw new Error("OpenAI not configured");
+    }
+    const response = await client.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
