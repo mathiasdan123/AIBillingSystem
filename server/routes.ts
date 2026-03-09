@@ -119,11 +119,8 @@ const authorizePractice = async (req: any, res: Response, next: NextFunction) =>
 
     // Admin users can access any practice
     if (user.role === 'admin') {
-      // If admin requests a specific practice, use that; otherwise use their default
-      const practiceId = requestedPracticeId || user.practiceId;
-      if (!practiceId) {
-        return res.status(400).json({ message: "Practice ID required. Admin must specify practiceId or be assigned to a practice." });
-      }
+      // If admin requests a specific practice, use that; otherwise use their default or demo default (1)
+      const practiceId = requestedPracticeId || user.practiceId || 1;
       req.authorizedPracticeId = practiceId;
       return next();
     }
@@ -165,10 +162,8 @@ const getAuthorizedPracticeId = (req: any): number => {
 
   // Admin users can access any practice
   if (userRole === 'admin') {
-    const practiceId = requestedPracticeId || userPracticeId;
-    if (!practiceId) {
-      throw new Error('Practice ID required. Admin must specify practiceId query parameter or be assigned to a practice.');
-    }
+    // Default to practice 1 for demo admin without assigned practice
+    const practiceId = requestedPracticeId || userPracticeId || 1;
     return practiceId;
   }
 

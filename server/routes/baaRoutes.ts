@@ -12,10 +12,8 @@ function getAuthorizedPracticeId(req: any): number {
   const requestedPracticeId = req.query?.practiceId ? parseInt(req.query.practiceId as string) : undefined;
 
   if (userRole === 'admin') {
-    const practiceId = requestedPracticeId || userPracticeId;
-    if (!practiceId) {
-      throw new Error('Practice ID required. Admin must specify practiceId or be assigned to a practice.');
-    }
+    // For admin without practice, default to practice 1 (demo mode)
+    const practiceId = requestedPracticeId || userPracticeId || 1;
     return practiceId;
   }
 
