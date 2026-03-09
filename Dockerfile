@@ -16,8 +16,15 @@ RUN npm ci
 # Copy source files
 COPY . .
 
+# Build argument to bust cache - updated each deployment
+ARG BUILD_DATE=unknown
+RUN echo "Build date: ${BUILD_DATE}"
+
 # Build the application with production optimizations
 RUN npm run build
+
+# Verify no vite imports in production build
+RUN ! grep -q "from \"vite\"" dist/index.js || (echo "ERROR: vite import found in production build!" && exit 1)
 
 # Stage 2: Production image
 FROM node:20-alpine AS production
