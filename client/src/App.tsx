@@ -1,46 +1,59 @@
 import { Switch, Route } from "wouter";
+import { Suspense, lazy } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import SimpleNavigation from "@/components/SimpleNavigation";
-import Landing from "@/pages/landing";
-import DataUpload from "@/pages/data-upload";
-import Dashboard from "@/pages/dashboard";
-import Claims from "@/pages/claims";
-import Patients from "@/pages/patients";
-import PatientAuthorizePage from "@/pages/patient-authorize";
-import Analytics from "@/pages/analytics";
-import Reports from "@/pages/reports";
-import Expenses from "@/pages/expenses";
-import Settings from "@/pages/settings";
-import PatientIntake from "@/pages/intake";
-import SoapNotes from "@/pages/soap-notes";
-import Calendar from "@/pages/calendar";
-import Accounting from "@/pages/accounting";
-import InvitePage from "@/pages/invite";
-import PayerManagement from "@/pages/payer-management";
-import BreachIncidents from "@/pages/breach-incidents";
-import Appeals from "@/pages/appeals";
-import Waitlist from "@/pages/waitlist";
-import Reviews from "@/pages/reviews";
-import PublicBooking from "@/pages/public-booking";
-import BookingSettings from "@/pages/booking-settings";
-import Telehealth from "@/pages/telehealth";
-import TelehealthJoin from "@/pages/telehealth-join";
-import Messages from "@/pages/messages";
-import PatientPortal from "@/pages/patient-portal";
-import NewPatientPortal from "@/pages/patient-portal/index";
-import MfaChallenge from "@/pages/mfa-challenge";
-import OutcomeMeasures from "@/pages/outcome-measures";
-import PublicFeedback from "@/pages/public-feedback";
-import SessionRecorder from "@/pages/session-recorder";
-import InsuranceRates from "@/pages/insurance-rates";
-import Billing from "@/pages/billing";
-import Reimbursement from "@/pages/reimbursement";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
+
+// Keep frequently used pages in the main bundle
+import Landing from "@/pages/landing";
+import Dashboard from "@/pages/dashboard";
+import Patients from "@/pages/patients";
+import Calendar from "@/pages/calendar";
+
+// Lazy load less frequently accessed pages for code-splitting
+const Analytics = lazy(() => import("@/pages/analytics"));
+const Accounting = lazy(() => import("@/pages/accounting"));
+const Claims = lazy(() => import("@/pages/claims"));
+const Appeals = lazy(() => import("@/pages/appeals"));
+const Reports = lazy(() => import("@/pages/reports"));
+const Expenses = lazy(() => import("@/pages/expenses"));
+const Settings = lazy(() => import("@/pages/settings"));
+const DataUpload = lazy(() => import("@/pages/data-upload"));
+const PatientIntake = lazy(() => import("@/pages/intake"));
+const SoapNotes = lazy(() => import("@/pages/soap-notes"));
+const InvitePage = lazy(() => import("@/pages/invite"));
+const PayerManagement = lazy(() => import("@/pages/payer-management"));
+const BreachIncidents = lazy(() => import("@/pages/breach-incidents"));
+const Waitlist = lazy(() => import("@/pages/waitlist"));
+const Reviews = lazy(() => import("@/pages/reviews"));
+const PublicBooking = lazy(() => import("@/pages/public-booking"));
+const BookingSettings = lazy(() => import("@/pages/booking-settings"));
+const Telehealth = lazy(() => import("@/pages/telehealth"));
+const TelehealthJoin = lazy(() => import("@/pages/telehealth-join"));
+const Messages = lazy(() => import("@/pages/messages"));
+const PatientPortal = lazy(() => import("@/pages/patient-portal"));
+const NewPatientPortal = lazy(() => import("@/pages/patient-portal/index"));
+const MfaChallenge = lazy(() => import("@/pages/mfa-challenge"));
+const OutcomeMeasures = lazy(() => import("@/pages/outcome-measures"));
+const PublicFeedback = lazy(() => import("@/pages/public-feedback"));
+const SessionRecorder = lazy(() => import("@/pages/session-recorder"));
+const InsuranceRates = lazy(() => import("@/pages/insurance-rates"));
+const Billing = lazy(() => import("@/pages/billing"));
+const Reimbursement = lazy(() => import("@/pages/reimbursement"));
+
+// Loading fallback component
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
+    </div>
+  );
+}
 
 function Router() {
   const { isAuthenticated, isLoading, isAdmin } = useAuth();
@@ -55,21 +68,23 @@ function Router() {
 
   if (!isAuthenticated) {
     return (
-      <Switch>
-        <Route path="/" component={Landing} />
-        <Route path="/intake" component={PatientIntake} />
-        <Route path="/invite/:token" component={InvitePage} />
-        <Route path="/mfa-challenge" component={MfaChallenge} />
-        <Route path="/book/:slug" component={PublicBooking} />
-        <Route path="/join/:code" component={TelehealthJoin} />
-        <Route path="/portal" component={PatientPortal} />
-        <Route path="/portal/login/:token" component={PatientPortal} />
-        <Route path="/patient-portal" component={NewPatientPortal} />
-        <Route path="/patient-portal/login" component={NewPatientPortal} />
-        <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
-        <Route path="/feedback/:token" component={PublicFeedback} />
-        <Route component={NotFound} />
-      </Switch>
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/" component={Landing} />
+          <Route path="/intake" component={PatientIntake} />
+          <Route path="/invite/:token" component={InvitePage} />
+          <Route path="/mfa-challenge" component={MfaChallenge} />
+          <Route path="/book/:slug" component={PublicBooking} />
+          <Route path="/join/:code" component={TelehealthJoin} />
+          <Route path="/portal" component={PatientPortal} />
+          <Route path="/portal/login/:token" component={PatientPortal} />
+          <Route path="/patient-portal" component={NewPatientPortal} />
+          <Route path="/patient-portal/login" component={NewPatientPortal} />
+          <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
+          <Route path="/feedback/:token" component={PublicFeedback} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     );
   }
 
@@ -77,39 +92,41 @@ function Router() {
     <>
       <SimpleNavigation />
       <IdleTimeoutWarning />
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/claims" component={Claims} />
-        <Route path="/appeals" component={Appeals} />
-        <Route path="/waitlist" component={Waitlist} />
-        <Route path="/reviews" component={Reviews} />
-        <Route path="/online-booking" component={BookingSettings} />
-        <Route path="/telehealth" component={Telehealth} />
-        <Route path="/messages" component={Messages} />
-        <Route path="/join/:code" component={TelehealthJoin} />
-        <Route path="/book/:slug" component={PublicBooking} />
-        <Route path="/patients" component={Patients} />
-        <Route path="/intake" component={PatientIntake} />
-        <Route path="/calendar" component={Calendar} />
-        <Route path="/soap-notes" component={SoapNotes} />
-        <Route path="/session-recorder" component={SessionRecorder} />
-        <Route path="/outcome-measures" component={OutcomeMeasures} />
-        {isAdmin && <Route path="/accounting" component={Accounting} />}
-        {isAdmin && <Route path="/analytics" component={Analytics} />}
-        <Route path="/reports" component={Reports} />
-        <Route path="/expenses" component={Expenses} />
-        <Route path="/settings" component={Settings} />
-        <Route path="/data-upload" component={DataUpload} />
-        <Route path="/payer-management" component={PayerManagement} />
-        <Route path="/insurance-rates" component={InsuranceRates} />
-        <Route path="/reimbursement" component={Reimbursement} />
-        <Route path="/subscription" component={Billing} />
-        {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
-        <Route path="/invite/:token" component={InvitePage} />
-        <Route path="/mfa-challenge" component={MfaChallenge} />
-        <Route path="/feedback/:token" component={PublicFeedback} />
-        <Route component={NotFound} />
-      </Switch>
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/" component={Dashboard} />
+          <Route path="/claims" component={Claims} />
+          <Route path="/appeals" component={Appeals} />
+          <Route path="/waitlist" component={Waitlist} />
+          <Route path="/reviews" component={Reviews} />
+          <Route path="/online-booking" component={BookingSettings} />
+          <Route path="/telehealth" component={Telehealth} />
+          <Route path="/messages" component={Messages} />
+          <Route path="/join/:code" component={TelehealthJoin} />
+          <Route path="/book/:slug" component={PublicBooking} />
+          <Route path="/patients" component={Patients} />
+          <Route path="/intake" component={PatientIntake} />
+          <Route path="/calendar" component={Calendar} />
+          <Route path="/soap-notes" component={SoapNotes} />
+          <Route path="/session-recorder" component={SessionRecorder} />
+          <Route path="/outcome-measures" component={OutcomeMeasures} />
+          {isAdmin && <Route path="/accounting" component={Accounting} />}
+          {isAdmin && <Route path="/analytics" component={Analytics} />}
+          <Route path="/reports" component={Reports} />
+          <Route path="/expenses" component={Expenses} />
+          <Route path="/settings" component={Settings} />
+          <Route path="/data-upload" component={DataUpload} />
+          <Route path="/payer-management" component={PayerManagement} />
+          <Route path="/insurance-rates" component={InsuranceRates} />
+          <Route path="/reimbursement" component={Reimbursement} />
+          <Route path="/subscription" component={Billing} />
+          {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
+          <Route path="/invite/:token" component={InvitePage} />
+          <Route path="/mfa-challenge" component={MfaChallenge} />
+          <Route path="/feedback/:token" component={PublicFeedback} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     </>
   );
 }

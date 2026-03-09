@@ -1,0 +1,678 @@
+/**
+ * Patient Routes
+ *
+ * Handles:
+ * - /api/patients - Patient CRUD operations
+ * - /api/patients/:id/consents - Patient consent management
+ * - /api/patients/:id/eligibility - Eligibility verification
+ * - /api/patients/:id/cost-estimate - Cost estimation
+ * - /api/patients/:id/documents - Patient documents
+ * - /api/patients/:id/statements - Patient statements
+ * - /api/patients/:id/treatment-plans - Treatment plans
+ * - /api/patients/:id/assessments - Patient assessments
+ * - /api/patients/:id/referrals - Patient referrals
+ * - /api/patients/:id/payment-methods - Payment methods
+ * - /api/patients/:id/transactions - Payment transactions
+ * - /api/patients/:id/balance - Patient balance
+ * - /api/patients/:id/payment-plans - Payment plans
+ * - /api/patients/:id/portal-access - Portal access management
+ * - /api/patients/:id/insurance-data - Insurance data
+ */
+
+import { Router, type Response, type NextFunction } from 'express';
+import { storage } from '../storage';
+import { isAuthenticated } from '../replitAuth';
+import { validate } from '../middleware/validate';
+import { createPatientSchema } from '../validation/schemas';
+import logger from '../services/logger';
+
+const router = Router();
+
+// Helper to get authorized practiceId from request
+const getAuthorizedPracticeId = (req: any): number => {
+  if (req.authorizedPracticeId) {
+    return req.authorizedPracticeId;
+  }
+
+  const userPracticeId = req.userPracticeId;
+  const userRole = req.userRole;
+  const requestedPracticeId = req.query.practiceId
+    ? parseInt(req.query.practiceId as string)
+    : undefined;
+
+  if (userRole === 'admin') {
+    return requestedPracticeId || userPracticeId || 1;
+  }
+
+  if (!userPracticeId) {
+    throw new Error('User not assigned to a practice. Contact administrator.');
+  }
+
+  if (requestedPracticeId && requestedPracticeId !== userPracticeId) {
+    logger.warn(`Practice access restricted: User requested practice ${requestedPracticeId} but assigned to ${userPracticeId}`);
+    return userPracticeId;
+  }
+
+  return requestedPracticeId || userPracticeId;
+};
+
+/**
+ * Security: Verify user has access to the specified patient
+ * Prevents IDOR attacks by checking patient belongs to user's practice
+ */
+const verifyPatientAccess = async (req: any, patientId: number): Promise<{
+  patient: any | null;
+  authorized: boolean;
+  error?: string;
+}> => {
+  try {
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return { patient: null, authorized: false, error: 'Patient not found' };
+    }
+
+    const userPracticeId = req.userPracticeId;
+    const userRole = req.userRole;
+
+    if (userRole === 'admin') {
+      return { patient, authorized: true };
+    }
+
+    if (!userPracticeId) {
+      logger.warn('User has no practice assigned', { userId: req.user?.claims?.sub });
+      return { patient: null, authorized: false, error: 'User not assigned to a practice' };
+    }
+
+    if (patient.practiceId !== userPracticeId) {
+      logger.warn('Unauthorized patient access attempt', {
+        userId: req.user?.claims?.sub,
+        userPracticeId,
+        patientPracticeId: patient.practiceId,
+        patientId,
+      });
+      return { patient: null, authorized: false, error: 'Access denied' };
+    }
+
+    return { patient, authorized: true };
+  } catch (error) {
+    logger.error('Error verifying patient access', { patientId, error });
+    return { patient: null, authorized: false, error: 'Failed to verify access' };
+  }
+};
+
+// ==================== PATIENT CRUD ====================
+
+// Get all patients
+router.get('/', isAuthenticated, async (req: any, res) => {
+  try {
+    const patients = await storage.getAllPatients();
+
+    // HIPAA: Include consent status for each patient (for UI indicators)
+    const patientsWithConsent = await Promise.all(
+      patients.map(async (patient: any) => {
+        const consentStatus = await storage.hasRequiredTreatmentConsents(patient.id);
+        return {
+          ...patient,
+          consentStatus: {
+            hasRequiredConsents: consentStatus.hasConsent,
+            missingConsents: consentStatus.missingConsents,
+          },
+        };
+      })
+    );
+
+    res.json(patientsWithConsent);
+  } catch (error) {
+    logger.error('Error fetching patients', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to fetch patients' });
+  }
+});
+
+// Create patient
+router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any, res) => {
+  try {
+    const patient = await storage.createPatient(req.body);
+    res.json(patient);
+  } catch (error) {
+    logger.error('Error creating patient', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to create patient' });
+  }
+});
+
+// ==================== PATIENT CONSENTS ====================
+
+// Get patient consents
+router.get('/:id/consents', isAuthenticated, async (req: any, res) => {
+  try {
+    const consents = await storage.getPatientConsents(parseInt(req.params.id));
+    res.json(consents);
+  } catch (error) {
+    logger.error('Error fetching consents', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch consents' });
+  }
+});
+
+// Get active consent by type
+router.get('/:id/consents/:type', isAuthenticated, async (req: any, res) => {
+  try {
+    const consent = await storage.getActiveConsent(parseInt(req.params.id), req.params.type);
+    res.json(consent || null);
+  } catch (error) {
+    logger.error('Error fetching consent', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch consent' });
+  }
+});
+
+// ==================== PATIENT ELIGIBILITY ====================
+
+// Get most recent eligibility for a patient
+router.get('/:id/eligibility', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const eligibility = await storage.getPatientEligibility(patientId);
+    res.json(eligibility || null);
+  } catch (error) {
+    logger.error('Error fetching eligibility', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch eligibility' });
+  }
+});
+
+// Get eligibility history for a patient
+router.get('/:id/eligibility/history', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const history = await storage.getEligibilityHistory(patientId);
+    res.json(history);
+  } catch (error) {
+    logger.error('Error fetching eligibility history', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch eligibility history' });
+  }
+});
+
+// ==================== COST ESTIMATION ====================
+
+// Get cost estimate for a specific patient
+router.get('/:id/cost-estimate', isAuthenticated, async (req: any, res) => {
+  try {
+    const { getQuickEstimate } = await import('../services/insuranceCostEstimator');
+    const patientId = parseInt(req.params.id);
+    const { sessionRate } = req.query;
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    const insurance = patient.insuranceProvider || 'Unknown';
+    const estimate = await getQuickEstimate(insurance, 45, parseInt(sessionRate as string) || 300);
+
+    res.json({
+      patient: {
+        id: patient.id,
+        name: `${patient.firstName} ${patient.lastName}`,
+        insurance,
+      },
+      ...estimate,
+    });
+  } catch (error) {
+    logger.error('Error getting patient cost estimate', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to get estimate' });
+  }
+});
+
+// ==================== PATIENT DOCUMENTS ====================
+
+// Get patient documents
+router.get('/:id/documents', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const documents = await storage.getPatientDocuments(patientId);
+    res.json(documents);
+  } catch (error) {
+    logger.error('Error fetching documents', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch documents' });
+  }
+});
+
+// Upload document for patient
+router.post('/:id/documents', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const { name, description, category, fileUrl, fileType, fileSize, visibleToPatient, requiresSignature } = req.body;
+
+    if (!name || !fileUrl) {
+      return res.status(400).json({ message: 'Name and file URL are required' });
+    }
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!patient.practiceId) {
+      return res.status(400).json({ message: 'Patient has no assigned practice' });
+    }
+
+    const document = await storage.createPatientDocument({
+      patientId,
+      practiceId: patient.practiceId,
+      uploadedById: req.user?.claims?.sub,
+      name,
+      description,
+      category: category || 'general',
+      fileUrl,
+      fileType,
+      fileSize,
+      visibleToPatient: visibleToPatient !== false,
+      requiresSignature: requiresSignature || false,
+    });
+
+    res.status(201).json(document);
+  } catch (error) {
+    logger.error('Error creating document', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to create document' });
+  }
+});
+
+// ==================== PATIENT STATEMENTS ====================
+
+// Get patient statements
+router.get('/:id/statements', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const statements = await storage.getPatientStatements(patientId);
+    res.json(statements);
+  } catch (error) {
+    logger.error('Error fetching statements', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch statements' });
+  }
+});
+
+// Create statement for patient
+router.post('/:id/statements', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const { totalAmount, dueDate, lineItems } = req.body;
+
+    if (!totalAmount) {
+      return res.status(400).json({ message: 'Total amount is required' });
+    }
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!patient.practiceId) {
+      return res.status(400).json({ message: 'Patient has no assigned practice' });
+    }
+
+    const statement = await storage.createPatientStatement({
+      patientId,
+      practiceId: patient.practiceId,
+      totalAmount,
+      balanceDue: totalAmount,
+      dueDate: dueDate ? new Date(dueDate) : undefined,
+      lineItems: lineItems || [],
+    });
+
+    res.status(201).json(statement);
+  } catch (error) {
+    logger.error('Error creating statement', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to create statement' });
+  }
+});
+
+// ==================== TREATMENT PLANS ====================
+
+// Get patient's treatment plans
+router.get('/:id/treatment-plans', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const plans = await storage.getPatientTreatmentPlans(patientId);
+    res.json(plans);
+  } catch (error) {
+    logger.error('Error fetching patient treatment plans', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch patient treatment plans' });
+  }
+});
+
+// Get patient's active treatment plan
+router.get('/:id/active-treatment-plan', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const plan = await storage.getActiveTreatmentPlan(patientId);
+    if (!plan) {
+      return res.json(null);
+    }
+    const planDetails = await storage.getTreatmentPlanWithDetails(plan.id);
+    res.json(planDetails);
+  } catch (error) {
+    logger.error('Error fetching active treatment plan', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch active treatment plan' });
+  }
+});
+
+// ==================== ASSESSMENTS ====================
+
+// Get patient's assessments
+router.get('/:id/assessments', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const templateId = req.query.templateId ? parseInt(req.query.templateId as string) : undefined;
+    const assessments = await storage.getPatientAssessments(patientId, templateId);
+    res.json(assessments);
+  } catch (error) {
+    logger.error('Error fetching patient assessments', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch assessments' });
+  }
+});
+
+// Get patient's assessment history with trend analysis
+router.get('/:id/assessments/:templateId/history', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const templateId = parseInt(req.params.templateId);
+    const history = await storage.getPatientAssessmentHistory(patientId, templateId);
+    res.json(history);
+  } catch (error) {
+    logger.error('Error fetching assessment history', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch assessment history' });
+  }
+});
+
+// Get patient's latest assessment for a template
+router.get('/:id/assessments/:templateId/latest', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const templateId = parseInt(req.params.templateId);
+    const assessment = await storage.getLatestPatientAssessment(patientId, templateId);
+    res.json(assessment || null);
+  } catch (error) {
+    logger.error('Error fetching latest assessment', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch latest assessment' });
+  }
+});
+
+// Get patient's assessment schedules
+router.get('/:id/assessment-schedules', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const schedules = await storage.getPatientAssessmentSchedules(patientId);
+    res.json(schedules);
+  } catch (error) {
+    logger.error('Error fetching assessment schedules', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch assessment schedules' });
+  }
+});
+
+// ==================== REFERRALS ====================
+
+// Get patient's referrals
+router.get('/:id/referrals', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const patientReferrals = await storage.getPatientReferrals(patientId);
+    res.json(patientReferrals);
+  } catch (error) {
+    logger.error('Error fetching patient referrals', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch patient referrals' });
+  }
+});
+
+// ==================== PAYMENT METHODS ====================
+
+// Get patient's payment methods
+router.get('/:id/payment-methods', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const methods = await storage.getPatientPaymentMethods(patientId);
+    res.json(methods);
+  } catch (error) {
+    logger.error('Error fetching payment methods', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch payment methods' });
+  }
+});
+
+// Get patient's default payment method
+router.get('/:id/payment-methods/default', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const method = await storage.getDefaultPaymentMethod(patientId);
+    res.json(method || null);
+  } catch (error) {
+    logger.error('Error fetching default payment method', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch default payment method' });
+  }
+});
+
+// Add payment method
+router.post('/:id/payment-methods', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const method = await storage.createPatientPaymentMethod({
+      ...req.body,
+      patientId,
+    });
+    res.status(201).json(method);
+  } catch (error) {
+    logger.error('Error creating payment method', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to create payment method' });
+  }
+});
+
+// ==================== TRANSACTIONS ====================
+
+// Get patient's transactions
+router.get('/:id/transactions', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const transactions = await storage.getPatientPaymentHistory(patientId);
+    res.json(transactions);
+  } catch (error) {
+    logger.error('Error fetching patient transactions', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch patient transactions' });
+  }
+});
+
+// Get patient's balance
+router.get('/:id/balance', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const balance = await storage.getPatientBalance(patientId);
+    res.json({ patientId, balance });
+  } catch (error) {
+    logger.error('Error fetching patient balance', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch patient balance' });
+  }
+});
+
+// ==================== PAYMENT PLANS ====================
+
+// Get patient's payment plans
+router.get('/:id/payment-plans', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const plans = await storage.getPatientPaymentPlans(patientId);
+    res.json(plans);
+  } catch (error) {
+    logger.error('Error fetching patient payment plans', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch patient payment plans' });
+  }
+});
+
+// ==================== PORTAL ACCESS ====================
+
+// Create or get portal access for a patient
+router.post('/:id/portal-access', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    let access = await storage.getPatientPortalAccess(patientId);
+    if (!access) {
+      if (!patient.practiceId) {
+        return res.status(400).json({ message: 'Patient has no assigned practice' });
+      }
+      access = await storage.createPatientPortalAccess(patientId, patient.practiceId);
+    }
+
+    res.json(access);
+  } catch (error) {
+    logger.error('Error creating portal access', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to create portal access' });
+  }
+});
+
+// Send magic link to patient
+router.post('/:id/send-portal-link', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    // Ensure portal access exists
+    let access = await storage.getPatientPortalAccess(patientId);
+    if (!access) {
+      if (!patient.practiceId) {
+        return res.status(400).json({ message: 'Patient has no assigned practice' });
+      }
+      access = await storage.createPatientPortalAccess(patientId, patient.practiceId);
+    }
+
+    // Create magic link
+    const magicLink = await storage.createMagicLink(patientId);
+    const portalUrl = `${req.protocol}://${req.get('host')}/portal/login/${magicLink.token}`;
+
+    // Send email with magic link
+    if (patient.email) {
+      try {
+        const nodemailer = await import('nodemailer');
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: process.env.SMTP_SECURE === 'true',
+          auth: {
+            user: process.env.SMTP_USER || '',
+            pass: process.env.SMTP_PASS || '',
+          },
+        });
+
+        if (!patient.practiceId) {
+          logger.warn('Patient has no assigned practice, using default name');
+        }
+        const practice = patient.practiceId ? await storage.getPractice(patient.practiceId) : null;
+        const practiceName = practice?.name || 'Your Healthcare Provider';
+
+        await transporter.sendMail({
+          from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+          to: patient.email,
+          subject: `Access Your Patient Portal - ${practiceName}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2>Hello ${patient.firstName},</h2>
+              <p>You've been invited to access your patient portal at ${practiceName}.</p>
+              <p>Click the button below to securely access your portal:</p>
+              <p style="text-align: center; margin: 30px 0;">
+                <a href="${portalUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+                  Access Patient Portal
+                </a>
+              </p>
+              <p style="color: #666; font-size: 14px;">This link expires in 15 minutes for security purposes.</p>
+              <p style="color: #666; font-size: 14px;">If you didn't request this link, please ignore this email.</p>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+              <p style="color: #999; font-size: 12px;">${practiceName}</p>
+            </div>
+          `,
+        });
+
+        res.json({ message: 'Portal access link sent', email: patient.email });
+      } catch (emailError) {
+        logger.error('Error sending portal email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
+        res.json({
+          message: 'Portal link created but email failed',
+          portalUrl,
+          token: magicLink.token,
+        });
+      }
+    } else {
+      res.json({
+        message: 'No email on file. Share this link with the patient:',
+        portalUrl,
+        token: magicLink.token,
+      });
+    }
+  } catch (error) {
+    logger.error('Error sending portal link', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to send portal link' });
+  }
+});
+
+// ==================== INSURANCE DATA ====================
+
+// Refresh patient insurance data via Stedi
+router.post('/:id/insurance-data/refresh', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    const creds = await storage.getPayerCredentials(patient.practiceId, 'stedi');
+    if (!creds) {
+      return res.status(400).json({ message: 'Stedi not configured' });
+    }
+
+    const { StediAdapter } = await import('../payer-integrations/adapters/payers/StediAdapter');
+    const adapter = new StediAdapter((creds.credentials as any).apiKey);
+    const practice = await storage.getPractice(patient.practiceId);
+    const result = await adapter.checkEligibility({
+      providerNpi: practice?.npi || '',
+      providerName: practice?.name || '',
+      memberFirstName: patient.firstName,
+      memberLastName: patient.lastName,
+      memberDob: patient.dateOfBirth || '',
+      memberId: patient.insuranceId || '',
+      payerName: patient.insuranceProvider || '',
+    });
+
+    const auth = await storage.getPatientInsuranceAuth(patientId);
+    await storage.cacheInsuranceData({
+      patientId,
+      practiceId: patient.practiceId,
+      authorizationId: auth?.id || 0,
+      dataType: 'eligibility',
+      normalizedData: result.eligibility as any,
+      rawResponse: result.raw || null,
+      status: 'success',
+      fetchedAt: new Date(),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    res.json({ eligibility: result.eligibility, benefits: result.benefits, verifiedAt: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Insurance data refresh failed', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Eligibility check failed' });
+  }
+});
+
+// Get patient insurance data from cache
+router.get('/:id/insurance-data', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    const cached = await storage.getCachedInsuranceData(patientId);
+    if (!cached) {
+      return res.json({ eligibility: null, benefits: null, verifiedAt: null });
+    }
+    res.json(cached);
+  } catch (error) {
+    logger.error('Error fetching insurance data', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch insurance data' });
+  }
+});
+
+export default router;

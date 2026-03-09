@@ -15,6 +15,9 @@
 export { default as authRouter } from './auth';
 export { default as analyticsRouter } from './analytics';
 export { default as soapNotesRouter } from './soap-notes';
+export { default as patientsRouter } from './patients';
+export { default as claimsRouter } from './claims';
+export { default as appointmentsRouter } from './appointments';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
@@ -35,25 +38,26 @@ export { default as insuranceDataRoutes } from './insuranceDataRoutes';
  * - soap-notes.ts - SOAP notes (/api/soap-notes/*, /api/therapy-bank)
  *   Includes: CRUD, signing, co-signing (supervisor workflow), therapy bank
  *
- * TODO: Remaining routes to split from server/routes.ts
- *
- * High Priority (large route groups):
  * - patients.ts - Patient CRUD and related endpoints (/api/patients/*)
- *   ~30 routes including consents, eligibility, documents, statements,
- *   treatment plans, assessments, referrals, payment methods, transactions
+ *   Includes: consents, eligibility, cost-estimate, documents, statements,
+ *   treatment plans, assessments, referrals, payment methods, transactions,
+ *   balance, payment plans, portal access, insurance data
  *
  * - claims.ts - Claims management (/api/claims/*)
- *   ~15 routes including line items, submission, status checks, appeals
+ *   Includes: CRUD, line items, submission, status checks, paid/deny,
+ *   appeals (get, sent, completed, failed), regenerate-appeal, analytics
  *
  * - appointments.ts - Appointment routes (/api/appointments/*)
- *   ~7 routes including eligibility checks, alerts, CRUD operations
+ *   Includes: CRUD, cancel, check-eligibility, eligibility-alerts,
+ *   recurring (create, get series, delete series, update series, cancel series)
+ *
+ * TODO: Remaining routes to split from server/routes.ts
  *
  * Medium Priority:
  * - practices.ts - Practice management (/api/practices/*)
- *
  * - billing.ts - Billing and reimbursement (/api/estimate-reimbursement, etc.)
- *
  * - admin.ts - Admin endpoints (/api/admin/*)
+ * - appeals.ts - Appeals management routes (/api/appeals/*)
  *
  * Lower Priority:
  * - insurance.ts - Insurance-related endpoints (/api/insurance/*)
@@ -61,6 +65,8 @@ export { default as insuranceDataRoutes } from './insuranceDataRoutes';
  * - reports.ts - Report generation (/api/reports/*)
  * - payments.ts - Payment processing (/api/payments/*)
  * - stripe.ts - Stripe integration (/api/stripe/*)
+ * - reminders.ts - Appointment reminders (/api/reminders/*)
+ * - portal.ts - Patient portal public endpoints (/api/public/portal/*)
  *
  * MIGRATION NOTES:
  * - The legacy routes in server/routes.ts are kept temporarily for backward compatibility

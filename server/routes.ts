@@ -12,7 +12,7 @@ import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedCl
 import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport, triggerHardDeletionNow } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
-import { authRouter, analyticsRouter, soapNotesRouter } from "./routes/index";
+import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter } from "./routes/index";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
@@ -522,6 +522,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Therapy Bank is also served under SOAP notes router at /api/soap-notes/therapy-bank
   // For backward compatibility, also mount at /api/therapy-bank
   app.use('/api', soapNotesRouter);
+  // Patient routes: /api/patients/*
+  app.use('/api/patients', patientsRouter);
+  // Claims routes: /api/claims/*
+  app.use('/api/claims', claimsRouter);
+  // Appointment routes: /api/appointments/*
+  app.use('/api/appointments', appointmentsRouter);
 
   // TODO: The routes below are duplicated in the modular routers above.
   // They are kept here temporarily for backward compatibility during migration.
@@ -2132,7 +2138,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Patients API routes
+  // ==================== LEGACY PATIENT ROUTES ====================
+  // NOTE: These routes are now handled by the modular patientsRouter (server/routes/patients.ts)
+  // They are kept here temporarily for backward compatibility during migration.
+  // Remove once modular routes are verified working.
   app.get('/api/patients', isAuthenticated, async (req: any, res) => {
     try {
       const patients = await storage.getAllPatients();
@@ -4028,7 +4037,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ==================== CLAIMS ENDPOINTS ====================
+  // ==================== LEGACY CLAIMS ENDPOINTS ====================
+  // NOTE: These routes are now handled by the modular claimsRouter (server/routes/claims.ts)
+  // They are kept here temporarily for backward compatibility during migration.
+  // Remove once modular routes are verified working.
 
   // Get all claims for practice
   app.get('/api/claims', isAuthenticated, async (req: any, res) => {
@@ -6101,7 +6113,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ==================== APPOINTMENT CRUD ====================
+  // ==================== LEGACY APPOINTMENT CRUD ====================
+  // NOTE: These routes are now handled by the modular appointmentsRouter (server/routes/appointments.ts)
+  // They are kept here temporarily for backward compatibility during migration.
+  // Remove once modular routes are verified working.
 
   app.post('/api/appointments', isAuthenticated, validate(createAppointmentSchema), async (req: any, res) => {
     try {
@@ -6181,7 +6196,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ==================== RECURRING APPOINTMENTS ====================
+  // ==================== LEGACY RECURRING APPOINTMENTS ====================
+  // NOTE: These routes are now handled by the modular appointmentsRouter (server/routes/appointments.ts)
+  // They are kept here temporarily for backward compatibility during migration.
+  // Remove once modular routes are verified working.
 
   // Create a recurring appointment series
   app.post('/api/appointments/recurring', isAuthenticated, async (req: any, res) => {
