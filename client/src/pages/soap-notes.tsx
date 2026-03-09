@@ -372,6 +372,23 @@ export default function SoapNotes() {
     retry: false,
   });
 
+  // Fetch current user's signature for SOAP note signing
+  const { data: therapistSignature } = useQuery<{ signature: string; name: string; credentials: string } | null>({
+    queryKey: ["/api/therapists", user?.id, "signature"],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      try {
+        const response = await apiRequest("GET", `/api/therapists/${user.id}/signature`);
+        if (!response.ok) return null;
+        return response.json();
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!user?.id,
+    retry: false,
+  });
+
   // Mutation to add new exercise to the bank
   const addExerciseMutation = useMutation({
     mutationFn: async ({ exerciseName, category }: { exerciseName: string; category: string }) => {
@@ -1609,22 +1626,50 @@ export default function SoapNotes() {
                     <div>
                       <Label className="text-xs font-semibold text-slate-600">SIGNATURES</Label>
                       <div className="mt-3 p-4 border rounded-lg bg-slate-50">
-                        <p className="text-xs text-slate-500 mb-3">
-                          Digital signature will be applied when you save this note.
-                        </p>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-start gap-6">
+                          {/* Signature Image or Placeholder */}
                           <div className="flex-1">
-                            <p className="text-sm font-medium text-slate-700">Therapist Signature</p>
-                            <p className="text-xs text-slate-500">
-                              {user?.firstName} {user?.lastName}
-                              {(user as any)?.credentials && `, ${(user as any).credentials}`}
+                            <p className="text-xs text-slate-500 mb-2">Therapist Signature</p>
+                            {therapistSignature?.signature ? (
+                              <div className="border-b-2 border-slate-300 pb-2 mb-2">
+                                <img
+                                  src={therapistSignature.signature}
+                                  alt="Therapist Signature"
+                                  className="h-16 max-w-[200px] object-contain"
+                                />
+                              </div>
+                            ) : (
+                              <div className="border-b-2 border-slate-300 pb-2 mb-2 h-16 flex items-end">
+                                <p className="text-slate-400 italic text-sm">
+                                  {user?.firstName} {user?.lastName}
+                                </p>
+                              </div>
+                            )}
+                            <p className="text-sm font-medium text-slate-700">
+                              {therapistSignature?.name || `${user?.firstName} ${user?.lastName}`}
+                              {(therapistSignature?.credentials || (user as any)?.credentials) && (
+                                <span className="text-slate-500 font-normal">
+                                  , {therapistSignature?.credentials || (user as any)?.credentials}
+                                </span>
+                              )}
                             </p>
                           </div>
+
+                          {/* Date */}
                           <div className="text-right">
-                            <p className="text-xs text-slate-500">Date:</p>
-                            <p className="text-sm font-medium">{new Date().toLocaleDateString()}</p>
+                            <p className="text-xs text-slate-500 mb-2">Date</p>
+                            <p className="text-lg font-medium text-slate-700">
+                              {new Date().toLocaleDateString()}
+                            </p>
                           </div>
                         </div>
+
+                        {!therapistSignature?.signature && (
+                          <p className="text-xs text-orange-600 mt-3 flex items-center gap-1">
+                            <span className="inline-block w-2 h-2 bg-orange-500 rounded-full"></span>
+                            No signature on file. Upload your signature in Settings → Therapists.
+                          </p>
+                        )}
                       </div>
                     </div>
                   </CardContent>
