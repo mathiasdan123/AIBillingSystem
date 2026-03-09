@@ -7,6 +7,21 @@ export async function seedDatabase() {
     // Wait for database to be ready
     const db = await getDb();
 
+    // Run schema migrations for new columns (safe to run multiple times)
+    console.log("Running schema migrations...");
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS credentials VARCHAR`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS license_number VARCHAR`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS npi_number VARCHAR`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS digital_signature TEXT`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_uploaded_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS therapist_id VARCHAR`);
+    await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS therapist_signature TEXT`);
+    await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS therapist_signed_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS therapist_signed_name VARCHAR`);
+    await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS therapist_credentials VARCHAR`);
+    await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS signature_ip_address VARCHAR`);
+    console.log("Schema migrations complete");
+
     // Check if data already exists
     const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
     const count = parseInt(result.rows[0]?.count || '0', 10);
