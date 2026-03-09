@@ -1,0 +1,1685 @@
+openapi: 3.0.3
+info:
+  title: AIBillingSystem API
+  description: |
+    API for the AIBillingSystem - a comprehensive medical billing and practice management system
+    designed for therapy practices. Features include patient management, claims processing,
+    appointment scheduling, analytics, and AI-powered billing optimization.
+
+    ## Authentication
+    Most endpoints require authentication via session-based auth (Replit Auth).
+    Protected endpoints will return 401 Unauthorized if not authenticated.
+
+    ## Multi-Tenancy
+    The system supports multiple practices. Users are assigned to a practice and can only
+    access data within their authorized practice (except admin users who have cross-practice access).
+
+    ## HIPAA Compliance
+    This API handles Protected Health Information (PHI). All access is logged for audit purposes.
+  version: 1.0.0
+  contact:
+    name: AIBillingSystem Support
+  license:
+    name: Proprietary
+
+servers:
+  - url: /api
+    description: API base path
+
+tags:
+  - name: Health
+    description: System health checks
+  - name: Authentication
+    description: User authentication and session management
+  - name: Patients
+    description: Patient CRUD operations
+  - name: Claims
+    description: Insurance claims management
+  - name: Appointments
+    description: Appointment scheduling and management
+  - name: Analytics
+    description: Dashboard and reporting analytics
+
+paths:
+  # ==================== HEALTH CHECK ====================
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the health status of the API and its dependencies. No authentication required.
+      operationId: getHealth
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: System is degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  # ==================== AUTHENTICATION ====================
+  /auth/user:
+    get:
+      tags:
+        - Authentication
+      summary: Get current authenticated user
+      description: Returns the currently authenticated user's profile information
+      operationId: getCurrentUser
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users:
+    get:
+      tags:
+        - Authentication
+      summary: List all users (Admin only)
+      description: Returns a list of all users in the system. Requires admin role.
+      operationId: listUsers
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/{id}/role:
+    patch:
+      tags:
+        - Authentication
+      summary: Update user role (Admin only)
+      description: Updates a user's role. Cannot remove your own admin role.
+      operationId: updateUserRole
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - role
+              properties:
+                role:
+                  type: string
+                  enum: [therapist, admin, billing]
+                  description: New role for the user
+      responses:
+        '200':
+          description: Role updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== PATIENTS ====================
+  /patients:
+    get:
+      tags:
+        - Patients
+      summary: List all patients
+      description: Returns all patients for the authorized practice with consent status
+      operationId: listPatients
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: List of patients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PatientWithConsent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Patients
+      summary: Create a new patient
+      description: Creates a new patient record in the practice
+      operationId: createPatient
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientCreate'
+      responses:
+        '200':
+          description: Patient created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /patients/{id}:
+    get:
+      tags:
+        - Patients
+      summary: Get patient by ID
+      description: Returns a single patient record. Validates practice access.
+      operationId: getPatient
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+      responses:
+        '200':
+          description: Patient details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /patients/{id}/consents:
+    get:
+      tags:
+        - Patients
+      summary: Get patient consents
+      description: Returns all consent records for a patient
+      operationId: getPatientConsents
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+      responses:
+        '200':
+          description: List of consents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PatientConsent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /patients/{id}/eligibility:
+    get:
+      tags:
+        - Patients
+      summary: Get patient insurance eligibility
+      description: Returns the cached insurance eligibility data for a patient
+      operationId: getPatientEligibility
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+      responses:
+        '200':
+          description: Eligibility data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EligibilityData'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== CLAIMS ====================
+  /claims:
+    get:
+      tags:
+        - Claims
+      summary: List all claims
+      description: Returns all claims for the authorized practice
+      operationId: listClaims
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: List of claims
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Claim'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Claims
+      summary: Create a new claim
+      description: Creates a new claim with optional AI optimization based on session SOAP notes
+      operationId: createClaim
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimCreate'
+      responses:
+        '200':
+          description: Claim created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Claim created successfully
+                  claim:
+                    $ref: '#/components/schemas/Claim'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{id}:
+    get:
+      tags:
+        - Claims
+      summary: Get claim by ID
+      description: Returns a single claim with its line items
+      operationId: getClaim
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      responses:
+        '200':
+          description: Claim details with line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimWithLineItems'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      tags:
+        - Claims
+      summary: Update a claim
+      description: Updates claim fields. Only draft claims can be edited (admin can override).
+      operationId: updateClaim
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimUpdate'
+      responses:
+        '200':
+          description: Claim updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Claim'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{id}/submit:
+    post:
+      tags:
+        - Claims
+      summary: Submit a claim
+      description: Submits a draft claim to the clearinghouse for processing
+      operationId: submitClaim
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      responses:
+        '200':
+          description: Claim submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  claim:
+                    $ref: '#/components/schemas/Claim'
+                  clearinghouseResponse:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{id}/line-items:
+    get:
+      tags:
+        - Claims
+      summary: Get claim line items
+      description: Returns all line items for a claim with CPT and ICD-10 code details
+      operationId: getClaimLineItems
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      responses:
+        '200':
+          description: List of line items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClaimLineItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Claims
+      summary: Add line item to claim
+      description: Adds a new line item to an existing claim
+      operationId: addClaimLineItem
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimLineItemCreate'
+      responses:
+        '200':
+          description: Line item added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimLineItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{id}/paid:
+    post:
+      tags:
+        - Claims
+      summary: Mark claim as paid (Admin/Billing only)
+      description: Updates claim status to paid with payment details
+      operationId: markClaimPaid
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - paidAmount
+              properties:
+                paidAmount:
+                  type: number
+                  format: decimal
+                  description: Amount paid
+      responses:
+        '200':
+          description: Claim marked as paid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Claim'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{id}/deny:
+    post:
+      tags:
+        - Claims
+      summary: Mark claim as denied (Admin/Billing only)
+      description: Updates claim status to denied with denial reason and triggers appeal generation
+      operationId: denyClaim
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Claim ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - denialReason
+              properties:
+                denialReason:
+                  type: string
+                  description: Reason for denial
+      responses:
+        '200':
+          description: Claim marked as denied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claim:
+                    $ref: '#/components/schemas/Claim'
+                  appeal:
+                    type: object
+                    description: Generated appeal details
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== APPOINTMENTS ====================
+  /appointments:
+    get:
+      tags:
+        - Appointments
+      summary: List appointments
+      description: Returns appointments for the authorized practice, optionally filtered by date range
+      operationId: listAppointments
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start of date range filter
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End of date range filter
+      responses:
+        '200':
+          description: List of appointments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Appointments
+      summary: Create an appointment
+      description: Creates a new appointment
+      operationId: createAppointment
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppointmentCreate'
+      responses:
+        '200':
+          description: Appointment created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /appointments/{id}:
+    get:
+      tags:
+        - Appointments
+      summary: Get appointment by ID
+      description: Returns a single appointment
+      operationId: getAppointment
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Appointment ID
+      responses:
+        '200':
+          description: Appointment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      tags:
+        - Appointments
+      summary: Update an appointment
+      description: Updates appointment fields
+      operationId: updateAppointment
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Appointment ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppointmentUpdate'
+      responses:
+        '200':
+          description: Appointment updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /appointments/{id}/cancel:
+    post:
+      tags:
+        - Appointments
+      summary: Cancel an appointment
+      description: Cancels an appointment with reason
+      operationId: cancelAppointment
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Appointment ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  enum: [patient_request, sick, schedule_conflict, weather, no_show, other]
+                  description: Cancellation reason
+                notes:
+                  type: string
+                  description: Additional cancellation notes
+                cancelledBy:
+                  type: string
+                  enum: [patient, therapist, admin]
+                  description: Who cancelled the appointment
+      responses:
+        '200':
+          description: Appointment cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /appointments/{id}/check-eligibility:
+    post:
+      tags:
+        - Appointments
+      summary: Check insurance eligibility for appointment
+      description: Verifies patient insurance eligibility before the appointment
+      operationId: checkAppointmentEligibility
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Appointment ID
+      responses:
+        '200':
+          description: Eligibility check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EligibilityData'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==================== ANALYTICS ====================
+  /analytics/dashboard:
+    get:
+      tags:
+        - Analytics
+      summary: Get dashboard analytics
+      description: Returns key metrics for the dashboard. Financial data only visible to admin/billing roles.
+      operationId: getDashboardAnalytics
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Dashboard analytics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardAnalytics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/revenue:
+    get:
+      tags:
+        - Analytics
+      summary: Get revenue analytics
+      description: Returns revenue data over a specified time range
+      operationId: getRevenueAnalytics
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: timeRange
+          in: query
+          schema:
+            type: string
+            enum: ['3months', '6months', '12months']
+            default: '12months'
+          description: Time range for the analytics
+      responses:
+        '200':
+          description: Revenue analytics data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    month:
+                      type: string
+                    revenue:
+                      type: number
+                    claims:
+                      type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/claims-by-status:
+    get:
+      tags:
+        - Analytics
+      summary: Get claims by status
+      description: Returns claim counts grouped by status
+      operationId: getClaimsByStatus
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Claims by status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                    count:
+                      type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/denial-reasons:
+    get:
+      tags:
+        - Analytics
+      summary: Get denial reasons analytics
+      description: Returns common claim denial reasons with counts
+      operationId: getDenialReasons
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Denial reasons with counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    reason:
+                      type: string
+                    count:
+                      type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/collection-rate:
+    get:
+      tags:
+        - Analytics
+      summary: Get collection rate
+      description: Returns the percentage of billed amounts that were collected
+      operationId: getCollectionRate
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Collection rate data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rate:
+                    type: number
+                    format: decimal
+                  totalBilled:
+                    type: number
+                  totalCollected:
+                    type: number
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/clean-claims-rate:
+    get:
+      tags:
+        - Analytics
+      summary: Get clean claims rate
+      description: Returns the percentage of claims submitted without errors
+      operationId: getCleanClaimsRate
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Clean claims rate data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rate:
+                    type: number
+                    format: decimal
+                  cleanClaims:
+                    type: integer
+                  totalClaims:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/capacity:
+    get:
+      tags:
+        - Analytics
+      summary: Get practice capacity analytics
+      description: Returns therapist capacity and utilization metrics
+      operationId: getCapacityAnalytics
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Capacity analytics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalSlots:
+                    type: integer
+                  bookedSlots:
+                    type: integer
+                  utilizationRate:
+                    type: number
+                    format: decimal
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/ar-aging:
+    get:
+      tags:
+        - Analytics
+      summary: Get accounts receivable aging
+      description: Returns AR aging buckets (0-30, 31-60, 61-90, 90+ days)
+      operationId: getARAgingAnalytics
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: AR aging data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    bucket:
+                      type: string
+                    amount:
+                      type: number
+                    count:
+                      type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /analytics/cancellations:
+    get:
+      tags:
+        - Analytics
+      summary: Get cancellation analytics
+      description: Returns appointment cancellation metrics
+      operationId: getCancellationAnalytics
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Cancellation analytics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalCancellations:
+                    type: integer
+                  cancellationRate:
+                    type: number
+                    format: decimal
+                  byReason:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reason:
+                          type: string
+                        count:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: Session-based authentication via Replit Auth
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Unauthorized
+
+    Forbidden:
+      description: Access denied - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Access denied. Admin role required.
+
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Invalid request parameters
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Resource not found
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: An unexpected error occurred
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Error message
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded]
+          description: Overall health status
+        timestamp:
+          type: string
+          format: date-time
+          description: Time of health check
+        uptime:
+          type: number
+          description: Server uptime in seconds
+        checks:
+          type: object
+          properties:
+            database:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [healthy, unhealthy]
+                latency:
+                  type: number
+                  description: Database response time in ms
+            server:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [healthy, unhealthy]
+        responseTime:
+          type: number
+          description: Total response time in ms
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique user ID
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        profileImageUrl:
+          type: string
+          format: uri
+        practiceId:
+          type: integer
+        role:
+          type: string
+          enum: [therapist, admin, billing]
+        credentials:
+          type: string
+          description: Professional credentials (e.g., OTR/L)
+        licenseNumber:
+          type: string
+        npiNumber:
+          type: string
+        mfaEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [therapist, admin, billing]
+        createdAt:
+          type: string
+          format: date-time
+
+    Patient:
+      type: object
+      properties:
+        id:
+          type: integer
+        practiceId:
+          type: integer
+        firstName:
+          type: string
+        lastName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        address:
+          type: string
+        insuranceProvider:
+          type: string
+        insuranceId:
+          type: string
+        policyNumber:
+          type: string
+        groupNumber:
+          type: string
+        phoneType:
+          type: string
+          enum: [mobile, landline, work]
+        preferredContactMethod:
+          type: string
+          enum: [email, sms, both]
+        smsConsentGiven:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PatientWithConsent:
+      allOf:
+        - $ref: '#/components/schemas/Patient'
+        - type: object
+          properties:
+            consentStatus:
+              type: object
+              properties:
+                hasRequiredConsents:
+                  type: boolean
+                missingConsents:
+                  type: array
+                  items:
+                    type: string
+
+    PatientCreate:
+      type: object
+      required:
+        - firstName
+        - lastName
+        - practiceId
+      properties:
+        practiceId:
+          type: integer
+        firstName:
+          type: string
+        lastName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        address:
+          type: string
+        insuranceProvider:
+          type: string
+        insuranceId:
+          type: string
+        policyNumber:
+          type: string
+        groupNumber:
+          type: string
+
+    PatientConsent:
+      type: object
+      properties:
+        id:
+          type: integer
+        patientId:
+          type: integer
+        consentType:
+          type: string
+        consentGiven:
+          type: boolean
+        consentDate:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        ipAddress:
+          type: string
+
+    EligibilityData:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, inactive, unknown]
+        coverageType:
+          type: string
+          enum: [PPO, HMO, POS, EPO]
+        effectiveDate:
+          type: string
+          format: date
+        terminationDate:
+          type: string
+          format: date
+        copay:
+          type: number
+        deductible:
+          type: number
+        deductibleMet:
+          type: number
+        outOfPocketMax:
+          type: number
+        outOfPocketMet:
+          type: number
+        coinsurance:
+          type: number
+        visitsAllowed:
+          type: integer
+        visitsUsed:
+          type: integer
+        authRequired:
+          type: boolean
+        message:
+          type: string
+
+    Claim:
+      type: object
+      properties:
+        id:
+          type: integer
+        practiceId:
+          type: integer
+        patientId:
+          type: integer
+        sessionId:
+          type: integer
+        claimNumber:
+          type: string
+        insuranceId:
+          type: integer
+        totalAmount:
+          type: string
+          format: decimal
+        submittedAmount:
+          type: string
+          format: decimal
+        paidAmount:
+          type: string
+          format: decimal
+        expectedAmount:
+          type: string
+          format: decimal
+        status:
+          type: string
+          enum: [draft, submitted, paid, denied, appeal, optimized]
+        submittedAt:
+          type: string
+          format: date-time
+        paidAt:
+          type: string
+          format: date-time
+        denialReason:
+          type: string
+        aiReviewScore:
+          type: string
+          format: decimal
+        aiReviewNotes:
+          type: string
+        clearinghouseClaimId:
+          type: string
+        clearinghouseStatus:
+          type: string
+          enum: [accepted, rejected, pending]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClaimWithLineItems:
+      allOf:
+        - $ref: '#/components/schemas/Claim'
+        - type: object
+          properties:
+            lineItems:
+              type: array
+              items:
+                $ref: '#/components/schemas/ClaimLineItem'
+
+    ClaimCreate:
+      type: object
+      required:
+        - patientId
+        - totalAmount
+      properties:
+        patientId:
+          type: integer
+        insuranceId:
+          type: integer
+        sessionId:
+          type: integer
+        totalAmount:
+          type: number
+          format: decimal
+        submittedAmount:
+          type: number
+          format: decimal
+
+    ClaimUpdate:
+      type: object
+      properties:
+        totalAmount:
+          type: string
+          format: decimal
+        submittedAmount:
+          type: string
+          format: decimal
+        status:
+          type: string
+        denialReason:
+          type: string
+
+    ClaimLineItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        claimId:
+          type: integer
+        cptCodeId:
+          type: integer
+        icd10CodeId:
+          type: integer
+        units:
+          type: integer
+        rate:
+          type: string
+          format: decimal
+        amount:
+          type: string
+          format: decimal
+        dateOfService:
+          type: string
+          format: date
+        modifier:
+          type: string
+        notes:
+          type: string
+        cptCode:
+          type: object
+          properties:
+            code:
+              type: string
+            description:
+              type: string
+        icd10Code:
+          type: object
+          properties:
+            code:
+              type: string
+            description:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ClaimLineItemCreate:
+      type: object
+      required:
+        - cptCodeId
+      properties:
+        cptCodeId:
+          type: integer
+        icd10CodeId:
+          type: integer
+        units:
+          type: integer
+          default: 1
+        dateOfService:
+          type: string
+          format: date
+        modifier:
+          type: string
+        notes:
+          type: string
+
+    Appointment:
+      type: object
+      properties:
+        id:
+          type: integer
+        practiceId:
+          type: integer
+        patientId:
+          type: integer
+        therapistId:
+          type: string
+        title:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, completed, cancelled, no_show]
+        notes:
+          type: string
+        reminderSent:
+          type: boolean
+        cancelledAt:
+          type: string
+          format: date-time
+        cancelledBy:
+          type: string
+          enum: [patient, therapist, admin]
+        cancellationReason:
+          type: string
+          enum: [patient_request, sick, schedule_conflict, weather, no_show, other]
+        cancellationNotes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AppointmentCreate:
+      type: object
+      required:
+        - startTime
+        - endTime
+      properties:
+        practiceId:
+          type: integer
+        patientId:
+          type: integer
+        therapistId:
+          type: string
+        title:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        notes:
+          type: string
+
+    AppointmentUpdate:
+      type: object
+      properties:
+        patientId:
+          type: integer
+        therapistId:
+          type: string
+        title:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, completed, cancelled, no_show]
+        notes:
+          type: string
+
+    DashboardAnalytics:
+      type: object
+      properties:
+        totalPatients:
+          type: integer
+          description: Total number of active patients
+        activeClaims:
+          type: integer
+          description: Number of claims in progress
+        pendingPayments:
+          type: integer
+          description: Number of claims awaiting payment
+        claimApprovalRate:
+          type: number
+          format: decimal
+          description: Percentage of claims approved
+        monthlyRevenue:
+          type: number
+          format: decimal
+          description: Revenue for current month (admin/billing only)
+        averageReimbursement:
+          type: number
+          format: decimal
+          description: Average reimbursement per claim (admin/billing only)
+
+security:
+  - sessionAuth: []

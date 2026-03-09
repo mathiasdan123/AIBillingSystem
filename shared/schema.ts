@@ -41,6 +41,9 @@ export const users = pgTable("users", {
   npiNumber: varchar("npi_number"),
   digitalSignature: text("digital_signature"), // Base64 encoded signature image
   signatureUploadedAt: timestamp("signature_uploaded_at"),
+  // Supervision fields (for supervised therapist co-signing workflow)
+  supervisorId: varchar("supervisor_id"), // References users.id - supervisor who co-signs notes
+  requiresCosign: boolean("requires_cosign").default(false), // Whether this therapist needs co-signatures
   // MFA fields
   mfaEnabled: boolean("mfa_enabled").default(false),
   mfaSecret: jsonb("mfa_secret"), // encrypted with PHI encryption
@@ -253,9 +256,23 @@ export const soapNotes = pgTable("soap_notes", {
   therapistSignedName: varchar("therapist_signed_name"), // Legal name at signing
   therapistCredentials: varchar("therapist_credentials"), // Credentials at signing (OTR/L, etc.)
   signatureIpAddress: varchar("signature_ip_address"), // For audit trail
+  // Co-signing fields (for supervised therapist workflow)
+  cosignedBy: varchar("cosigned_by").references(() => users.id), // Supervisor who co-signed
+  cosignedAt: timestamp("cosigned_at"), // When supervisor co-signed
+  cosignStatus: varchar("cosign_status").default("not_required"), // not_required, pending, approved, rejected
+  cosignRejectionReason: text("cosign_rejection_reason"), // Reason if rejected
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Co-sign status enum values (for reference)
+export const COSIGN_STATUS = {
+  NOT_REQUIRED: 'not_required',
+  PENDING: 'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+} as const;
+export type CosignStatus = typeof COSIGN_STATUS[keyof typeof COSIGN_STATUS];
 
 // CPT Code optimization mappings by insurance
 export const cptCodeMappings = pgTable("cpt_code_mappings", {
@@ -418,6 +435,10 @@ export const appointments = pgTable("appointments", {
   cancelledBy: varchar("cancelled_by"), // patient, therapist, admin
   cancellationReason: varchar("cancellation_reason"), // patient_request, sick, schedule_conflict, weather, no_show, other
   cancellationNotes: text("cancellation_notes"),
+  // Recurring appointment fields
+  recurrenceRule: varchar("recurrence_rule"), // iCal RRULE format (e.g., "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO")
+  recurrenceParentId: integer("recurrence_parent_id"), // Links to parent recurring appointment (self-reference)
+  isRecurringInstance: boolean("is_recurring_instance").default(false), // True for instances generated from a recurring parent
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -772,10 +793,20 @@ export const eligibilityChecks = pgTable("eligibility_checks", {
 });
 
 // Relations
-export const usersRelations = relations(users, ({ one }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
   practice: one(practices, {
     fields: [users.practiceId],
     references: [practices.id],
+  }),
+  // Supervision relationship - who supervises this user
+  supervisor: one(users, {
+    fields: [users.supervisorId],
+    references: [users.id],
+    relationName: 'supervisor',
+  }),
+  // Inverse - users this person supervises
+  supervisees: many(users, {
+    relationName: 'supervisor',
   }),
 }));
 
@@ -853,6 +884,23 @@ export const claimLineItemsRelations = relations(claimLineItems, ({ one }) => ({
   icd10Code: one(icd10Codes, {
     fields: [claimLineItems.icd10CodeId],
     references: [icd10Codes.id],
+  }),
+}));
+
+export const soapNotesRelations = relations(soapNotes, ({ one }) => ({
+  session: one(treatmentSessions, {
+    fields: [soapNotes.sessionId],
+    references: [treatmentSessions.id],
+  }),
+  therapist: one(users, {
+    fields: [soapNotes.therapistId],
+    references: [users.id],
+    relationName: 'therapist',
+  }),
+  cosigner: one(users, {
+    fields: [soapNotes.cosignedBy],
+    references: [users.id],
+    relationName: 'cosigner',
   }),
 }));
 

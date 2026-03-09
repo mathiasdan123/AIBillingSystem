@@ -273,7 +273,18 @@ export interface IStorage {
   getSoapNotes(practiceId?: number): Promise<SoapNote[]>;
   getSoapNote(id: number): Promise<SoapNote | undefined>;
   getSoapNoteBySession(sessionId: number): Promise<SoapNote | undefined>;
-  
+  updateSoapNoteCosignStatus(id: number, data: {
+    cosignedBy?: string;
+    cosignedAt?: Date;
+    cosignStatus: string;
+    cosignRejectionReason?: string;
+  }): Promise<SoapNote | undefined>;
+  getPendingCosignNotes(supervisorId: string): Promise<SoapNote[]>;
+
+  // User supervision operations
+  getSupervisees(supervisorId: string): Promise<User[]>;
+  updateUserSupervision(userId: string, supervisorId: string | null, requiresCosign: boolean): Promise<User | undefined>;
+
   // CPT Code Mapping operations
   getCptCodeMappings(insuranceId?: number): Promise<CptCodeMapping[]>;
   createCptCodeMapping(mapping: any): Promise<CptCodeMapping>;
@@ -758,7 +769,21 @@ export class DatabaseStorage implements IStorage {
 
   // SOAP Notes operations (with PHI encryption)
   async createSoapNote(soapNote: InsertSoapNote): Promise<SoapNote> {
-    const encrypted = encryptSoapNoteRecord(soapNote as any);
+    // Check if the therapist requires co-signing
+    let cosignStatus = 'not_required';
+    if (soapNote.therapistId) {
+      const therapist = await this.getUser(soapNote.therapistId);
+      if (therapist?.requiresCosign) {
+        cosignStatus = 'pending';
+      }
+    }
+
+    const noteWithCosignStatus = {
+      ...soapNote,
+      cosignStatus,
+    };
+
+    const encrypted = encryptSoapNoteRecord(noteWithCosignStatus as any);
     const [created] = await db.insert(soapNotes).values(encrypted as any).returning();
     return decryptSoapNoteRecord(created) as SoapNote;
   }
@@ -830,6 +855,76 @@ export class DatabaseStorage implements IStorage {
       .where(eq(soapNotes.id, id))
       .returning();
     return updated ? decryptSoapNoteRecord(updated) as SoapNote : undefined;
+  }
+
+  // Co-signing workflow methods
+  async updateSoapNoteCosignStatus(id: number, data: {
+    cosignedBy?: string;
+    cosignedAt?: Date;
+    cosignStatus: string;
+    cosignRejectionReason?: string;
+  }): Promise<SoapNote | undefined> {
+    const [updated] = await db
+      .update(soapNotes)
+      .set({
+        cosignedBy: data.cosignedBy,
+        cosignedAt: data.cosignedAt,
+        cosignStatus: data.cosignStatus,
+        cosignRejectionReason: data.cosignRejectionReason,
+        updatedAt: new Date()
+      })
+      .where(eq(soapNotes.id, id))
+      .returning();
+    return updated ? decryptSoapNoteRecord(updated) as SoapNote : undefined;
+  }
+
+  async getPendingCosignNotes(supervisorId: string): Promise<SoapNote[]> {
+    // Get all supervisees of this supervisor
+    const superviseeIds = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.supervisorId, supervisorId));
+
+    if (superviseeIds.length === 0) {
+      return [];
+    }
+
+    // Get all pending SOAP notes from those supervisees
+    const ids = superviseeIds.map((s: { id: string }) => s.id);
+    const rows = await db
+      .select()
+      .from(soapNotes)
+      .where(
+        and(
+          eq(soapNotes.cosignStatus, 'pending'),
+          inArray(soapNotes.therapistId, ids)
+        )
+      )
+      .orderBy(desc(soapNotes.createdAt));
+
+    return rows.map((r: any) => decryptSoapNoteRecord(r) as SoapNote);
+  }
+
+  // User supervision methods
+  async getSupervisees(supervisorId: string): Promise<User[]> {
+    return await db
+      .select()
+      .from(users)
+      .where(eq(users.supervisorId, supervisorId))
+      .orderBy(users.lastName, users.firstName);
+  }
+
+  async updateUserSupervision(userId: string, supervisorId: string | null, requiresCosign: boolean): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({
+        supervisorId: supervisorId,
+        requiresCosign: requiresCosign,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return updated;
   }
 
   // Convenience methods for API routes
@@ -1781,6 +1876,192 @@ export class DatabaseStorage implements IStorage {
         lte(appointments.startTime, future)
       ))
       .orderBy(appointments.startTime);
+  }
+
+  // ==================== RECURRING APPOINTMENTS ====================
+
+  /**
+   * Create a recurring appointment series
+   * @param parentAppointment - The parent appointment with recurrence rule
+   * @param instanceDates - Array of dates for appointment instances
+   * @returns The parent appointment and all created instances
+   */
+  async createRecurringAppointmentSeries(
+    parentAppointment: InsertAppointment,
+    instanceDates: Date[]
+  ): Promise<{ parent: Appointment; instances: Appointment[] }> {
+    // Create the parent appointment first
+    const [parent] = await db.insert(appointments).values({
+      ...parentAppointment,
+      isRecurringInstance: false,
+    }).returning();
+
+    // Create all instances linked to the parent
+    const instances: Appointment[] = [];
+    const durationMs = new Date(parentAppointment.endTime).getTime() - new Date(parentAppointment.startTime).getTime();
+
+    for (const startDate of instanceDates) {
+      // Skip the first occurrence if it's the same as the parent
+      if (startDate.getTime() === new Date(parentAppointment.startTime).getTime()) {
+        continue;
+      }
+
+      const endDate = new Date(startDate.getTime() + durationMs);
+      const [instance] = await db.insert(appointments).values({
+        ...parentAppointment,
+        startTime: startDate,
+        endTime: endDate,
+        recurrenceParentId: parent.id,
+        recurrenceRule: null, // Only parent has the rule
+        isRecurringInstance: true,
+      }).returning();
+      instances.push(instance);
+    }
+
+    return { parent, instances };
+  }
+
+  /**
+   * Get all appointments in a recurring series by parent ID
+   */
+  async getRecurringSeries(parentId: number): Promise<Appointment[]> {
+    // Get the parent appointment
+    const [parent] = await db.select().from(appointments).where(eq(appointments.id, parentId));
+    if (!parent) return [];
+
+    // Get all instances
+    const instances = await db
+      .select()
+      .from(appointments)
+      .where(eq(appointments.recurrenceParentId, parentId))
+      .orderBy(appointments.startTime);
+
+    return [parent, ...instances];
+  }
+
+  /**
+   * Delete an entire recurring series
+   * @param parentId - The ID of the parent appointment
+   * @param includeCompleted - Whether to include completed appointments in deletion
+   */
+  async deleteRecurringSeries(parentId: number, includeCompleted: boolean = false): Promise<number> {
+    let deletedCount = 0;
+
+    // First delete all instances
+    if (includeCompleted) {
+      const result = await db
+        .delete(appointments)
+        .where(eq(appointments.recurrenceParentId, parentId))
+        .returning();
+      deletedCount += result.length;
+    } else {
+      const result = await db
+        .delete(appointments)
+        .where(and(
+          eq(appointments.recurrenceParentId, parentId),
+          ne(appointments.status, 'completed')
+        ))
+        .returning();
+      deletedCount += result.length;
+    }
+
+    // Then delete the parent if it's not completed (or if includeCompleted is true)
+    const [parent] = await db.select().from(appointments).where(eq(appointments.id, parentId));
+    if (parent && (includeCompleted || parent.status !== 'completed')) {
+      await db.delete(appointments).where(eq(appointments.id, parentId));
+      deletedCount += 1;
+    }
+
+    return deletedCount;
+  }
+
+  /**
+   * Update an entire recurring series (future appointments only)
+   * @param parentId - The ID of the parent appointment
+   * @param updates - The updates to apply
+   * @param fromDate - Only update appointments on or after this date (defaults to now)
+   */
+  async updateRecurringSeries(
+    parentId: number,
+    updates: Partial<InsertAppointment>,
+    fromDate?: Date
+  ): Promise<Appointment[]> {
+    const effectiveFromDate = fromDate || new Date();
+    const updatedAppointments: Appointment[] = [];
+
+    // Get all appointments in the series
+    const series = await this.getRecurringSeries(parentId);
+
+    for (const apt of series) {
+      // Only update future/scheduled appointments
+      if (new Date(apt.startTime) >= effectiveFromDate && apt.status === 'scheduled') {
+        const [updated] = await db
+          .update(appointments)
+          .set({
+            ...updates,
+            updatedAt: new Date(),
+            // Don't update these fields
+            id: undefined,
+            recurrenceParentId: undefined,
+            recurrenceRule: undefined,
+            isRecurringInstance: undefined,
+            createdAt: undefined,
+          })
+          .where(eq(appointments.id, apt.id))
+          .returning();
+        updatedAppointments.push(updated);
+      }
+    }
+
+    return updatedAppointments;
+  }
+
+  /**
+   * Cancel all future appointments in a recurring series
+   */
+  async cancelRecurringSeries(
+    parentId: number,
+    reason: string,
+    notes?: string,
+    cancelledBy?: string
+  ): Promise<Appointment[]> {
+    const now = new Date();
+    const cancelledAppointments: Appointment[] = [];
+
+    // Get all appointments in the series
+    const series = await this.getRecurringSeries(parentId);
+
+    for (const apt of series) {
+      // Only cancel future/scheduled appointments
+      if (new Date(apt.startTime) >= now && apt.status === 'scheduled') {
+        const [cancelled] = await db
+          .update(appointments)
+          .set({
+            status: 'cancelled',
+            cancelledAt: new Date(),
+            cancelledBy: cancelledBy || null,
+            cancellationReason: reason,
+            cancellationNotes: notes || null,
+            updatedAt: new Date(),
+          })
+          .where(eq(appointments.id, apt.id))
+          .returning();
+        cancelledAppointments.push(cancelled);
+      }
+    }
+
+    return cancelledAppointments;
+  }
+
+  /**
+   * Get parent appointment for a recurring instance
+   */
+  async getRecurrenceParent(appointmentId: number): Promise<Appointment | undefined> {
+    const [apt] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
+    if (!apt || !apt.recurrenceParentId) return undefined;
+
+    const [parent] = await db.select().from(appointments).where(eq(appointments.id, apt.recurrenceParentId));
+    return parent;
   }
 
   // ==================== WAITLIST MANAGEMENT ====================

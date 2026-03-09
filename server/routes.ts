@@ -12,6 +12,7 @@ import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedCl
 import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport, triggerHardDeletionNow } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
+import { authRouter, analyticsRouter, soapNotesRouter } from "./routes/index";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
@@ -22,6 +23,10 @@ import { parsePlanDocument, parsePlanDocumentFromPDF, benefitsToInsertFormat } f
 import * as stripeService from "./services/stripeService";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
+import { setMfaVerified, clearMfaVerification, mfaRequired, conditionalMfaRequired, adminMfaRequired, MFA_PROTECTED_ROUTES, MFA_CONFIG } from "./middleware/mfa-required";
+import { authLimiter, apiLimiter, uploadLimiter, exportLimiter } from "./middleware/rate-limiter";
+import { validate } from "./middleware/validate";
+import { createPatientSchema, createClaimSchema, createAppointmentSchema, updateUserRoleSchema } from "./validation/schemas";
 import logger from "./services/logger";
 import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
 import { registerBaaRoutes } from "./routes/baaRoutes";
@@ -414,6 +419,57 @@ const generateSecureClaimNumber = (prefix: string = 'CLM'): string => {
   return `${prefix}-${dateStr}-${randomPart}`;
 };
 
+/**
+ * Register all API routes for the application.
+ *
+ * RATE LIMITING:
+ * The following rate limiters are available from ./middleware/rate-limiter:
+ *
+ * - authLimiter: For auth endpoints (5 requests/15 min per IP)
+ *   Applied to: /api/login, /api/dev-user, /api/mfa/challenge
+ *
+ * - apiLimiter: For general API requests (100 requests/min per user)
+ *   Apply to endpoints that need protection from abuse
+ *
+ * - uploadLimiter: For file uploads (10 uploads/hour per user)
+ *   Apply to: /api/upload/*, /api/patients/:id/documents, /api/insurance/parse-plan-document
+ *
+ * - exportLimiter: For data exports (5 exports/hour per user)
+ *   Apply to: /api/export/*, /api/reports/.../export
+ *
+ * Usage: Add the limiter as middleware before other middleware:
+ *   app.post('/api/upload', uploadLimiter, isAuthenticated, handler);
+ *
+ * OPENAPI/SWAGGER DOCUMENTATION:
+ * To serve the OpenAPI spec with Swagger UI, install swagger-ui-express:
+ *
+ *   npm install swagger-ui-express
+ *   npm install -D @types/swagger-ui-express
+ *   npm install yamljs
+ *   npm install -D @types/yamljs
+ *
+ * Then add the following code at the beginning of registerRoutes():
+ *
+ *   import swaggerUi from 'swagger-ui-express';
+ *   import YAML from 'yamljs';
+ *   import path from 'path';
+ *
+ *   // Load the OpenAPI spec
+ *   const openapiSpec = YAML.load(path.join(__dirname, 'openapi.yaml'));
+ *
+ *   // Serve Swagger UI at /api/docs
+ *   app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec, {
+ *     customCss: '.swagger-ui .topbar { display: none }',
+ *     customSiteTitle: 'AIBillingSystem API Documentation'
+ *   }));
+ *
+ *   // Serve raw OpenAPI spec at /api/openapi.yaml
+ *   app.get('/api/openapi.yaml', (req, res) => {
+ *     res.sendFile(path.join(__dirname, 'openapi.yaml'));
+ *   });
+ *
+ * The OpenAPI spec is located at: server/openapi.yaml
+ */
 export async function registerRoutes(app: Express): Promise<Server> {
   // Health check endpoint (no auth required for monitoring)
   app.get('/api/health', async (req, res) => {
@@ -454,7 +510,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerBaaRoutes(app);
   registerBreachNotificationRoutes(app);
 
-  // Auth routes
+  // ==================== MODULAR ROUTERS ====================
+  // Mount modular route handlers (migrated from this file)
+  // Auth routes: /api/auth/*, /api/users/*, /api/mfa/*, /api/invites/*, /api/therapists/*
+  app.use('/api', authRouter);
+  // Analytics routes: /api/analytics/*
+  app.use('/api/analytics', analyticsRouter);
+  // SOAP Notes routes: /api/soap-notes/*
+  app.use('/api/soap-notes', soapNotesRouter);
+  // Therapy Bank is also served under SOAP notes router at /api/soap-notes/therapy-bank
+  // For backward compatibility, also mount at /api/therapy-bank
+  app.use('/api', soapNotesRouter);
+
+  // TODO: The routes below are duplicated in the modular routers above.
+  // They are kept here temporarily for backward compatibility during migration.
+  // Once verified working, remove the duplicate routes below and keep only the modular versions.
+  // See server/routes/index.ts for the full list of routes to migrate.
+
+  // Auth routes (LEGACY - now in server/routes/auth.ts)
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -466,17 +539,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Development user endpoint (bypass auth in dev)
-  app.get('/api/dev-user', async (req, res) => {
-    res.json({
-      id: 'dev-user-123',
-      email: 'dev@example.com',
-      firstName: 'Dev',
-      lastName: 'User',
-      profileImageUrl: null,
-      role: 'admin' // Dev user is admin for testing
+  // Development user endpoint - DISABLED IN PRODUCTION
+  // This endpoint is a security risk and should never be exposed in production
+  // Rate limited to prevent abuse even in development
+  if (process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_USER === 'true') {
+    app.get('/api/dev-user', authLimiter, async (req, res) => {
+      res.json({
+        id: 'dev-user-123',
+        email: 'dev@example.com',
+        firstName: 'Dev',
+        lastName: 'User',
+        profileImageUrl: null,
+        role: 'admin'
+      });
     });
-  });
+  }
 
   // User management endpoints (admin only)
   app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => {
@@ -498,15 +575,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/users/:id/role', isAuthenticated, isAdmin, async (req: any, res) => {
+  app.patch('/api/users/:id/role', isAuthenticated, isAdmin, validate(updateUserRoleSchema), async (req: any, res) => {
     try {
       const { id } = req.params;
+      // role is validated by the validate middleware
       const { role } = req.body;
-
-      // Validate role
-      if (!['therapist', 'admin', 'billing'].includes(role)) {
-        return res.status(400).json({ message: "Invalid role. Must be 'therapist', 'admin', or 'billing'" });
-      }
 
       // Prevent removing your own admin role
       const currentUserId = req.user?.claims?.sub;
@@ -751,6 +824,144 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== SOAP NOTE CO-SIGNING (Supervisor Workflow) ====================
+
+  // Get SOAP notes pending co-signature for the current supervisor
+  app.get('/api/soap-notes/pending-cosign', isAuthenticated, async (req: any, res) => {
+    try {
+      const supervisorId = req.user?.claims?.sub;
+      if (!supervisorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const pendingNotes = await storage.getPendingCosignNotes(supervisorId);
+      res.json(pendingNotes);
+    } catch (error) {
+      logger.error("Error fetching pending cosign notes", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to fetch pending notes" });
+    }
+  });
+
+  // Co-sign (approve or reject) a SOAP note
+  app.post('/api/soap-notes/:id/cosign', isAuthenticated, async (req: any, res) => {
+    try {
+      const noteId = parseInt(req.params.id);
+      const supervisorId = req.user?.claims?.sub;
+      const { action, rejectionReason } = req.body; // action: 'approve' or 'reject'
+
+      if (!supervisorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      if (!action || !['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ message: "Invalid action. Must be 'approve' or 'reject'" });
+      }
+
+      // Get the SOAP note
+      const soapNote = await storage.getSoapNote(noteId);
+      if (!soapNote) {
+        return res.status(404).json({ message: "SOAP note not found" });
+      }
+
+      // Verify the note is pending co-sign
+      if (soapNote.cosignStatus !== 'pending') {
+        return res.status(400).json({ message: "SOAP note is not pending co-signature" });
+      }
+
+      // Verify the supervisor is authorized to co-sign this note
+      if (soapNote.therapistId) {
+        const therapist = await storage.getUser(soapNote.therapistId);
+        if (!therapist || therapist.supervisorId !== supervisorId) {
+          return res.status(403).json({ message: "You are not authorized to co-sign this note" });
+        }
+      } else {
+        return res.status(400).json({ message: "SOAP note has no associated therapist" });
+      }
+
+      // Update the co-sign status
+      const cosignStatus = action === 'approve' ? 'approved' : 'rejected';
+      const updatedNote = await storage.updateSoapNoteCosignStatus(noteId, {
+        cosignedBy: supervisorId,
+        cosignedAt: new Date(),
+        cosignStatus,
+        cosignRejectionReason: action === 'reject' ? rejectionReason : undefined,
+      });
+
+      if (!updatedNote) {
+        return res.status(500).json({ message: "Failed to update co-sign status" });
+      }
+
+      // Get supervisor info for response
+      const supervisor = await storage.getUser(supervisorId);
+      const supervisorName = supervisor ? `${supervisor.firstName} ${supervisor.lastName}` : 'Unknown';
+
+      res.json({
+        message: action === 'approve' ? "SOAP note approved" : "SOAP note rejected",
+        cosignStatus: updatedNote.cosignStatus,
+        cosignedBy: supervisorName,
+        cosignedAt: updatedNote.cosignedAt,
+        rejectionReason: updatedNote.cosignRejectionReason,
+      });
+    } catch (error) {
+      logger.error("Error co-signing SOAP note", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to co-sign SOAP note" });
+    }
+  });
+
+  // Get supervisees for a user
+  app.get('/api/users/:id/supervisees', isAuthenticated, async (req: any, res) => {
+    try {
+      const supervisorId = req.params.id;
+      const currentUserId = req.user?.claims?.sub;
+
+      // Only allow users to see their own supervisees (or admins)
+      const currentUser = await storage.getUser(currentUserId);
+      if (currentUserId !== supervisorId && currentUser?.role !== 'admin') {
+        return res.status(403).json({ message: "Not authorized to view these supervisees" });
+      }
+
+      const supervisees = await storage.getSupervisees(supervisorId);
+      res.json(supervisees);
+    } catch (error) {
+      logger.error("Error fetching supervisees", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to fetch supervisees" });
+    }
+  });
+
+  // Update user supervision settings (admin only)
+  app.patch('/api/users/:id/supervision', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+    try {
+      const userId = req.params.id;
+      const { supervisorId, requiresCosign } = req.body;
+
+      // Validate supervisor exists if provided
+      if (supervisorId) {
+        const supervisor = await storage.getUser(supervisorId);
+        if (!supervisor) {
+          return res.status(400).json({ message: "Supervisor not found" });
+        }
+      }
+
+      const updatedUser = await storage.updateUserSupervision(
+        userId,
+        supervisorId || null,
+        requiresCosign ?? false
+      );
+
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({
+        message: "Supervision settings updated",
+        user: updatedUser
+      });
+    } catch (error) {
+      logger.error("Error updating supervision settings", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to update supervision settings" });
+    }
+  });
+
   // ==================== PRACTICE MANAGEMENT ====================
 
   // Get practice by ID
@@ -954,6 +1165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Analytics routes (LEGACY - now in server/routes/analytics.ts)
   // Dashboard analytics (financial data filtered by role)
   app.get('/api/analytics/dashboard', isAuthenticated, async (req: any, res) => {
     try {
@@ -1184,6 +1396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload historical reimbursement data (admin/billing only)
+  // TODO: Apply uploadLimiter middleware for rate limiting: uploadLimiter, isAuthenticated, isAdminOrBilling
   app.post('/api/upload-reimbursement-data', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const { records } = req.body;
@@ -1249,6 +1462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Export training data for external ML systems (admin/billing only)
+  // TODO: Apply exportLimiter middleware for rate limiting: exportLimiter, isAuthenticated, isAdminOrBilling
   app.get('/api/export-training-data', isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const trainingData = reimbursementPredictor.exportTrainingData();
@@ -1521,6 +1735,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Public endpoint: Upload plan document during patient intake
   // Requires valid portal token to prevent unauthorized uploads
+  // TODO: Apply uploadLimiter middleware for rate limiting: uploadLimiter, planDocUpload.single('document')
   app.post('/api/patients/:patientId/plan-documents/public', planDocUpload.single('document'), async (req: any, res) => {
     try {
       const patientId = parseInt(req.params.patientId);
@@ -1945,8 +2160,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/patients', isAuthenticated, async (req: any, res) => {
+  app.post('/api/patients', isAuthenticated, validate(createPatientSchema), async (req: any, res) => {
     try {
+      // req.body is now validated and sanitized by the validate middleware
       const patient = await storage.createPatient(req.body);
       res.json(patient);
     } catch (error) {
@@ -3969,14 +4185,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create new claim with AI optimization
-  app.post('/api/claims', isAuthenticated, async (req: any, res) => {
+  app.post('/api/claims', isAuthenticated, validate(createClaimSchema), async (req: any, res) => {
     try {
+      // req.body is validated by the validate middleware - patientId and totalAmount are guaranteed
       const { patientId, insuranceId, totalAmount, submittedAmount, sessionId } = req.body;
       const practiceId = getAuthorizedPracticeId(req);
-
-      if (!patientId || !totalAmount) {
-        return res.status(400).json({ message: 'Patient ID and total amount are required' });
-      }
 
       // Generate claim number
       const claimNumber = generateSecureClaimNumber("CLM");
@@ -4069,6 +4282,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (claim.status !== 'draft') {
         return res.status(400).json({ message: 'Only draft claims can be submitted' });
+      }
+
+      // Check if the associated SOAP note requires co-signing and is approved
+      if (claim.sessionId) {
+        const soapNote = await storage.getSoapNoteBySession(claim.sessionId);
+        if (soapNote && soapNote.cosignStatus === 'pending') {
+          return res.status(400).json({
+            message: 'Cannot submit claim: SOAP note requires supervisor co-signature',
+            code: 'COSIGN_REQUIRED'
+          });
+        }
+        if (soapNote && soapNote.cosignStatus === 'rejected') {
+          return res.status(400).json({
+            message: 'Cannot submit claim: SOAP note was rejected by supervisor',
+            code: 'COSIGN_REJECTED',
+            rejectionReason: soapNote.cosignRejectionReason
+          });
+        }
       }
 
       // Get related data for claim submission
@@ -5147,6 +5378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Export denied claims report as CSV
+  // TODO: Apply exportLimiter middleware for rate limiting: exportLimiter, isAuthenticated
   app.get('/api/reports/denied-claims/export', isAuthenticated, async (req: any, res) => {
     try {
       const practiceId = getAuthorizedPracticeId(req);
@@ -5686,6 +5918,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Invalid token' });
       }
       await storage.updateUserMfa(userId, { mfaEnabled: true });
+      // Set MFA verified in session for subsequent PHI access
+      setMfaVerified(req.session, userId);
+      logger.info('MFA enabled and verified for user', { userId });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: 'MFA verification failed' });
@@ -5696,16 +5931,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
       await storage.updateUserMfa(userId, { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: null });
+      // Clear MFA session verification since MFA is now disabled
+      clearMfaVerification(req.session);
+      logger.info('MFA disabled for user', { userId });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: 'Failed to disable MFA' });
     }
   });
 
-  app.post('/api/mfa/challenge', async (req: any, res) => {
+  // Rate limited to prevent brute force attacks on MFA codes
+  app.post('/api/mfa/challenge', authLimiter, isAuthenticated, async (req: any, res) => {
     try {
       const { verifyToken, verifyBackupCode } = await import('./services/mfaService');
-      const { userId, token, backupCode } = req.body;
+      const userId = req.user?.claims?.sub;
+      const { token, backupCode } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
       const user = await storage.getUser(userId);
       if (!user?.mfaEnabled || !user?.mfaSecret) {
         return res.status(400).json({ message: 'MFA not enabled' });
@@ -5713,19 +5958,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const secret = typeof user.mfaSecret === 'string' ? user.mfaSecret : (user.mfaSecret as any).secret || user.mfaSecret;
       if (token) {
         if (!verifyToken(secret as string, token)) {
+          logger.warn('MFA challenge failed: Invalid token', { userId });
           return res.status(400).json({ message: 'Invalid token' });
         }
       } else if (backupCode) {
         const codes = (user.mfaBackupCodes as string[]) || [];
         if (!verifyBackupCode(backupCode, codes)) {
+          logger.warn('MFA challenge failed: Invalid backup code', { userId });
           return res.status(400).json({ message: 'Invalid backup code' });
         }
       } else {
         return res.status(400).json({ message: 'Token or backup code required' });
       }
-      res.json({ success: true });
+
+      // Set MFA verified in session - this allows access to PHI routes
+      setMfaVerified(req.session, userId);
+      logger.info('MFA challenge completed successfully', {
+        userId,
+        method: token ? 'totp' : 'backup_code',
+        sessionTimeout: MFA_CONFIG.sessionTimeoutMinutes + ' minutes'
+      });
+
+      res.json({
+        success: true,
+        sessionExpiresIn: MFA_CONFIG.sessionTimeout,
+        sessionExpiresInMinutes: MFA_CONFIG.sessionTimeoutMinutes
+      });
     } catch (error) {
+      logger.error('MFA challenge error', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'MFA challenge failed' });
+    }
+  });
+
+  // MFA status endpoint - check if MFA session is valid
+  app.get('/api/mfa/status', isAuthenticated, async (req: any, res) => {
+    try {
+      const { getMfaSessionTimeRemaining, isMfaSessionValid } = await import('./middleware/mfa-required');
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId);
+
+      const sessionValid = isMfaSessionValid(req.session, userId);
+      const timeRemaining = getMfaSessionTimeRemaining(req.session);
+
+      res.json({
+        mfaEnabled: user?.mfaEnabled || false,
+        sessionValid,
+        timeRemainingMs: timeRemaining,
+        timeRemainingMinutes: Math.ceil(timeRemaining / 60000),
+        protectedRoutes: MFA_PROTECTED_ROUTES,
+        sessionTimeoutMinutes: MFA_CONFIG.sessionTimeoutMinutes
+      });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to get MFA status' });
     }
   });
 
@@ -5822,11 +6106,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ==================== APPOINTMENT CRUD ====================
 
-  app.post('/api/appointments', isAuthenticated, async (req: any, res) => {
+  app.post('/api/appointments', isAuthenticated, validate(createAppointmentSchema), async (req: any, res) => {
     try {
+      // req.body is validated by the validate middleware - startTime and endTime are validated ISO strings
       const data = { ...req.body };
-      if (data.startTime) data.startTime = new Date(data.startTime);
-      if (data.endTime) data.endTime = new Date(data.endTime);
+      // Convert validated ISO strings to Date objects for storage
+      data.startTime = new Date(data.startTime);
+      data.endTime = new Date(data.endTime);
       const appointment = await storage.createAppointment(data);
       res.json(appointment);
     } catch (error) {
@@ -5895,6 +6181,234 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       logger.error('Error cancelling appointment', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to cancel appointment' });
+    }
+  });
+
+  // ==================== RECURRING APPOINTMENTS ====================
+
+  // Create a recurring appointment series
+  app.post('/api/appointments/recurring', isAuthenticated, async (req: any, res) => {
+    try {
+      const {
+        parseRRule,
+        generateOccurrences,
+        validateRecurrenceRule,
+        describeRecurrence,
+      } = await import('./services/recurrenceService');
+
+      const { recurrenceRule, ...appointmentData } = req.body;
+
+      // Validate required fields
+      if (!recurrenceRule) {
+        return res.status(400).json({ message: 'Recurrence rule is required' });
+      }
+      if (!appointmentData.startTime || !appointmentData.endTime) {
+        return res.status(400).json({ message: 'Start time and end time are required' });
+      }
+
+      // Validate the recurrence rule
+      const validationErrors = validateRecurrenceRule(recurrenceRule);
+      if (validationErrors.length > 0) {
+        return res.status(400).json({
+          message: 'Invalid recurrence rule',
+          errors: validationErrors
+        });
+      }
+
+      // Parse dates
+      const startTime = new Date(appointmentData.startTime);
+      const endTime = new Date(appointmentData.endTime);
+
+      // Generate occurrence dates
+      const occurrences = generateOccurrences(startTime, recurrenceRule);
+
+      if (occurrences.length === 0) {
+        return res.status(400).json({ message: 'No occurrences generated from recurrence rule' });
+      }
+
+      // Create the appointment series
+      const result = await storage.createRecurringAppointmentSeries(
+        {
+          ...appointmentData,
+          startTime,
+          endTime,
+          recurrenceRule,
+        },
+        occurrences
+      );
+
+      res.status(201).json({
+        parent: result.parent,
+        instances: result.instances,
+        totalCreated: result.instances.length + 1,
+        recurrenceDescription: describeRecurrence(recurrenceRule),
+      });
+    } catch (error) {
+      logger.error('Error creating recurring appointment series', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to create recurring appointment series' });
+    }
+  });
+
+  // Get recurring series for an appointment
+  app.get('/api/appointments/:id/series', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointmentId = parseInt(req.params.id);
+      const appointment = await storage.getAppointment(appointmentId);
+
+      if (!appointment) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+
+      // Determine the parent ID
+      const parentId = appointment.recurrenceParentId || appointment.id;
+
+      // Check if this is actually a recurring appointment
+      const parent = await storage.getAppointment(parentId);
+      if (!parent?.recurrenceRule && !appointment.isRecurringInstance) {
+        return res.status(400).json({ message: 'This appointment is not part of a recurring series' });
+      }
+
+      const series = await storage.getRecurringSeries(parentId);
+
+      const { describeRecurrence } = await import('./services/recurrenceService');
+      const recurrenceDescription = parent?.recurrenceRule
+        ? describeRecurrence(parent.recurrenceRule)
+        : 'Recurring appointment';
+
+      res.json({
+        parentId,
+        recurrenceRule: parent?.recurrenceRule,
+        recurrenceDescription,
+        appointments: series,
+        totalCount: series.length,
+      });
+    } catch (error) {
+      logger.error('Error fetching recurring series', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to fetch recurring series' });
+    }
+  });
+
+  // Delete entire recurring series
+  app.delete('/api/appointments/:id/series', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointmentId = parseInt(req.params.id);
+      const includeCompleted = req.query.includeCompleted === 'true';
+
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+
+      // Determine the parent ID
+      const parentId = appointment.recurrenceParentId || appointment.id;
+
+      // Check if this is actually a recurring appointment
+      const parent = await storage.getAppointment(parentId);
+      if (!parent?.recurrenceRule && !appointment.isRecurringInstance) {
+        return res.status(400).json({ message: 'This appointment is not part of a recurring series' });
+      }
+
+      const deletedCount = await storage.deleteRecurringSeries(parentId, includeCompleted);
+
+      res.json({
+        message: 'Recurring series deleted',
+        deletedCount,
+      });
+    } catch (error) {
+      logger.error('Error deleting recurring series', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to delete recurring series' });
+    }
+  });
+
+  // Update entire recurring series (future appointments only)
+  app.patch('/api/appointments/:id/series', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointmentId = parseInt(req.params.id);
+      const { fromDate, ...updates } = req.body;
+
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+
+      // Determine the parent ID
+      const parentId = appointment.recurrenceParentId || appointment.id;
+
+      // Check if this is actually a recurring appointment
+      const parent = await storage.getAppointment(parentId);
+      if (!parent?.recurrenceRule && !appointment.isRecurringInstance) {
+        return res.status(400).json({ message: 'This appointment is not part of a recurring series' });
+      }
+
+      // Parse fromDate if provided
+      const effectiveFromDate = fromDate ? new Date(fromDate) : undefined;
+
+      const updatedAppointments = await storage.updateRecurringSeries(
+        parentId,
+        updates,
+        effectiveFromDate
+      );
+
+      res.json({
+        message: 'Recurring series updated',
+        updatedCount: updatedAppointments.length,
+        updatedAppointments,
+      });
+    } catch (error) {
+      logger.error('Error updating recurring series', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to update recurring series' });
+    }
+  });
+
+  // Cancel entire recurring series (future appointments only)
+  app.post('/api/appointments/:id/series/cancel', isAuthenticated, async (req: any, res) => {
+    try {
+      const appointmentId = parseInt(req.params.id);
+      const { reason, notes, cancelledBy } = req.body;
+
+      if (!reason) {
+        return res.status(400).json({ message: 'Cancellation reason is required' });
+      }
+
+      const appointment = await storage.getAppointment(appointmentId);
+      if (!appointment) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+
+      // Determine the parent ID
+      const parentId = appointment.recurrenceParentId || appointment.id;
+
+      // Check if this is actually a recurring appointment
+      const parent = await storage.getAppointment(parentId);
+      if (!parent?.recurrenceRule && !appointment.isRecurringInstance) {
+        return res.status(400).json({ message: 'This appointment is not part of a recurring series' });
+      }
+
+      // Determine who cancelled
+      let whoCancelled = cancelledBy;
+      if (!whoCancelled) {
+        const userId = req.user?.claims?.sub;
+        if (userId) {
+          const user = await storage.getUser(userId);
+          whoCancelled = user?.role || 'therapist';
+        }
+      }
+
+      const cancelledAppointments = await storage.cancelRecurringSeries(
+        parentId,
+        reason,
+        notes,
+        whoCancelled
+      );
+
+      res.json({
+        message: 'Recurring series cancelled',
+        cancelledCount: cancelledAppointments.length,
+        cancelledAppointments,
+      });
+    } catch (error) {
+      logger.error('Error cancelling recurring series', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to cancel recurring series' });
     }
   });
 

@@ -1,0 +1,53 @@
+# Dependencies
+node_modules
+
+# Build outputs (we rebuild in Docker)
+dist
+
+# Development files
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Documentation
+*.md
+!README.md
+docs
+
+# Test files
+*.test.*
+*.spec.*
+__tests__
+coverage
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+backups
+*.bak
+
+# Replit files
+.replit
+replit.nix

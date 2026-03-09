@@ -7,6 +7,7 @@ import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
+import { authLimiter } from "./middleware/rate-limiter";
 
 // Allow local development without Replit auth
 // SECURITY: Multiple safeguards to prevent dev mode in production
@@ -137,7 +138,8 @@ export async function setupAuth(app: Express) {
     });
 
     // Mock login for dev/demo - automatically log in as admin
-    app.get("/api/login", async (req, res) => {
+    // Rate limited to prevent abuse
+    app.get("/api/login", authLimiter, async (req, res) => {
       const devUser = {
         claims: {
           sub: 'demo-user-123',
@@ -174,6 +176,11 @@ export async function setupAuth(app: Express) {
     });
 
     app.get("/api/logout", (req, res) => {
+      // Clear MFA verification on logout
+      if ((req as any).session) {
+        delete (req as any).session.mfaVerifiedAt;
+        delete (req as any).session.mfaUserId;
+      }
       req.logout(() => {
         res.redirect('/');
       });
@@ -217,7 +224,8 @@ export async function setupAuth(app: Express) {
     cb(null, user);
   });
 
-  app.get("/api/login", (req, res, next) => {
+  // Rate limited to prevent brute force attacks
+  app.get("/api/login", authLimiter, (req, res, next) => {
     console.log('Login attempt for hostname:', req.hostname);
     console.log('Session ID:', req.sessionID);
     passport.authenticate(`replitauth:${req.hostname}`, {
@@ -250,6 +258,11 @@ export async function setupAuth(app: Express) {
   });
 
   app.get("/api/logout", (req, res) => {
+    // Clear MFA verification on logout
+    if ((req as any).session) {
+      delete (req as any).session.mfaVerifiedAt;
+      delete (req as any).session.mfaUserId;
+    }
     req.logout(() => {
       res.redirect(
         client.buildEndSessionUrl(config, {
