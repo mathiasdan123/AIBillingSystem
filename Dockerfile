@@ -4,16 +4,19 @@ FROM node:20-alpine AS builder
 # Set working directory
 WORKDIR /app
 
+# Set NODE_ENV for build-time dead code elimination
+ENV NODE_ENV=production
+
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install all dependencies (including dev) for building
 RUN npm ci
 
 # Copy source files
 COPY . .
 
-# Build the application
+# Build the application with production optimizations
 RUN npm run build
 
 # Stage 2: Production image
