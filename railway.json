@@ -3,9 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
-    "buildArgs": {
-      "BUILD_DATE": "${{RAILWAY_DEPLOYMENT_ID}}"
-    }
+    "dockerBuildOptions": "--no-cache"
   },
   "deploy": {
     "startCommand": "node dist/index.js",

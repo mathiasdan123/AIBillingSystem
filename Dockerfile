@@ -4,10 +4,13 @@ FROM node:20-alpine AS builder
 # Set working directory
 WORKDIR /app
 
+# Force cache invalidation - Build ID: 20260309-v2
+LABEL build.version="20260309-v2"
+
 # Set NODE_ENV for build-time dead code elimination
 ENV NODE_ENV=production
 
-# Copy package files
+# Copy package files - these changing will bust npm ci cache
 COPY package*.json ./
 
 # Install all dependencies (including dev) for building
