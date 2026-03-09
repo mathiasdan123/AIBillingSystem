@@ -247,13 +247,14 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV !== "production") {
-    // Dynamic import to avoid loading vite in production
-    // This code path is completely removed in production builds
-    const viteModule = await import("./vite.js");
+  // Setup static file serving or vite dev server
+  // In production: always use static file serving
+  // In development: dynamically load vite for HMR
+  if (process.env.NODE_ENV === "development") {
+    // Use Function constructor to completely hide the import from static analysis
+    // This prevents esbuild from including vite in the bundle
+    const loadVite = new Function('return import("./vite.js")');
+    const viteModule = await loadVite();
     await viteModule.setupVite(app, server);
   } else {
     serveStatic(app);
