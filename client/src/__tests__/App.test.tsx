@@ -15,7 +15,9 @@ vi.mock('@/hooks/useAuth', () => ({
     isAuthenticated: false,
     isLoading: true,
     isAdmin: false,
-    user: null,
+    user: undefined,
+    currentRole: 'therapist' as const,
+    actualRole: 'therapist' as const,
   })),
 }));
 
@@ -43,7 +45,9 @@ describe('App component', () => {
       isAuthenticated: false,
       isLoading: true,
       isAdmin: false,
-      user: null,
+      user: undefined,
+      currentRole: 'therapist' as const,
+      actualRole: 'therapist' as const,
     });
 
     render(<App />);
@@ -59,7 +63,9 @@ describe('App component', () => {
       isAuthenticated: false,
       isLoading: false,
       isAdmin: false,
-      user: null,
+      user: undefined,
+      currentRole: 'therapist' as const,
+      actualRole: 'therapist' as const,
     });
 
     render(<App />);

@@ -393,7 +393,7 @@ router.post('/therapy-bank', isAuthenticated, async (req: any, res) => {
       practiceId: user.practiceId,
       therapyName: therapyName.trim(),
       category: category || null,
-      createdById: user.id,
+      createdBy: user.id,
     });
 
     res.status(201).json(therapy);
@@ -416,10 +416,14 @@ router.delete('/therapy-bank/:id', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ error: 'Invalid therapy ID' });
     }
 
-    const success = await storage.deleteTherapyBankEntry(therapyId, user.practiceId);
-    if (!success) {
+    // First verify the therapy belongs to this practice
+    const therapies = await storage.getTherapyBank(user.practiceId);
+    const therapy = therapies.find(t => t.id === therapyId);
+    if (!therapy) {
       return res.status(404).json({ error: 'Therapy not found or not authorized to delete' });
     }
+
+    await storage.deleteTherapyBankEntry(therapyId);
 
     res.json({ success: true });
   } catch (error) {

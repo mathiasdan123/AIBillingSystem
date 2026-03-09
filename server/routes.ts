@@ -25,6 +25,7 @@ import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSp
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { setMfaVerified, clearMfaVerification, mfaRequired, conditionalMfaRequired, adminMfaRequired, MFA_PROTECTED_ROUTES, MFA_CONFIG } from "./middleware/mfa-required";
 import { authLimiter, apiLimiter, uploadLimiter, exportLimiter } from "./middleware/rate-limiter";
+import { createFileValidator, FileValidationContexts } from "./middleware/file-validator";
 import { validate } from "./middleware/validate";
 import { createPatientSchema, createClaimSchema, createAppointmentSchema, updateUserRoleSchema } from "./validation/schemas";
 import logger from "./services/logger";
@@ -1396,8 +1397,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload historical reimbursement data (admin/billing only)
-  // TODO: Apply uploadLimiter middleware for rate limiting: uploadLimiter, isAuthenticated, isAdminOrBilling
-  app.post('/api/upload-reimbursement-data', isAuthenticated, isAdminOrBilling, async (req, res) => {
+  app.post('/api/upload-reimbursement-data', uploadLimiter, isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const { records } = req.body;
 
@@ -1462,8 +1462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Export training data for external ML systems (admin/billing only)
-  // TODO: Apply exportLimiter middleware for rate limiting: exportLimiter, isAuthenticated, isAdminOrBilling
-  app.get('/api/export-training-data', isAuthenticated, isAdminOrBilling, async (req, res) => {
+  app.get('/api/export-training-data', exportLimiter, isAuthenticated, isAdminOrBilling, async (req, res) => {
     try {
       const trainingData = reimbursementPredictor.exportTrainingData();
       
@@ -1735,8 +1734,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Public endpoint: Upload plan document during patient intake
   // Requires valid portal token to prevent unauthorized uploads
-  // TODO: Apply uploadLimiter middleware for rate limiting: uploadLimiter, planDocUpload.single('document')
-  app.post('/api/patients/:patientId/plan-documents/public', planDocUpload.single('document'), async (req: any, res) => {
+  app.post('/api/patients/:patientId/plan-documents/public', uploadLimiter, planDocUpload.single('document'), createFileValidator(FileValidationContexts.PLAN_DOCUMENT), async (req: any, res) => {
     try {
       const patientId = parseInt(req.params.patientId);
       const portalToken = req.headers['x-portal-token'] || req.body.portalToken;
@@ -1855,7 +1853,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload and parse a plan document (admin/staff authenticated)
-  app.post('/api/patients/:patientId/plan-documents', isAuthenticated, planDocUpload.single('document'), async (req: any, res) => {
+  app.post('/api/patients/:patientId/plan-documents', uploadLimiter, isAuthenticated, planDocUpload.single('document'), createFileValidator(FileValidationContexts.PLAN_DOCUMENT), async (req: any, res) => {
     try {
       const userId = req.user?.claims?.sub;
       const user = await storage.getUser(userId);
@@ -2593,7 +2591,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Extract text from uploaded insurance contract file (PDF, TXT, DOC)
-  app.post('/api/insurance-rates/extract-text', isAuthenticated, upload.single('file'), async (req: any, res) => {
+  app.post('/api/insurance-rates/extract-text', uploadLimiter, isAuthenticated, upload.single('file'), createFileValidator(FileValidationContexts.INSURANCE_CONTRACT), async (req: any, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
@@ -5378,8 +5376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Export denied claims report as CSV
-  // TODO: Apply exportLimiter middleware for rate limiting: exportLimiter, isAuthenticated
-  app.get('/api/reports/denied-claims/export', isAuthenticated, async (req: any, res) => {
+  app.get('/api/reports/denied-claims/export', exportLimiter, isAuthenticated, async (req: any, res) => {
     try {
       const practiceId = getAuthorizedPracticeId(req);
       const period = req.query.period || 'month';
