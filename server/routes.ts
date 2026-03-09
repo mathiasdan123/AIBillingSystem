@@ -415,6 +415,34 @@ const generateSecureClaimNumber = (prefix: string = 'CLM'): string => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Health check endpoint (no auth required for monitoring)
+  app.get('/api/health', async (req, res) => {
+    const startTime = Date.now();
+    const checks: Record<string, { status: string; latency?: number }> = {};
+
+    // Check database
+    try {
+      const dbStart = Date.now();
+      await storage.getAllPracticeIds();
+      checks.database = { status: 'healthy', latency: Date.now() - dbStart };
+    } catch (error) {
+      checks.database = { status: 'unhealthy' };
+    }
+
+    // Check if server can process requests
+    checks.server = { status: 'healthy' };
+
+    const allHealthy = Object.values(checks).every(c => c.status === 'healthy');
+
+    res.status(allHealthy ? 200 : 503).json({
+      status: allHealthy ? 'healthy' : 'degraded',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      checks,
+      responseTime: Date.now() - startTime
+    });
+  });
+
   // Auth middleware
   await setupAuth(app);
 

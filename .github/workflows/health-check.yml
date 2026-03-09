@@ -1,0 +1,156 @@
+name: Production Health Check
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  PROD_URL: https://aibillingsystem-production-e60c.up.railway.app
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Production is Up
+        id: prod-check
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL")
+          if [ "$status" = "200" ]; then
+            echo "✅ Production site is up"
+            echo "site_up=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Production site returned $status"
+            echo "site_up=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Test Admin Login
+        run: |
+          # Login and save cookies
+          curl -s -L -c /tmp/cookies.txt "$PROD_URL/api/login" > /dev/null
+
+          # Check we're authenticated
+          user=$(curl -s -b /tmp/cookies.txt "$PROD_URL/api/auth/user")
+          if echo "$user" | grep -q '"id"'; then
+            echo "✅ Admin login works"
+          else
+            echo "❌ Admin login failed"
+            exit 1
+          fi
+
+      - name: Test Core API Endpoints
+        run: |
+          COOKIES="/tmp/cookies.txt"
+          FAILED=0
+
+          test_endpoint() {
+            local name="$1"
+            local endpoint="$2"
+            response=$(curl -s -b $COOKIES -w "\n%{http_code}" "$PROD_URL$endpoint")
+            status=$(echo "$response" | tail -1)
+            if [[ "$status" =~ ^2 ]]; then
+              echo "✅ $name"
+            else
+              echo "❌ $name (HTTP $status)"
+              FAILED=$((FAILED + 1))
+            fi
+          }
+
+          echo "=== Testing Core Endpoints ==="
+          test_endpoint "Patients List" "/api/patients"
+          test_endpoint "Appointments List" "/api/appointments"
+          test_endpoint "Claims List" "/api/claims"
+          test_endpoint "Therapists List" "/api/therapists"
+          test_endpoint "Services List" "/api/services"
+          test_endpoint "Analytics Dashboard" "/api/analytics/dashboard"
+          test_endpoint "Practice Settings" "/api/practice"
+          test_endpoint "SOAP Templates" "/api/soap-templates"
+          test_endpoint "Notifications" "/api/notifications"
+
+          if [ $FAILED -gt 0 ]; then
+            echo ""
+            echo "❌ $FAILED endpoint(s) failed"
+            exit 1
+          fi
+          echo ""
+          echo "✅ All core endpoints healthy"
+
+      - name: Test Patient Portal
+        run: |
+          echo "=== Testing Patient Portal ==="
+
+          # Test demo login
+          pp_response=$(curl -s "$PROD_URL/api/patient-portal/demo-login")
+          if echo "$pp_response" | grep -q '"portalToken"'; then
+            echo "✅ Patient Portal Demo Login"
+            token=$(echo "$pp_response" | grep -o '"portalToken":"[^"]*"' | cut -d'"' -f4)
+
+            # Test dashboard with token
+            dashboard=$(curl -s -H "Authorization: Bearer $token" "$PROD_URL/api/patient-portal/dashboard")
+            if echo "$dashboard" | grep -q '"patient"\|"appointments"'; then
+              echo "✅ Patient Portal Dashboard"
+            else
+              echo "❌ Patient Portal Dashboard failed"
+              exit 1
+            fi
+          else
+            echo "❌ Patient Portal Demo Login failed"
+            exit 1
+          fi
+
+      - name: Test Page Loads
+        run: |
+          FAILED=0
+
+          for path in "/" "/dashboard" "/patients" "/calendar" "/claims" "/analytics" "/settings"; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL$path")
+            if [ "$status" = "200" ]; then
+              echo "✅ Page: $path"
+            else
+              echo "❌ Page: $path (HTTP $status)"
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          if [ $FAILED -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Production Health Check Failed - ${new Date().toISOString().split('T')[0]}`;
+            const body = `## Production Health Check Failed
+
+            **Time:** ${new Date().toISOString()}
+            **URL:** ${process.env.PROD_URL}
+
+            Please check the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for details.
+
+            ### Quick Checks:
+            - [ ] Is Railway deployment active?
+            - [ ] Is the database connected?
+            - [ ] Check Railway logs for errors
+            `;
+
+            // Check if there's already an open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'production-alert'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['production-alert', 'bug']
+              });
+            }
