@@ -320,6 +320,58 @@ export default function Settings() {
     },
   });
 
+  // Therapist management
+  interface TherapistData {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    credentials: string | null;
+    licenseNumber: string | null;
+    npiNumber: string | null;
+    hasSignature: boolean;
+    signatureUploadedAt: string | null;
+  }
+
+  const { data: therapists, isLoading: therapistsLoading } = useQuery<TherapistData[]>({
+    queryKey: ['/api/therapists'],
+    queryFn: async () => (await apiRequest('GET', '/api/therapists')).json(),
+  });
+
+  const updateTherapistMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      const response = await apiRequest('PATCH', `/api/therapists/${id}`, data);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/therapists'] });
+      toast({ title: 'Updated', description: 'Therapist profile updated successfully.' });
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to update therapist profile.', variant: 'destructive' });
+    },
+  });
+
+  const [editingTherapist, setEditingTherapist] = useState<string | null>(null);
+  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', npiNumber: '' });
+  const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+
+  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>, therapistId: string) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        setSignatureDataUrl(base64);
+        updateTherapistMutation.mutate({
+          id: therapistId,
+          data: { digitalSignature: base64 }
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Populate form with practice data
   useEffect(() => {
     if (practice) {
@@ -369,6 +421,7 @@ export default function Settings() {
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
     { id: "billing", label: "Billing", icon: CreditCard },
+    { id: "therapists", label: "Therapists", icon: BadgeCheck },
     ...(isAdmin ? [
       { id: "users", label: "User Management", icon: Users },
       { id: "baa", label: "BAA Tracking", icon: FileText },
@@ -1207,6 +1260,171 @@ export default function Settings() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === "therapists" && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <BadgeCheck className="w-5 h-5 mr-2" />
+                    Therapist Profiles & Signatures
+                  </CardTitle>
+                  <CardDescription>
+                    Manage therapist credentials and digital signatures for SOAP notes
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {therapistsLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+                    </div>
+                  ) : therapists && therapists.length > 0 ? (
+                    <div className="space-y-6">
+                      {therapists.map((therapist) => (
+                        <div key={therapist.id} className="border rounded-lg p-4">
+                          <div className="flex items-start justify-between mb-4">
+                            <div>
+                              <h3 className="font-semibold text-lg">
+                                {therapist.firstName} {therapist.lastName}
+                                {therapist.credentials && (
+                                  <span className="text-slate-600 font-normal ml-2">
+                                    {therapist.credentials}
+                                  </span>
+                                )}
+                              </h3>
+                              <p className="text-sm text-slate-600">{therapist.email}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {therapist.hasSignature ? (
+                                <Badge variant="default" className="bg-green-100 text-green-800">
+                                  <CheckCircle className="w-3 h-3 mr-1" />
+                                  Signature on File
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-orange-600 border-orange-300">
+                                  No Signature
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+
+                          {editingTherapist === therapist.id ? (
+                            <div className="space-y-4 bg-slate-50 p-4 rounded-lg">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                  <Label>Credentials (e.g., OTR/L, PT, DPT)</Label>
+                                  <Input
+                                    value={therapistForm.credentials}
+                                    onChange={(e) => setTherapistForm({ ...therapistForm, credentials: e.target.value })}
+                                    placeholder="OTR/L"
+                                  />
+                                </div>
+                                <div>
+                                  <Label>License Number</Label>
+                                  <Input
+                                    value={therapistForm.licenseNumber}
+                                    onChange={(e) => setTherapistForm({ ...therapistForm, licenseNumber: e.target.value })}
+                                    placeholder="OT-12345"
+                                  />
+                                </div>
+                                <div>
+                                  <Label>NPI Number</Label>
+                                  <Input
+                                    value={therapistForm.npiNumber}
+                                    onChange={(e) => setTherapistForm({ ...therapistForm, npiNumber: e.target.value })}
+                                    placeholder="1234567890"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <Label>Digital Signature</Label>
+                                <p className="text-sm text-slate-600 mb-2">
+                                  Upload a PNG or JPG image of your signature (transparent background recommended)
+                                </p>
+                                <Input
+                                  type="file"
+                                  accept="image/png,image/jpeg"
+                                  onChange={(e) => handleSignatureUpload(e, therapist.id)}
+                                />
+                                {therapist.hasSignature && (
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    Current signature uploaded: {therapist.signatureUploadedAt ? new Date(therapist.signatureUploadedAt).toLocaleDateString() : 'Unknown'}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="flex gap-2">
+                                <Button
+                                  onClick={() => {
+                                    updateTherapistMutation.mutate({
+                                      id: therapist.id,
+                                      data: therapistForm
+                                    });
+                                    setEditingTherapist(null);
+                                  }}
+                                  disabled={updateTherapistMutation.isPending}
+                                >
+                                  Save Changes
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => setEditingTherapist(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between">
+                              <div className="grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                  <span className="text-slate-500">License:</span>{' '}
+                                  <span className="font-medium">{therapist.licenseNumber || 'Not set'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-500">NPI:</span>{' '}
+                                  <span className="font-medium">{therapist.npiNumber || 'Not set'}</span>
+                                </div>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingTherapist(therapist.id);
+                                  setTherapistForm({
+                                    credentials: therapist.credentials || '',
+                                    licenseNumber: therapist.licenseNumber || '',
+                                    npiNumber: therapist.npiNumber || ''
+                                  });
+                                }}
+                              >
+                                Edit Profile
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+
+                      <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                        <h4 className="font-medium text-blue-900 mb-2">About Digital Signatures</h4>
+                        <div className="text-sm text-blue-800 space-y-1">
+                          <p>Digital signatures are used to sign SOAP notes electronically, meeting compliance requirements.</p>
+                          <p>Once uploaded, your signature will appear on all SOAP notes you sign.</p>
+                          <p>For best results, use a transparent PNG with your signature in dark ink.</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-slate-600">
+                      <p>No therapists found.</p>
+                      <p className="text-sm mt-2">Therapists will appear here once they are added to your practice.</p>
                     </div>
                   )}
                 </CardContent>

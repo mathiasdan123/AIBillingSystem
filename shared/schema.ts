@@ -35,6 +35,13 @@ export const users = pgTable("users", {
   profileImageUrl: varchar("profile_image_url"),
   practiceId: integer("practice_id").references(() => practices.id),
   role: varchar("role").default("therapist"), // therapist, admin, billing
+  // Therapist-specific fields
+  credentials: varchar("credentials"), // e.g., "OTR/L", "PT, DPT", "MS, CCC-SLP"
+  licenseNumber: varchar("license_number"),
+  npiNumber: varchar("npi_number"),
+  digitalSignature: text("digital_signature"), // Base64 encoded signature image
+  signatureUploadedAt: timestamp("signature_uploaded_at"),
+  // MFA fields
   mfaEnabled: boolean("mfa_enabled").default(false),
   mfaSecret: jsonb("mfa_secret"), // encrypted with PHI encryption
   mfaBackupCodes: jsonb("mfa_backup_codes"), // encrypted, array of hashed codes
@@ -239,6 +246,13 @@ export const soapNotes = pgTable("soap_notes", {
   optimizedCptCode: integer("optimized_cpt_code_id").references(() => cptCodes.id),
   cptOptimizationReason: text("cpt_optimization_reason"), // Why AI suggested the change
   dataSource: varchar("data_source").default("manual"), // manual, voice, ai_extracted
+  // Therapist signature
+  therapistId: varchar("therapist_id").references(() => users.id),
+  therapistSignature: text("therapist_signature"), // Base64 signature at time of signing
+  therapistSignedAt: timestamp("therapist_signed_at"),
+  therapistSignedName: varchar("therapist_signed_name"), // Legal name at signing
+  therapistCredentials: varchar("therapist_credentials"), // Credentials at signing (OTR/L, etc.)
+  signatureIpAddress: varchar("signature_ip_address"), // For audit trail
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

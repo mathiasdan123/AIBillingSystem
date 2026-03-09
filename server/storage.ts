@@ -455,6 +455,26 @@ export class DatabaseStorage implements IStorage {
       ));
   }
 
+  async updateUser(id: string, updates: Partial<{
+    firstName: string;
+    lastName: string;
+    email: string;
+    credentials: string;
+    licenseNumber: string;
+    npiNumber: string;
+    digitalSignature: string;
+    signatureUploadedAt: Date;
+    practiceId: number;
+    role: string;
+  }>): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
   // Practice operations
   async createPractice(practice: InsertPractice): Promise<Practice> {
     const [newPractice] = await db
@@ -786,6 +806,30 @@ export class DatabaseStorage implements IStorage {
   async getSoapNoteBySession(sessionId: number): Promise<SoapNote | undefined> {
     const [soapNote] = await db.select().from(soapNotes).where(eq(soapNotes.sessionId, sessionId));
     return soapNote ? decryptSoapNoteRecord(soapNote) as SoapNote : undefined;
+  }
+
+  async signSoapNote(id: number, signatureData: {
+    therapistId: string;
+    therapistSignature: string;
+    therapistSignedAt: Date;
+    therapistSignedName: string;
+    therapistCredentials: string;
+    signatureIpAddress: string;
+  }): Promise<SoapNote | undefined> {
+    const [updated] = await db
+      .update(soapNotes)
+      .set({
+        therapistId: signatureData.therapistId,
+        therapistSignature: signatureData.therapistSignature,
+        therapistSignedAt: signatureData.therapistSignedAt,
+        therapistSignedName: signatureData.therapistSignedName,
+        therapistCredentials: signatureData.therapistCredentials,
+        signatureIpAddress: signatureData.signatureIpAddress,
+        updatedAt: new Date()
+      })
+      .where(eq(soapNotes.id, id))
+      .returning();
+    return updated ? decryptSoapNoteRecord(updated) as SoapNote : undefined;
   }
 
   // Convenience methods for API routes

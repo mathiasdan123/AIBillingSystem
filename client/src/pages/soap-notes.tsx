@@ -1605,6 +1605,28 @@ export default function SoapNotes() {
                       <Label className="text-xs font-semibold text-orange-600">PLAN</Label>
                       <p className="mt-1 text-slate-700">{generatedNote.plan}</p>
                     </div>
+                    <Separator />
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-600">SIGNATURES</Label>
+                      <div className="mt-3 p-4 border rounded-lg bg-slate-50">
+                        <p className="text-xs text-slate-500 mb-3">
+                          Digital signature will be applied when you save this note.
+                        </p>
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-slate-700">Therapist Signature</p>
+                            <p className="text-xs text-slate-500">
+                              {user?.firstName} {user?.lastName}
+                              {(user as any)?.credentials && `, ${(user as any).credentials}`}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-slate-500">Date:</p>
+                            <p className="text-sm font-medium">{new Date().toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
 

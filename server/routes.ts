@@ -566,6 +566,191 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== THERAPIST MANAGEMENT ====================
+
+  // Get all therapists for practice (for settings/management)
+  app.get('/api/therapists', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      const therapists = await storage.getTherapistsByPractice(practiceId);
+
+      // Return therapist info including signature status
+      const therapistData = therapists.map(t => ({
+        id: t.id,
+        email: t.email,
+        firstName: t.firstName,
+        lastName: t.lastName,
+        credentials: t.credentials,
+        licenseNumber: t.licenseNumber,
+        npiNumber: t.npiNumber,
+        hasSignature: !!t.digitalSignature,
+        signatureUploadedAt: t.signatureUploadedAt,
+        role: t.role,
+        createdAt: t.createdAt
+      }));
+
+      res.json(therapistData);
+    } catch (error) {
+      logger.error("Error fetching therapists", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to fetch therapists" });
+    }
+  });
+
+  // Update therapist profile (credentials, license, signature)
+  app.patch('/api/therapists/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const therapistId = req.params.id;
+      const currentUserId = req.user?.claims?.sub;
+      const userRole = req.userRole;
+
+      // Only allow editing own profile or admin can edit any
+      if (therapistId !== currentUserId && userRole !== 'admin') {
+        return res.status(403).json({ message: "Can only edit your own profile" });
+      }
+
+      const { credentials, licenseNumber, npiNumber, digitalSignature } = req.body;
+
+      const updates: any = {};
+      if (credentials !== undefined) updates.credentials = credentials;
+      if (licenseNumber !== undefined) updates.licenseNumber = licenseNumber;
+      if (npiNumber !== undefined) updates.npiNumber = npiNumber;
+      if (digitalSignature !== undefined) {
+        updates.digitalSignature = digitalSignature;
+        updates.signatureUploadedAt = new Date();
+      }
+
+      const updatedUser = await storage.updateUser(therapistId, updates);
+      if (!updatedUser) {
+        return res.status(404).json({ message: "Therapist not found" });
+      }
+
+      res.json({
+        id: updatedUser.id,
+        email: updatedUser.email,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        credentials: updatedUser.credentials,
+        licenseNumber: updatedUser.licenseNumber,
+        npiNumber: updatedUser.npiNumber,
+        hasSignature: !!updatedUser.digitalSignature,
+        signatureUploadedAt: updatedUser.signatureUploadedAt
+      });
+    } catch (error) {
+      logger.error("Error updating therapist", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to update therapist" });
+    }
+  });
+
+  // Get therapist signature (for display in notes)
+  app.get('/api/therapists/:id/signature', isAuthenticated, async (req: any, res) => {
+    try {
+      const therapistId = req.params.id;
+      const user = await storage.getUser(therapistId);
+
+      if (!user || !user.digitalSignature) {
+        return res.status(404).json({ message: "Signature not found" });
+      }
+
+      res.json({
+        signature: user.digitalSignature,
+        name: `${user.firstName} ${user.lastName}`,
+        credentials: user.credentials
+      });
+    } catch (error) {
+      logger.error("Error fetching signature", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to fetch signature" });
+    }
+  });
+
+  // Create new therapist (admin only)
+  app.post('/api/therapists', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      const { email, firstName, lastName, credentials, licenseNumber, npiNumber } = req.body;
+
+      if (!email || !firstName || !lastName) {
+        return res.status(400).json({ message: "Email, first name, and last name are required" });
+      }
+
+      // Generate a unique ID for the new therapist
+      const id = `therapist-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      const newTherapist = await storage.upsertUser({
+        id,
+        email,
+        firstName,
+        lastName,
+        practiceId,
+        role: 'therapist',
+        credentials,
+        licenseNumber,
+        npiNumber
+      });
+
+      res.status(201).json({
+        id: newTherapist.id,
+        email: newTherapist.email,
+        firstName: newTherapist.firstName,
+        lastName: newTherapist.lastName,
+        credentials: newTherapist.credentials,
+        licenseNumber: newTherapist.licenseNumber,
+        npiNumber: newTherapist.npiNumber,
+        hasSignature: false
+      });
+    } catch (error) {
+      logger.error("Error creating therapist", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to create therapist" });
+    }
+  });
+
+  // ==================== SOAP NOTE SIGNATURES ====================
+
+  // Sign a SOAP note
+  app.post('/api/soap-notes/:id/sign', isAuthenticated, async (req: any, res) => {
+    try {
+      const noteId = parseInt(req.params.id);
+      const therapistId = req.user?.claims?.sub;
+
+      // Get the therapist's info and signature
+      const therapist = await storage.getUser(therapistId);
+      if (!therapist) {
+        return res.status(404).json({ message: "Therapist not found" });
+      }
+
+      if (!therapist.digitalSignature) {
+        return res.status(400).json({
+          message: "No signature on file. Please upload your signature in Settings → Therapist Profile first."
+        });
+      }
+
+      // Get client IP for audit trail
+      const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+
+      // Update the SOAP note with signature
+      const updatedNote = await storage.signSoapNote(noteId, {
+        therapistId,
+        therapistSignature: therapist.digitalSignature,
+        therapistSignedAt: new Date(),
+        therapistSignedName: `${therapist.firstName} ${therapist.lastName}`,
+        therapistCredentials: therapist.credentials || '',
+        signatureIpAddress: typeof ipAddress === 'string' ? ipAddress : ipAddress[0]
+      });
+
+      if (!updatedNote) {
+        return res.status(404).json({ message: "SOAP note not found" });
+      }
+
+      res.json({
+        message: "SOAP note signed successfully",
+        signedAt: updatedNote.therapistSignedAt,
+        signedBy: updatedNote.therapistSignedName
+      });
+    } catch (error) {
+      logger.error("Error signing SOAP note", { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: "Failed to sign SOAP note" });
+    }
+  });
+
   // ==================== PRACTICE MANAGEMENT ====================
 
   // Get practice by ID
