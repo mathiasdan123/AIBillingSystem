@@ -4,27 +4,19 @@ FROM node:20-alpine AS builder
 # Set working directory
 WORKDIR /app
 
-# Force cache invalidation - Build ID: 20260309-v2
-LABEL build.version="20260309-v2"
-
-# Set NODE_ENV for build-time dead code elimination
-ENV NODE_ENV=production
-
-# Copy package files - these changing will bust npm ci cache
+# Copy package files
 COPY package*.json ./
 
-# Install all dependencies (including dev) for building
+# Install ALL dependencies (including dev) for building
+# NODE_ENV must NOT be production here or devDeps are skipped
 RUN npm ci
 
 # Copy source files
 COPY . .
 
-# Build argument to bust cache - updated each deployment
-ARG BUILD_DATE=unknown
-RUN echo "Build date: ${BUILD_DATE}"
-
 # Build the application with production optimizations
-RUN npm run build
+# NODE_ENV=production enables dead code elimination in esbuild
+RUN NODE_ENV=production npm run build
 
 # Verify no vite imports in production build
 RUN ! grep -q "from \"vite\"" dist/index.js || (echo "ERROR: vite import found in production build!" && exit 1)
