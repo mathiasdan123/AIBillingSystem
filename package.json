@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "NODE_ENV=development node --env-file=.env --import=tsx server/index.ts",
     "dev:local": "DATABASE_URL=postgresql://$(whoami)@localhost:5432/therapybill SESSION_SECRET=local-dev-secret PORT=3000 npm run dev",
