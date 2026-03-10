@@ -4,11 +4,14 @@
 [variables]
 NODE_ENV = "production"
 
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-10_x", "openssl"]
+
+[phases.install]
+cmds = ["npm ci"]
+
 [phases.build]
-cmds = [
-  "npm ci",
-  "npm run build"
-]
+cmds = ["npm run build"]
 
 [start]
 cmd = "node dist/index.js"
