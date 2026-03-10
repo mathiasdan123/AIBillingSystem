@@ -23,6 +23,9 @@ const isLocalDev =
 // Railway demo mode - use simple session auth instead of Replit OAuth
 const isRailwayDemo = !!process.env.RAILWAY_ENVIRONMENT;
 
+// Render demo mode - use simple session auth instead of Replit OAuth
+const isRenderDemo = !!process.env.RENDER;
+
 // Log warning if dev mode is active
 if (isLocalDev) {
   console.warn('⚠️  WARNING: Running in local development mode with mock authentication');
@@ -33,8 +36,12 @@ if (isRailwayDemo) {
   console.log('🚂 Running on Railway - using demo authentication mode');
 }
 
-// Only require REPLIT_DOMAINS when on Replit (not local dev, not Railway)
-if (!isLocalDev && !isRailwayDemo && !process.env.REPLIT_DOMAINS) {
+if (isRenderDemo) {
+  console.log('🎨 Running on Render - using demo authentication mode');
+}
+
+// Only require REPLIT_DOMAINS when on Replit (not local dev, not Railway, not Render)
+if (!isLocalDev && !isRailwayDemo && !isRenderDemo && !process.env.REPLIT_DOMAINS) {
   throw new Error("Environment variable REPLIT_DOMAINS not provided");
 }
 
@@ -126,9 +133,9 @@ export async function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Local development mode or Railway demo - bypass Replit OAuth
-  if (isLocalDev || isRailwayDemo) {
-    console.log(isRailwayDemo ? 'Running on Railway - using demo auth' : 'Running in local development mode - using mock auth');
+  // Local development mode or Railway/Render demo - bypass Replit OAuth
+  if (isLocalDev || isRailwayDemo || isRenderDemo) {
+    console.log(isRailwayDemo ? 'Running on Railway - using demo auth' : isRenderDemo ? 'Running on Render - using demo auth' : 'Running in local development mode - using mock auth');
 
     passport.serializeUser((user: Express.User, cb) => {
       cb(null, user);

@@ -12,15 +12,17 @@ import { startScheduler } from "./scheduler";
 // =============================================================================
 const isProduction = process.env.NODE_ENV === 'production';
 const isRailwayDemo = !!process.env.RAILWAY_ENVIRONMENT;
+const isRenderDemo = !!process.env.RENDER;
+const isDemoMode = isRailwayDemo || isRenderDemo;
 
-// For Railway demo, provide defaults for non-critical demo environment
-if (isRailwayDemo && !process.env.PHI_ENCRYPTION_KEY) {
+// For Railway/Render demo, provide defaults for non-critical demo environment
+if (isDemoMode && !process.env.PHI_ENCRYPTION_KEY) {
   // Demo key - only for demo with fake data, never for real PHI
   process.env.PHI_ENCRYPTION_KEY = '0'.repeat(64);
   console.warn('⚠️  Using demo PHI encryption key - NOT FOR REAL DATA');
 }
 
-if (isProduction && !isRailwayDemo) {
+if (isProduction && !isDemoMode) {
   const requiredEnvVars = [
     'DATABASE_URL',
     'SESSION_SECRET',
@@ -81,13 +83,18 @@ app.use(cors({
       return callback(null, true);
     }
 
+    // Allow Render domains (same-origin requests from deployed app)
+    if (isRenderDemo && origin?.includes('.onrender.com')) {
+      return callback(null, true);
+    }
+
     // In production, check against allowed origins
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
     // If no explicit origins set and we're in demo mode, allow
-    if (isRailwayDemo && allowedOrigins.length === 0) {
+    if (isDemoMode && allowedOrigins.length === 0) {
       return callback(null, true);
     }
 
@@ -127,8 +134,8 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Content Security Policy - prevents XSS and data injection attacks
   // Note: 'unsafe-inline' for styles needed for some UI libraries; review for stricter CSP
-  // For Railway demo, we use a more permissive CSP
-  if (isRailwayDemo) {
+  // For Railway/Render demo, we use a more permissive CSP
+  if (isDemoMode) {
     // Demo mode: permissive CSP for easier testing
     res.setHeader('Content-Security-Policy', [
       "default-src 'self' https: wss:",
