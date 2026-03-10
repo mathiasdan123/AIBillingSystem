@@ -8,8 +8,9 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ALL dependencies (including dev) for building
+# Use npm install instead of npm ci to regenerate platform-specific binaries
 # NODE_ENV must NOT be production here or devDeps are skipped
-RUN npm ci
+RUN npm install --include=dev
 
 # Copy source files
 COPY . .
