@@ -4,12 +4,11 @@ FROM node:20-slim AS builder
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package.json only (not package-lock.json to force fresh install)
+COPY package.json ./
 
-# Install ALL dependencies (including dev) for building
-# Use npm install instead of npm ci to regenerate platform-specific binaries
-# NODE_ENV must NOT be production here or devDeps are skipped
+# Install ALL dependencies fresh to get platform-specific binaries
+# This generates a new package-lock.json for Linux
 RUN npm install --include=dev
 
 # Copy source files
