@@ -9,6 +9,13 @@ import localAuthRoutes from "./routes/localAuth";
 const isLocalDev = process.env.NODE_ENV === 'development';
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Clean connection string - remove unsupported parameters
+function getCleanConnectionString(): string {
+  const connStr = process.env.DATABASE_URL || '';
+  // Remove channel_binding parameter (Neon-specific, not supported by connect-pg-simple)
+  return connStr.replace(/[&?]channel_binding=[^&]*/g, '');
+}
+
 // Log environment info
 if (isLocalDev) {
   console.log('Running in development mode with local authentication');
@@ -41,7 +48,7 @@ export function getSession() {
   // Use PostgreSQL store for production
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
+    conString: getCleanConnectionString(),
     createTableIfMissing: true,
     ttl: sessionTtl / 1000, // connect-pg-simple expects seconds
     tableName: "sessions",
