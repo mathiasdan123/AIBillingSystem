@@ -9,42 +9,128 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { useLocation } from 'wouter';
+import { Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react';
 
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+interface PasswordRequirement {
+  label: string;
+  test: (password: string) => boolean;
+}
+
+const passwordRequirements: PasswordRequirement[] = [
+  { label: 'At least 12 characters', test: (p) => p.length >= 12 },
+  { label: 'One uppercase letter', test: (p) => /[A-Z]/.test(p) },
+  { label: 'One lowercase letter', test: (p) => /[a-z]/.test(p) },
+  { label: 'One number', test: (p) => /[0-9]/.test(p) },
+  { label: 'One special character', test: (p) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p) },
+];
+
 export function AuthModal({ open, onOpenChange }: AuthModalProps) {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'magic'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [forgotEmailSent, setForgotEmailSent] = useState(false);
 
   const { toast } = useToast();
-
-  // useAuth doesn't provide signIn/signUp/signInWithMagicLink - stub them to redirect
-  const signIn = async (_email: string, _password: string) => {
-    window.location.href = "/api/login";
-  };
-  const signUp = async (_email: string, _password: string, _meta?: any) => {
-    window.location.href = "/api/login";
-  };
-  const signInWithMagicLink = async (_email: string) => {
-    window.location.href = "/api/login";
-  };
+  const [, setLocation] = useLocation();
 
   const resetForm = () => {
     setEmail('');
     setPassword('');
     setFirstName('');
     setLastName('');
-    setMagicLinkSent(false);
+    setShowPassword(false);
+    setForgotEmailSent(false);
+  };
+
+  const handleSignIn = async () => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+      credentials: 'include',
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Login failed');
+    }
+
+    // Check if MFA is required
+    if (data.requiresMfa) {
+      toast({
+        title: 'MFA Required',
+        description: 'Please complete two-factor authentication.',
+      });
+      onOpenChange(false);
+      setLocation('/mfa-challenge');
+      return;
+    }
+
+    toast({
+      title: 'Welcome back!',
+      description: 'You have been signed in successfully.',
+    });
+    resetForm();
+    onOpenChange(false);
+    window.location.reload(); // Reload to update auth state
+  };
+
+  const handleSignUp = async () => {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, firstName, lastName }),
+      credentials: 'include',
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      if (data.errors) {
+        throw new Error(data.errors.join('. '));
+      }
+      throw new Error(data.message || 'Registration failed');
+    }
+
+    toast({
+      title: 'Account created!',
+      description: 'Please check your email to verify your account.',
+    });
+    resetForm();
+    onOpenChange(false);
+    window.location.reload(); // Reload to update auth state
+  };
+
+  const handleForgotPassword = async () => {
+    const response = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to send reset email');
+    }
+
+    setForgotEmailSent(true);
+    toast({
+      title: 'Check your email',
+      description: 'If an account exists, you will receive a password reset link.',
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -52,29 +138,12 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
     setIsLoading(true);
 
     try {
-      if (mode === 'magic') {
-        await signInWithMagicLink(email);
-        setMagicLinkSent(true);
-        toast({
-          title: 'Check your email',
-          description: 'We sent you a magic link to sign in.',
-        });
+      if (mode === 'forgot') {
+        await handleForgotPassword();
       } else if (mode === 'signup') {
-        await signUp(email, password, { firstName, lastName });
-        toast({
-          title: 'Account created',
-          description: 'Please check your email to verify your account.',
-        });
-        resetForm();
-        onOpenChange(false);
+        await handleSignUp();
       } else {
-        await signIn(email, password);
-        toast({
-          title: 'Welcome back!',
-          description: 'You have been signed in successfully.',
-        });
-        resetForm();
-        onOpenChange(false);
+        await handleSignIn();
       }
     } catch (error: any) {
       toast({
@@ -87,6 +156,8 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
     }
   };
 
+  const isPasswordValid = passwordRequirements.every(req => req.test(password));
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
@@ -94,29 +165,27 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
           <DialogTitle>
             {mode === 'signin' && 'Sign In'}
             {mode === 'signup' && 'Create Account'}
-            {mode === 'magic' && 'Magic Link'}
+            {mode === 'forgot' && 'Reset Password'}
           </DialogTitle>
           <DialogDescription>
             {mode === 'signin' && 'Enter your credentials to access your account.'}
             {mode === 'signup' && 'Fill in your details to create a new account.'}
-            {mode === 'magic' && "We'll send you a link to sign in without a password."}
+            {mode === 'forgot' && "Enter your email to receive a password reset link."}
           </DialogDescription>
         </DialogHeader>
 
-        {magicLinkSent ? (
+        {forgotEmailSent ? (
           <div className="py-6 text-center">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+              <CheckCircle className="w-8 h-8 text-green-500" />
             </div>
             <p className="text-slate-600 mb-4">
-              Check your email for the magic link. Click it to sign in instantly.
+              If an account exists with that email, you will receive a password reset link shortly.
             </p>
             <Button
               variant="outline"
               onClick={() => {
-                setMagicLinkSent(false);
+                setForgotEmailSent(false);
                 setMode('signin');
               }}
             >
@@ -162,22 +231,56 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
               />
             </div>
 
-            {mode !== 'magic' && (
+            {mode !== 'forgot' && (
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  required
-                  minLength={6}
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    required
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                {/* Password strength indicator for signup */}
+                {mode === 'signup' && password.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-xs font-medium text-slate-600">Password requirements:</p>
+                    <div className="grid grid-cols-2 gap-1">
+                      {passwordRequirements.map((req, index) => (
+                        <div key={index} className="flex items-center gap-1 text-xs">
+                          {req.test(password) ? (
+                            <CheckCircle className="w-3 h-3 text-green-500" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-slate-300" />
+                          )}
+                          <span className={req.test(password) ? 'text-green-600' : 'text-slate-400'}>
+                            {req.label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isLoading || (mode === 'signup' && !isPasswordValid)}
+            >
               {isLoading ? (
                 <span className="flex items-center">
                   <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -190,7 +293,7 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                 <>
                   {mode === 'signin' && 'Sign In'}
                   {mode === 'signup' && 'Create Account'}
-                  {mode === 'magic' && 'Send Magic Link'}
+                  {mode === 'forgot' && 'Send Reset Link'}
                 </>
               )}
             </Button>
@@ -211,9 +314,9 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                     type="button"
                     variant="outline"
                     className="w-full"
-                    onClick={() => setMode('magic')}
+                    onClick={() => setMode('forgot')}
                   >
-                    Sign in with Magic Link
+                    Forgot Password?
                   </Button>
                   <p className="text-center text-sm text-slate-600">
                     Don't have an account?{' '}
@@ -239,15 +342,15 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                   </button>
                 </p>
               )}
-              {mode === 'magic' && (
+              {mode === 'forgot' && (
                 <p className="text-center text-sm text-slate-600">
-                  Want to use a password?{' '}
+                  Remember your password?{' '}
                   <button
                     type="button"
                     className="text-blue-600 hover:underline font-medium"
                     onClick={() => setMode('signin')}
                   >
-                    Sign in with password
+                    Sign in
                   </button>
                 </p>
               )}

@@ -293,6 +293,38 @@ export const exportLimiter = createRateLimiter('export', {
   message: 'Too many export requests. Please try again later.',
 });
 
+/**
+ * Rate limiter for password reset requests
+ *
+ * Very strict limits to prevent enumeration and spam:
+ * - 3 password reset requests per hour per IP address
+ *
+ * Apply to: /api/auth/forgot-password
+ */
+export const passwordResetLimiter = createRateLimiter('password-reset', {
+  maxRequests: 3,
+  windowMs: 60 * 60 * 1000, // 1 hour
+  description: 'Password reset rate limiter',
+  keyGenerator: authKeyGenerator,
+  message: 'Too many password reset requests. Please try again in an hour.',
+});
+
+/**
+ * Rate limiter for account registration
+ *
+ * Moderate limits to prevent spam registrations:
+ * - 5 registration attempts per hour per IP address
+ *
+ * Apply to: /api/auth/register
+ */
+export const registrationLimiter = createRateLimiter('registration', {
+  maxRequests: 5,
+  windowMs: 60 * 60 * 1000, // 1 hour
+  description: 'Registration rate limiter',
+  keyGenerator: authKeyGenerator,
+  message: 'Too many registration attempts. Please try again later.',
+});
+
 // =============================================================================
 // Type Exports
 // =============================================================================

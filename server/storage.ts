@@ -219,6 +219,29 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
 
+  // Password authentication operations
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUserWithPassword(userData: {
+    email: string;
+    passwordHash: string;
+    firstName?: string;
+    lastName?: string;
+    practiceId?: number;
+    role?: string;
+  }): Promise<User>;
+  updatePasswordHash(userId: string, passwordHash: string): Promise<void>;
+  setPasswordResetToken(userId: string, token: string, expires: Date): Promise<void>;
+  clearPasswordResetToken(userId: string): Promise<void>;
+  getUserByPasswordResetToken(token: string): Promise<User | undefined>;
+  incrementFailedLoginAttempts(userId: string): Promise<number>;
+  resetFailedLoginAttempts(userId: string): Promise<void>;
+  setLockout(userId: string, lockoutUntil: Date): Promise<void>;
+  setEmailVerificationToken(userId: string, token: string, expires: Date): Promise<void>;
+  getUserByEmailVerificationToken(token: string): Promise<User | undefined>;
+  verifyEmail(userId: string): Promise<void>;
+  updateLastLoginAt(userId: string): Promise<void>;
+  clearAllUserSessions(userId: string): Promise<void>;
+
   // Practice operations
   createPractice(practice: InsertPractice): Promise<Practice>;
   getPractice(id: number): Promise<Practice | undefined>;
@@ -454,6 +477,161 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  // Password authentication operations
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createUserWithPassword(userData: {
+    email: string;
+    passwordHash: string;
+    firstName?: string;
+    lastName?: string;
+    practiceId?: number;
+    role?: string;
+  }): Promise<User> {
+    const { nanoid } = await import('nanoid');
+    const userId = nanoid();
+    const [user] = await db
+      .insert(users)
+      .values({
+        id: userId,
+        email: userData.email,
+        passwordHash: userData.passwordHash,
+        firstName: userData.firstName,
+        lastName: userData.lastName,
+        practiceId: userData.practiceId,
+        role: userData.role || 'therapist',
+        emailVerified: false,
+        failedLoginAttempts: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+    return user;
+  }
+
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
+    await db
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+  }
+
+  async setPasswordResetToken(userId: string, token: string, expires: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        passwordResetToken: token,
+        passwordResetExpires: expires,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async clearPasswordResetToken(userId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        passwordResetToken: null,
+        passwordResetExpires: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async getUserByPasswordResetToken(token: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.passwordResetToken, token));
+    return user;
+  }
+
+  async incrementFailedLoginAttempts(userId: string): Promise<number> {
+    const [user] = await db
+      .update(users)
+      .set({
+        failedLoginAttempts: sql`COALESCE(${users.failedLoginAttempts}, 0) + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning({ failedLoginAttempts: users.failedLoginAttempts });
+    return user?.failedLoginAttempts || 1;
+  }
+
+  async resetFailedLoginAttempts(userId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async setLockout(userId: string, lockoutUntil: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        lockoutUntil,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async setEmailVerificationToken(userId: string, token: string, expires: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        emailVerificationToken: token,
+        emailVerificationExpires: expires,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async getUserByEmailVerificationToken(token: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.emailVerificationToken, token));
+    return user;
+  }
+
+  async verifyEmail(userId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        emailVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async updateLastLoginAt(userId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        lastLoginAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async clearAllUserSessions(userId: string): Promise<void> {
+    // Clear all sessions for this user by deleting session records
+    // Sessions are stored with the user ID in the sess JSON column
+    await db.execute(sql`
+      DELETE FROM sessions
+      WHERE sess::text LIKE ${`%"sub":"${userId}"%`}
+    `);
   }
 
   async getTherapistsByPractice(practiceId: number): Promise<User[]> {

@@ -48,6 +48,16 @@ export const users = pgTable("users", {
   mfaEnabled: boolean("mfa_enabled").default(false),
   mfaSecret: jsonb("mfa_secret"), // encrypted with PHI encryption
   mfaBackupCodes: jsonb("mfa_backup_codes"), // encrypted, array of hashed codes
+  // Password authentication fields
+  passwordHash: varchar("password_hash"),
+  emailVerified: boolean("email_verified").default(false),
+  emailVerificationToken: varchar("email_verification_token"),
+  emailVerificationExpires: timestamp("email_verification_expires"),
+  failedLoginAttempts: integer("failed_login_attempts").default(0),
+  lockoutUntil: timestamp("lockout_until"),
+  lastLoginAt: timestamp("last_login_at"),
+  passwordResetToken: varchar("password_reset_token"),
+  passwordResetExpires: timestamp("password_reset_expires"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -960,3 +960,272 @@ export async function sendAuthorizationSMS(
   console.log(`SMS would be sent to ${patient.phone}: ${message}`);
   return { success: true };
 }
+
+// ==================== PASSWORD AUTHENTICATION EMAIL TEMPLATES ====================
+
+/**
+ * Send password reset email
+ */
+export async function sendPasswordResetEmail(
+  to: string,
+  data: {
+    resetUrl: string;
+    firstName: string;
+    expiresInMinutes: number;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping password reset email');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  try {
+    const transport = getTransporter();
+
+    await transport.sendMail({
+      from: `"TherapyBill AI" <${fromAddress}>`,
+      to,
+      subject: 'Reset Your Password - TherapyBill AI',
+      text: `Hi ${data.firstName},
+
+We received a request to reset your password for your TherapyBill AI account.
+
+Click the link below to reset your password:
+${data.resetUrl}
+
+This link will expire in ${data.expiresInMinutes} minutes.
+
+If you didn't request this password reset, you can safely ignore this email. Your password will not be changed.
+
+For security, this link can only be used once. If you need to reset your password again, please request a new link.
+
+Best regards,
+The TherapyBill AI Team`,
+      html: `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Reset Your Password</title></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f8fafc;">
+  <div style="max-width:600px;margin:0 auto;padding:20px;">
+    <div style="background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:white;padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+      <h1 style="margin:0;font-size:24px;">Reset Your Password</h1>
+    </div>
+    <div style="background:white;padding:30px;border:1px solid #e2e8f0;border-top:none;">
+      <p style="color:#1e293b;">Hi ${data.firstName},</p>
+      <p style="color:#475569;">We received a request to reset your password for your TherapyBill AI account.</p>
+      <div style="text-align:center;margin:30px 0;">
+        <a href="${data.resetUrl}" style="display:inline-block;padding:14px 28px;background:#2563eb;color:white;text-decoration:none;border-radius:8px;font-weight:600;">Reset Password</a>
+      </div>
+      <p style="color:#64748b;font-size:14px;">This link will expire in ${data.expiresInMinutes} minutes.</p>
+      <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:15px;margin-top:20px;">
+        <p style="margin:0;color:#92400e;font-size:14px;">
+          <strong>Didn't request this?</strong> You can safely ignore this email. Your password will not be changed.
+        </p>
+      </div>
+    </div>
+    <div style="background:#f1f5f9;padding:20px;border-radius:0 0 12px 12px;text-align:center;border:1px solid #e2e8f0;border-top:none;">
+      <p style="margin:0;color:#64748b;font-size:13px;">This is an automated message from TherapyBill AI.</p>
+    </div>
+  </div>
+</body>
+</html>`,
+    });
+
+    console.log('Password reset email sent to:', to);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send password reset email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+/**
+ * Send email verification email
+ */
+export async function sendEmailVerificationEmail(
+  to: string,
+  data: {
+    verificationUrl: string;
+    firstName: string;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping email verification');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  try {
+    const transport = getTransporter();
+
+    await transport.sendMail({
+      from: `"TherapyBill AI" <${fromAddress}>`,
+      to,
+      subject: 'Verify Your Email - TherapyBill AI',
+      text: `Hi ${data.firstName},
+
+Welcome to TherapyBill AI! Please verify your email address by clicking the link below:
+
+${data.verificationUrl}
+
+This link will expire in 24 hours.
+
+If you didn't create an account with TherapyBill AI, you can safely ignore this email.
+
+Best regards,
+The TherapyBill AI Team`,
+      html: `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Verify Your Email</title></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f8fafc;">
+  <div style="max-width:600px;margin:0 auto;padding:20px;">
+    <div style="background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);color:white;padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+      <h1 style="margin:0;font-size:24px;">Welcome to TherapyBill AI!</h1>
+    </div>
+    <div style="background:white;padding:30px;border:1px solid #e2e8f0;border-top:none;">
+      <p style="color:#1e293b;">Hi ${data.firstName},</p>
+      <p style="color:#475569;">Thank you for creating an account! Please verify your email address to get started.</p>
+      <div style="text-align:center;margin:30px 0;">
+        <a href="${data.verificationUrl}" style="display:inline-block;padding:14px 28px;background:#22c55e;color:white;text-decoration:none;border-radius:8px;font-weight:600;">Verify Email Address</a>
+      </div>
+      <p style="color:#64748b;font-size:14px;">This link will expire in 24 hours.</p>
+      <p style="color:#64748b;font-size:14px;">If you didn't create an account with TherapyBill AI, you can safely ignore this email.</p>
+    </div>
+    <div style="background:#f1f5f9;padding:20px;border-radius:0 0 12px 12px;text-align:center;border:1px solid #e2e8f0;border-top:none;">
+      <p style="margin:0;color:#64748b;font-size:13px;">This is an automated message from TherapyBill AI.</p>
+    </div>
+  </div>
+</body>
+</html>`,
+    });
+
+    console.log('Email verification sent to:', to);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send email verification:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+/**
+ * Send security alert email (account lockout, password changed, etc.)
+ */
+export async function sendSecurityAlertEmail(
+  to: string,
+  data: {
+    alertType: 'account_lockout' | 'password_changed' | 'new_login' | 'mfa_enabled' | 'mfa_disabled';
+    ipAddress?: string;
+    timestamp: Date;
+    failedAttempts?: number;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping security alert email');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  const formatDate = (d: Date) => new Date(d).toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+
+  const alertConfig = {
+    account_lockout: {
+      subject: 'Security Alert: Account Temporarily Locked',
+      title: 'Account Temporarily Locked',
+      color: '#dc2626',
+      message: `Your account has been temporarily locked due to ${data.failedAttempts} failed login attempts. This is a security measure to protect your account.`,
+      action: 'If this was you, please wait 15 minutes before trying again. If you forgot your password, use the password reset option.',
+    },
+    password_changed: {
+      subject: 'Security Alert: Password Changed',
+      title: 'Password Changed Successfully',
+      color: '#22c55e',
+      message: 'Your password was successfully changed.',
+      action: 'If you did not make this change, please contact support immediately.',
+    },
+    new_login: {
+      subject: 'Security Alert: New Login Detected',
+      title: 'New Login Detected',
+      color: '#2563eb',
+      message: 'A new login to your account was detected.',
+      action: 'If this was not you, please change your password immediately.',
+    },
+    mfa_enabled: {
+      subject: 'Security Alert: Two-Factor Authentication Enabled',
+      title: 'Two-Factor Authentication Enabled',
+      color: '#22c55e',
+      message: 'Two-factor authentication has been enabled on your account.',
+      action: 'If you did not make this change, please contact support immediately.',
+    },
+    mfa_disabled: {
+      subject: 'Security Alert: Two-Factor Authentication Disabled',
+      title: 'Two-Factor Authentication Disabled',
+      color: '#f59e0b',
+      message: 'Two-factor authentication has been disabled on your account.',
+      action: 'If you did not make this change, please contact support immediately and consider re-enabling 2FA.',
+    },
+  };
+
+  const config = alertConfig[data.alertType];
+
+  try {
+    const transport = getTransporter();
+
+    await transport.sendMail({
+      from: `"TherapyBill AI Security" <${fromAddress}>`,
+      to,
+      subject: config.subject,
+      text: `${config.title}
+
+${config.message}
+
+Time: ${formatDate(data.timestamp)}
+${data.ipAddress ? `IP Address: ${data.ipAddress}` : ''}
+
+${config.action}
+
+If you have any concerns, please contact our support team.
+
+Best regards,
+The TherapyBill AI Security Team`,
+      html: `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${config.title}</title></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f8fafc;">
+  <div style="max-width:600px;margin:0 auto;padding:20px;">
+    <div style="background:linear-gradient(135deg,${config.color} 0%,${config.color}dd 100%);color:white;padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+      <h1 style="margin:0;font-size:24px;">${config.title}</h1>
+    </div>
+    <div style="background:white;padding:30px;border:1px solid #e2e8f0;border-top:none;">
+      <p style="color:#475569;">${config.message}</p>
+      <div style="background:#f8fafc;border-radius:8px;padding:15px;margin:20px 0;">
+        <p style="margin:0 0 8px 0;color:#64748b;font-size:14px;"><strong>Time:</strong> ${formatDate(data.timestamp)}</p>
+        ${data.ipAddress ? `<p style="margin:0;color:#64748b;font-size:14px;"><strong>IP Address:</strong> ${data.ipAddress}</p>` : ''}
+      </div>
+      <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:15px;">
+        <p style="margin:0;color:#92400e;font-size:14px;">
+          <strong>Important:</strong> ${config.action}
+        </p>
+      </div>
+    </div>
+    <div style="background:#f1f5f9;padding:20px;border-radius:0 0 12px 12px;text-align:center;border:1px solid #e2e8f0;border-top:none;">
+      <p style="margin:0;color:#64748b;font-size:13px;">This is an automated security alert from TherapyBill AI.</p>
+    </div>
+  </div>
+</body>
+</html>`,
+    });
+
+    console.log('Security alert email sent to:', to);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send security alert email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}

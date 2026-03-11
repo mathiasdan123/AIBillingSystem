@@ -46,6 +46,11 @@ const InsuranceRates = lazy(() => import("@/pages/insurance-rates"));
 const Billing = lazy(() => import("@/pages/billing"));
 const Reimbursement = lazy(() => import("@/pages/reimbursement"));
 
+// Auth pages
+const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
+const ResetPassword = lazy(() => import("@/pages/reset-password"));
+const VerifyEmail = lazy(() => import("@/pages/verify-email"));
+
 // Loading fallback component
 function PageLoader() {
   return (
@@ -82,6 +87,9 @@ function Router() {
           <Route path="/patient-portal/login" component={NewPatientPortal} />
           <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
           <Route path="/feedback/:token" component={PublicFeedback} />
+          <Route path="/forgot-password" component={ForgotPassword} />
+          <Route path="/reset-password/:token" component={ResetPassword} />
+          <Route path="/verify-email/:token" component={VerifyEmail} />
           <Route component={NotFound} />
         </Switch>
       </Suspense>

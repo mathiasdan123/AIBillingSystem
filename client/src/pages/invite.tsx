@@ -3,10 +3,12 @@ import { useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { CheckCircle, AlertCircle, Mail, UserPlus } from "lucide-react";
+import { CheckCircle, AlertCircle, Mail, UserPlus, Eye, EyeOff, XCircle } from "lucide-react";
 
 interface InviteInfo {
   email: string;
@@ -14,12 +16,33 @@ interface InviteInfo {
   expiresAt: string;
 }
 
+interface PasswordRequirement {
+  label: string;
+  test: (password: string) => boolean;
+}
+
+const passwordRequirements: PasswordRequirement[] = [
+  { label: 'At least 12 characters', test: (p) => p.length >= 12 },
+  { label: 'One uppercase letter', test: (p) => /[A-Z]/.test(p) },
+  { label: 'One lowercase letter', test: (p) => /[a-z]/.test(p) },
+  { label: 'One number', test: (p) => /[0-9]/.test(p) },
+  { label: 'One special character', test: (p) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p) },
+];
+
 export default function InvitePage() {
   const [, params] = useRoute("/invite/:token");
   const token = params?.token;
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   const [accepted, setAccepted] = useState(false);
+
+  // Registration form state
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Fetch invite info
   const { data: invite, isLoading: inviteLoading, error: inviteError } = useQuery<InviteInfo>({
@@ -36,7 +59,7 @@ export default function InvitePage() {
     retry: false,
   });
 
-  // Accept invite mutation
+  // Accept invite mutation (for already authenticated users)
   const acceptInviteMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("POST", `/api/invites/${token}/accept`, {});
@@ -61,14 +84,69 @@ export default function InvitePage() {
     },
   });
 
-  const handleSignIn = () => {
-    // Store the invite token so we can redirect back after login
-    sessionStorage.setItem("pendingInviteToken", token || "");
-    window.location.href = "/api/login";
-  };
+  // Register with invite mutation
+  const registerMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: invite?.email,
+          password,
+          firstName,
+          lastName,
+          inviteToken: token,
+        }),
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data.errors) {
+          throw new Error(data.errors.join('. '));
+        }
+        throw new Error(data.message || 'Registration failed');
+      }
+
+      return data;
+    },
+    onSuccess: () => {
+      setAccepted(true);
+      toast({
+        title: "Welcome!",
+        description: "Your account has been created. Redirecting to dashboard...",
+      });
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 2000);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create account",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleAcceptInvite = () => {
     acceptInviteMutation.mutate();
+  };
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (password !== confirmPassword) {
+      toast({
+        title: "Passwords don't match",
+        description: "Please ensure both passwords are the same.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    registerMutation.mutate();
   };
 
   // Check for pending invite after login
@@ -80,6 +158,9 @@ export default function InvitePage() {
       acceptInviteMutation.mutate();
     }
   }, [isAuthenticated, token]);
+
+  const isPasswordValid = passwordRequirements.every(req => req.test(password));
+  const passwordsMatch = password === confirmPassword && confirmPassword.length > 0;
 
   if (inviteLoading || authLoading) {
     return (
@@ -177,14 +258,136 @@ export default function InvitePage() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
+            <form onSubmit={handleRegister} className="space-y-4">
               <p className="text-sm text-slate-600 text-center">
-                Sign in to accept this invite and join the team.
+                Create your account to join the team.
               </p>
-              <Button onClick={handleSignIn} className="w-full">
-                Sign In to Accept
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="firstName">First Name</Label>
+                  <Input
+                    id="firstName"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="John"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="lastName">Last Name</Label>
+                  <Input
+                    id="lastName"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Doe"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={invite.email}
+                  disabled
+                  className="bg-slate-50"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Create a password"
+                    required
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                {/* Password requirements */}
+                {password.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-xs font-medium text-slate-600">Password requirements:</p>
+                    <div className="grid grid-cols-2 gap-1">
+                      {passwordRequirements.map((req, index) => (
+                        <div key={index} className="flex items-center gap-1 text-xs">
+                          {req.test(password) ? (
+                            <CheckCircle className="w-3 h-3 text-green-500" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-slate-300" />
+                          )}
+                          <span className={req.test(password) ? 'text-green-600' : 'text-slate-400'}>
+                            {req.label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <div className="relative">
+                  <Input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm password"
+                    required
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {confirmPassword.length > 0 && !passwordsMatch && (
+                  <p className="text-xs text-red-500">Passwords do not match</p>
+                )}
+                {passwordsMatch && (
+                  <p className="text-xs text-green-500 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" /> Passwords match
+                  </p>
+                )}
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={registerMutation.isPending || !isPasswordValid || !passwordsMatch}
+              >
+                {registerMutation.isPending ? (
+                  <span className="flex items-center">
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Creating Account...
+                  </span>
+                ) : (
+                  'Create Account & Join'
+                )}
               </Button>
-            </div>
+            </form>
           )}
 
           <p className="text-xs text-slate-500 text-center">
