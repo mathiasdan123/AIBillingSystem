@@ -6,10 +6,11 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// Use regular pg for local development and Railway, neon-serverless only for Replit/Neon
+// Use regular pg for local development, Railway, and Render - neon-serverless only for Replit/Neon
 const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
 const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
-const useRegularPg = isLocalDev || isRailway;
+const isRender = !!process.env.RENDER;
+const useRegularPg = isLocalDev || isRailway || isRender;
 
 let pool: any;
 let db: any;
