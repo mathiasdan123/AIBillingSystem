@@ -22,6 +22,12 @@ if (isDemoMode && !process.env.PHI_ENCRYPTION_KEY) {
   console.warn('⚠️  Using demo PHI encryption key - NOT FOR REAL DATA');
 }
 
+if (isDemoMode && !process.env.SESSION_SECRET) {
+  // Demo session secret - only for demo, generates consistent key per deployment
+  process.env.SESSION_SECRET = 'demo-session-secret-' + crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️  Using auto-generated session secret - NOT FOR PRODUCTION DATA');
+}
+
 if (isProduction && !isDemoMode) {
   const requiredEnvVars = [
     'DATABASE_URL',
