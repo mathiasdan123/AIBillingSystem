@@ -6,6 +6,11 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
+// Clean up connection string - remove unsupported parameters for standard pg driver
+let connectionString = process.env.DATABASE_URL;
+// Remove channel_binding parameter (Neon-specific, not supported by node-postgres)
+connectionString = connectionString.replace(/[&?]channel_binding=[^&]*/g, '');
+
 // Use regular pg for local development, Railway, and Render - neon-serverless only for Replit/Neon
 const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
 const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
@@ -22,7 +27,7 @@ dbReady = (async () => {
     // Use regular pg driver for local PostgreSQL and Railway
     const pg = await import('pg');
     const { drizzle: drizzlePg } = await import('drizzle-orm/node-postgres');
-    pool = new pg.default.Pool({ connectionString: process.env.DATABASE_URL });
+    pool = new pg.default.Pool({ connectionString });
     db = drizzlePg({ client: pool, schema });
     console.log('Using regular PostgreSQL driver');
   } else {
