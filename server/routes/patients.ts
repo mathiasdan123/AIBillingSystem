@@ -104,7 +104,66 @@ const verifyPatientAccess = async (req: any, patientId: number): Promise<{
 
 // ==================== PATIENT CRUD ====================
 
-// Get all patients
+/**
+ * @openapi
+ * /api/patients:
+ *   get:
+ *     tags: [Patients]
+ *     summary: List all patients
+ *     description: Returns a paginated list of patients for the authenticated user's practice. Includes consent status for each patient.
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: Items per page
+ *       - in: query
+ *         name: practiceId
+ *         schema:
+ *           type: integer
+ *         description: Practice ID (admin only — non-admins are scoped to their own practice)
+ *     responses:
+ *       200:
+ *         description: Paginated patient list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/PaginatedResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         allOf:
+ *                           - $ref: '#/components/schemas/Patient'
+ *                           - type: object
+ *                             properties:
+ *                               consentStatus:
+ *                                 type: object
+ *                                 properties:
+ *                                   hasRequiredConsents:
+ *                                     type: boolean
+ *                                   missingConsents:
+ *                                     type: array
+ *                                     items:
+ *                                       type: string
+ *       401:
+ *         description: Not authenticated
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
@@ -137,7 +196,37 @@ router.get('/', isAuthenticated, async (req: any, res) => {
   }
 });
 
-// Create patient
+/**
+ * @openapi
+ * /api/patients:
+ *   post:
+ *     tags: [Patients]
+ *     summary: Create a new patient
+ *     description: Creates a patient record for the authenticated user's practice.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/InsertPatient'
+ *     responses:
+ *       200:
+ *         description: Created patient
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Patient'
+ *       401:
+ *         description: Not authenticated
+ *       422:
+ *         description: Validation error
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
 router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any, res) => {
   try {
     const patient = await storage.createPatient(req.body);

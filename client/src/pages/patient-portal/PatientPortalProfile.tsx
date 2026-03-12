@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ interface PatientPortalProfileProps {
 export default function PatientPortalProfile({ token }: PatientPortalProfileProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<PatientProfile>>({});
 
@@ -101,13 +103,13 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
       queryClient.invalidateQueries({ queryKey: ["/api/patient-portal/dashboard", token] });
       setIsEditing(false);
       toast({
-        title: "Profile Updated",
-        description: "Your information has been saved successfully.",
+        title: t('portal.profileUpdated'),
+        description: t('portal.profileUpdatedDesc'),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "Update Failed",
+        title: t('portal.updateFailed'),
         description: error.message,
         variant: "destructive",
       });
@@ -124,7 +126,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
   };
 
   const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "Not set";
+    if (!dateStr) return t('common.notSet');
     return new Date(dateStr).toLocaleDateString("en-US", {
       year: "numeric",
       month: "long",
@@ -155,8 +157,8 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
       <Card>
         <CardContent className="flex flex-col items-center py-8">
           <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
-          <p className="text-lg font-medium">Failed to load profile</p>
-          <p className="text-muted-foreground">Please try refreshing the page</p>
+          <p className="text-lg font-medium">{t('portal.failedLoadProfile')}</p>
+          <p className="text-muted-foreground">{t('portal.tryRefreshing')}</p>
         </CardContent>
       </Card>
     );
@@ -171,20 +173,20 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div>
               <CardTitle className="flex items-center gap-2">
                 <User className="h-5 w-5" />
-                Personal Information
+                {t('portal.personalInfo')}
               </CardTitle>
               <CardDescription>
-                Your basic contact information
+                {t('portal.basicContact')}
               </CardDescription>
             </div>
             {!isEditing ? (
               <Button variant="outline" onClick={() => setIsEditing(true)}>
-                Edit Profile
+                {t('portal.editProfile')}
               </Button>
             ) : (
               <div className="flex gap-2">
                 <Button variant="outline" onClick={handleCancel}>
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
                 <Button onClick={handleSave} disabled={updateMutation.isPending}>
                   {updateMutation.isPending ? (
@@ -192,7 +194,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
                   ) : (
                     <Save className="h-4 w-4 mr-2" />
                   )}
-                  Save Changes
+                  {t('portal.saveChanges')}
                 </Button>
               </div>
             )}
@@ -202,7 +204,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
           <div className="grid gap-6 md:grid-cols-2">
             {/* First Name */}
             <div className="space-y-2">
-              <Label>First Name</Label>
+              <Label>{t('form.firstName')}</Label>
               {isEditing ? (
                 <Input
                   value={formData.firstName || ""}
@@ -215,7 +217,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
 
             {/* Last Name */}
             <div className="space-y-2">
-              <Label>Last Name</Label>
+              <Label>{t('form.lastName')}</Label>
               {isEditing ? (
                 <Input
                   value={formData.lastName || ""}
@@ -230,7 +232,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
-                Date of Birth
+                {t('form.dateOfBirth')}
               </Label>
               {isEditing ? (
                 <Input
@@ -249,7 +251,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Mail className="h-4 w-4" />
-                Email Address
+                {t('form.emailAddress')}
               </Label>
               {isEditing ? (
                 <Input
@@ -259,7 +261,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
-                  {profile.email || "Not set"}
+                  {profile.email || t('common.notSet')}
                 </p>
               )}
             </div>
@@ -268,7 +270,7 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Phone className="h-4 w-4" />
-                Phone Number
+                {t('form.phoneNumber')}
               </Label>
               {isEditing ? (
                 <Input
@@ -279,31 +281,31 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
-                  {profile.phone || "Not set"}
+                  {profile.phone || t('common.notSet')}
                 </p>
               )}
             </div>
 
             {/* Phone Type */}
             <div className="space-y-2">
-              <Label>Phone Type</Label>
+              <Label>{t('form.phoneType')}</Label>
               {isEditing ? (
                 <Select
                   value={formData.phoneType || "mobile"}
                   onValueChange={(value) => setFormData({ ...formData, phoneType: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select type" />
+                    <SelectValue placeholder={t('form.mobile')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="mobile">Mobile</SelectItem>
-                    <SelectItem value="landline">Landline</SelectItem>
-                    <SelectItem value="work">Work</SelectItem>
+                    <SelectItem value="mobile">{t('form.mobile')}</SelectItem>
+                    <SelectItem value="landline">{t('form.landline')}</SelectItem>
+                    <SelectItem value="work">{t('form.work')}</SelectItem>
                   </SelectContent>
                 </Select>
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md capitalize">
-                  {profile.phoneType || "Mobile"}
+                  {profile.phoneType || t('form.mobile')}
                 </p>
               )}
             </div>
@@ -312,42 +314,42 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div className="space-y-2 md:col-span-2">
               <Label className="flex items-center gap-2">
                 <MapPin className="h-4 w-4" />
-                Address
+                {t('form.address')}
               </Label>
               {isEditing ? (
                 <Textarea
                   value={formData.address || ""}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  placeholder="Street address, City, State, ZIP"
+                  placeholder={t('portal.addressPlaceholder')}
                   rows={2}
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md min-h-[60px]">
-                  {profile.address || "Not set"}
+                  {profile.address || t('common.notSet')}
                 </p>
               )}
             </div>
 
             {/* Preferred Contact Method */}
             <div className="space-y-2">
-              <Label>Preferred Contact Method</Label>
+              <Label>{t('form.preferredContactMethod')}</Label>
               {isEditing ? (
                 <Select
                   value={formData.preferredContactMethod || "email"}
                   onValueChange={(value) => setFormData({ ...formData, preferredContactMethod: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select method" />
+                    <SelectValue placeholder={t('form.email')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="email">Email</SelectItem>
-                    <SelectItem value="sms">Text Message (SMS)</SelectItem>
-                    <SelectItem value="both">Both</SelectItem>
+                    <SelectItem value="email">{t('form.email')}</SelectItem>
+                    <SelectItem value="sms">{t('form.textMessage')}</SelectItem>
+                    <SelectItem value="both">{t('form.both')}</SelectItem>
                   </SelectContent>
                 </Select>
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md capitalize">
-                  {profile.preferredContactMethod || "Email"}
+                  {profile.preferredContactMethod || t('form.email')}
                 </p>
               )}
             </div>
@@ -360,74 +362,74 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CreditCard className="h-5 w-5" />
-            Insurance Information
+            {t('portal.insuranceInfo')}
           </CardTitle>
           <CardDescription>
-            Your health insurance details for billing purposes
+            {t('portal.insuranceBillingDesc')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 md:grid-cols-2">
             {/* Insurance Provider */}
             <div className="space-y-2">
-              <Label>Insurance Provider</Label>
+              <Label>{t('portal.insuranceProvider')}</Label>
               {isEditing ? (
                 <Input
                   value={formData.insuranceProvider || ""}
                   onChange={(e) => setFormData({ ...formData, insuranceProvider: e.target.value })}
-                  placeholder="e.g., Blue Cross Blue Shield"
+                  placeholder={t('portal.insurancePlaceholder')}
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
-                  {profile.insuranceProvider || "Not set"}
+                  {profile.insuranceProvider || t('common.notSet')}
                 </p>
               )}
             </div>
 
             {/* Member ID */}
             <div className="space-y-2">
-              <Label>Member ID</Label>
+              <Label>{t('portal.memberId')}</Label>
               {isEditing ? (
                 <Input
                   value={formData.insuranceId || ""}
                   onChange={(e) => setFormData({ ...formData, insuranceId: e.target.value })}
-                  placeholder="Your member ID number"
+                  placeholder={t('portal.memberIdPlaceholder')}
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
-                  {profile.insuranceId || "Not set"}
+                  {profile.insuranceId || t('common.notSet')}
                 </p>
               )}
             </div>
 
             {/* Policy Number */}
             <div className="space-y-2">
-              <Label>Policy Number</Label>
+              <Label>{t('portal.policyNumber')}</Label>
               {isEditing ? (
                 <Input
                   value={formData.policyNumber || ""}
                   onChange={(e) => setFormData({ ...formData, policyNumber: e.target.value })}
-                  placeholder="Policy number"
+                  placeholder={t('portal.policyPlaceholder')}
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
-                  {profile.policyNumber || "Not set"}
+                  {profile.policyNumber || t('common.notSet')}
                 </p>
               )}
             </div>
 
             {/* Group Number */}
             <div className="space-y-2">
-              <Label>Group Number</Label>
+              <Label>{t('portal.groupNumber')}</Label>
               {isEditing ? (
                 <Input
                   value={formData.groupNumber || ""}
                   onChange={(e) => setFormData({ ...formData, groupNumber: e.target.value })}
-                  placeholder="Group number (if applicable)"
+                  placeholder={t('portal.groupPlaceholder')}
                 />
               ) : (
                 <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
-                  {profile.groupNumber || "Not set"}
+                  {profile.groupNumber || t('common.notSet')}
                 </p>
               )}
             </div>
@@ -437,10 +439,9 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div className="flex items-start gap-3">
               <Shield className="h-5 w-5 text-blue-600 mt-0.5" />
               <div className="text-sm">
-                <p className="font-medium text-blue-900">Your information is secure</p>
+                <p className="font-medium text-blue-900">{t('portal.infoSecure')}</p>
                 <p className="text-blue-700">
-                  Insurance information is encrypted and used only for billing purposes.
-                  We never share your data with third parties without your consent.
+                  {t('portal.infoSecureDesc')}
                 </p>
               </div>
             </div>
@@ -453,10 +454,10 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CreditCard className="h-5 w-5" />
-            Payment Method
+            {t('portal.paymentMethod')}
           </CardTitle>
           <CardDescription>
-            A payment method on file is required to schedule appointments
+            {t('portal.paymentRequired')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -464,13 +465,12 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
             <div className="flex items-start gap-3">
               <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
               <div className="text-sm">
-                <p className="font-medium text-yellow-900">Payment method required</p>
+                <p className="font-medium text-yellow-900">{t('portal.paymentMethodRequired')}</p>
                 <p className="text-yellow-700">
-                  Please contact the office to add a payment method to your account.
-                  This is required before you can schedule appointments.
+                  {t('portal.contactOffice')}
                 </p>
                 <p className="text-yellow-600 mt-2 text-xs">
-                  Online payment setup coming soon.
+                  {t('portal.onlinePaymentSoon')}
                 </p>
               </div>
             </div>
@@ -483,18 +483,18 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CheckCircle className="h-5 w-5 text-green-500" />
-            Profile Status
+            {t('portal.profileStatus')}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            <ProfileCheckItem label="Name" completed={!!profile.firstName && !!profile.lastName} />
-            <ProfileCheckItem label="Email" completed={!!profile.email} />
-            <ProfileCheckItem label="Phone" completed={!!profile.phone} />
-            <ProfileCheckItem label="Date of Birth" completed={!!profile.dateOfBirth} />
-            <ProfileCheckItem label="Address" completed={!!profile.address} />
-            <ProfileCheckItem label="Insurance Provider" completed={!!profile.insuranceProvider} />
-            <ProfileCheckItem label="Insurance ID" completed={!!profile.insuranceId} />
+            <ProfileCheckItem label={t('portal.name')} completed={!!profile.firstName && !!profile.lastName} />
+            <ProfileCheckItem label={t('form.email')} completed={!!profile.email} />
+            <ProfileCheckItem label={t('form.phone')} completed={!!profile.phone} />
+            <ProfileCheckItem label={t('form.dateOfBirth')} completed={!!profile.dateOfBirth} />
+            <ProfileCheckItem label={t('form.address')} completed={!!profile.address} />
+            <ProfileCheckItem label={t('portal.insuranceProvider')} completed={!!profile.insuranceProvider} />
+            <ProfileCheckItem label={t('portal.memberId')} completed={!!profile.insuranceId} />
           </div>
         </CardContent>
       </Card>
@@ -503,17 +503,19 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
 }
 
 function ProfileCheckItem({ label, completed }: { label: string; completed: boolean }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-md">
       <span className="text-sm">{label}</span>
       {completed ? (
         <Badge className="bg-green-500">
           <CheckCircle className="h-3 w-3 mr-1" />
-          Complete
+          {t('status.complete')}
         </Badge>
       ) : (
         <Badge variant="outline" className="text-muted-foreground">
-          Missing
+          {t('status.missing')}
         </Badge>
       )}
     </div>

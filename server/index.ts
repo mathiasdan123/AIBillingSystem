@@ -22,13 +22,16 @@ if (process.env.SENTRY_DSN) {
 import express, { type Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
+import rateLimit, { type Store } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static";
 import { requestTimeout } from "./middleware/requestTimeout";
 import { globalErrorHandler } from "./middleware/errorHandler";
 import { seedDatabase } from "./seeds";
 import { startScheduler } from "./scheduler";
+import { initRedisClient } from "./services/redisClient";
+import { RedisStore } from "rate-limit-redis";
+import { swaggerSpec } from "./swagger";
 
 // =============================================================================
 // SECURITY: Production environment validation
@@ -199,12 +202,36 @@ const RATE_LIMIT_MAX_AUTH = parseInt(process.env.RATE_LIMIT_MAX_AUTH || '20');
 const RATE_LIMIT_MAX_API = parseInt(process.env.RATE_LIMIT_MAX_API || '100');
 const API_RATE_LIMIT_WINDOW_MS = parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || '60000'); // 1 minute default
 
+// Initialize Redis-backed rate limit store if REDIS_URL is configured.
+// Falls back to the default in-memory store when Redis is unavailable.
+let rateLimitStore: Store | undefined;
+
+const redisClient = initRedisClient();
+if (redisClient) {
+  try {
+    rateLimitStore = new RedisStore({
+      // Use sendCommand to stay compatible with ioredis
+      sendCommand: (...args: string[]) =>
+        redisClient.call(args[0], ...args.slice(1)) as any,
+      prefix: 'rl:', // key prefix to avoid collisions with other Redis data
+    });
+    console.log('✓ Redis-backed rate limiting enabled (distributed)');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`⚠️  Could not initialize Redis rate limit store: ${message}`);
+    console.warn('   Falling back to in-memory rate limiting');
+  }
+} else {
+  console.log('ℹ  Using in-memory rate limiting (set REDIS_URL for distributed rate limiting)');
+}
+
 const generalLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS,
   max: RATE_LIMIT_MAX_GENERAL,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  ...(rateLimitStore ? { store: rateLimitStore } : {}),
 });
 
 const authLimiter = rateLimit({
@@ -213,6 +240,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many authentication attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  ...(rateLimitStore ? { store: rateLimitStore } : {}),
 });
 
 const apiLimiter = rateLimit({
@@ -221,6 +249,7 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many API requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  ...(rateLimitStore ? { store: rateLimitStore } : {}),
 });
 
 // Apply rate limiters
@@ -277,6 +306,22 @@ app.use((req, res, next) => {
   await seedDatabase();
   
   const server = await registerRoutes(app);
+
+  // Swagger UI — only in non-production to avoid exposing API surface
+  if (process.env.NODE_ENV !== 'production') {
+    // Dynamic import to avoid bundling swagger-ui-express in production
+    const swaggerUi = await import('swagger-ui-express');
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+      customSiteTitle: 'TherapyBill AI API Docs',
+      customCss: '.swagger-ui .topbar { display: none }',
+    }));
+    // Also serve the raw spec as JSON
+    app.get('/api-docs.json', (_req: Request, res: Response) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.send(swaggerSpec);
+    });
+    log('Swagger UI available at /api-docs');
+  }
 
   // Sentry error handler — must be AFTER all routes but BEFORE other error handlers
   if (process.env.SENTRY_DSN) {

@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import "./i18n"; // Initialize i18n before rendering
 
 // Initialize Sentry for frontend error tracking (optional — no-ops if DSN is not set)
 if (import.meta.env.VITE_SENTRY_DSN) {

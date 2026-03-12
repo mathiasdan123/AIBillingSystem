@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { User, Mail, Loader2, ArrowRight, AlertCircle, Shield } from "lucide-react";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 interface PatientPortalLoginProps {
   onLoginSuccess: (token: string) => void;
@@ -15,6 +17,7 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
   const params = useParams<{ token?: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -37,13 +40,13 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
           }
         })
         .catch(() => {
-          setTokenError("Could not connect to server");
+          setTokenError(t('portal.couldNotConnect'));
         })
         .finally(() => {
           setIsLoading(false);
         });
     }
-  }, [params.token, onLoginSuccess, setLocation]);
+  }, [params.token, onLoginSuccess, setLocation, t]);
 
   const handleRequestLink = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,20 +65,20 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
       if (res.ok) {
         setLinkSent(true);
         toast({
-          title: "Login Link Sent",
-          description: "Check your email for the login link. It will expire in 15 minutes.",
+          title: t('portal.loginLinkSent'),
+          description: t('portal.checkEmailForLink'),
         });
       } else {
         toast({
-          title: "Request Failed",
-          description: data.message || "Could not send login link",
+          title: t('portal.requestFailed'),
+          description: data.message || t('portal.couldNotSendLink'),
           variant: "destructive",
         });
       }
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Could not connect to server",
+        title: t('portal.error'),
+        description: t('portal.couldNotConnect'),
         variant: "destructive",
       });
     } finally {
@@ -90,7 +93,7 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
         <Card className="max-w-md w-full">
           <CardContent className="flex flex-col items-center py-8">
             <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-            <p className="text-muted-foreground">Verifying your login link...</p>
+            <p className="text-muted-foreground">{t('portal.verifyingLink')}</p>
           </CardContent>
         </Card>
       </div>
@@ -106,14 +109,14 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
             <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
               <AlertCircle className="h-8 w-8 text-red-600" />
             </div>
-            <CardTitle>Login Link Invalid</CardTitle>
+            <CardTitle>{t('portal.loginLinkInvalid')}</CardTitle>
             <CardDescription>
               {tokenError}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground text-center">
-              Login links expire after 15 minutes for your security. Please request a new one below.
+              {t('portal.linkExpired')}
             </p>
             <Button
               className="w-full"
@@ -122,7 +125,7 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
                 setLocation("/patient-portal/login");
               }}
             >
-              Request New Login Link
+              {t('portal.requestNewLink')}
             </Button>
           </CardContent>
         </Card>
@@ -139,19 +142,19 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
             <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
               <Mail className="h-8 w-8 text-green-600" />
             </div>
-            <CardTitle>Check Your Email</CardTitle>
+            <CardTitle>{t('portal.checkEmail')}</CardTitle>
             <CardDescription>
-              We've sent a secure login link to <strong>{email}</strong>
+              {t('portal.loginLinkSentTo')} <strong>{email}</strong>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="bg-muted p-4 rounded-lg space-y-2 text-sm">
-              <p className="font-medium">What to expect:</p>
+              <p className="font-medium">{t('portal.whatToExpect')}</p>
               <ul className="list-disc list-inside text-muted-foreground space-y-1">
-                <li>The email should arrive within a few minutes</li>
-                <li>Click the link in the email to log in</li>
-                <li>The link expires in 15 minutes</li>
-                <li>Check your spam folder if you don't see it</li>
+                <li>{t('portal.emailArriveMinutes')}</li>
+                <li>{t('portal.clickLink')}</li>
+                <li>{t('portal.linkExpires15')}</li>
+                <li>{t('portal.checkSpam')}</li>
               </ul>
             </div>
             <Button
@@ -159,7 +162,7 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
               className="w-full"
               onClick={() => setLinkSent(false)}
             >
-              Didn't receive it? Try again
+              {t('portal.didntReceive')}
             </Button>
           </CardContent>
         </Card>
@@ -172,29 +175,32 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
     <div className="min-h-screen bg-gradient-to-b from-primary/5 to-background flex items-center justify-center p-4">
       <Card className="max-w-md w-full">
         <CardHeader className="text-center">
+          <div className="flex justify-end mb-2">
+            <LanguageSwitcher compact />
+          </div>
           <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
             <User className="h-8 w-8 text-primary" />
           </div>
-          <CardTitle className="text-2xl">Patient Portal</CardTitle>
+          <CardTitle className="text-2xl">{t('portal.loginTitle')}</CardTitle>
           <CardDescription>
-            Access your appointments, profile, and more
+            {t('portal.loginSubtitle')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleRequestLink} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email Address</Label>
+              <Label htmlFor="email">{t('form.emailAddress')}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="Enter your email address"
+                placeholder={t('portal.enterEmail')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={isLoading}
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Enter the email address associated with your patient record
+                {t('portal.emailHint')}
               </p>
             </div>
 
@@ -202,11 +208,11 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
               {isLoading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Sending...
+                  {t('portal.sending')}
                 </>
               ) : (
                 <>
-                  Get Login Link
+                  {t('portal.getLoginLink')}
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </>
               )}
@@ -217,7 +223,7 @@ export default function PatientPortalLogin({ onLoginSuccess }: PatientPortalLogi
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Shield className="h-4 w-4" />
               <span>
-                We'll send you a secure, one-time login link. No password needed.
+                {t('portal.secureLogin')}
               </span>
             </div>
           </div>

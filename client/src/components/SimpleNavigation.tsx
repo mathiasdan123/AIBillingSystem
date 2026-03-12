@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -34,33 +35,35 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: Home, adminOnly: false },
-  { name: 'Patient Intake', href: '/intake', icon: UserPlus, adminOnly: false },
-  { name: 'Patients', href: '/patients', icon: Users, adminOnly: false },
-  { name: 'Calendar', href: '/calendar', icon: Calendar, adminOnly: false },
-  { name: 'Waitlist', href: '/waitlist', icon: Clock, adminOnly: false },
-  { name: 'Reviews', href: '/reviews', icon: Star, adminOnly: false },
-  { name: 'Online Booking', href: '/online-booking', icon: CalendarCheck, adminOnly: false },
-  { name: 'Telehealth', href: '/telehealth', icon: Video, adminOnly: false },
-  { name: 'Messages', href: '/messages', icon: MessageSquare, adminOnly: false },
-  { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
-  { name: 'Session Recorder', href: '/session-recorder', icon: Mic, adminOnly: false },
-  { name: 'Outcome Measures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
-  { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
-  { name: 'Insurance Rates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
-  { name: 'Reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
-  { name: 'ERA / 835', href: '/remittance', icon: Receipt, adminOnly: false },
-  { name: 'Payer Contracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
-  { name: 'Appeals', href: '/appeals', icon: Scale, adminOnly: false },
-  { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
-  { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
-  { name: 'Expenses', href: '/expenses', icon: Receipt, adminOnly: false },
-  { name: 'Payer Management', href: '/payer-management', icon: Shield, adminOnly: true },
-  { name: 'Breach Incidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
-  { name: 'Subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
-  { name: 'Settings', href: '/settings', icon: Settings, adminOnly: false },
+// Navigation items with i18n keys instead of hardcoded names
+const navigationItems = [
+  { nameKey: 'nav.dashboard', href: '/', icon: Home, adminOnly: false },
+  { nameKey: 'nav.patientIntake', href: '/intake', icon: UserPlus, adminOnly: false },
+  { nameKey: 'nav.patients', href: '/patients', icon: Users, adminOnly: false },
+  { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar, adminOnly: false },
+  { nameKey: 'nav.waitlist', href: '/waitlist', icon: Clock, adminOnly: false },
+  { nameKey: 'nav.reviews', href: '/reviews', icon: Star, adminOnly: false },
+  { nameKey: 'nav.onlineBooking', href: '/online-booking', icon: CalendarCheck, adminOnly: false },
+  { nameKey: 'nav.telehealth', href: '/telehealth', icon: Video, adminOnly: false },
+  { nameKey: 'nav.messages', href: '/messages', icon: MessageSquare, adminOnly: false },
+  { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
+  { nameKey: 'nav.sessionRecorder', href: '/session-recorder', icon: Mic, adminOnly: false },
+  { nameKey: 'nav.outcomeMeasures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
+  { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
+  { nameKey: 'nav.insuranceRates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
+  { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
+  { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
+  { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
+  { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
+  { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
+  { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+  { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
+  { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
+  { nameKey: 'nav.breachIncidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
+  { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
+  { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
 
 export default function SimpleNavigation() {
@@ -68,6 +71,7 @@ export default function SimpleNavigation() {
   const { user, isAdmin, currentRole } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation();
 
   const cycleTheme = () => {
     if (theme === 'light') setTheme('dark');
@@ -76,7 +80,7 @@ export default function SimpleNavigation() {
   };
 
   const themeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
-  const themeLabel = theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System theme';
+  const themeLabel = theme === 'dark' ? t('theme.dark') : theme === 'light' ? t('theme.light') : t('theme.system');
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -84,7 +88,7 @@ export default function SimpleNavigation() {
   }, [location]);
 
   // Filter navigation items based on role
-  const filteredNavigation = navigation.filter(item => !item.adminOnly || isAdmin);
+  const filteredNavigation = navigationItems.filter(item => !item.adminOnly || isAdmin);
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -105,13 +109,13 @@ export default function SimpleNavigation() {
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-md focus:outline-none"
       >
-        Skip to main content
+        {t('nav.skipToMain')}
       </a>
 
       {/* Desktop Navigation */}
       <nav
         role="navigation"
-        aria-label="Main navigation"
+        aria-label={t('nav.mainNavigation')}
         className="hidden md:flex fixed left-0 top-0 bottom-0 w-64 bg-background border-r border-border flex-col z-10"
       >
         <div className="flex items-center h-16 px-6 border-b border-border">
@@ -127,7 +131,7 @@ export default function SimpleNavigation() {
               const Icon = item.icon;
               const isActive = location === item.href;
               return (
-                <li key={item.name}>
+                <li key={item.nameKey}>
                   <a
                     href={item.href}
                     onClick={(e) => {
@@ -142,7 +146,7 @@ export default function SimpleNavigation() {
                     }`}
                   >
                     <Icon className="w-5 h-5 mr-3" aria-hidden="true" />
-                    {item.name}
+                    {t(item.nameKey)}
                   </a>
                 </li>
               );
@@ -151,6 +155,9 @@ export default function SimpleNavigation() {
         </div>
 
         <div className="p-6 border-t border-border space-y-4">
+          <div className="flex items-center justify-center">
+            <LanguageSwitcher compact />
+          </div>
           <div className="flex items-center space-x-3">
             <Avatar>
               <AvatarImage src={(user as any)?.profileImageUrl} />
@@ -177,7 +184,7 @@ export default function SimpleNavigation() {
             <Button
               variant="ghost"
               size="sm"
-              aria-label="Log out"
+              aria-label={t('nav.logOut')}
               onClick={() => window.location.href = '/api/logout'}
             >
               <LogOut className="w-4 h-4" aria-hidden="true" />
@@ -195,28 +202,31 @@ export default function SimpleNavigation() {
             </div>
             <span className="text-xl font-bold text-foreground">TherapyBill AI</span>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-nav-menu"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          >
-            {mobileMenuOpen ? <X className="w-6 h-6" aria-hidden="true" /> : <Menu className="w-6 h-6" aria-hidden="true" />}
-          </Button>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher compact />
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={mobileMenuOpen ? t('nav.closeMenu') : t('nav.openMenu')}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-nav-menu"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X className="w-6 h-6" aria-hidden="true" /> : <Menu className="w-6 h-6" aria-hidden="true" />}
+            </Button>
+          </div>
         </div>
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
           <div id="mobile-nav-menu" className="fixed inset-0 top-16 bg-background z-50 overflow-y-auto">
-            <nav role="navigation" aria-label="Mobile navigation" className="px-4 py-6">
+            <nav role="navigation" aria-label={t('nav.mobileNavigation')} className="px-4 py-6">
               <ul className="space-y-2" role="list">
                 {filteredNavigation.map((item) => {
                   const Icon = item.icon;
                   const isActive = location === item.href;
                   return (
-                    <li key={item.name}>
+                    <li key={item.nameKey}>
                       <a
                         href={item.href}
                         onClick={(e) => {
@@ -232,7 +242,7 @@ export default function SimpleNavigation() {
                         }`}
                       >
                         <Icon className="w-6 h-6 mr-3" aria-hidden="true" />
-                        {item.name}
+                        {t(item.nameKey)}
                       </a>
                     </li>
                   );

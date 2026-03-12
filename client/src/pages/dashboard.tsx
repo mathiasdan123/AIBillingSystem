@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,14 +15,15 @@ import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
 export default function Dashboard() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [practiceId] = useState(1); // Mock practice ID for now
 
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       toast({
-        title: "Unauthorized",
-        description: "You are logged out. Logging in again...",
+        title: t('dashboard.unauthorized'),
+        description: t('dashboard.loggedOut'),
         variant: "destructive",
       });
       setTimeout(() => {
@@ -29,7 +31,7 @@ export default function Dashboard() {
       }, 500);
       return;
     }
-  }, [isAuthenticated, isLoading, toast]);
+  }, [isAuthenticated, isLoading, toast, t]);
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['/api/analytics/dashboard'],
@@ -93,10 +95,10 @@ export default function Dashboard() {
     <div className="p-6 pt-20 md:pt-6 md:ml-64">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900 mb-2">
-          Welcome back, {user?.firstName || 'User'}!
+          {t('dashboard.welcomeBack', { name: user?.firstName || 'User' })}
         </h1>
         <p className="text-slate-600">
-          Here's what's happening with your practice today.
+          {t('dashboard.practiceOverview')}
         </p>
       </div>
 
@@ -110,11 +112,11 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Ban className="w-5 h-5 text-red-600" />
-                <CardTitle className="text-red-900">Denied Claims Today</CardTitle>
+                <CardTitle className="text-red-900">{t('dashboard.deniedClaimsToday')}</CardTitle>
               </div>
               <Link href="/reports">
                 <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100">
-                  View Full Report
+                  {t('dashboard.viewFullReport')}
                 </Button>
               </Link>
             </div>
@@ -123,27 +125,27 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div className="text-center p-3 bg-white rounded-lg border border-red-100">
                 <p className="text-2xl font-bold text-red-600">{deniedClaimsReport.summary.totalDenied}</p>
-                <p className="text-xs text-slate-600">Claims Denied</p>
+                <p className="text-xs text-slate-600">{t('dashboard.claimsDenied')}</p>
               </div>
               <div className="text-center p-3 bg-white rounded-lg border border-red-100">
                 <p className="text-2xl font-bold text-red-600">
                   ${deniedClaimsReport.summary.totalAmountAtRisk?.toLocaleString() || '0'}
                 </p>
-                <p className="text-xs text-slate-600">Amount at Risk</p>
+                <p className="text-xs text-slate-600">{t('dashboard.amountAtRisk')}</p>
               </div>
               <div className="text-center p-3 bg-white rounded-lg border border-green-100">
                 <p className="text-2xl font-bold text-green-600">{deniedClaimsReport.summary.appealsGenerated}</p>
-                <p className="text-xs text-slate-600">Appeals Generated</p>
+                <p className="text-xs text-slate-600">{t('dashboard.appealsGenerated')}</p>
               </div>
               <div className="text-center p-3 bg-white rounded-lg border border-blue-100">
                 <p className="text-2xl font-bold text-blue-600">{deniedClaimsReport.summary.appealsSent}</p>
-                <p className="text-xs text-slate-600">Appeals Sent</p>
+                <p className="text-xs text-slate-600">{t('dashboard.appealsSent')}</p>
               </div>
             </div>
 
             {deniedClaimsReport.claims?.length > 0 && (
               <div className="space-y-2">
-                <p className="text-sm font-medium text-red-800 mb-2">Today's Denied Claims:</p>
+                <p className="text-sm font-medium text-red-800 mb-2">{t('dashboard.todaysDeniedClaims')}</p>
                 {deniedClaimsReport.claims.slice(0, 3).map((claim: any) => (
                   <div key={claim.id} className="flex items-center justify-between p-2 bg-white rounded border border-red-100">
                     <div className="flex items-center space-x-3">
@@ -155,13 +157,13 @@ export default function Dashboard() {
                     </div>
                     <div className="text-right">
                       <p className="font-medium text-red-600 text-sm">${claim.amount}</p>
-                      <p className="text-xs text-slate-500">{claim.appealStatus === 'none' ? 'No appeal' : `Appeal: ${claim.appealStatus}`}</p>
+                      <p className="text-xs text-slate-500">{claim.appealStatus === 'none' ? t('dashboard.noAppeal') : t('dashboard.appeal', { status: claim.appealStatus })}</p>
                     </div>
                   </div>
                 ))}
                 {deniedClaimsReport.claims.length > 3 && (
                   <p className="text-xs text-slate-500 text-center pt-1">
-                    +{deniedClaimsReport.claims.length - 3} more denied claims
+                    {t('dashboard.moreDeniedClaims', { count: deniedClaimsReport.claims.length - 3 })}
                   </p>
                 )}
               </div>
@@ -176,11 +178,11 @@ export default function Dashboard() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>Recent Claims</CardTitle>
-                <CardDescription>Latest billing activity</CardDescription>
+                <CardTitle>{t('dashboard.recentClaims')}</CardTitle>
+                <CardDescription>{t('dashboard.latestBilling')}</CardDescription>
               </div>
               <Link href="/claims">
-                <Button size="sm">View All</Button>
+                <Button size="sm">{t('common.viewAll')}</Button>
               </Link>
             </div>
           </CardHeader>
@@ -222,14 +224,14 @@ export default function Dashboard() {
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <FileText className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No claims yet</h3>
+                <h3 className="text-lg font-semibold mb-2">{t('dashboard.noClaimsYet')}</h3>
                 <p className="text-muted-foreground mb-6 max-w-md">
-                  Claims track your billing activity. Create a claim after a patient session to start billing insurance or tracking payments.
+                  {t('dashboard.noClaimsDescription')}
                 </p>
                 <Link href="/claims">
                   <Button size="sm">
                     <Plus className="w-4 h-4 mr-2" />
-                    Create Your First Claim
+                    {t('dashboard.createFirstClaim')}
                   </Button>
                 </Link>
               </div>
@@ -242,11 +244,11 @@ export default function Dashboard() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>Recent Patients</CardTitle>
-                <CardDescription>Newly added patients</CardDescription>
+                <CardTitle>{t('dashboard.recentPatients')}</CardTitle>
+                <CardDescription>{t('dashboard.newlyAdded')}</CardDescription>
               </div>
               <Link href="/patients">
-                <Button size="sm">View All</Button>
+                <Button size="sm">{t('common.viewAll')}</Button>
               </Link>
             </div>
           </CardHeader>
@@ -288,14 +290,14 @@ export default function Dashboard() {
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Users className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Welcome! Let's get started</h3>
+                <h3 className="text-lg font-semibold mb-2">{t('dashboard.welcomeGetStarted')}</h3>
                 <p className="text-muted-foreground mb-6 max-w-md">
-                  Add your first patient to begin managing their information, verifying insurance eligibility, and tracking sessions.
+                  {t('dashboard.noPatientDescription')}
                 </p>
                 <Link href="/patients">
                   <Button size="sm">
                     <Plus className="w-4 h-4 mr-2" />
-                    Add Your First Patient
+                    {t('dashboard.addFirstPatient')}
                   </Button>
                 </Link>
               </div>
@@ -312,33 +314,33 @@ export default function Dashboard() {
       {/* Quick Actions */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>Common tasks to get you started</CardDescription>
+          <CardTitle>{t('dashboard.quickActions')}</CardTitle>
+          <CardDescription>{t('dashboard.commonTasks')}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <Link href="/patients">
               <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
                 <Plus className="w-6 h-6" />
-                <span>Add Patient</span>
+                <span>{t('dashboard.addPatient')}</span>
               </Button>
             </Link>
             <Link href="/claims">
               <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
                 <Plus className="w-6 h-6" />
-                <span>Create Claim</span>
+                <span>{t('dashboard.createClaim')}</span>
               </Button>
             </Link>
             <Link href="/expenses">
               <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
                 <Plus className="w-6 h-6" />
-                <span>Add Expense</span>
+                <span>{t('dashboard.addExpense')}</span>
               </Button>
             </Link>
             <Link href="/analytics">
               <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
                 <Plus className="w-6 h-6" />
-                <span>View Reports</span>
+                <span>{t('dashboard.viewReports')}</span>
               </Button>
             </Link>
           </div>

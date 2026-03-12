@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -11,6 +12,7 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 import PatientPortalLogin from "./PatientPortalLogin";
 import PatientPortalDashboard from "./PatientPortalDashboard";
 import PatientPortalProfile from "./PatientPortalProfile";
@@ -20,6 +22,7 @@ export default function PatientPortalPage() {
   const params = useParams<{ token?: string; tab?: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   // Get token from localStorage or URL query param (for demo QR code)
   const [portalToken, setPortalToken] = useState<string | null>(() => {
@@ -71,8 +74,8 @@ export default function PatientPortalPage() {
     setPortalToken(null);
     setLocation("/patient-portal");
     toast({
-      title: "Logged Out",
-      description: "You have been successfully logged out.",
+      title: t('portal.loggedOutTitle'),
+      description: t('portal.loggedOutDesc'),
     });
   };
 
@@ -88,7 +91,7 @@ export default function PatientPortalPage() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading demo patient portal...</p>
+          <p className="text-muted-foreground">{t('portal.loadingDemo')}</p>
         </div>
       </div>
     );
@@ -109,9 +112,9 @@ export default function PatientPortalPage() {
               <Home className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">Patient Portal</h1>
+              <h1 className="text-lg font-bold">{t('portal.patientPortal')}</h1>
               <p className="text-sm text-muted-foreground hidden sm:block">
-                Manage your appointments and profile
+                {t('portal.manageAppointments')}
               </p>
             </div>
           </div>
@@ -125,7 +128,7 @@ export default function PatientPortalPage() {
                 onClick={() => handleNavigate("dashboard")}
               >
                 <Home className="h-4 w-4 mr-2" />
-                Dashboard
+                {t('portal.dashboard')}
               </Button>
               <Button
                 variant={activeTab === "appointments" ? "default" : "ghost"}
@@ -133,7 +136,7 @@ export default function PatientPortalPage() {
                 onClick={() => handleNavigate("appointments")}
               >
                 <Calendar className="h-4 w-4 mr-2" />
-                Appointments
+                {t('portal.appointments')}
               </Button>
               <Button
                 variant={activeTab === "profile" ? "default" : "ghost"}
@@ -141,24 +144,27 @@ export default function PatientPortalPage() {
                 onClick={() => handleNavigate("profile")}
               >
                 <User className="h-4 w-4 mr-2" />
-                Profile
+                {t('portal.profile')}
               </Button>
             </nav>
+            <LanguageSwitcher compact />
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut className="h-4 w-4 mr-2" />
-              Sign Out
+              {t('portal.signOut')}
             </Button>
           </div>
 
           {/* Mobile Menu Button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="md:hidden"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          >
-            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </Button>
+          <div className="flex items-center gap-2 md:hidden">
+            <LanguageSwitcher compact />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </Button>
+          </div>
         </div>
 
         {/* Mobile Navigation */}
@@ -171,7 +177,7 @@ export default function PatientPortalPage() {
                 onClick={() => handleNavigate("dashboard")}
               >
                 <Home className="h-4 w-4 mr-2" />
-                Dashboard
+                {t('portal.dashboard')}
               </Button>
               <Button
                 variant={activeTab === "appointments" ? "default" : "ghost"}
@@ -179,7 +185,7 @@ export default function PatientPortalPage() {
                 onClick={() => handleNavigate("appointments")}
               >
                 <Calendar className="h-4 w-4 mr-2" />
-                Appointments
+                {t('portal.appointments')}
               </Button>
               <Button
                 variant={activeTab === "profile" ? "default" : "ghost"}
@@ -187,7 +193,7 @@ export default function PatientPortalPage() {
                 onClick={() => handleNavigate("profile")}
               >
                 <User className="h-4 w-4 mr-2" />
-                Profile
+                {t('portal.profile')}
               </Button>
               <Button
                 variant="outline"
@@ -195,7 +201,7 @@ export default function PatientPortalPage() {
                 onClick={handleLogout}
               >
                 <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
+                {t('portal.signOut')}
               </Button>
             </nav>
           </div>
@@ -218,8 +224,8 @@ export default function PatientPortalPage() {
       {/* Footer */}
       <footer className="border-t bg-white mt-auto">
         <div className="max-w-6xl mx-auto px-4 py-6 text-center text-sm text-muted-foreground">
-          <p>Your health information is protected and secure.</p>
-          <p className="mt-1">Need help? Contact your healthcare provider.</p>
+          <p>{t('portal.healthInfoSecure')}</p>
+          <p className="mt-1">{t('portal.needHelp')}</p>
         </div>
       </footer>
     </div>

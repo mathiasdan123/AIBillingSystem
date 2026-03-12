@@ -77,7 +77,50 @@ const generateMockEligibility = (patient: any, insurance: any) => {
 
 // ==================== APPOINTMENT CRUD ====================
 
-// Create appointment (supports optional recurrence)
+/**
+ * @openapi
+ * /api/appointments:
+ *   post:
+ *     tags: [Appointments]
+ *     summary: Create an appointment
+ *     description: Creates a single appointment, or a recurring series if a recurrencePattern is provided (weekly, biweekly, or monthly).
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/InsertAppointment'
+ *     responses:
+ *       200:
+ *         description: Created appointment (single)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Appointment'
+ *       201:
+ *         description: Created recurring series
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 seriesId:
+ *                   type: string
+ *                 count:
+ *                   type: integer
+ *                 appointments:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Appointment'
+ *       400:
+ *         description: Invalid recurrence configuration
+ *       401:
+ *         description: Not authenticated
+ *       500:
+ *         description: Server error
+ */
 router.post('/', isAuthenticated, async (req: any, res) => {
   try {
     const { recurrencePattern, recurrenceEndDate, numberOfOccurrences, ...appointmentData } = req.body;
@@ -170,6 +213,60 @@ router.post('/', isAuthenticated, async (req: any, res) => {
 });
 
 // Get all appointments
+/**
+ * @openapi
+ * /api/appointments:
+ *   get:
+ *     tags: [Appointments]
+ *     summary: List appointments
+ *     description: Returns a paginated list of appointments. Optionally filter by date range.
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: start
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Start of date range filter
+ *       - in: query
+ *         name: end
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: End of date range filter
+ *       - in: query
+ *         name: practiceId
+ *         schema:
+ *           type: integer
+ *         description: Practice ID (admin only)
+ *     responses:
+ *       200:
+ *         description: Paginated appointment list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/PaginatedResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Appointment'
+ *       401:
+ *         description: Not authenticated
+ *       500:
+ *         description: Server error
+ */
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);

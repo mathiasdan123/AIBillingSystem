@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,6 +85,7 @@ interface PatientPortalAppointmentsProps {
 export default function PatientPortalAppointments({ token }: PatientPortalAppointmentsProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [showRequestDialog, setShowRequestDialog] = useState(false);
   const [selectedTab, setSelectedTab] = useState("upcoming");
 
@@ -187,13 +189,13 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
       setShowRequestDialog(false);
       resetForm();
       toast({
-        title: "Request Submitted",
-        description: "Your appointment request has been submitted for approval.",
+        title: t('portal.requestSubmitted'),
+        description: t('portal.requestSubmittedDesc'),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "Request Failed",
+        title: t('portal.requestFailed'),
         description: error.message,
         variant: "destructive",
       });
@@ -217,13 +219,13 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
       queryClient.invalidateQueries({ queryKey: ["/api/patient-portal/appointment-requests", token] });
       queryClient.invalidateQueries({ queryKey: ["/api/patient-portal/dashboard", token] });
       toast({
-        title: "Request Cancelled",
-        description: "Your appointment request has been cancelled.",
+        title: t('portal.requestCancelled'),
+        description: t('portal.requestCancelledDesc'),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "Cancel Failed",
+        title: t('portal.cancelFailed'),
         description: error.message,
         variant: "destructive",
       });
@@ -241,8 +243,8 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
   const handleSubmitRequest = () => {
     if (!selectedType || !selectedDate || !selectedTime) {
       toast({
-        title: "Missing Information",
-        description: "Please select an appointment type, date, and time.",
+        title: t('portal.missingInfo'),
+        description: t('portal.selectTypeDateTime'),
         variant: "destructive",
       });
       return;
@@ -277,17 +279,17 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
     switch (status) {
       case "scheduled":
       case "confirmed":
-        return <Badge className="bg-green-500">Confirmed</Badge>;
+        return <Badge className="bg-green-500">{t('status.confirmed')}</Badge>;
       case "pending_approval":
-        return <Badge variant="outline" className="text-yellow-600 border-yellow-600">Pending Approval</Badge>;
+        return <Badge variant="outline" className="text-yellow-600 border-yellow-600">{t('status.pendingApproval')}</Badge>;
       case "cancelled":
-        return <Badge variant="destructive">Cancelled</Badge>;
+        return <Badge variant="destructive">{t('status.cancelled')}</Badge>;
       case "completed":
-        return <Badge variant="secondary">Completed</Badge>;
+        return <Badge variant="secondary">{t('status.completed')}</Badge>;
       case "rejected":
-        return <Badge variant="destructive">Rejected</Badge>;
+        return <Badge variant="destructive">{t('status.rejected')}</Badge>;
       case "no_show":
-        return <Badge variant="outline" className="text-red-600">No Show</Badge>;
+        return <Badge variant="outline" className="text-red-600">{t('status.noShow')}</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -321,9 +323,9 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Appointments</h2>
+          <h2 className="text-2xl font-bold">{t('portal.appointments')}</h2>
           <p className="text-muted-foreground">
-            View your appointments and request new ones
+            {t('portal.viewAppointments')}
           </p>
         </div>
         <Button
@@ -331,7 +333,7 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
           disabled={!canSchedule}
         >
           <Plus className="h-4 w-4 mr-2" />
-          Request Appointment
+          {t('portal.requestAppointment')}
         </Button>
       </div>
 
@@ -344,23 +346,23 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
                 <AlertCircle className="h-5 w-5 text-red-600" />
               </div>
               <div className="flex-1">
-                <p className="font-medium text-red-800">Complete the following to schedule appointments:</p>
+                <p className="font-medium text-red-800">{t('portal.completeToSchedule')}</p>
                 <ul className="mt-2 space-y-1 text-sm text-red-700">
                   {!intakeCompleted && (
                     <li className="flex items-center gap-2">
                       <XCircle className="h-4 w-4" />
-                      Complete your patient intake form (profile information)
+                      {t('portal.completeIntake')}
                     </li>
                   )}
                   {!hasPaymentMethod && (
                     <li className="flex items-center gap-2">
                       <XCircle className="h-4 w-4" />
-                      Add a payment method on file
+                      {t('portal.addPaymentMethod')}
                     </li>
                   )}
                 </ul>
                 <p className="mt-3 text-sm text-red-600">
-                  Please update your profile to complete these requirements.
+                  {t('portal.updateProfileReqs')}
                 </p>
               </div>
             </div>
@@ -377,10 +379,10 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
             </div>
             <div className="flex-1">
               <p className="font-medium">
-                You have {pendingRequests.length} pending appointment request{pendingRequests.length > 1 ? "s" : ""}
+                {t('portal.pendingRequestCount', { count: pendingRequests.length })}
               </p>
               <p className="text-sm text-muted-foreground">
-                Our staff will review and confirm your request soon.
+                {t('portal.staffReview')}
               </p>
             </div>
           </CardContent>
@@ -390,26 +392,26 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
         <TabsList>
           <TabsTrigger value="upcoming">
-            Upcoming
+            {t('portal.upcoming')}
             {upcomingAppointments.length > 0 && (
               <Badge variant="secondary" className="ml-2">{upcomingAppointments.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="requests">
-            Requests
+            {t('portal.requests')}
             {pendingRequests.length > 0 && (
               <Badge variant="secondary" className="ml-2">{pendingRequests.length}</Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="past">Past</TabsTrigger>
+          <TabsTrigger value="past">{t('portal.past')}</TabsTrigger>
         </TabsList>
 
         {/* Upcoming Appointments */}
         <TabsContent value="upcoming">
           <Card>
             <CardHeader>
-              <CardTitle>Upcoming Appointments</CardTitle>
-              <CardDescription>Your confirmed future appointments</CardDescription>
+              <CardTitle>{t('portal.upcomingAppointments')}</CardTitle>
+              <CardDescription>{t('portal.confirmedFuture')}</CardDescription>
             </CardHeader>
             <CardContent>
               {isLoading ? (
@@ -421,9 +423,9 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
               ) : upcomingAppointments.length === 0 ? (
                 <div className="text-center py-8">
                   <CalendarIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No upcoming appointments</p>
+                  <p className="text-muted-foreground">{t('portal.noUpcomingAppt')}</p>
                   <Button variant="outline" className="mt-4" onClick={() => setShowRequestDialog(true)}>
-                    Request an Appointment
+                    {t('portal.requestAnAppt')}
                   </Button>
                 </div>
               ) : (
@@ -447,8 +449,8 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
         <TabsContent value="requests">
           <Card>
             <CardHeader>
-              <CardTitle>Appointment Requests</CardTitle>
-              <CardDescription>Track the status of your appointment requests</CardDescription>
+              <CardTitle>{t('portal.appointmentRequests')}</CardTitle>
+              <CardDescription>{t('portal.trackRequests')}</CardDescription>
             </CardHeader>
             <CardContent>
               {isLoading ? (
@@ -460,9 +462,9 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
               ) : requests.length === 0 ? (
                 <div className="text-center py-8">
                   <ClockIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No appointment requests</p>
+                  <p className="text-muted-foreground">{t('portal.noAppointmentRequests')}</p>
                   <Button variant="outline" className="mt-4" onClick={() => setShowRequestDialog(true)}>
-                    Request an Appointment
+                    {t('portal.requestAnAppt')}
                   </Button>
                 </div>
               ) : (
@@ -486,8 +488,8 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
         <TabsContent value="past">
           <Card>
             <CardHeader>
-              <CardTitle>Past Appointments</CardTitle>
-              <CardDescription>Your appointment history</CardDescription>
+              <CardTitle>{t('portal.pastAppointments')}</CardTitle>
+              <CardDescription>{t('portal.pastApptDescription')}</CardDescription>
             </CardHeader>
             <CardContent>
               {isLoading ? (
@@ -499,7 +501,7 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
               ) : pastAppointments.length === 0 ? (
                 <div className="text-center py-8">
                   <CalendarIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No past appointments</p>
+                  <p className="text-muted-foreground">{t('portal.noPastAppointments')}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -524,24 +526,24 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
       <Dialog open={showRequestDialog} onOpenChange={setShowRequestDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Request an Appointment</DialogTitle>
+            <DialogTitle>{t('portal.requestDialogTitle')}</DialogTitle>
             <DialogDescription>
-              Submit a request for a new appointment. Our staff will review and confirm your request.
+              {t('portal.requestDialogDesc')}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             {/* Appointment Type */}
             <div className="space-y-2">
-              <Label>Appointment Type *</Label>
+              <Label>{t('portal.appointmentType')} *</Label>
               <Select value={selectedType} onValueChange={setSelectedType}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select appointment type" />
+                  <SelectValue placeholder={t('portal.selectAppointmentType')} />
                 </SelectTrigger>
                 <SelectContent>
                   {appointmentTypes.map((type) => (
                     <SelectItem key={type.id} value={type.id.toString()}>
-                      {type.name} ({type.duration} min)
+                      {type.name} ({type.duration} {t('portal.min')})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -550,13 +552,13 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
 
             {/* Preferred Therapist */}
             <div className="space-y-2">
-              <Label>Preferred Therapist (Optional)</Label>
+              <Label>{t('portal.preferredTherapist')}</Label>
               <Select value={selectedTherapist} onValueChange={setSelectedTherapist}>
                 <SelectTrigger>
-                  <SelectValue placeholder="No preference" />
+                  <SelectValue placeholder={t('portal.noPreference')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No preference</SelectItem>
+                  <SelectItem value="">{t('portal.noPreference')}</SelectItem>
                   {therapists.map((therapist) => (
                     <SelectItem key={therapist.id} value={therapist.id}>
                       {therapist.firstName} {therapist.lastName}
@@ -568,7 +570,7 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
 
             {/* Date Selection */}
             <div className="space-y-2">
-              <Label>Preferred Date *</Label>
+              <Label>{t('portal.preferredDate')} *</Label>
               <Calendar
                 mode="single"
                 selected={selectedDate}
@@ -580,10 +582,10 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
 
             {/* Time Selection */}
             <div className="space-y-2">
-              <Label>Preferred Time *</Label>
+              <Label>{t('portal.preferredTime')} *</Label>
               <Select value={selectedTime} onValueChange={setSelectedTime}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select time" />
+                  <SelectValue placeholder={t('portal.selectTime')} />
                 </SelectTrigger>
                 <SelectContent>
                   {timeSlots.map((time) => (
@@ -597,11 +599,11 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
 
             {/* Notes */}
             <div className="space-y-2">
-              <Label>Additional Notes (Optional)</Label>
+              <Label>{t('portal.additionalNotes')}</Label>
               <Textarea
                 value={requestNotes}
                 onChange={(e) => setRequestNotes(e.target.value)}
-                placeholder="Any specific concerns or preferences..."
+                placeholder={t('portal.notesPlaceholder')}
                 rows={3}
               />
             </div>
@@ -609,7 +611,7 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRequestDialog(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={handleSubmitRequest}
@@ -618,10 +620,10 @@ export default function PatientPortalAppointments({ token }: PatientPortalAppoin
               {requestMutation.isPending ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Submitting...
+                  {t('portal.submitting')}
                 </>
               ) : (
-                "Submit Request"
+                t('portal.submitRequest')
               )}
             </Button>
           </DialogFooter>
@@ -644,6 +646,8 @@ function AppointmentCard({
   getStatusBadge: (status: string) => React.ReactNode;
   isPast?: boolean;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className={`p-4 rounded-lg border ${isPast ? "bg-slate-50" : "bg-white"}`}>
       <div className="flex items-start justify-between">
@@ -652,7 +656,7 @@ function AppointmentCard({
             <CalendarIcon className={`h-6 w-6 ${isPast ? "text-slate-500" : "text-primary"}`} />
           </div>
           <div>
-            <p className="font-medium">{appointment.title || "Appointment"}</p>
+            <p className="font-medium">{appointment.title || t('portal.appointment')}</p>
             <p className="text-sm text-muted-foreground">
               {formatDate(appointment.startTime)}
             </p>
@@ -684,6 +688,7 @@ function RequestCard({
   onCancel: () => void;
   isCancelling: boolean;
 }) {
+  const { t } = useTranslation();
   const isPending = request.status === "pending_approval";
 
   return (
@@ -694,24 +699,24 @@ function RequestCard({
             <ClockIcon className={`h-6 w-6 ${isPending ? "text-yellow-600" : "text-slate-500"}`} />
           </div>
           <div>
-            <p className="font-medium">{request.appointmentTypeName || "Appointment Request"}</p>
+            <p className="font-medium">{request.appointmentTypeName || t('portal.appointmentRequest')}</p>
             <p className="text-sm text-muted-foreground">
-              Requested: {request.requestedDate} at {request.requestedTime}
+              {t('portal.requested')} {request.requestedDate} at {request.requestedTime}
             </p>
             {request.therapistName && (
               <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                 <User className="h-3 w-3" />
-                Preferred: {request.therapistName}
+                {t('portal.preferred')} {request.therapistName}
               </p>
             )}
             {request.notes && (
               <p className="text-sm text-muted-foreground mt-1">
-                Notes: {request.notes}
+                {t('portal.notes')} {request.notes}
               </p>
             )}
             {request.rejectionReason && (
               <p className="text-sm text-red-600 mt-1">
-                Reason: {request.rejectionReason}
+                {t('portal.reason')} {request.rejectionReason}
               </p>
             )}
           </div>
@@ -731,7 +736,7 @@ function RequestCard({
               ) : (
                 <>
                   <XCircle className="h-4 w-4 mr-1" />
-                  Cancel
+                  {t('common.cancel')}
                 </>
               )}
             </Button>

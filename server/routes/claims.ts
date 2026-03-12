@@ -105,7 +105,48 @@ const generateSecureClaimNumber = (prefix: string): string => {
 
 // ==================== CLAIMS CRUD ====================
 
-// Get all claims for practice
+/**
+ * @openapi
+ * /api/claims:
+ *   get:
+ *     tags: [Claims]
+ *     summary: List all claims
+ *     description: Returns a paginated list of claims for the authenticated user's practice.
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: practiceId
+ *         schema:
+ *           type: integer
+ *         description: Practice ID (admin only)
+ *     responses:
+ *       200:
+ *         description: Paginated claims list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/PaginatedResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Claim'
+ *       401:
+ *         description: Not authenticated
+ *       500:
+ *         description: Server error
+ */
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
@@ -121,7 +162,35 @@ router.get('/', isAuthenticated, async (req: any, res) => {
   }
 });
 
-// Get single claim with line items
+/**
+ * @openapi
+ * /api/claims/{id}:
+ *   get:
+ *     tags: [Claims]
+ *     summary: Get a claim by ID
+ *     description: Returns a single claim with its line items enriched with CPT and ICD-10 details.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Claim with line items
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Claim'
+ *       400:
+ *         description: Invalid claim ID
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Claim not found
+ *       500:
+ *         description: Server error
+ */
 router.get('/:id', isAuthenticated, async (req: any, res) => {
   try {
     const claimId = validatePositiveInt(req.params.id);
@@ -208,7 +277,33 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
   }
 });
 
-// Create new claim with AI optimization
+/**
+ * @openapi
+ * /api/claims:
+ *   post:
+ *     tags: [Claims]
+ *     summary: Create a new claim
+ *     description: Creates a claim with optional AI optimization of billing codes. If a sessionId is provided, the system runs AI review on the associated SOAP note.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/InsertClaim'
+ *     responses:
+ *       200:
+ *         description: Created claim
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Claim'
+ *       401:
+ *         description: Not authenticated
+ *       422:
+ *         description: Validation error
+ *       500:
+ *         description: Server error
+ */
 router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, res) => {
   try {
     const { patientId, insuranceId, totalAmount, submittedAmount, sessionId, billingOrder, primaryClaimId } = req.body;
@@ -385,6 +480,60 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
 // ==================== CLAIM SUBMISSION ====================
 
 // Batch submit claims
+/**
+ * @openapi
+ * /api/claims/batch-submit:
+ *   post:
+ *     tags: [Claims]
+ *     summary: Batch-submit claims
+ *     description: Submits multiple claims at once. Maximum 50 claims per batch.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [claimIds]
+ *             properties:
+ *               claimIds:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 minItems: 1
+ *                 maxItems: 50
+ *                 description: Array of claim IDs to submit
+ *     responses:
+ *       200:
+ *         description: Batch submission results
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 submitted:
+ *                   type: integer
+ *                   description: Number of successfully submitted claims
+ *                 failed:
+ *                   type: integer
+ *                   description: Number of failed submissions
+ *                 results:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       claimId:
+ *                         type: integer
+ *                       success:
+ *                         type: boolean
+ *                       error:
+ *                         type: string
+ *       400:
+ *         description: Invalid request (empty array, too many claims)
+ *       401:
+ *         description: Not authenticated
+ *       500:
+ *         description: Server error
+ */
 router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
   try {
     const { claimIds } = req.body;
