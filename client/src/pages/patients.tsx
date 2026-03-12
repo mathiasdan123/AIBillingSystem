@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2 } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -16,6 +16,8 @@ import PatientIntakeForm from "@/components/PatientIntakeForm";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
 import BenefitsSummary from "@/components/BenefitsSummary";
 import { Skeleton, CardGridSkeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
 
 interface EligibilityCheck {
   id: number;
@@ -50,6 +52,15 @@ export default function Patients() {
   const [loadingOonEstimate, setLoadingOonEstimate] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [documentType, setDocumentType] = useState<string>("sbc");
+  const [selectedPatientIds, setSelectedPatientIds] = useState<Set<number>>(new Set());
+  const [bulkCheckInProgress, setBulkCheckInProgress] = useState(false);
+  const [bulkCheckProgress, setBulkCheckProgress] = useState(0);
+  const [bulkCheckTotal, setBulkCheckTotal] = useState(0);
+  const [bulkCheckResults, setBulkCheckResults] = useState<{
+    summary: { checked: number; eligible: number; ineligible: number; errors: number };
+    results: Array<{ patientId: number; patientName: string; status: string; eligibility: any; error?: string }>;
+  } | null>(null);
+  const [showBulkResultsDialog, setShowBulkResultsDialog] = useState(false);
 
   const { data: insuranceData } = useQuery({
     queryKey: [`/api/patients/${selectedPatient?.id}/insurance-data`],
@@ -144,6 +155,82 @@ export default function Patients() {
       });
     },
   });
+
+  // Bulk eligibility check mutation
+  const bulkEligibilityMutation = useMutation({
+    mutationFn: async (patientIds: number[]) => {
+      setBulkCheckInProgress(true);
+      setBulkCheckTotal(patientIds.length);
+      setBulkCheckProgress(0);
+      setBulkCheckResults(null);
+      setShowBulkResultsDialog(true);
+
+      const response = await apiRequest("POST", "/api/patients/bulk-eligibility", { patientIds });
+      const data = await response.json();
+      return data;
+    },
+    onSuccess: (data) => {
+      setBulkCheckInProgress(false);
+      setBulkCheckProgress(data.summary.checked);
+      setBulkCheckResults(data);
+
+      // Update local eligibility results cache
+      if (data.results) {
+        const newResults: Record<number, EligibilityCheck> = {};
+        for (const r of data.results) {
+          if (r.eligibility) {
+            newResults[r.patientId] = r.eligibility;
+          }
+        }
+        setEligibilityResults(prev => ({ ...prev, ...newResults }));
+      }
+
+      // Invalidate eligibility queries for all checked patients
+      for (const pid of Array.from(selectedPatientIds)) {
+        queryClient.invalidateQueries({ queryKey: [`/api/patients/${pid}/eligibility`] });
+      }
+
+      setSelectedPatientIds(new Set());
+
+      toast({
+        title: "Bulk Eligibility Check Complete",
+        description: `${data.summary.eligible} eligible, ${data.summary.ineligible} ineligible, ${data.summary.errors} errors out of ${data.summary.checked} checked`,
+      });
+    },
+    onError: (error) => {
+      setBulkCheckInProgress(false);
+      if (isUnauthorizedError(error)) {
+        toast({ title: "Unauthorized", description: "You are logged out. Logging in again...", variant: "destructive" });
+        setTimeout(() => { window.location.href = "/api/login"; }, 500);
+        return;
+      }
+      toast({ title: "Error", description: "Failed to run bulk eligibility checks", variant: "destructive" });
+    },
+  });
+
+  // Toggle patient selection for bulk checks
+  const togglePatientSelection = (patientId: number) => {
+    setSelectedPatientIds(prev => {
+      const next = new Set(prev);
+      if (next.has(patientId)) {
+        next.delete(patientId);
+      } else {
+        next.add(patientId);
+      }
+      return next;
+    });
+  };
+
+  // Select/deselect all filtered patients with insurance
+  const toggleSelectAll = (currentFilteredPatients: any[]) => {
+    const insuredPatients = currentFilteredPatients?.filter((p: any) => p.insuranceProvider) || [];
+    const allSelected = insuredPatients.length > 0 && insuredPatients.every((p: any) => selectedPatientIds.has(p.id));
+    if (allSelected) {
+      setSelectedPatientIds(new Set());
+    } else {
+      setSelectedPatientIds(new Set(insuredPatients.map((p: any) => p.id)));
+    }
+  };
 
   // Fetch OON estimate for selected patient (admin only)
   // Uses patient-specific plan data if available
@@ -365,7 +452,7 @@ export default function Patients() {
         </Dialog>
       </div>
 
-      {/* Search */}
+      {/* Search and Bulk Actions */}
       <div className="flex items-center space-x-4 mb-6">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
@@ -376,6 +463,25 @@ export default function Patients() {
             className="pl-10"
           />
         </div>
+        {selectedPatientIds.size > 0 && (
+          <Button
+            onClick={() => bulkEligibilityMutation.mutate(Array.from(selectedPatientIds))}
+            disabled={bulkCheckInProgress}
+            className="bg-medical-blue-500 hover:bg-medical-blue-600 whitespace-nowrap"
+          >
+            {bulkCheckInProgress ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Checking...
+              </>
+            ) : (
+              <>
+                <ListChecks className="w-4 h-4 mr-2" />
+                Check Eligibility ({selectedPatientIds.size})
+              </>
+            )}
+          </Button>
+        )}
       </div>
 
       {/* Stats Cards */}
@@ -413,14 +519,39 @@ export default function Patients() {
         </Card>
       </div>
 
+      {/* Select All / Bulk Actions Bar */}
+      {filteredPatients?.length > 0 && (
+        <div className="flex items-center gap-3 mb-4 px-1">
+          <Checkbox
+            id="select-all"
+            checked={
+              filteredPatients.filter((p: any) => p.insuranceProvider).length > 0 &&
+              filteredPatients.filter((p: any) => p.insuranceProvider).every((p: any) => selectedPatientIds.has(p.id))
+            }
+            onCheckedChange={() => toggleSelectAll(filteredPatients)}
+          />
+          <label htmlFor="select-all" className="text-sm text-slate-600 cursor-pointer select-none">
+            Select all insured patients ({filteredPatients.filter((p: any) => p.insuranceProvider).length})
+          </label>
+        </div>
+      )}
+
       {/* Patients Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredPatients?.length ? (
           filteredPatients.map((patient: any) => (
-            <Card key={patient.id} className="hover:shadow-lg transition-shadow">
+            <Card key={patient.id} className={`hover:shadow-lg transition-shadow ${selectedPatientIds.has(patient.id) ? 'ring-2 ring-medical-blue-500' : ''}`}>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <div>
+                  <div className="flex items-center gap-3">
+                    {patient.insuranceProvider && (
+                      <Checkbox
+                        checked={selectedPatientIds.has(patient.id)}
+                        onCheckedChange={() => togglePatientSelection(patient.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    )}
+                    <div>
                     <CardTitle className="text-lg">
                       {patient.firstName} {patient.lastName}
                     </CardTitle>
@@ -432,6 +563,7 @@ export default function Patients() {
                         </span>
                       )}
                     </CardDescription>
+                    </div>
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <Badge variant="outline">
@@ -536,6 +668,102 @@ export default function Patients() {
           </div>
         )}
       </div>
+
+      {/* Bulk Eligibility Progress/Results Dialog */}
+      <Dialog open={showBulkResultsDialog} onOpenChange={(open) => { if (!bulkCheckInProgress) setShowBulkResultsDialog(open); }}>
+        <DialogContent className="sm:max-w-[550px] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {bulkCheckInProgress ? "Checking Eligibility..." : "Bulk Eligibility Results"}
+            </DialogTitle>
+            <DialogDescription>
+              {bulkCheckInProgress
+                ? `Verifying insurance eligibility for ${bulkCheckTotal} patients`
+                : bulkCheckResults
+                  ? `Completed: ${bulkCheckResults.summary.checked} patients checked`
+                  : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {bulkCheckInProgress && (
+            <div className="space-y-4 py-4">
+              <div className="flex items-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin text-medical-blue-500" />
+                <span className="text-sm text-slate-600">Processing eligibility checks...</span>
+              </div>
+              <Progress value={0} className="h-2" />
+              <p className="text-xs text-slate-500 text-center">
+                This may take a moment. Please do not close this dialog.
+              </p>
+            </div>
+          )}
+
+          {!bulkCheckInProgress && bulkCheckResults && (
+            <div className="space-y-4">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-4 gap-3">
+                <div className="text-center p-3 bg-slate-50 rounded-lg">
+                  <p className="text-2xl font-bold text-slate-900">{bulkCheckResults.summary.checked}</p>
+                  <p className="text-xs text-slate-500">Checked</p>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded-lg">
+                  <p className="text-2xl font-bold text-green-700">{bulkCheckResults.summary.eligible}</p>
+                  <p className="text-xs text-green-600">Eligible</p>
+                </div>
+                <div className="text-center p-3 bg-red-50 rounded-lg">
+                  <p className="text-2xl font-bold text-red-700">{bulkCheckResults.summary.ineligible}</p>
+                  <p className="text-xs text-red-600">Ineligible</p>
+                </div>
+                <div className="text-center p-3 bg-yellow-50 rounded-lg">
+                  <p className="text-2xl font-bold text-yellow-700">{bulkCheckResults.summary.errors}</p>
+                  <p className="text-xs text-yellow-600">Errors</p>
+                </div>
+              </div>
+
+              {/* Individual Results */}
+              <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
+                {bulkCheckResults.results.map((result) => (
+                  <div key={result.patientId} className="flex items-center justify-between px-4 py-3">
+                    <span className="text-sm font-medium text-slate-700">{result.patientName}</span>
+                    <div>
+                      {result.status === 'active' && (
+                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Eligible
+                        </Badge>
+                      )}
+                      {result.status === 'inactive' && (
+                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
+                          <XCircle className="w-3 h-3 mr-1" />
+                          Inactive
+                        </Badge>
+                      )}
+                      {result.status === 'unknown' && (
+                        <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">
+                          <AlertCircle className="w-3 h-3 mr-1" />
+                          Unknown
+                        </Badge>
+                      )}
+                      {result.status === 'error' && (
+                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100" title={result.error}>
+                          <XCircle className="w-3 h-3 mr-1" />
+                          Error
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => setShowBulkResultsDialog(false)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Patient Details Modal */}
       {selectedPatient && (

@@ -15,6 +15,8 @@ import {
   DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical,
   Copy, RefreshCw, Loader2, Scale, Mail
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -73,6 +75,18 @@ export default function Claims() {
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const [claimLineItems, setClaimLineItems] = useState<any[]>([]);
   const [loadingLineItems, setLoadingLineItems] = useState(false);
+
+  // Batch submission state
+  const [selectedClaimIds, setSelectedClaimIds] = useState<Set<number>>(new Set());
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    show: boolean;
+    total: number;
+    succeeded: number;
+    failed: number;
+    errors: Array<{ claimId: number; error: string }>;
+    results: Array<{ claimId: number; claimNumber: string; success: boolean; error?: string }>;
+  }>({ show: false, total: 0, succeeded: 0, failed: 0, errors: [], results: [] });
 
   // Superbill creation state
   const [superbillPatient, setSuperbillPatient] = useState("");
@@ -331,6 +345,44 @@ export default function Claims() {
     },
   });
 
+  const batchSubmitClaims = async (claimIds: number[]) => {
+    setBatchSubmitting(true);
+    setBatchProgress({ show: true, total: claimIds.length, succeeded: 0, failed: 0, errors: [], results: [] });
+    try {
+      const response = await apiRequest("POST", "/api/claims/batch-submit", { claimIds });
+      const data = await response.json();
+      setBatchProgress({
+        show: true,
+        total: data.summary.total,
+        succeeded: data.summary.succeeded,
+        failed: data.summary.failed,
+        errors: data.errors || [],
+        results: data.results || [],
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      setSelectedClaimIds(new Set());
+      toast({
+        title: "Batch Submission Complete",
+        description: data.message,
+        variant: data.summary.failed > 0 ? "destructive" : "default",
+      });
+    } catch (error: any) {
+      if (isUnauthorizedError(error)) {
+        toast({ title: "Unauthorized", description: "You are logged out. Logging in again...", variant: "destructive" });
+        setTimeout(() => { window.location.href = "/api/login"; }, 500);
+        return;
+      }
+      setBatchProgress(prev => ({ ...prev, show: false }));
+      toast({
+        title: "Error",
+        description: error.message || "Failed to submit claims batch",
+        variant: "destructive",
+      });
+    } finally {
+      setBatchSubmitting(false);
+    }
+  };
+
   const checkStatusMutation = useMutation({
     mutationFn: async (claimId: number) => {
       const response = await apiRequest("POST", `/api/claims/${claimId}/check-status`, {});
@@ -588,6 +640,53 @@ export default function Claims() {
 
   const onSubmit = (data: ClaimFormData) => {
     createClaimMutation.mutate(data);
+  };
+
+  // Batch selection helpers
+  const draftClaims = filteredClaims.filter(c => c.status === 'draft');
+  const allDraftSelected = draftClaims.length > 0 && draftClaims.every(c => selectedClaimIds.has(c.id));
+  const someDraftSelected = draftClaims.some(c => selectedClaimIds.has(c.id));
+
+  const toggleClaimSelection = (claimId: number) => {
+    setSelectedClaimIds(prev => {
+      const next = new Set(prev);
+      if (next.has(claimId)) {
+        next.delete(claimId);
+      } else {
+        next.add(claimId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllDraft = () => {
+    if (allDraftSelected) {
+      // Deselect all draft claims
+      setSelectedClaimIds(prev => {
+        const next = new Set(prev);
+        draftClaims.forEach(c => next.delete(c.id));
+        return next;
+      });
+    } else {
+      // Select all draft claims
+      setSelectedClaimIds(prev => {
+        const next = new Set(prev);
+        draftClaims.forEach(c => next.add(c.id));
+        return next;
+      });
+    }
+  };
+
+  const handleBatchSubmit = () => {
+    const ids = Array.from(selectedClaimIds).filter(id => {
+      const claim = filteredClaims.find(c => c.id === id);
+      return claim && claim.status === 'draft';
+    });
+    if (ids.length === 0) {
+      toast({ title: "No Draft Claims Selected", description: "Select draft claims to submit", variant: "destructive" });
+      return;
+    }
+    batchSubmitClaims(ids);
   };
 
   const handleViewClaim = (claim: Claim) => {
@@ -1063,15 +1162,112 @@ export default function Claims() {
         </Select>
       </div>
 
+      {/* Batch Actions Bar */}
+      {draftClaims.length > 0 && (
+        <div className="flex items-center gap-4 mb-4 p-3 bg-slate-50 rounded-lg border">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="select-all-draft"
+              checked={allDraftSelected ? true : someDraftSelected ? "indeterminate" : false}
+              onCheckedChange={toggleSelectAllDraft}
+            />
+            <Label htmlFor="select-all-draft" className="text-sm font-medium cursor-pointer">
+              Select All Draft ({draftClaims.length})
+            </Label>
+          </div>
+          {selectedClaimIds.size > 0 && (
+            <>
+              <span className="text-sm text-slate-500">
+                {selectedClaimIds.size} claim{selectedClaimIds.size !== 1 ? 's' : ''} selected
+              </span>
+              <Button
+                size="sm"
+                onClick={handleBatchSubmit}
+                disabled={batchSubmitting}
+              >
+                {batchSubmitting ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4 mr-1" />
+                )}
+                Submit Selected ({selectedClaimIds.size})
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedClaimIds(new Set())}
+              >
+                Clear Selection
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Batch Progress */}
+      {batchProgress.show && (
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-semibold text-sm">Batch Submission Results</h4>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setBatchProgress(prev => ({ ...prev, show: false }))}
+              >
+                Dismiss
+              </Button>
+            </div>
+            <Progress
+              value={batchProgress.total > 0 ? ((batchProgress.succeeded + batchProgress.failed) / batchProgress.total) * 100 : 0}
+              className="mb-3"
+            />
+            <div className="flex gap-4 text-sm">
+              <span className="text-slate-600">Total: {batchProgress.total}</span>
+              <span className="text-green-600">Succeeded: {batchProgress.succeeded}</span>
+              <span className="text-red-600">Failed: {batchProgress.failed}</span>
+            </div>
+            {batchProgress.errors.length > 0 && (
+              <div className="mt-3 space-y-1">
+                <p className="text-sm font-medium text-red-700">Validation Errors:</p>
+                {batchProgress.errors.map((err, idx) => (
+                  <p key={idx} className="text-xs text-red-600">
+                    Claim #{err.claimId}: {err.error}
+                  </p>
+                ))}
+              </div>
+            )}
+            {batchProgress.results.filter(r => !r.success).length > 0 && (
+              <div className="mt-3 space-y-1">
+                <p className="text-sm font-medium text-red-700">Submission Errors:</p>
+                {batchProgress.results.filter(r => !r.success).map((r, idx) => (
+                  <p key={idx} className="text-xs text-red-600">
+                    {r.claimNumber}: {r.error || 'Submission failed'}
+                  </p>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Claims List */}
       <div className="space-y-3">
         {filteredClaims.length > 0 ? (
           filteredClaims.map((claim) => (
-            <Card key={claim.id} className="hover:shadow-md transition-shadow">
+            <Card key={claim.id} className={`hover:shadow-md transition-shadow ${selectedClaimIds.has(claim.id) ? 'ring-2 ring-blue-300 bg-blue-50/30' : ''}`}>
               <CardContent className="p-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   {/* Left: Claim Info */}
                   <div className="flex items-start gap-3">
+                    {claim.status === 'draft' && (
+                      <div className="flex items-center pt-1">
+                        <Checkbox
+                          checked={selectedClaimIds.has(claim.id)}
+                          onCheckedChange={() => toggleClaimSelection(claim.id)}
+                        />
+                      </div>
+                    )}
                     <div className="p-2 bg-slate-100 rounded-lg">
                       {getClaimStatusIcon(claim.status)}
                     </div>

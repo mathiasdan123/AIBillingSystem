@@ -620,6 +620,224 @@ router.post('/:id/send-portal-link', isAuthenticated, requirePatientConsent, asy
   }
 });
 
+// ==================== BULK ELIGIBILITY ====================
+
+// Run eligibility checks for multiple patients at once
+router.post('/bulk-eligibility', isAuthenticated, async (req: any, res) => {
+  try {
+    const { patientIds } = req.body;
+
+    if (!Array.isArray(patientIds) || patientIds.length === 0) {
+      return res.status(400).json({ message: 'patientIds must be a non-empty array' });
+    }
+
+    if (patientIds.length > 50) {
+      return res.status(400).json({ message: 'Maximum 50 patients per bulk check' });
+    }
+
+    const { StediAdapter } = await import('../payer-integrations/adapters/payers/StediAdapter');
+    const stediApiKey = process.env.STEDI_API_KEY;
+
+    const summary = {
+      checked: 0,
+      eligible: 0,
+      ineligible: 0,
+      errors: 0,
+    };
+    const results: Array<{
+      patientId: number;
+      patientName: string;
+      status: string;
+      eligibility: any;
+      error?: string;
+    }> = [];
+
+    for (const patientId of patientIds) {
+      const id = typeof patientId === 'string' ? parseInt(patientId, 10) : patientId;
+
+      try {
+        const patient = await storage.getPatient(id);
+        if (!patient) {
+          results.push({ patientId: id, patientName: 'Unknown', status: 'error', eligibility: null, error: 'Patient not found' });
+          summary.errors++;
+          summary.checked++;
+          continue;
+        }
+
+        if (!patient.insuranceProvider) {
+          results.push({ patientId: id, patientName: `${patient.firstName} ${patient.lastName}`, status: 'error', eligibility: null, error: 'No insurance on file' });
+          summary.errors++;
+          summary.checked++;
+          continue;
+        }
+
+        let eligibilityResult: any;
+
+        if (stediApiKey && patient.practiceId) {
+          try {
+            const practice = await storage.getPractice(patient.practiceId);
+            const adapter = new StediAdapter(stediApiKey);
+            const result = await adapter.checkEligibility({
+              providerNpi: practice?.npi || '1234567890',
+              providerName: practice?.name || 'Practice',
+              memberFirstName: patient.firstName,
+              memberLastName: patient.lastName,
+              memberDob: patient.dateOfBirth || '',
+              memberId: patient.insuranceId || '',
+              groupNumber: patient.groupNumber || undefined,
+              payerName: patient.insuranceProvider || 'Unknown',
+            });
+
+            eligibilityResult = {
+              status: result.eligibility.isEligible ? 'active' : 'inactive',
+              coverageType: result.eligibility.planType || 'Commercial',
+              effectiveDate: result.eligibility.effectiveDate,
+              terminationDate: result.eligibility.terminationDate,
+              copay: result.benefits.copay,
+              deductible: result.benefits.deductible?.individual,
+              deductibleMet: result.benefits.deductible?.individualMet,
+              outOfPocketMax: result.benefits.outOfPocketMax?.individual,
+              outOfPocketMet: result.benefits.outOfPocketMax?.individualMet,
+              coinsurance: result.benefits.coinsurance,
+              visitsAllowed: result.benefits.visitsAllowed,
+              visitsUsed: result.benefits.visitsUsed,
+              authRequired: result.benefits.priorAuthRequired,
+              source: 'stedi',
+            };
+          } catch (stediError: any) {
+            logger.warn('Stedi eligibility failed for bulk check, using mock', { patientId: id, error: stediError.message });
+            eligibilityResult = generateBulkMockEligibility(patient);
+            eligibilityResult.source = 'mock_fallback';
+          }
+        } else {
+          eligibilityResult = generateBulkMockEligibility(patient);
+          eligibilityResult.source = 'mock';
+        }
+
+        // Store the result
+        const savedCheck = await storage.createEligibilityCheck({
+          patientId: id,
+          insuranceId: null,
+          status: eligibilityResult.status,
+          coverageType: eligibilityResult.coverageType,
+          effectiveDate: eligibilityResult.effectiveDate,
+          terminationDate: eligibilityResult.terminationDate,
+          copay: eligibilityResult.copay?.toString(),
+          deductible: eligibilityResult.deductible?.toString(),
+          deductibleMet: eligibilityResult.deductibleMet?.toString(),
+          outOfPocketMax: eligibilityResult.outOfPocketMax?.toString(),
+          outOfPocketMet: eligibilityResult.outOfPocketMet?.toString(),
+          coinsurance: eligibilityResult.coinsurance,
+          visitsAllowed: eligibilityResult.visitsAllowed,
+          visitsUsed: eligibilityResult.visitsUsed,
+          authRequired: eligibilityResult.authRequired,
+          rawResponse: eligibilityResult,
+        });
+
+        summary.checked++;
+        if (eligibilityResult.status === 'active') {
+          summary.eligible++;
+        } else {
+          summary.ineligible++;
+        }
+
+        results.push({
+          patientId: id,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          status: eligibilityResult.status,
+          eligibility: savedCheck,
+        });
+
+      } catch (patientError: any) {
+        logger.error('Bulk eligibility check failed for patient', { patientId: id, error: patientError.message });
+        results.push({ patientId: id, patientName: 'Unknown', status: 'error', eligibility: null, error: patientError.message });
+        summary.errors++;
+        summary.checked++;
+      }
+
+      // Small delay between checks to respect rate limits (200ms)
+      if (patientIds.indexOf(patientId) < patientIds.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+
+    res.json({ summary, results });
+  } catch (error) {
+    logger.error('Bulk eligibility check failed', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to run bulk eligibility checks' });
+  }
+});
+
+// Helper: generate mock eligibility for bulk checks (deterministic per patient)
+function generateBulkMockEligibility(patient: any) {
+  const patientSeed = patient?.id || 1;
+  const consistentRandom = (patientSeed * 9301 + 49297) % 233280 / 233280;
+
+  let status: 'active' | 'inactive' | 'unknown';
+  if (consistentRandom < 0.95) {
+    status = 'active';
+  } else if (consistentRandom < 0.98) {
+    status = 'inactive';
+  } else {
+    status = 'unknown';
+  }
+
+  if (status !== 'active') {
+    return {
+      status,
+      coverageType: null,
+      effectiveDate: null,
+      terminationDate: status === 'inactive' ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null,
+      copay: null,
+      deductible: null,
+      deductibleMet: null,
+      outOfPocketMax: null,
+      outOfPocketMet: null,
+      coinsurance: null,
+      visitsAllowed: null,
+      visitsUsed: null,
+      authRequired: null,
+    };
+  }
+
+  const coverageTypes = ['PPO', 'HMO', 'POS', 'EPO'];
+  const copayOptions = [20, 25, 30, 35, 40, 50];
+  const deductibleOptions = [500, 1000, 1500, 2000, 2500, 3000];
+  const outOfPocketOptions = [3000, 4000, 5000, 6000, 7500, 8000];
+  const visitLimits = [30, 40, 50, 60];
+
+  // Use deterministic values based on patient seed
+  const idx = (n: number) => Math.floor(((patientSeed * 7 + n * 13) % 100) / 100 * n) % n;
+  const coverageType = coverageTypes[idx(coverageTypes.length)];
+  const copay = copayOptions[idx(copayOptions.length)];
+  const deductible = deductibleOptions[idx(deductibleOptions.length)];
+  const deductibleMet = Math.round(deductible * consistentRandom * 100) / 100;
+  const outOfPocketMax = outOfPocketOptions[idx(outOfPocketOptions.length)];
+  const outOfPocketMet = Math.round(outOfPocketMax * consistentRandom * 0.5 * 100) / 100;
+  const coinsurance = [10, 20, 30][idx(3)];
+  const visitsAllowed = visitLimits[idx(visitLimits.length)];
+  const visitsUsed = Math.floor(consistentRandom * visitsAllowed * 0.6);
+  const authRequired = consistentRandom < 0.3;
+
+  const currentYear = new Date().getFullYear();
+
+  return {
+    status,
+    coverageType,
+    effectiveDate: new Date(currentYear - 1, 0, 1).toISOString().split('T')[0],
+    terminationDate: new Date(currentYear, 11, 31).toISOString().split('T')[0],
+    copay,
+    deductible,
+    deductibleMet,
+    outOfPocketMax,
+    outOfPocketMet,
+    coinsurance,
+    visitsAllowed,
+    visitsUsed,
+    authRequired,
+  };
+}
+
 // ==================== INSURANCE DATA ====================
 
 // Refresh patient insurance data via Stedi

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react";
 import { Switch, Route } from "wouter";
 import { Suspense, lazy, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
@@ -69,6 +70,14 @@ class ErrorBoundary extends Component<
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
+    // Report to Sentry if initialized (no-ops if DSN was not configured)
+    Sentry.captureException(error, {
+      contexts: {
+        react: {
+          componentStack: errorInfo.componentStack || undefined,
+        },
+      },
+    });
   }
 
   render() {

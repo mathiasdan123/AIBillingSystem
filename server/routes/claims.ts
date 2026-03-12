@@ -4,6 +4,7 @@
  * Handles:
  * - /api/claims - Claims CRUD operations
  * - /api/claims/:id/line-items - Claim line items management
+ * - /api/claims/batch-submit - Batch claim submission
  * - /api/claims/:id/submit - Claim submission
  * - /api/claims/:id/check-status - Status verification
  * - /api/claims/:id/paid - Mark claim as paid
@@ -343,6 +344,275 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
 });
 
 // ==================== CLAIM SUBMISSION ====================
+
+// Batch submit claims
+router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
+  try {
+    const { claimIds } = req.body;
+
+    if (!Array.isArray(claimIds) || claimIds.length === 0) {
+      return res.status(400).json({ message: 'claimIds must be a non-empty array' });
+    }
+
+    if (claimIds.length > 50) {
+      return res.status(400).json({ message: 'Maximum 50 claims per batch submission' });
+    }
+
+    // Validate all IDs are positive integers
+    const parsedIds: number[] = [];
+    for (const id of claimIds) {
+      const parsed = parseInt(id, 10);
+      if (isNaN(parsed) || parsed <= 0) {
+        return res.status(400).json({ message: `Invalid claim ID: ${id}` });
+      }
+      parsedIds.push(parsed);
+    }
+
+    // Deduplicate
+    const uniqueIds = Array.from(new Set(parsedIds));
+
+    const practiceId = getAuthorizedPracticeId(req);
+
+    // Validate all claims exist and are submittable
+    const validationErrors: Array<{ claimId: number; error: string }> = [];
+    const validClaims: Array<{ claim: any; patient: any; practice: any; insurance: any; lineItems: any[] }> = [];
+
+    for (const claimId of uniqueIds) {
+      const claim = await storage.getClaim(claimId);
+      if (!claim) {
+        validationErrors.push({ claimId, error: 'Claim not found' });
+        continue;
+      }
+
+      // Security: Verify user has access to this claim's practice
+      const userPracticeId = (req as any).userPracticeId;
+      const userRole = (req as any).userRole;
+      if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+        validationErrors.push({ claimId, error: 'Access denied' });
+        continue;
+      }
+
+      if (claim.status !== 'draft') {
+        validationErrors.push({ claimId, error: `Claim is in '${claim.status}' status, only draft claims can be submitted` });
+        continue;
+      }
+
+      // Check co-sign requirements
+      if (claim.sessionId) {
+        const soapNote = await storage.getSoapNoteBySession(claim.sessionId);
+        if (soapNote && soapNote.cosignStatus === 'pending') {
+          validationErrors.push({ claimId, error: 'SOAP note requires supervisor co-signature' });
+          continue;
+        }
+        if (soapNote && soapNote.cosignStatus === 'rejected') {
+          validationErrors.push({ claimId, error: 'SOAP note was rejected by supervisor' });
+          continue;
+        }
+      }
+
+      const patient = await storage.getPatient(claim.patientId);
+      if (!patient) {
+        validationErrors.push({ claimId, error: 'Patient not found' });
+        continue;
+      }
+
+      const practice = await storage.getPractice(claim.practiceId);
+      if (!practice) {
+        validationErrors.push({ claimId, error: 'Practice not found' });
+        continue;
+      }
+
+      const lineItems = await storage.getClaimLineItems(claimId);
+      if (!lineItems || lineItems.length === 0) {
+        validationErrors.push({ claimId, error: 'Claim has no line items' });
+        continue;
+      }
+
+      let insurance = null;
+      if (claim.insuranceId) {
+        const insurances = await storage.getInsurances();
+        insurance = insurances.find((i: any) => i.id === claim.insuranceId);
+      }
+
+      validClaims.push({ claim, patient, practice, insurance, lineItems });
+    }
+
+    // If all claims failed validation, return error
+    if (validClaims.length === 0) {
+      return res.status(400).json({
+        message: 'No claims passed validation',
+        results: [],
+        errors: validationErrors,
+        summary: { total: uniqueIds.length, succeeded: 0, failed: validationErrors.length },
+      });
+    }
+
+    // Submit valid claims sequentially with a small delay for rate limiting
+    const stediApiKey = process.env.STEDI_API_KEY;
+    const results: Array<{
+      claimId: number;
+      claimNumber: string;
+      success: boolean;
+      submissionMethod: string;
+      stediClaimId?: string;
+      error?: string;
+    }> = [];
+
+    let stediService: typeof import('../services/stediService') | null = null;
+    let cptCodes: any[] | null = null;
+    let icd10Codes: any[] | null = null;
+
+    if (stediApiKey) {
+      stediService = await import('../services/stediService');
+      cptCodes = await storage.getCptCodes();
+      icd10Codes = await storage.getIcd10Codes();
+    }
+
+    for (let i = 0; i < validClaims.length; i++) {
+      const { claim, patient, practice, insurance, lineItems } = validClaims[i];
+      let clearinghouseResult: any = null;
+      let submissionMethod = 'manual';
+
+      if (stediService && stediApiKey && insurance && cptCodes && icd10Codes) {
+        try {
+          // Rate limiting: add a small delay between submissions (except the first)
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+
+          // Build service lines from claim line items
+          const serviceLines = lineItems.map((item: any) => {
+            const cpt = cptCodes!.find((c: any) => c.id === item.cptCodeId);
+            const icd = item.icd10CodeId ? icd10Codes!.find((c: any) => c.id === item.icd10CodeId) : null;
+            return {
+              procedureCode: cpt?.code || '',
+              modifiers: item.modifier ? [item.modifier] : [],
+              diagnosisCodes: icd ? [icd.code] : [],
+              amount: parseFloat(item.amount) || 0,
+              units: item.units || 1,
+              dateOfService: item.dateOfService || new Date().toISOString().split('T')[0],
+              description: cpt?.description || '',
+            };
+          });
+
+          const diagnosisCodeSet = new Set(
+            lineItems
+              .filter((item: any) => item.icd10CodeId)
+              .map((item: any) => {
+                const icd = icd10Codes!.find((c: any) => c.id === item.icd10CodeId);
+                return icd?.code;
+              })
+              .filter(Boolean) as string[]
+          );
+          const diagnosisCodes = Array.from(diagnosisCodeSet);
+
+          const parseAddress = (addr: string | null) => {
+            const parts = (addr || '').split(',').map(p => p.trim());
+            return {
+              line1: parts[0] || '',
+              city: parts[1] || '',
+              state: parts[2]?.split(' ')[0] || '',
+              zip: parts[2]?.split(' ')[1] || parts[3] || '',
+            };
+          };
+          const patientAddr = parseAddress(patient.address);
+          const practiceAddr = parseAddress(practice.address);
+
+          const claimSubmission: ClaimSubmission = {
+            claimId: claim.claimNumber || `CLM${claim.id}`,
+            totalAmount: parseFloat(claim.totalAmount as any) || 0,
+            placeOfService: '11',
+            dateOfService: lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0],
+            patient: {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth || '',
+              gender: 'U',
+              address: patientAddr,
+              memberId: patient.insuranceId || '',
+            },
+            provider: {
+              npi: practice.npi || '',
+              taxId: practice.taxId || '',
+              organizationName: practice.name,
+              address: practiceAddr,
+              taxonomy: '101YM0800X',
+            },
+            payer: {
+              id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerCode || '00000',
+              name: insurance.name || 'Unknown',
+            },
+            serviceLines,
+            diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+          };
+
+          clearinghouseResult = await stediService.submitClaim(claimSubmission);
+          submissionMethod = 'stedi';
+
+          logger.info('Batch claim submitted via Stedi', {
+            claimId: claim.id,
+            stediClaimId: clearinghouseResult.stediClaimId,
+            status: clearinghouseResult.status,
+          });
+        } catch (stediError: any) {
+          logger.error('Batch Stedi claim submission failed', { claimId: claim.id, error: stediError.message });
+          clearinghouseResult = {
+            success: false,
+            status: 'pending',
+            errors: [stediError.message],
+          };
+        }
+      }
+
+      // Update claim with submission info
+      try {
+        await storage.updateClaim(claim.id, {
+          status: 'submitted',
+          submittedAt: new Date(),
+          submittedAmount: claim.totalAmount,
+          clearinghouseClaimId: clearinghouseResult?.stediClaimId || null,
+          clearinghouseStatus: clearinghouseResult?.status || 'pending',
+          clearinghouseResponse: clearinghouseResult || null,
+          clearinghouseSubmittedAt: new Date(),
+        });
+
+        results.push({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          success: true,
+          submissionMethod,
+          stediClaimId: clearinghouseResult?.stediClaimId,
+        });
+      } catch (updateError: any) {
+        logger.error('Failed to update claim after submission', { claimId: claim.id, error: updateError.message });
+        results.push({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          success: false,
+          submissionMethod,
+          error: 'Failed to update claim status',
+        });
+      }
+    }
+
+    const succeeded = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length + validationErrors.length;
+
+    res.json({
+      message: `Batch submission complete: ${succeeded} succeeded, ${failed} failed`,
+      results,
+      errors: validationErrors,
+      summary: {
+        total: uniqueIds.length,
+        succeeded,
+        failed,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Error in batch claim submission', { error: error instanceof Error ? error.message : String(error) });
+    safeErrorResponse(res, 500, 'Failed to process batch claim submission', error);
+  }
+});
 
 // Submit claim
 router.post('/:id/submit', isAuthenticated, async (req: any, res) => {

@@ -1,3 +1,24 @@
+// Sentry must be initialized before all other imports
+import * as Sentry from "@sentry/node";
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+    // Do not send PHI or sensitive session data to Sentry
+    beforeSend(event: any) {
+      // Strip any cookies or session info from the event
+      if (event.request) {
+        delete event.request.cookies;
+        delete event.request.data;
+      }
+      return event;
+    },
+  });
+  console.log("✓ Sentry error tracking initialized");
+}
+
 import express, { type Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors";
@@ -161,7 +182,7 @@ app.use((req, res, next) => {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https: blob:",
-      "connect-src 'self' https://api.stripe.com https://api.openai.com wss:",
+      "connect-src 'self' https://api.stripe.com https://api.openai.com https://*.ingest.sentry.io wss:",
       "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
       "object-src 'none'",
       "base-uri 'self'",
@@ -257,7 +278,12 @@ app.use((req, res, next) => {
   
   const server = await registerRoutes(app);
 
-  // Global error handler — must be AFTER all routes
+  // Sentry error handler — must be AFTER all routes but BEFORE other error handlers
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+  }
+
+  // Global error handler — must be AFTER all routes (and after Sentry)
   app.use(globalErrorHandler);
 
   // Setup static file serving or vite dev server

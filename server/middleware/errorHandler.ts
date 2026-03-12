@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import type { Request, Response, NextFunction } from "express";
 import logger from "../services/logger";
 

@@ -132,15 +132,55 @@ const SOAP_NOTE_PHI_FIELDS = [
   'progressNotes', 'homeProgram',
 ] as const;
 
-const TREATMENT_SESSION_PHI_FIELDS = [
-  'notes', 'originalDocumentText',
+const TREATMENT_SESSION_PHI_STRING_FIELDS = [
+  'notes', 'originalDocumentText', 'voiceTranscriptionUrl',
+] as const;
+
+const TREATMENT_SESSION_PHI_JSONB_FIELDS = [
+  'aiExtractedData',
+] as const;
+
+// Voice recording metadata - therapist PII stored alongside recordings
+const TELEHEALTH_SESSION_PHI_STRING_FIELDS = [
+  'recordingUrl', 'notes', 'technicalIssues',
+] as const;
+
+// Telehealth settings - provider secrets
+const TELEHEALTH_SETTINGS_PHI_STRING_FIELDS = [
+  'providerApiKey', 'providerApiSecret',
+] as const;
+
+// Therapist/User PII fields that need encryption
+const USER_PHI_STRING_FIELDS = [
+  'licenseNumber', 'npiNumber', 'digitalSignature',
+] as const;
+
+// Practice sensitive fields - tax IDs, API keys, contact info
+const PRACTICE_PHI_STRING_FIELDS = [
+  'taxId', 'phone', 'stediApiKey', 'stediPartnerId',
+  'itContactPhone', 'billingContactPhone',
+] as const;
+
+// Patient insurance fields on the patients table are already covered in PATIENT_PHI_STRING_FIELDS.
+// Insurance provider name ('insuranceProvider') should also be encrypted as it reveals health plan info.
+const PATIENT_INSURANCE_EXTRA_FIELDS = [
+  'insuranceProvider',
+] as const;
+
+// Data capture events may contain PHI in original/extracted data
+const DATA_CAPTURE_EVENT_PHI_STRING_FIELDS = [
+  'originalData',
+] as const;
+
+const DATA_CAPTURE_EVENT_PHI_JSONB_FIELDS = [
+  'extractedData',
 ] as const;
 
 export function encryptPatientRecord(patient: Record<string, any>): Record<string, any> {
   const encrypted = { ...patient };
 
-  // Encrypt string fields
-  for (const field of PATIENT_PHI_STRING_FIELDS) {
+  // Encrypt string fields (core PHI + insurance provider)
+  for (const field of [...PATIENT_PHI_STRING_FIELDS, ...PATIENT_INSURANCE_EXTRA_FIELDS]) {
     if (encrypted[field] !== undefined) {
       encrypted[field] = encryptField(encrypted[field] as string);
     }
@@ -160,8 +200,8 @@ export function decryptPatientRecord(patient: Record<string, any> | null | undef
   if (!patient) return null;
   const decrypted = { ...patient };
 
-  // Decrypt string fields
-  for (const field of PATIENT_PHI_STRING_FIELDS) {
+  // Decrypt string fields (core PHI + insurance provider)
+  for (const field of [...PATIENT_PHI_STRING_FIELDS, ...PATIENT_INSURANCE_EXTRA_FIELDS]) {
     if (decrypted[field] !== undefined && decrypted[field] !== null) {
       decrypted[field] = decryptField(decrypted[field]);
     }
@@ -200,9 +240,14 @@ export function decryptSoapNoteRecord(note: Record<string, any> | null | undefin
 
 export function encryptTreatmentSessionRecord(session: Record<string, any>): Record<string, any> {
   const encrypted = { ...session };
-  for (const field of TREATMENT_SESSION_PHI_FIELDS) {
+  for (const field of TREATMENT_SESSION_PHI_STRING_FIELDS) {
     if (encrypted[field] !== undefined) {
       encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  for (const field of TREATMENT_SESSION_PHI_JSONB_FIELDS) {
+    if (encrypted[field] !== undefined && encrypted[field] !== null) {
+      encrypted[field] = encryptValue(encrypted[field]);
     }
   }
   return encrypted;
@@ -211,7 +256,170 @@ export function encryptTreatmentSessionRecord(session: Record<string, any>): Rec
 export function decryptTreatmentSessionRecord(session: Record<string, any> | null | undefined): Record<string, any> | null {
   if (!session) return null;
   const decrypted = { ...session };
-  for (const field of TREATMENT_SESSION_PHI_FIELDS) {
+  for (const field of TREATMENT_SESSION_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  for (const field of TREATMENT_SESSION_PHI_JSONB_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptValue(decrypted[field], true);
+    }
+  }
+  return decrypted;
+}
+
+// ==================== TELEHEALTH SESSION ENCRYPTION ====================
+// Encrypts voice recording metadata and therapist PII stored alongside recordings
+
+export function encryptTelehealthSessionRecord(session: Record<string, any>): Record<string, any> {
+  const encrypted = { ...session };
+  for (const field of TELEHEALTH_SESSION_PHI_STRING_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptTelehealthSessionRecord(session: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!session) return null;
+  const decrypted = { ...session };
+  for (const field of TELEHEALTH_SESSION_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  return decrypted;
+}
+
+// ==================== TELEHEALTH SETTINGS ENCRYPTION ====================
+// Encrypts provider API credentials
+
+export function encryptTelehealthSettingsRecord(settings: Record<string, any>): Record<string, any> {
+  const encrypted = { ...settings };
+  for (const field of TELEHEALTH_SETTINGS_PHI_STRING_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptTelehealthSettingsRecord(settings: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!settings) return null;
+  const decrypted = { ...settings };
+  for (const field of TELEHEALTH_SETTINGS_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  return decrypted;
+}
+
+// ==================== USER/THERAPIST PII ENCRYPTION ====================
+// Encrypts therapist personal info (license numbers, NPI, digital signatures)
+
+export function encryptUserRecord(user: Record<string, any>): Record<string, any> {
+  const encrypted = { ...user };
+  for (const field of USER_PHI_STRING_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptUserRecord(user: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!user) return null;
+  const decrypted = { ...user };
+  for (const field of USER_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  return decrypted;
+}
+
+// ==================== PRACTICE ENCRYPTION ====================
+// Encrypts practice tax IDs, API keys, and sensitive contact info
+
+export function encryptPracticeRecord(practice: Record<string, any>): Record<string, any> {
+  const encrypted = { ...practice };
+  for (const field of PRACTICE_PHI_STRING_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptPracticeRecord(practice: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!practice) return null;
+  const decrypted = { ...practice };
+  for (const field of PRACTICE_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  return decrypted;
+}
+
+// ==================== DATA CAPTURE EVENT ENCRYPTION ====================
+// Encrypts voice recording transcription data and extracted PHI
+
+export function encryptDataCaptureEventRecord(event: Record<string, any>): Record<string, any> {
+  const encrypted = { ...event };
+  for (const field of DATA_CAPTURE_EVENT_PHI_STRING_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  for (const field of DATA_CAPTURE_EVENT_PHI_JSONB_FIELDS) {
+    if (encrypted[field] !== undefined && encrypted[field] !== null) {
+      encrypted[field] = encryptValue(encrypted[field]);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptDataCaptureEventRecord(event: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!event) return null;
+  const decrypted = { ...event };
+  for (const field of DATA_CAPTURE_EVENT_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  for (const field of DATA_CAPTURE_EVENT_PHI_JSONB_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptValue(decrypted[field], true);
+    }
+  }
+  return decrypted;
+}
+
+// ==================== PRACTICE PAYMENT SETTINGS ENCRYPTION ====================
+// Encrypts Stripe secret keys and webhook secrets
+
+const PRACTICE_PAYMENT_SETTINGS_SECRET_FIELDS = [
+  'stripeSecretKeyEncrypted', 'stripeWebhookSecret',
+] as const;
+
+export function encryptPracticePaymentSettingsRecord(settings: Record<string, any>): Record<string, any> {
+  const encrypted = { ...settings };
+  for (const field of PRACTICE_PAYMENT_SETTINGS_SECRET_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptPracticePaymentSettingsRecord(settings: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!settings) return null;
+  const decrypted = { ...settings };
+  for (const field of PRACTICE_PAYMENT_SETTINGS_SECRET_FIELDS) {
     if (decrypted[field] !== undefined && decrypted[field] !== null) {
       decrypted[field] = decryptField(decrypted[field]);
     }

@@ -212,6 +212,18 @@ import {
   decryptSoapNoteRecord,
   encryptTreatmentSessionRecord,
   decryptTreatmentSessionRecord,
+  encryptTelehealthSessionRecord,
+  decryptTelehealthSessionRecord,
+  encryptTelehealthSettingsRecord,
+  decryptTelehealthSettingsRecord,
+  encryptUserRecord,
+  decryptUserRecord,
+  encryptPracticeRecord,
+  decryptPracticeRecord,
+  encryptDataCaptureEventRecord,
+  decryptDataCaptureEventRecord,
+  encryptPracticePaymentSettingsRecord,
+  decryptPracticePaymentSettingsRecord,
 } from "./services/phiEncryptionService";
 
 export interface IStorage {
@@ -455,26 +467,28 @@ export class DatabaseStorage implements IStorage {
   // User operations (required for Replit Auth)
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
+    const encrypted = encryptUserRecord(userData as any);
     const [user] = await db
       .insert(users)
-      .values(userData)
+      .values(encrypted as any)
       .onConflictDoUpdate({
         target: users.id,
         set: {
-          ...userData,
+          ...encrypted,
           updatedAt: new Date(),
         },
       })
       .returning();
-    return user;
+    return decryptUserRecord(user) as User;
   }
 
   async getAllUsers(): Promise<User[]> {
-    return await db.select().from(users).orderBy(desc(users.createdAt));
+    const rows = await db.select().from(users).orderBy(desc(users.createdAt));
+    return rows.map((r: any) => decryptUserRecord(r) as User);
   }
 
   async updateUserRole(id: string, role: string): Promise<User | undefined> {
@@ -483,13 +497,13 @@ export class DatabaseStorage implements IStorage {
       .set({ role, updatedAt: new Date() })
       .where(eq(users.id, id))
       .returning();
-    return user;
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 
   // Password authentication operations
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email));
-    return user;
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 
   async createUserWithPassword(userData: {
@@ -502,23 +516,25 @@ export class DatabaseStorage implements IStorage {
   }): Promise<User> {
     const { nanoid } = await import('nanoid');
     const userId = nanoid();
+    const record = {
+      id: userId,
+      email: userData.email,
+      passwordHash: userData.passwordHash,
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+      practiceId: userData.practiceId,
+      role: userData.role || 'therapist',
+      emailVerified: false,
+      failedLoginAttempts: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const encrypted = encryptUserRecord(record as any);
     const [user] = await db
       .insert(users)
-      .values({
-        id: userId,
-        email: userData.email,
-        passwordHash: userData.passwordHash,
-        firstName: userData.firstName,
-        lastName: userData.lastName,
-        practiceId: userData.practiceId,
-        role: userData.role || 'therapist',
-        emailVerified: false,
-        failedLoginAttempts: 0,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
+      .values(encrypted as any)
       .returning();
-    return user;
+    return decryptUserRecord(user) as User;
   }
 
   async updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
@@ -555,7 +571,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(users)
       .where(eq(users.passwordResetToken, token));
-    return user;
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 
   async incrementFailedLoginAttempts(userId: string): Promise<number> {
@@ -607,7 +623,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(users)
       .where(eq(users.emailVerificationToken, token));
-    return user;
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 
   async verifyEmail(userId: string): Promise<void> {
@@ -642,13 +658,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTherapistsByPractice(practiceId: number): Promise<User[]> {
-    return await db
+    const rows = await db
       .select()
       .from(users)
       .where(and(
         eq(users.practiceId, practiceId),
         eq(users.role, 'therapist')
       ));
+    return rows.map((r: any) => decryptUserRecord(r) as User);
   }
 
   async updateUser(id: string, updates: Partial<{
@@ -663,21 +680,23 @@ export class DatabaseStorage implements IStorage {
     practiceId: number;
     role: string;
   }>): Promise<User | undefined> {
+    const encrypted = encryptUserRecord(updates as any);
     const [user] = await db
       .update(users)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({ ...encrypted, updatedAt: new Date() })
       .where(eq(users.id, id))
       .returning();
-    return user;
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 
-  // Practice operations
+  // Practice operations (with PHI encryption for tax IDs, API keys, sensitive contact info)
   async createPractice(practice: InsertPractice): Promise<Practice> {
+    const encrypted = encryptPracticeRecord(practice as any);
     const [newPractice] = await db
       .insert(practices)
-      .values(practice)
+      .values(encrypted as any)
       .returning();
-    return newPractice;
+    return decryptPracticeRecord(newPractice) as Practice;
   }
 
   async getPractice(id: number): Promise<Practice | undefined> {
@@ -685,7 +704,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(practices)
       .where(eq(practices.id, id));
-    return practice;
+    return practice ? decryptPracticeRecord(practice) as Practice : undefined;
   }
 
   async getAllPracticeIds(): Promise<number[]> {
@@ -696,12 +715,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePractice(id: number, practice: Partial<InsertPractice>): Promise<Practice> {
+    const encrypted = encryptPracticeRecord(practice as any);
     const [updatedPractice] = await db
       .update(practices)
-      .set({ ...practice, updatedAt: new Date() })
+      .set({ ...encrypted, updatedAt: new Date() })
       .where(eq(practices.id, id))
       .returning();
-    return updatedPractice;
+    return decryptPracticeRecord(updatedPractice) as Practice;
   }
 
   // Patient operations (with PHI encryption)
@@ -1111,11 +1131,12 @@ export class DatabaseStorage implements IStorage {
 
   // User supervision methods
   async getSupervisees(supervisorId: string): Promise<User[]> {
-    return await db
+    const rows = await db
       .select()
       .from(users)
       .where(eq(users.supervisorId, supervisorId))
       .orderBy(users.lastName, users.firstName);
+    return rows.map((r: any) => decryptUserRecord(r) as User);
   }
 
   async updateUserSupervision(userId: string, supervisorId: string | null, requiresCosign: boolean): Promise<User | undefined> {
@@ -1128,7 +1149,7 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(users.id, userId))
       .returning();
-    return updated;
+    return updated ? decryptUserRecord(updated) as User : undefined;
   }
 
   // Convenience methods for API routes
@@ -3126,9 +3147,11 @@ export class DatabaseStorage implements IStorage {
   // ==================== TELEHEALTH ====================
 
   // Telehealth Sessions
+  // Telehealth session operations (with PHI encryption for recording URLs, notes)
   async createTelehealthSession(session: InsertTelehealthSession): Promise<TelehealthSession> {
-    const [result] = await db.insert(telehealthSessions).values(session).returning();
-    return result;
+    const encrypted = encryptTelehealthSessionRecord(session as any);
+    const [result] = await db.insert(telehealthSessions).values(encrypted as any).returning();
+    return decryptTelehealthSessionRecord(result) as TelehealthSession;
   }
 
   async getTelehealthSessions(practiceId: number, filters?: {
@@ -3156,11 +3179,12 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lte(telehealthSessions.scheduledStart, filters.endDate));
     }
 
-    return await db
+    const rows = await db
       .select()
       .from(telehealthSessions)
       .where(and(...conditions))
       .orderBy(desc(telehealthSessions.scheduledStart));
+    return rows.map((r: any) => decryptTelehealthSessionRecord(r) as TelehealthSession);
   }
 
   async getTelehealthSession(id: number): Promise<TelehealthSession | undefined> {
@@ -3168,7 +3192,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(telehealthSessions)
       .where(eq(telehealthSessions.id, id));
-    return result;
+    return result ? decryptTelehealthSessionRecord(result) as TelehealthSession : undefined;
   }
 
   async getTelehealthSessionByRoom(roomName: string): Promise<TelehealthSession | undefined> {
@@ -3176,7 +3200,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(telehealthSessions)
       .where(eq(telehealthSessions.roomName, roomName));
-    return result;
+    return result ? decryptTelehealthSessionRecord(result) as TelehealthSession : undefined;
   }
 
   async getTelehealthSessionByAppointment(appointmentId: number): Promise<TelehealthSession | undefined> {
@@ -3184,7 +3208,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(telehealthSessions)
       .where(eq(telehealthSessions.appointmentId, appointmentId));
-    return result;
+    return result ? decryptTelehealthSessionRecord(result) as TelehealthSession : undefined;
   }
 
   async getTelehealthSessionByAccessCode(code: string): Promise<TelehealthSession | undefined> {
@@ -3192,16 +3216,17 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(telehealthSessions)
       .where(eq(telehealthSessions.patientAccessCode, code));
-    return result;
+    return result ? decryptTelehealthSessionRecord(result) as TelehealthSession : undefined;
   }
 
   async updateTelehealthSession(id: number, updates: Partial<InsertTelehealthSession>): Promise<TelehealthSession> {
+    const encrypted = encryptTelehealthSessionRecord(updates as any);
     const [result] = await db
       .update(telehealthSessions)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({ ...encrypted, updatedAt: new Date() })
       .where(eq(telehealthSessions.id, id))
       .returning();
-    return result;
+    return decryptTelehealthSessionRecord(result) as TelehealthSession;
   }
 
   async startTelehealthSession(id: number, isTherapist: boolean): Promise<TelehealthSession> {
@@ -3228,7 +3253,7 @@ export class DatabaseStorage implements IStorage {
       .set(updates)
       .where(eq(telehealthSessions.id, id))
       .returning();
-    return result;
+    return decryptTelehealthSessionRecord(result) as TelehealthSession;
   }
 
   async endTelehealthSession(id: number): Promise<TelehealthSession> {
@@ -3249,14 +3274,14 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(telehealthSessions.id, id))
       .returning();
-    return result;
+    return decryptTelehealthSessionRecord(result) as TelehealthSession;
   }
 
   async getUpcomingTelehealthSessions(practiceId: number, hoursAhead: number = 24): Promise<TelehealthSession[]> {
     const now = new Date();
     const future = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
 
-    return await db
+    const rows = await db
       .select()
       .from(telehealthSessions)
       .where(and(
@@ -3266,6 +3291,7 @@ export class DatabaseStorage implements IStorage {
         lte(telehealthSessions.scheduledStart, future)
       ))
       .orderBy(telehealthSessions.scheduledStart);
+    return rows.map((r: any) => decryptTelehealthSessionRecord(r) as TelehealthSession);
   }
 
   async getTodaysTelehealthSessions(practiceId: number, therapistId?: string): Promise<TelehealthSession[]> {
@@ -3284,34 +3310,36 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(telehealthSessions.therapistId, therapistId));
     }
 
-    return await db
+    const rows = await db
       .select()
       .from(telehealthSessions)
       .where(and(...conditions))
       .orderBy(telehealthSessions.scheduledStart);
+    return rows.map((r: any) => decryptTelehealthSessionRecord(r) as TelehealthSession);
   }
 
-  // Telehealth Settings
+  // Telehealth Settings (with API key encryption)
   async getTelehealthSettings(practiceId: number): Promise<TelehealthSettings | undefined> {
     const [result] = await db
       .select()
       .from(telehealthSettings)
       .where(eq(telehealthSettings.practiceId, practiceId));
-    return result;
+    return result ? decryptTelehealthSettingsRecord(result) as TelehealthSettings : undefined;
   }
 
   async upsertTelehealthSettings(settings: InsertTelehealthSettings): Promise<TelehealthSettings> {
+    const encrypted = encryptTelehealthSettingsRecord(settings as any);
     const existing = await this.getTelehealthSettings(settings.practiceId);
     if (existing) {
       const [result] = await db
         .update(telehealthSettings)
-        .set({ ...settings, updatedAt: new Date() })
+        .set({ ...encrypted, updatedAt: new Date() })
         .where(eq(telehealthSettings.id, existing.id))
         .returning();
-      return result;
+      return decryptTelehealthSettingsRecord(result) as TelehealthSettings;
     }
-    const [result] = await db.insert(telehealthSettings).values(settings).returning();
-    return result;
+    const [result] = await db.insert(telehealthSettings).values(encrypted as any).returning();
+    return decryptTelehealthSettingsRecord(result) as TelehealthSettings;
   }
 
   // Generate unique room name
@@ -3701,7 +3729,7 @@ export class DatabaseStorage implements IStorage {
       .set({ ...data, updatedAt: new Date() })
       .where(eq(users.id, userId))
       .returning();
-    return updated;
+    return updated ? decryptUserRecord(updated) as User : undefined;
   }
 
   // ==================== MISSING METHOD ALIASES/STUBS ====================
@@ -6164,22 +6192,23 @@ export class DatabaseStorage implements IStorage {
     const [settings] = await db.select()
       .from(practicePaymentSettings)
       .where(eq(practicePaymentSettings.practiceId, practiceId));
-    return settings;
+    return settings ? decryptPracticePaymentSettingsRecord(settings) as PracticePaymentSettings : undefined;
   }
 
   async upsertPracticePaymentSettings(settings: InsertPracticePaymentSettings): Promise<PracticePaymentSettings> {
+    const encrypted = encryptPracticePaymentSettingsRecord(settings as any);
     const existing = await this.getPracticePaymentSettings(settings.practiceId);
 
     if (existing) {
       const [updated] = await db.update(practicePaymentSettings)
-        .set({ ...settings, updatedAt: new Date() })
+        .set({ ...encrypted, updatedAt: new Date() })
         .where(eq(practicePaymentSettings.practiceId, settings.practiceId))
         .returning();
-      return updated;
+      return decryptPracticePaymentSettingsRecord(updated) as PracticePaymentSettings;
     }
 
-    const [created] = await db.insert(practicePaymentSettings).values(settings).returning();
-    return created;
+    const [created] = await db.insert(practicePaymentSettings).values(encrypted as any).returning();
+    return decryptPracticePaymentSettingsRecord(created) as PracticePaymentSettings;
   }
 
   // ==================== Payment Analytics ====================
