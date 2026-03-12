@@ -32,7 +32,7 @@ const passwordRequirements: PasswordRequirement[] = [
 ];
 
 export function AuthModal({ open, onOpenChange }: AuthModalProps) {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot' | 'sso'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -40,6 +40,8 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [forgotEmailSent, setForgotEmailSent] = useState(false);
+  const [ssoPracticeId, setSsoPracticeId] = useState('');
+  const [ssoStatus, setSsoStatus] = useState<{ ssoEnabled: boolean; provider: string | null } | null>(null);
 
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -133,12 +135,48 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
     });
   };
 
+  const handleSsoLookup = async () => {
+    if (!ssoPracticeId.trim()) {
+      toast({
+        title: 'Practice ID Required',
+        description: 'Please enter your practice ID to continue with SSO.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const response = await fetch(`/api/sso/check/${ssoPracticeId.trim()}`, {
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to check SSO configuration');
+    }
+
+    const data = await response.json();
+    setSsoStatus(data);
+
+    if (!data.ssoEnabled) {
+      toast({
+        title: 'SSO Not Available',
+        description: 'SSO is not configured for this practice. Please use email/password to sign in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Redirect to SSO login
+    window.location.href = `/api/sso/login/${ssoPracticeId.trim()}`;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      if (mode === 'forgot') {
+      if (mode === 'sso') {
+        await handleSsoLookup();
+      } else if (mode === 'forgot') {
         await handleForgotPassword();
       } else if (mode === 'signup') {
         await handleSignUp();
@@ -166,11 +204,13 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
             {mode === 'signin' && 'Sign In'}
             {mode === 'signup' && 'Create Account'}
             {mode === 'forgot' && 'Reset Password'}
+            {mode === 'sso' && 'Sign in with SSO'}
           </DialogTitle>
           <DialogDescription>
             {mode === 'signin' && 'Enter your credentials to access your account.'}
             {mode === 'signup' && 'Fill in your details to create a new account.'}
             {mode === 'forgot' && "Enter your email to receive a password reset link."}
+            {mode === 'sso' && 'Enter your practice ID to sign in with your organization\'s identity provider.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -192,6 +232,60 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
               Back to Sign In
             </Button>
           </div>
+        ) : mode === 'sso' ? (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="ssoPracticeId">Practice ID</Label>
+              <Input
+                id="ssoPracticeId"
+                type="text"
+                value={ssoPracticeId}
+                onChange={(e) => setSsoPracticeId(e.target.value)}
+                placeholder="Enter your practice ID"
+                required
+              />
+              <p className="text-xs text-slate-500">
+                Your practice ID is provided by your organization administrator.
+              </p>
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isLoading || !ssoPracticeId.trim()}
+            >
+              {isLoading ? (
+                <span className="flex items-center">
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Connecting...
+                </span>
+              ) : (
+                'Continue with SSO'
+              )}
+            </Button>
+
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-slate-500">Or</span>
+              </div>
+            </div>
+
+            <p className="text-center text-sm text-slate-600">
+              <button
+                type="button"
+                className="text-blue-600 hover:underline font-medium"
+                onClick={() => { setMode('signin'); setSsoStatus(null); }}
+              >
+                Sign in with email and password
+              </button>
+            </p>
+          </form>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'signup' && (
@@ -310,6 +404,14 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
             <div className="space-y-2">
               {mode === 'signin' && (
                 <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setMode('sso')}
+                  >
+                    Sign in with SSO
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"

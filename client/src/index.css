@@ -156,3 +156,22 @@
     color: var(--medical-blue-600);
   }
 }
+
+/* Mobile safe area support for bottom tab bar */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Smooth slide-in animation for mobile sheets */
+@keyframes slide-in-from-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.animate-in.slide-in-from-bottom {
+  animation: slide-in-from-bottom 0.3s ease-out;
+}

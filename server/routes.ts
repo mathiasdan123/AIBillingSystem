@@ -12,7 +12,7 @@ import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedCl
 import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport, triggerHardDeletionNow } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
-import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter, payerContractsRouter, remittanceRouter } from "./routes/index";
+import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter, treatmentPlansRouter } from "./routes/index";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
@@ -32,6 +32,7 @@ import logger from "./services/logger";
 import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
 import { registerBaaRoutes } from "./routes/baaRoutes";
 import { registerBreachNotificationRoutes } from "./routes/breachNotificationRoutes";
+import { registerComplianceRoutes } from "./routes/compliance";
 import { StediAdapter } from "./payer-integrations/adapters/payers/StediAdapter";
 import type { ClaimSubmission } from "./services/stediService";
 
@@ -517,6 +518,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPatientRightsRoutes(app);
   registerBaaRoutes(app);
   registerBreachNotificationRoutes(app);
+  registerComplianceRoutes(app);
 
   // ==================== MODULAR ROUTERS ====================
   // Mount modular route handlers (migrated from this file)
@@ -539,6 +541,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/payer-contracts', payerContractsRouter);
   // Remittance (ERA/835) routes: /api/remittance/*
   app.use('/api/remittance', remittanceRouter);
+  // SSO (SAML/OIDC) routes: /api/sso/*
+  app.use('/api/sso', ssoRouter);
+  // Treatment Plans routes: /api/patients/:id/treatment-plans, /api/treatment-plans/*
+  app.use('/api', treatmentPlansRouter);
 
   // Routes below are NOT yet in modular routers. See server/routes/index.ts for migration status.
 

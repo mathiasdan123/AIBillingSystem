@@ -58,6 +58,9 @@ export const users = pgTable("users", {
   lastLoginAt: timestamp("last_login_at"),
   passwordResetToken: varchar("password_reset_token"),
   passwordResetExpires: timestamp("password_reset_expires"),
+  // SSO fields
+  ssoProvider: varchar("sso_provider"), // okta, azure-ad, google, custom
+  ssoExternalId: varchar("sso_external_id"), // external identity from SSO provider
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -344,6 +347,8 @@ export const claims = pgTable("claims", {
   primaryPaidAmount: decimal("primary_paid_amount", { precision: 10, scale: 2 }), // what primary insurance paid
   primaryAdjustmentAmount: decimal("primary_adjustment_amount", { precision: 10, scale: 2 }), // primary adjustments
   cobData: jsonb("cob_data"), // Coordination of Benefits data
+  // AI denial prediction
+  denialPrediction: jsonb("denial_prediction"), // { riskScore, riskLevel, issues, overallRecommendation }
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -2004,6 +2009,23 @@ export const insertGoalProgressNoteSchema = createInsertSchema(goalProgressNotes
 export type GoalProgressNote = typeof goalProgressNotes.$inferSelect;
 export type InsertGoalProgressNote = z.infer<typeof insertGoalProgressNoteSchema>;
 
+// SOAP Note Goal Progress (links SOAP notes to treatment goals for progress tracking)
+export const soapNoteGoalProgress = pgTable("soap_note_goal_progress", {
+  id: serial("id").primaryKey(),
+  soapNoteId: integer("soap_note_id").references(() => soapNotes.id).notNull(),
+  goalId: integer("goal_id").references(() => treatmentGoals.id).notNull(),
+  progressNote: text("progress_note"),
+  progressPercentage: integer("progress_percentage"), // 0-100
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_soap_note_goal_progress_soap").on(table.soapNoteId),
+  index("idx_soap_note_goal_progress_goal").on(table.goalId),
+]);
+
+export const insertSoapNoteGoalProgressSchema = createInsertSchema(soapNoteGoalProgress).omit({ id: true, createdAt: true });
+export type SoapNoteGoalProgress = typeof soapNoteGoalProgress.$inferSelect;
+export type InsertSoapNoteGoalProgress = z.infer<typeof insertSoapNoteGoalProgressSchema>;
+
 // Outcome Measure Templates (standardized assessments)
 export const outcomeMeasureTemplates = pgTable("outcome_measure_templates", {
   id: serial("id").primaryKey(),
@@ -2721,3 +2743,56 @@ export type RemittanceAdvice = typeof remittanceAdvice.$inferSelect;
 export type InsertRemittanceAdvice = z.infer<typeof insertRemittanceAdviceSchema>;
 export type RemittanceLineItem = typeof remittanceLineItems.$inferSelect;
 export type InsertRemittanceLineItem = z.infer<typeof insertRemittanceLineItemSchema>;
+
+// HIPAA Compliance Self-Assessment Checks
+export const complianceChecks = pgTable("compliance_checks", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  checkType: varchar("check_type").notNull(), // mfa_enforcement, encryption_enabled, baa_signed, audit_logging, data_retention, access_controls, breach_notification_plan, risk_assessment, training_completed, backup_verified
+  status: varchar("status").notNull().default("not_checked"), // pass, fail, warning, not_checked
+  lastCheckedAt: timestamp("last_checked_at").defaultNow(),
+  details: jsonb("details"), // structured results from automated check
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertComplianceCheckSchema = createInsertSchema(complianceChecks).omit({ id: true, createdAt: true });
+export type ComplianceCheck = typeof complianceChecks.$inferSelect;
+export type InsertComplianceCheck = z.infer<typeof insertComplianceCheckSchema>;
+
+// SSO Configurations for enterprise customers
+export const ssoConfigurations = pgTable("sso_configurations", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  provider: varchar("provider").notNull(), // okta, azure-ad, google, custom
+  protocol: varchar("protocol").notNull(), // saml, oidc
+  clientId: varchar("client_id"),
+  clientSecret: jsonb("client_secret"), // encrypted via PHI encryption service
+  issuerUrl: varchar("issuer_url"),
+  callbackUrl: varchar("callback_url"),
+  metadataUrl: varchar("metadata_url"), // for SAML metadata
+  enabled: boolean("enabled").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_sso_config_practice").on(table.practiceId),
+]);
+
+// SSO Configuration relations
+export const ssoConfigurationsRelations = relations(ssoConfigurations, ({ one }) => ({
+  practice: one(practices, {
+    fields: [ssoConfigurations.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+// Insert schema for SSO configurations
+export const insertSsoConfigurationSchema = createInsertSchema(ssoConfigurations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Types for SSO configurations
+export type SsoConfiguration = typeof ssoConfigurations.$inferSelect;
+export type InsertSsoConfiguration = z.infer<typeof insertSsoConfigurationSchema>;

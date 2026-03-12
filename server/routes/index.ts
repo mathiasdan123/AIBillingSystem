@@ -21,6 +21,8 @@ export { default as appointmentsRouter } from './appointments';
 
 export { default as payerContractsRouter } from './payerContracts';
 export { default as remittanceRouter } from './remittance';
+export { default as ssoRouter } from './sso';
+export { default as treatmentPlansRouter } from './treatment-plans';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

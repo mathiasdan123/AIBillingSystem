@@ -148,6 +148,9 @@ import {
   type InsertTreatmentIntervention,
   type GoalProgressNote,
   type InsertGoalProgressNote,
+  soapNoteGoalProgress,
+  type SoapNoteGoalProgress,
+  type InsertSoapNoteGoalProgress,
   outcomeMeasureTemplates,
   patientAssessments,
   assessmentSchedules,
@@ -204,6 +207,9 @@ import {
   patientPayments,
   type PatientPayment,
   type InsertPatientPayment,
+  complianceChecks,
+  type ComplianceCheck,
+  type InsertComplianceCheck,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -476,6 +482,19 @@ export interface IStorage {
     buckets: { bucket: string; count: number; amount: number }[];
     byPatient: { patientId: number; patientName: string; totalOwed: number; oldestDays: number }[];
   }>;
+
+  // Compliance check operations
+  getComplianceChecks(practiceId: number): Promise<ComplianceCheck[]>;
+  upsertComplianceCheck(data: InsertComplianceCheck): Promise<ComplianceCheck>;
+  getAuditLogsPaginated(filters: {
+    practiceId?: number;
+    userId?: string;
+    eventCategory?: string;
+    startDate?: Date;
+    endDate?: Date;
+    page: number;
+    limit: number;
+  }): Promise<{ logs: AuditLog[]; total: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -5475,6 +5494,34 @@ export class DatabaseStorage implements IStorage {
       .where(eq(goalProgressNotes.sessionId, sessionId));
   }
 
+  // ==================== SOAP Note Goal Progress ====================
+
+  async createSoapNoteGoalProgress(entry: InsertSoapNoteGoalProgress): Promise<SoapNoteGoalProgress> {
+    const [newEntry] = await db.insert(soapNoteGoalProgress).values(entry).returning();
+
+    // Also update the goal's progress percentage if provided
+    if (entry.progressPercentage !== null && entry.progressPercentage !== undefined) {
+      await this.updateTreatmentGoal(entry.goalId, {
+        progressPercentage: entry.progressPercentage,
+      });
+    }
+
+    return newEntry;
+  }
+
+  async getSoapNoteGoalProgressBySoapNote(soapNoteId: number): Promise<SoapNoteGoalProgress[]> {
+    return db.select()
+      .from(soapNoteGoalProgress)
+      .where(eq(soapNoteGoalProgress.soapNoteId, soapNoteId));
+  }
+
+  async getSoapNoteGoalProgressByGoal(goalId: number): Promise<SoapNoteGoalProgress[]> {
+    return db.select()
+      .from(soapNoteGoalProgress)
+      .where(eq(soapNoteGoalProgress.goalId, goalId))
+      .orderBy(desc(soapNoteGoalProgress.createdAt));
+  }
+
   // ==================== Treatment Plan Analytics ====================
 
   async getTreatmentPlanStats(practiceId: number): Promise<{
@@ -7183,6 +7230,88 @@ export class DatabaseStorage implements IStorage {
       buckets,
       byPatient,
     };
+  }
+
+  // ==================== COMPLIANCE CHECK METHODS ====================
+
+  async getComplianceChecks(practiceId: number): Promise<ComplianceCheck[]> {
+    return await db
+      .select()
+      .from(complianceChecks)
+      .where(eq(complianceChecks.practiceId, practiceId))
+      .orderBy(desc(complianceChecks.lastCheckedAt));
+  }
+
+  async upsertComplianceCheck(data: InsertComplianceCheck): Promise<ComplianceCheck> {
+    // Check if a check of this type already exists for this practice
+    const [existing] = await db
+      .select()
+      .from(complianceChecks)
+      .where(and(
+        eq(complianceChecks.practiceId, data.practiceId),
+        eq(complianceChecks.checkType, data.checkType),
+      ));
+
+    if (existing) {
+      const [updated] = await db
+        .update(complianceChecks)
+        .set({
+          status: data.status,
+          lastCheckedAt: new Date(),
+          details: data.details,
+          notes: data.notes,
+        })
+        .where(eq(complianceChecks.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(complianceChecks).values(data).returning();
+    return created;
+  }
+
+  async getAuditLogsPaginated(filters: {
+    practiceId?: number;
+    userId?: string;
+    eventCategory?: string;
+    startDate?: Date;
+    endDate?: Date;
+    page: number;
+    limit: number;
+  }): Promise<{ logs: AuditLog[]; total: number }> {
+    const conditions = [];
+    if (filters.practiceId) {
+      conditions.push(eq(auditLog.practiceId, filters.practiceId));
+    }
+    if (filters.userId) {
+      conditions.push(eq(auditLog.userId, filters.userId));
+    }
+    if (filters.eventCategory) {
+      conditions.push(eq(auditLog.eventCategory, filters.eventCategory));
+    }
+    if (filters.startDate) {
+      conditions.push(gte(auditLog.createdAt, filters.startDate));
+    }
+    if (filters.endDate) {
+      conditions.push(lte(auditLog.createdAt, filters.endDate));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [totalResult] = await db
+      .select({ count: count() })
+      .from(auditLog)
+      .where(whereClause);
+
+    const logs = await db
+      .select()
+      .from(auditLog)
+      .where(whereClause)
+      .orderBy(desc(auditLog.createdAt))
+      .limit(filters.limit)
+      .offset((filters.page - 1) * filters.limit);
+
+    return { logs, total: totalResult?.count || 0 };
   }
 }
 

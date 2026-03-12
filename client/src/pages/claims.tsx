@@ -13,7 +13,8 @@ import { apiRequest } from "@/lib/queryClient";
 import {
   Plus, Search, Send, CheckCircle, Clock, XCircle, AlertCircle,
   DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical,
-  Copy, RefreshCw, Loader2, Scale, Mail
+  Copy, RefreshCw, Loader2, Scale, Mail, ShieldAlert, ShieldCheck,
+  TriangleAlert, CircleAlert, Info, Lightbulb
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -56,6 +57,18 @@ interface Claim {
   primaryPaidAmount?: string | null;
   primaryAdjustmentAmount?: string | null;
   cobData?: any;
+  denialPrediction?: {
+    riskScore: number;
+    riskLevel: "low" | "medium" | "high";
+    issues: Array<{
+      category: string;
+      description: string;
+      suggestion: string;
+      severity: "low" | "medium" | "high" | "critical";
+    }>;
+    overallRecommendation: string;
+    analyzedAt: string;
+  } | null;
 }
 
 export default function Claims() {
@@ -80,6 +93,11 @@ export default function Claims() {
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const [claimLineItems, setClaimLineItems] = useState<any[]>([]);
   const [loadingLineItems, setLoadingLineItems] = useState(false);
+
+  // Denial prediction state
+  const [showDenialPrediction, setShowDenialPrediction] = useState(false);
+  const [denialPredictionResult, setDenialPredictionResult] = useState<Claim["denialPrediction"]>(null);
+  const [predictingDenial, setPredictingDenial] = useState(false);
 
   // Batch submission state
   const [selectedClaimIds, setSelectedClaimIds] = useState<Set<number>>(new Set());
@@ -525,6 +543,36 @@ export default function Claims() {
     setLoadingAppeals(false);
   };
 
+  // Predict denial risk for a claim
+  const predictDenialRisk = async (claimId: number) => {
+    setPredictingDenial(true);
+    try {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/predict-denial`);
+      const data = await response.json();
+      setDenialPredictionResult(data);
+      setShowDenialPrediction(true);
+      // Refresh claims to pick up stored prediction
+      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      toast({
+        title: "Denial Risk Analysis Complete",
+        description: `Risk score: ${data.riskScore}/100 (${data.riskLevel})`,
+        variant: data.riskLevel === "high" ? "destructive" : "default",
+      });
+    } catch (error: any) {
+      if (isUnauthorizedError(error)) {
+        toast({ title: "Unauthorized", description: "You are logged out. Logging in again...", variant: "destructive" });
+        setTimeout(() => { window.location.href = "/api/login"; }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: error.message || "Failed to predict denial risk",
+        variant: "destructive",
+      });
+    }
+    setPredictingDenial(false);
+  };
+
   // Mark appeal as sent
   const markAppealSentMutation = useMutation({
     mutationFn: async ({ claimId, appealId }: { claimId: number; appealId: number }) => {
@@ -631,6 +679,38 @@ export default function Claims() {
     if (score >= 80) return 'text-green-600 bg-green-50';
     if (score >= 60) return 'text-yellow-600 bg-yellow-50';
     return 'text-red-600 bg-red-50';
+  };
+
+  const getDenialRiskColor = (score: number) => {
+    if (score < 30) return { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50 border-green-200' };
+    if (score < 70) return { bg: 'bg-yellow-500', text: 'text-yellow-700', light: 'bg-yellow-50 border-yellow-200' };
+    return { bg: 'bg-red-500', text: 'text-red-700', light: 'bg-red-50 border-red-200' };
+  };
+
+  const getSeverityIcon = (severity: string) => {
+    switch (severity) {
+      case 'critical':
+        return <XCircle className="w-4 h-4 text-red-600 flex-shrink-0" />;
+      case 'high':
+        return <CircleAlert className="w-4 h-4 text-orange-500 flex-shrink-0" />;
+      case 'medium':
+        return <TriangleAlert className="w-4 h-4 text-yellow-500 flex-shrink-0" />;
+      default:
+        return <Info className="w-4 h-4 text-blue-500 flex-shrink-0" />;
+    }
+  };
+
+  const getSeverityBadgeColor = (severity: string) => {
+    switch (severity) {
+      case 'critical':
+        return 'bg-red-100 text-red-800 border-red-200';
+      case 'high':
+        return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'medium':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      default:
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+    }
   };
 
   const filteredClaims = claims?.filter((claim) => {
@@ -741,30 +821,31 @@ export default function Claims() {
   };
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Claims Management</h1>
-          <p className="text-slate-600">Create, track, and manage insurance claims</p>
+          <h1 className="text-xl md:text-2xl font-bold text-slate-900">Claims Management</h1>
+          <p className="text-sm md:text-base text-slate-600">Create, track, and manage insurance claims</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowSessionsDialog(true)}>
-            <FileText className="w-4 h-4 mr-2" />
-            Generate from Session
+        <div className="flex gap-2 overflow-x-auto pb-1 sm:pb-0 -mx-1 px-1">
+          <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+            <FileText className="w-4 h-4 mr-1 md:mr-2" />
+            <span className="hidden sm:inline">Generate from Session</span>
+            <span className="sm:hidden">From Session</span>
           </Button>
-          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)}>
-            <DollarSign className="w-4 h-4 mr-2" />
-            Create Superbill
+          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+            <DollarSign className="w-4 h-4 mr-1 md:mr-2" />
+            Superbill
           </Button>
           <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
+              <Button className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+                <Plus className="w-4 h-4 mr-1 md:mr-2" />
                 New Claim
               </Button>
             </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="w-full h-full sm:h-auto sm:max-w-[425px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>Create New Claim</DialogTitle>
               <DialogDescription>
@@ -859,7 +940,7 @@ export default function Claims() {
 
       {/* Generate from Session Dialog */}
       <Dialog open={showSessionsDialog} onOpenChange={setShowSessionsDialog}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[600px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
           <DialogHeader>
             <DialogTitle>Generate Superbill from Session</DialogTitle>
             <DialogDescription>
@@ -953,7 +1034,7 @@ export default function Claims() {
 
       {/* Create Superbill Dialog */}
       <Dialog open={showSuperbillDialog} onOpenChange={setShowSuperbillDialog}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[700px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
           <DialogHeader>
             <DialogTitle>Create Superbill</DialogTitle>
             <DialogDescription>
@@ -1103,13 +1184,13 @@ export default function Claims() {
       </Dialog>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-600">Total Claims</p>
-                <p className="text-2xl font-bold">{stats.total}</p>
+                <p className="text-xs md:text-sm text-slate-600">Total Claims</p>
+                <p className="text-xl md:text-2xl font-bold">{stats.total}</p>
               </div>
               <div className="p-2 bg-slate-100 rounded-lg">
                 <FileText className="w-5 h-5 text-slate-600" />
@@ -1119,11 +1200,11 @@ export default function Claims() {
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-600">Pending</p>
-                <p className="text-2xl font-bold text-yellow-600">{stats.submitted}</p>
+                <p className="text-xs md:text-sm text-slate-600">Pending</p>
+                <p className="text-xl md:text-2xl font-bold text-yellow-600">{stats.submitted}</p>
               </div>
               <div className="p-2 bg-yellow-100 rounded-lg">
                 <Clock className="w-5 h-5 text-yellow-600" />
@@ -1133,11 +1214,11 @@ export default function Claims() {
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-600">Paid Amount</p>
-                <p className="text-2xl font-bold text-green-600">${stats.paidAmount.toFixed(2)}</p>
+                <p className="text-xs md:text-sm text-slate-600">Paid Amount</p>
+                <p className="text-lg md:text-2xl font-bold text-green-600">${stats.paidAmount.toFixed(2)}</p>
               </div>
               <div className="p-2 bg-green-100 rounded-lg">
                 <DollarSign className="w-5 h-5 text-green-600" />
@@ -1147,11 +1228,11 @@ export default function Claims() {
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-600">Success Rate</p>
-                <p className="text-2xl font-bold text-blue-600">
+                <p className="text-xs md:text-sm text-slate-600">Success Rate</p>
+                <p className="text-xl md:text-2xl font-bold text-blue-600">
                   {stats.total > 0 ? ((stats.paid / stats.total) * 100).toFixed(0) : 0}%
                 </p>
               </div>
@@ -1163,21 +1244,22 @@ export default function Claims() {
         </Card>
       </div>
 
-      {/* Search and Filter */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 mb-6">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
-          <Input
-            placeholder="Search by claim number or patient..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full sm:w-44">
-            <SelectValue placeholder="Filter by status" />
-          </SelectTrigger>
+      {/* Search and Filter - sticky on mobile */}
+      <div className="sticky top-14 md:static z-20 bg-background -mx-4 px-4 py-2 md:mx-0 md:px-0 md:py-0 border-b md:border-b-0 border-border mb-3 md:mb-6">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 md:gap-4">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <Input
+              placeholder="Search claims..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 min-h-[44px]"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-full sm:w-44 min-h-[44px]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="draft">Draft ({stats.draft})</SelectItem>
@@ -1186,11 +1268,12 @@ export default function Claims() {
             <SelectItem value="denied">Denied ({stats.denied})</SelectItem>
           </SelectContent>
         </Select>
+        </div>
       </div>
 
-      {/* Batch Actions Bar */}
+      {/* Batch Actions Bar - sticky at bottom on mobile when items selected */}
       {draftClaims.length > 0 && (
-        <div className="flex items-center gap-4 mb-4 p-3 bg-slate-50 rounded-lg border">
+        <div className={`flex flex-wrap items-center gap-2 md:gap-4 mb-3 md:mb-4 p-3 bg-slate-50 rounded-lg border ${selectedClaimIds.size > 0 ? 'fixed bottom-16 md:bottom-auto left-4 right-4 md:static z-30 shadow-lg md:shadow-none' : ''}`}>
           <div className="flex items-center gap-2">
             <Checkbox
               id="select-all-draft"
@@ -1345,17 +1428,53 @@ export default function Claims() {
                       </div>
                     )}
 
+                    {/* Denial Risk Badge */}
+                    {claim.denialPrediction && (
+                      <div
+                        className={`px-3 py-1 rounded-lg text-center cursor-pointer ${getDenialRiskColor(claim.denialPrediction.riskScore).light} border`}
+                        onClick={() => {
+                          setSelectedClaim(claim);
+                          setDenialPredictionResult(claim.denialPrediction);
+                          setShowDenialPrediction(true);
+                        }}
+                        title="Click to view denial risk details"
+                      >
+                        <p className={`font-bold text-lg ${getDenialRiskColor(claim.denialPrediction.riskScore).text}`}>
+                          {claim.denialPrediction.riskScore}
+                        </p>
+                        <p className="text-xs text-slate-600">Risk</p>
+                      </div>
+                    )}
+
                     {/* Actions */}
                     <div className="flex items-center gap-2">
                       {claim.status === 'draft' && (
-                        <Button
-                          size="sm"
-                          onClick={() => submitClaimMutation.mutate(claim.id)}
-                          disabled={submitClaimMutation.isPending}
-                        >
-                          <Send className="w-4 h-4 mr-1" />
-                          Submit
-                        </Button>
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedClaim(claim);
+                              predictDenialRisk(claim.id);
+                            }}
+                            disabled={predictingDenial}
+                          >
+                            {predictingDenial ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <ShieldAlert className="w-4 h-4 mr-1" />
+                            )}
+                            Check Risk
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => submitClaimMutation.mutate(claim.id)}
+                            disabled={submitClaimMutation.isPending}
+                          >
+                            <Send className="w-4 h-4 mr-1" />
+                            Submit
+                          </Button>
+                        </>
                       )}
 
                       <DropdownMenu>
@@ -1465,9 +1584,9 @@ export default function Claims() {
         )}
       </div>
 
-      {/* Claim Detail Dialog */}
+      {/* Claim Detail Dialog - full-screen on mobile */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[700px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
           <DialogHeader>
             <DialogTitle>Claim Details</DialogTitle>
             <DialogDescription>
@@ -1911,6 +2030,162 @@ export default function Claims() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Denial Risk Prediction Dialog */}
+      <Dialog open={showDenialPrediction} onOpenChange={setShowDenialPrediction}>
+        <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5" />
+              Denial Risk Analysis
+            </DialogTitle>
+            <DialogDescription>
+              {selectedClaim?.claimNumber} - AI-powered denial prediction
+            </DialogDescription>
+          </DialogHeader>
+
+          {predictingDenial ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-4" />
+              <p className="text-sm text-slate-600">Analyzing claim for denial risk...</p>
+              <p className="text-xs text-slate-400 mt-1">Checking CPT/ICD codes, documentation, and payer patterns</p>
+            </div>
+          ) : denialPredictionResult ? (
+            <div className="space-y-5">
+              {/* Risk Score Gauge */}
+              <div className={`rounded-lg border p-4 ${getDenialRiskColor(denialPredictionResult.riskScore).light}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    {denialPredictionResult.riskScore < 30 ? (
+                      <ShieldCheck className="w-6 h-6 text-green-600" />
+                    ) : denialPredictionResult.riskScore < 70 ? (
+                      <TriangleAlert className="w-6 h-6 text-yellow-600" />
+                    ) : (
+                      <ShieldAlert className="w-6 h-6 text-red-600" />
+                    )}
+                    <div>
+                      <p className="font-semibold text-lg">
+                        Risk Score: {denialPredictionResult.riskScore}/100
+                      </p>
+                      <p className="text-sm capitalize">
+                        {denialPredictionResult.riskLevel} Risk
+                      </p>
+                    </div>
+                  </div>
+                  <div className={`text-3xl font-bold ${getDenialRiskColor(denialPredictionResult.riskScore).text}`}>
+                    {denialPredictionResult.riskScore}
+                  </div>
+                </div>
+                {/* Score bar */}
+                <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${getDenialRiskColor(denialPredictionResult.riskScore).bg}`}
+                    style={{ width: `${denialPredictionResult.riskScore}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>Low Risk</span>
+                  <span>Medium</span>
+                  <span>High Risk</span>
+                </div>
+              </div>
+
+              {/* Overall Recommendation */}
+              <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+                <div className="flex items-start gap-2">
+                  <Lightbulb className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-blue-900 text-sm">Recommendation</p>
+                    <p className="text-sm text-blue-800 mt-1">{denialPredictionResult.overallRecommendation}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Issues List */}
+              {denialPredictionResult.issues.length > 0 ? (
+                <div>
+                  <h4 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    Identified Issues ({denialPredictionResult.issues.length})
+                  </h4>
+                  <div className="space-y-3">
+                    {denialPredictionResult.issues
+                      .sort((a, b) => {
+                        const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+                        return (order[a.severity] ?? 3) - (order[b.severity] ?? 3);
+                      })
+                      .map((issue, index) => (
+                        <div
+                          key={index}
+                          className="border rounded-lg p-3 bg-white"
+                        >
+                          <div className="flex items-start gap-2">
+                            {getSeverityIcon(issue.severity)}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-sm text-slate-900">
+                                  {issue.category}
+                                </span>
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs ${getSeverityBadgeColor(issue.severity)}`}
+                                >
+                                  {issue.severity}
+                                </Badge>
+                              </div>
+                              <p className="text-sm text-slate-700 mt-1">{issue.description}</p>
+                              <div className="mt-2 flex items-start gap-1.5 bg-slate-50 rounded p-2">
+                                <Lightbulb className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-slate-600">{issue.suggestion}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-6 bg-green-50 rounded-lg border border-green-200">
+                  <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-green-800">No issues detected</p>
+                  <p className="text-xs text-green-600 mt-1">This claim looks good to submit</p>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex justify-between items-center pt-2 border-t">
+                <p className="text-xs text-slate-400">
+                  Analyzed: {new Date(denialPredictionResult.analyzedAt).toLocaleString()}
+                </p>
+                <div className="flex gap-2">
+                  {selectedClaim && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => predictDenialRisk(selectedClaim.id)}
+                      disabled={predictingDenial}
+                    >
+                      <RefreshCw className={`w-4 h-4 mr-1 ${predictingDenial ? 'animate-spin' : ''}`} />
+                      Re-check
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => setShowDenialPrediction(false)}
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <ShieldAlert className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+              <p className="text-sm text-slate-500">No prediction data available</p>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

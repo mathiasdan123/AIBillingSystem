@@ -363,23 +363,23 @@ export default function Patients() {
 
   if (isLoading || patientsLoading) {
     return (
-      <div className="p-6 pt-20 md:pt-6 md:ml-64">
+      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
         {/* Header skeleton */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6 md:mb-8">
           <div>
-            <Skeleton className="h-8 w-48 mb-2" />
-            <Skeleton className="h-4 w-72" />
+            <Skeleton className="h-7 md:h-8 w-40 md:w-48 mb-2" />
+            <Skeleton className="h-4 w-56 md:w-72" />
           </div>
-          <Skeleton className="h-10 w-32 rounded-md" />
+          <Skeleton className="h-10 w-28 md:w-32 rounded-md" />
         </div>
 
         {/* Search skeleton */}
-        <div className="mb-6">
+        <div className="mb-4 md:mb-6">
           <Skeleton className="h-10 w-full rounded-md" />
         </div>
 
         {/* Stats cards skeleton */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6 md:mb-8">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -426,68 +426,72 @@ export default function Patients() {
   };
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Patient Management</h1>
-          <p className="text-slate-600">Manage patient information and insurance details</p>
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+      <div className="flex items-center justify-between mb-6 md:mb-8 gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl md:text-2xl font-bold text-slate-900">Patient Management</h1>
+          <p className="text-sm md:text-base text-slate-600">Manage patient information and insurance details</p>
         </div>
         <Dialog open={showIntakeDialog} onOpenChange={setShowIntakeDialog}>
           <DialogTrigger asChild>
-            <Button className="bg-medical-blue-500 hover:bg-medical-blue-600">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Patient
+            <Button className="bg-medical-blue-500 hover:bg-medical-blue-600 flex-shrink-0 min-h-[44px]">
+              <Plus className="w-4 h-4 mr-1 md:mr-2" />
+              <span className="hidden sm:inline">Add Patient</span>
+              <span className="sm:hidden">Add</span>
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto w-full h-full sm:h-auto sm:w-auto fixed inset-0 sm:inset-auto sm:relative rounded-none sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>Patient Intake Form</DialogTitle>
               <DialogDescription>
                 Add a new patient with insurance information
               </DialogDescription>
             </DialogHeader>
-            <PatientIntakeForm 
-              practiceId={practiceId} 
+            <PatientIntakeForm
+              practiceId={practiceId}
               onSuccess={handlePatientCreated}
             />
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* Search and Bulk Actions */}
-      <div className="flex items-center space-x-4 mb-6">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
-          <Input
-            placeholder="Search patients by name, email, or phone..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
+      {/* Search and Bulk Actions - sticky on mobile */}
+      <div className="sticky top-14 md:static z-20 bg-background -mx-4 px-4 py-2 md:mx-0 md:px-0 md:py-0 border-b md:border-b-0 border-border mb-4 md:mb-6">
+        <div className="flex items-center gap-2 md:space-x-4">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <Input
+              placeholder="Search patients..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 min-h-[44px]"
+            />
+          </div>
+          {selectedPatientIds.size > 0 && (
+            <Button
+              onClick={() => bulkEligibilityMutation.mutate(Array.from(selectedPatientIds))}
+              disabled={bulkCheckInProgress}
+              className="bg-medical-blue-500 hover:bg-medical-blue-600 whitespace-nowrap min-h-[44px] text-xs md:text-sm"
+            >
+              {bulkCheckInProgress ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 md:mr-2 animate-spin" />
+                  <span className="hidden sm:inline">Checking...</span>
+                </>
+              ) : (
+                <>
+                  <ListChecks className="w-4 h-4 mr-1 md:mr-2" />
+                  <span className="hidden sm:inline">Check Eligibility ({selectedPatientIds.size})</span>
+                  <span className="sm:hidden">Check ({selectedPatientIds.size})</span>
+                </>
+              )}
+            </Button>
+          )}
         </div>
-        {selectedPatientIds.size > 0 && (
-          <Button
-            onClick={() => bulkEligibilityMutation.mutate(Array.from(selectedPatientIds))}
-            disabled={bulkCheckInProgress}
-            className="bg-medical-blue-500 hover:bg-medical-blue-600 whitespace-nowrap"
-          >
-            {bulkCheckInProgress ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Checking...
-              </>
-            ) : (
-              <>
-                <ListChecks className="w-4 h-4 mr-2" />
-                Check Eligibility ({selectedPatientIds.size})
-              </>
-            )}
-          </Button>
-        )}
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-3 gap-3 md:gap-6 mb-6 md:mb-8">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Patients</CardTitle>
@@ -539,7 +543,7 @@ export default function Patients() {
       )}
 
       {/* Patients Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-6">
         {filteredPatients?.length ? (
           filteredPatients.map((patient: any) => (
             <Card key={patient.id} className={`hover:shadow-lg transition-shadow ${selectedPatientIds.has(patient.id) ? 'ring-2 ring-medical-blue-500' : ''}`}>
@@ -603,10 +607,10 @@ export default function Patients() {
                 </div>
                 
                 <div className="mt-4 flex space-x-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="flex-1"
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 min-h-[44px]"
                     onClick={() => setSelectedPatient(patient)}
                   >
                     View Details
@@ -615,6 +619,7 @@ export default function Patients() {
                     <Button
                       variant="outline"
                       size="sm"
+                      className="min-h-[44px]"
                       onClick={() => checkEligibilityMutation.mutate({
                         patientId: patient.id,
                       })}
@@ -623,12 +628,13 @@ export default function Patients() {
                       {checkingEligibility === patient.id ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                          Checking...
+                          <span className="hidden sm:inline">Checking...</span>
                         </>
                       ) : (
                         <>
                           <Shield className="w-4 h-4 mr-1" />
-                          Check Eligibility
+                          <span className="hidden sm:inline">Check Eligibility</span>
+                          <span className="sm:hidden">Check</span>
                         </>
                       )}
                     </Button>
@@ -678,7 +684,7 @@ export default function Patients() {
 
       {/* Bulk Eligibility Progress/Results Dialog */}
       <Dialog open={showBulkResultsDialog} onOpenChange={(open) => { if (!bulkCheckInProgress) setShowBulkResultsDialog(open); }}>
-        <DialogContent className="sm:max-w-[550px] max-h-[80vh] overflow-y-auto">
+        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[550px] max-h-screen sm:max-h-[80vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
           <DialogHeader>
             <DialogTitle>
               {bulkCheckInProgress ? "Checking Eligibility..." : "Bulk Eligibility Results"}
@@ -772,10 +778,10 @@ export default function Patients() {
         </DialogContent>
       </Dialog>
 
-      {/* Patient Details Modal */}
+      {/* Patient Details Modal - full-screen on mobile */}
       {selectedPatient && (
         <Dialog open={!!selectedPatient} onOpenChange={() => setSelectedPatient(null)}>
-          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-full h-full sm:h-auto sm:max-w-[700px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>
                 {selectedPatient.firstName} {selectedPatient.lastName}

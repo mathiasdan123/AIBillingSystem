@@ -37,7 +37,10 @@ export default function CalendarPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [view, setView] = useState<"week" | "day">("week");
+  // Default to day view on mobile (screen width < 768px)
+  const [view, setView] = useState<"week" | "day">(
+    typeof window !== 'undefined' && window.innerWidth < 768 ? "day" : "week"
+  );
   const [showNewAppointment, setShowNewAppointment] = useState(false);
   const [showAvailability, setShowAvailability] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -337,23 +340,47 @@ export default function CalendarPage() {
     return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
   };
 
+  // Touch swipe support for day navigation on mobile
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartX(e.touches[0].clientX);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const diff = touchStartX - touchEndX;
+    // Swipe threshold of 50px
+    if (Math.abs(diff) > 50) {
+      if (view === "day") {
+        navigateDay(diff > 0 ? 1 : -1);
+      } else {
+        navigateWeek(diff > 0 ? 1 : -1);
+      }
+    }
+    setTouchStartX(null);
+  };
+
   return (
-    <div className="md:ml-64 p-6">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Calendar</h1>
-            <p className="text-slate-600">Manage your appointments and availability</p>
+            <h1 className="text-xl md:text-2xl font-bold text-slate-900">Calendar</h1>
+            <p className="text-sm md:text-base text-slate-600">Manage your appointments and availability</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setShowAvailability(true)}>
-              <Clock className="w-4 h-4 mr-2" />Availability
+            <Button variant="outline" onClick={() => setShowAvailability(true)} className="min-h-[44px] text-xs md:text-sm">
+              <Clock className="w-4 h-4 mr-1 md:mr-2" />
+              <span className="hidden sm:inline">Availability</span>
+              <span className="sm:hidden">Hours</span>
             </Button>
             <Dialog open={showNewAppointment} onOpenChange={setShowNewAppointment}>
               <DialogTrigger asChild>
-                <Button><Plus className="w-4 h-4 mr-2" />New Appointment</Button>
+                <Button className="min-h-[44px] text-xs md:text-sm"><Plus className="w-4 h-4 mr-1 md:mr-2" /><span className="hidden sm:inline">New Appointment</span><span className="sm:hidden">New</span></Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
                 <DialogHeader>
                   <DialogTitle>Schedule New Appointment</DialogTitle>
                   <DialogDescription>Create a new 1-hour therapy session.</DialogDescription>
@@ -486,17 +513,17 @@ export default function CalendarPage() {
         </div>
 
         {/* Weekly cancellation summary */}
-        <Card className="mb-4 relative z-10">
-          <CardContent className="py-3">
-            <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
+        <Card className="mb-3 md:mb-4 relative z-10">
+          <CardContent className="py-2.5 md:py-3 px-3 md:px-6">
+            <div className="flex flex-wrap items-center gap-2 md:gap-6 text-xs md:text-sm">
+              <div className="flex items-center gap-1.5 md:gap-2">
                 <CalendarX className="w-4 h-4 text-red-500" />
                 <span className="font-medium">This Week:</span>
               </div>
               <div>
                 <span className="font-semibold">{thisWeekCancelled}</span> cancelled of <span className="font-semibold">{thisWeekTotal}</span> total
               </div>
-              <Badge variant={thisWeekRate > 20 ? "destructive" : "secondary"}>
+              <Badge variant={thisWeekRate > 20 ? "destructive" : "secondary"} className="text-[10px] md:text-xs">
                 {thisWeekRate}% cancel rate
               </Badge>
             </div>
@@ -509,18 +536,24 @@ export default function CalendarPage() {
         </div>
 
         {/* Navigation */}
-        <Card className="mb-6 relative z-10">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => view === "week" ? navigateWeek(-1) : navigateDay(-1)}><ChevronLeft className="w-4 h-4" /></Button>
-                <Button variant="outline" size="sm" onClick={() => view === "week" ? navigateWeek(1) : navigateDay(1)}><ChevronRight className="w-4 h-4" /></Button>
-                <Button variant="outline" size="sm" onClick={() => setCurrentDate(new Date())}>Today</Button>
+        <Card className="mb-4 md:mb-6 relative z-10">
+          <CardContent className="py-3 md:py-4 px-3 md:px-6">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+                <div className="flex items-center gap-1.5">
+                  <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "week" ? navigateWeek(-1) : navigateDay(-1)}><ChevronLeft className="w-4 h-4" /></Button>
+                  <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "week" ? navigateWeek(1) : navigateDay(1)}><ChevronRight className="w-4 h-4" /></Button>
+                  <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => setCurrentDate(new Date())}>Today</Button>
+                </div>
+                <div className="flex items-center gap-1.5 sm:hidden">
+                  <Button variant={view === "week" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("week")}>Week</Button>
+                  <Button variant={view === "day" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("day")}>Day</Button>
+                </div>
               </div>
-              <h2 className="text-lg font-semibold">
+              <h2 className="text-sm md:text-lg font-semibold text-center">
                 {view === "week" ? formatDate(weekDates[0]) + " - " + formatDate(weekDates[6]) + ", " + weekDates[0].getFullYear() : formatDateFull(currentDate)}
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2">
                 <Button variant={view === "week" ? "default" : "outline"} size="sm" onClick={() => setView("week")}>Week</Button>
                 <Button variant={view === "day" ? "default" : "outline"} size="sm" onClick={() => setView("day")}>Day</Button>
               </div>
@@ -530,9 +563,9 @@ export default function CalendarPage() {
 
         {/* Calendar Grid */}
         <Card>
-          <CardContent className="p-0">
+          <CardContent className="p-0" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             {view === "week" && (
-              <div className="grid grid-cols-8 border-b">
+              <div className="hidden md:grid grid-cols-8 border-b">
                 <div className="w-16 border-r" />
                 {weekDates.map((date, i) => (
                   <div key={i} className={"p-2 text-center border-r last:border-r-0 " + (date.toDateString() === new Date().toDateString() ? "bg-blue-50" : "")}>
@@ -542,7 +575,8 @@ export default function CalendarPage() {
                 ))}
               </div>
             )}
-            <div className="relative">
+            {/* Desktop: traditional time grid */}
+            <div className="hidden md:block relative">
               <div className={"grid " + (view === "week" ? "grid-cols-8" : "grid-cols-2")}>
                 <div className="w-16 border-r">
                   {HOURS.map((h) => (
@@ -585,54 +619,125 @@ export default function CalendarPage() {
                 ))}
               </div>
             </div>
+
+            {/* Mobile: stacked appointment cards */}
+            <div className="md:hidden p-3">
+              {view === "week" && (
+                <div className="flex gap-2 mb-3 overflow-x-auto pb-2 -mx-1 px-1">
+                  {weekDates.map((date, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setCurrentDate(date); setView("day"); }}
+                      className={`flex-shrink-0 flex flex-col items-center px-3 py-2 rounded-lg min-w-[52px] min-h-[44px] transition-colors ${
+                        date.toDateString() === new Date().toDateString()
+                          ? "bg-blue-100 text-blue-700 font-semibold"
+                          : "bg-slate-50 text-slate-600"
+                      }`}
+                    >
+                      <span className="text-[10px] uppercase">{DAYS[date.getDay()].slice(0, 3)}</span>
+                      <span className="text-sm font-semibold">{date.getDate()}</span>
+                      {getAppointmentsForDate(date).length > 0 && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-0.5" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {(() => {
+                const datesToShow = view === "day" ? [currentDate] : weekDates;
+                const allApts = datesToShow.flatMap(d => getAppointmentsForDate(d));
+                const sorted = allApts.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+                if (sorted.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-slate-500">
+                      <p className="text-sm">No appointments {view === "day" ? "today" : "this week"}</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-2">
+                    {sorted.map((apt) => (
+                      <div
+                        key={apt.id}
+                        className={`rounded-lg p-3 cursor-pointer active:opacity-80 ${getCalendarBlockStyle(apt)}`}
+                        onClick={() => {
+                          if (apt.status !== "cancelled") {
+                            openCancelDialog(apt);
+                          } else {
+                            toast({ title: apt.title || "Appointment", description: `Cancelled: ${apt.cancellationReason || "N/A"}` });
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {(apt as any).isRecurring && <Repeat className="w-3.5 h-3.5 flex-shrink-0" />}
+                            <span className="font-medium text-sm truncate">{apt.title || "Appointment"}</span>
+                          </div>
+                          <Badge className={`${getStatusColor(apt.status || "scheduled")} text-[10px] flex-shrink-0 ml-2`}>
+                            {apt.status}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1">
+                          {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
+                          {apt.therapistId && (() => {
+                            const therapist = therapists.find((t: any) => t.id === apt.therapistId);
+                            return therapist ? ` | ${therapist.firstName}` : "";
+                          })()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
           </CardContent>
         </Card>
 
         {/* Upcoming Appointments */}
-        <Card className="mt-6">
-          <CardHeader><CardTitle className="text-lg">Upcoming Appointments</CardTitle></CardHeader>
-          <CardContent>
-            <div className="space-y-4">
+        <Card className="mt-4 md:mt-6">
+          <CardHeader className="px-4 md:px-6"><CardTitle className="text-base md:text-lg">Upcoming Appointments</CardTitle></CardHeader>
+          <CardContent className="px-4 md:px-6">
+            <div className="space-y-2 md:space-y-4">
               {appointments
                 .filter(a => new Date(a.startTime) >= new Date() && a.status !== "cancelled")
                 .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
                 .slice(0, 5)
                 .map((apt) => (
-                  <div key={apt.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <User className="w-5 h-5 text-blue-600" />
+                  <div key={apt.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 md:p-4 bg-slate-50 rounded-lg gap-2 md:gap-4">
+                    <div className="flex items-center gap-3 md:gap-4">
+                      <div className="w-9 h-9 md:w-10 md:h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <User className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
                       </div>
-                      <div>
-                        <div className="font-medium flex items-center gap-1">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm md:text-base flex items-center gap-1">
                           {(apt as any).isRecurring && <Repeat className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
-                          {apt.title || "Appointment"}
+                          <span className="truncate">{apt.title || "Appointment"}</span>
                         </div>
-                        <div className="text-sm text-slate-600">
+                        <div className="text-xs md:text-sm text-slate-600 truncate">
                           {new Date(apt.startTime).toLocaleDateString()} at {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
                           {apt.therapistId && (() => {
                             const therapist = therapists.find((t: any) => t.id === apt.therapistId);
-                            return therapist ? ` • ${therapist.firstName} ${therapist.lastName}` : "";
+                            return therapist ? ` | ${therapist.firstName} ${therapist.lastName}` : "";
                           })()}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={getStatusColor(apt.status || "scheduled")}>{apt.status}</Badge>
-                      <Button variant="outline" size="sm" onClick={() => openCancelDialog(apt)}>
+                    <div className="flex items-center gap-2 ml-12 sm:ml-0">
+                      <Badge className={`${getStatusColor(apt.status || "scheduled")} text-[10px] md:text-xs`}>{apt.status}</Badge>
+                      <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => openCancelDialog(apt)}>
                         <XCircle className="w-4 h-4 mr-1" />Cancel
                       </Button>
                     </div>
                   </div>
                 ))}
               {appointments.filter(a => new Date(a.startTime) >= new Date() && a.status !== "cancelled").length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <ClipboardList className="h-12 w-12 text-muted-foreground mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No upcoming appointments</h3>
-                  <p className="text-muted-foreground mb-6 max-w-md">
-                    Schedule your first appointment to start managing your calendar. You can set availability, book sessions, and track cancellations all in one place.
+                <div className="flex flex-col items-center justify-center py-8 md:py-12 text-center">
+                  <ClipboardList className="h-10 w-10 md:h-12 md:w-12 text-muted-foreground mb-3 md:mb-4" />
+                  <h3 className="text-base md:text-lg font-semibold mb-2">No upcoming appointments</h3>
+                  <p className="text-muted-foreground mb-4 md:mb-6 max-w-md text-sm">
+                    Schedule your first appointment to start managing your calendar.
                   </p>
-                  <Button onClick={() => setShowNewAppointment(true)}>
+                  <Button onClick={() => setShowNewAppointment(true)} className="w-full sm:w-auto min-h-[44px]">
                     <Plus className="w-4 h-4 mr-2" />
                     Schedule an Appointment
                   </Button>
@@ -644,7 +749,7 @@ export default function CalendarPage() {
 
         {/* Cancel Appointment Dialog */}
         <Dialog open={showCancelDialog} onOpenChange={(open) => { setShowCancelDialog(open); if (!open) { delete (window as any).__cancelSeriesId; } }}>
-          <DialogContent>
+          <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>Cancel Appointment</DialogTitle>
               <DialogDescription>
@@ -696,7 +801,7 @@ export default function CalendarPage() {
 
         {/* Series Action Dialog — "This appointment only" vs "All future" */}
         <Dialog open={showSeriesActionDialog} onOpenChange={setShowSeriesActionDialog}>
-          <DialogContent>
+          <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>Recurring Appointment</DialogTitle>
               <DialogDescription>
@@ -744,7 +849,7 @@ export default function CalendarPage() {
 
         {/* Availability Dialog */}
         <Dialog open={showAvailability} onOpenChange={setShowAvailability}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="w-full h-full sm:h-auto sm:max-w-2xl max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>Manage Availability</DialogTitle>
               <DialogDescription>Set your regular working hours for each day of the week.</DialogDescription>

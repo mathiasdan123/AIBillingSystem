@@ -200,6 +200,14 @@ export default function SoapNotes() {
   const [nextSessionFocus, setNextSessionFocus] = useState("");
   const [homeProgram, setHomeProgram] = useState("");
 
+  // Goal Progress tracking for SOAP note linking
+  const [goalProgressEntries, setGoalProgressEntries] = useState<Array<{
+    goalId: number;
+    goalDescription: string;
+    progressNote: string;
+    progressPercentage: number;
+  }>>([]);
+
   // AI Generated content
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedNote, setGeneratedNote] = useState<{
@@ -294,6 +302,20 @@ export default function SoapNotes() {
   const { data: therapyBank, isLoading: therapyBankLoading } = useQuery<TherapyBank[]>({
     queryKey: ["/api/therapy-bank"],
     retry: false,
+  });
+
+  // Active treatment plan with goals for selected patient
+  const { data: activePlanData } = useQuery<{
+    plan: any;
+    goals: Array<{ id: number; goalNumber: number; description: string; status: string; progressPercentage: number | null; targetDate: string | null; objectives: any[] }>;
+    interventions: any[];
+  } | null>({
+    queryKey: ["/api/patients", selectedPatient, "active-treatment-plan"],
+    enabled: !!selectedPatient,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/patients/${selectedPatient}/active-treatment-plan`);
+      return res.json();
+    },
   });
 
   // Mutation to add new therapy to the bank
@@ -708,7 +730,23 @@ export default function SoapNotes() {
         aiSuggestedCptCodes: generatedNote.cptCodes || [],
       };
 
-      await apiRequest("POST", "/api/soap-notes", soapNoteData);
+      const soapNoteResponse = await apiRequest("POST", "/api/soap-notes", soapNoteData);
+      const savedSoapNote = await soapNoteResponse.json();
+
+      // Link goal progress entries to the SOAP note if any were tracked
+      if (goalProgressEntries.length > 0 && savedSoapNote?.id) {
+        try {
+          await apiRequest("POST", `/api/soap-notes/${savedSoapNote.id}/goal-progress`, {
+            goalProgressEntries: goalProgressEntries.map(e => ({
+              goalId: e.goalId,
+              progressNote: e.progressNote,
+              progressPercentage: e.progressPercentage,
+            })),
+          });
+        } catch (goalError) {
+          console.error("Failed to save goal progress entries:", goalError);
+        }
+      }
 
       // Auto-generate claim for the session
       try {
@@ -744,6 +782,7 @@ export default function SoapNotes() {
       setPlanNextSteps("");
       setNextSessionFocus("");
       setHomeProgram("");
+      setGoalProgressEntries([]);
       setGeneratedNote(null);
     },
     onError: () => {
@@ -1414,6 +1453,123 @@ export default function SoapNotes() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Goal Progress Section */}
+            {activePlanData && activePlanData.goals && activePlanData.goals.length > 0 && (
+              <Card className="border-indigo-200">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <span className="w-6 h-6 rounded bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-bold">G</span>
+                    Goal Progress
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Track progress on treatment goals for this session
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {activePlanData.goals.map((goal) => {
+                    const existingEntry = goalProgressEntries.find(e => e.goalId === goal.id);
+                    const isTracked = !!existingEntry;
+
+                    return (
+                      <div
+                        key={goal.id}
+                        className={`border rounded-lg p-3 transition-colors ${
+                          isTracked ? "border-indigo-300 bg-indigo-50 dark:bg-indigo-950/20" : "border-slate-200"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-bold text-slate-400">GOAL {goal.goalNumber}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {goal.status ? goal.status.replace(/_/g, " ") : "not started"}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-slate-700 dark:text-slate-300">{goal.description}</p>
+                          </div>
+                          <Button
+                            variant={isTracked ? "default" : "outline"}
+                            size="sm"
+                            className="ml-2 shrink-0"
+                            onClick={() => {
+                              if (isTracked) {
+                                setGoalProgressEntries(prev => prev.filter(e => e.goalId !== goal.id));
+                              } else {
+                                setGoalProgressEntries(prev => [
+                                  ...prev,
+                                  {
+                                    goalId: goal.id,
+                                    goalDescription: goal.description,
+                                    progressNote: "",
+                                    progressPercentage: goal.progressPercentage || 0,
+                                  },
+                                ]);
+                              }
+                            }}
+                          >
+                            {isTracked ? (
+                              <><CheckCircle className="w-3 h-3 mr-1" /> Tracking</>
+                            ) : (
+                              <><Plus className="w-3 h-3 mr-1" /> Track</>
+                            )}
+                          </Button>
+                        </div>
+
+                        {isTracked && existingEntry && (
+                          <div className="mt-2 space-y-2 pt-2 border-t border-indigo-200">
+                            <div>
+                              <Label className="text-xs text-slate-500">Progress Note</Label>
+                              <Textarea
+                                placeholder="Describe progress observed this session..."
+                                value={existingEntry.progressNote}
+                                onChange={(e) => {
+                                  setGoalProgressEntries(prev =>
+                                    prev.map(entry =>
+                                      entry.goalId === goal.id
+                                        ? { ...entry, progressNote: e.target.value }
+                                        : entry
+                                    )
+                                  );
+                                }}
+                                className="mt-1 min-h-[40px] text-sm"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs text-slate-500">
+                                Progress: {existingEntry.progressPercentage}%
+                              </Label>
+                              <input
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="5"
+                                value={existingEntry.progressPercentage}
+                                onChange={(e) => {
+                                  setGoalProgressEntries(prev =>
+                                    prev.map(entry =>
+                                      entry.goalId === goal.id
+                                        ? { ...entry, progressPercentage: parseInt(e.target.value) }
+                                        : entry
+                                    )
+                                  );
+                                }}
+                                className="w-full mt-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                              />
+                              <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+                                <span>0%</span>
+                                <span>50%</span>
+                                <span>100%</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Generate Button */}
             <Button

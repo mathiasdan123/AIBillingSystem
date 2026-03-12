@@ -10,8 +10,6 @@ import {
   TrendingUp,
   Receipt,
   Settings,
-  Menu,
-  X,
   LogOut,
   UserPlus,
   ClipboardList,
@@ -19,6 +17,7 @@ import {
   DollarSign,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Scale,
   Clock,
   Star,
@@ -32,6 +31,8 @@ import {
   Moon,
   Monitor,
   Handshake,
+  Target,
+  MoreHorizontal,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
@@ -51,6 +52,7 @@ const navigationItems = [
   { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
   { nameKey: 'nav.sessionRecorder', href: '/session-recorder', icon: Mic, adminOnly: false },
   { nameKey: 'nav.outcomeMeasures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
+  { nameKey: 'nav.treatmentPlans', href: '/treatment-plans', icon: Target, adminOnly: false },
   { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
   { nameKey: 'nav.insuranceRates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
   { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
@@ -62,14 +64,23 @@ const navigationItems = [
   { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
   { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
   { nameKey: 'nav.breachIncidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
+  { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
   { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
+];
+
+// Bottom tab bar items (the 4 primary + More)
+const bottomTabItems = [
+  { nameKey: 'nav.dashboard', href: '/', icon: Home },
+  { nameKey: 'nav.patients', href: '/patients', icon: Users },
+  { nameKey: 'nav.claims', href: '/claims', icon: FileText },
+  { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar },
 ];
 
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
   const { user, isAdmin, currentRole } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
 
@@ -82,13 +93,28 @@ export default function SimpleNavigation() {
   const themeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
   const themeLabel = theme === 'dark' ? t('theme.dark') : theme === 'light' ? t('theme.light') : t('theme.system');
 
-  // Close mobile menu on route change
+  // Close mobile menu and more sheet on route change
+  // Close more sheet on route change
   useEffect(() => {
-    setMobileMenuOpen(false);
+    setMoreSheetOpen(false);
   }, [location]);
+
+  // Prevent body scroll when more sheet is open
+  useEffect(() => {
+    if (moreSheetOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [moreSheetOpen]);
 
   // Filter navigation items based on role
   const filteredNavigation = navigationItems.filter(item => !item.adminOnly || isAdmin);
+
+  // Items for the "More" sheet (everything not in bottom tabs)
+  const bottomTabHrefs = new Set(bottomTabItems.map(item => item.href));
+  const moreNavItems = filteredNavigation.filter(item => !bottomTabHrefs.has(item.href));
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -102,6 +128,18 @@ export default function SimpleNavigation() {
     setLocation(href);
   };
 
+  // Check if current location matches any bottom tab
+  const isBottomTabActive = (href: string) => {
+    if (href === '/') return location === '/';
+    return location.startsWith(href);
+  };
+
+  // Check if current location matches any "more" item
+  const isMoreActive = moreNavItems.some(item => {
+    if (item.href === '/') return location === '/';
+    return location.startsWith(item.href);
+  });
+
   return (
     <>
       {/* Skip to main content link */}
@@ -112,7 +150,7 @@ export default function SimpleNavigation() {
         {t('nav.skipToMain')}
       </a>
 
-      {/* Desktop Navigation */}
+      {/* Desktop Navigation - sidebar, hidden on mobile */}
       <nav
         role="navigation"
         aria-label={t('nav.mainNavigation')}
@@ -193,36 +231,122 @@ export default function SimpleNavigation() {
         </div>
       </nav>
 
-      {/* Mobile Navigation */}
-      <div className="md:hidden">
-        <div className="flex items-center justify-between h-16 px-4 bg-background border-b border-border">
+      {/* Mobile: Top header bar with logo only (no hamburger needed since we have bottom tabs) */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-background border-b border-border">
+        <div className="flex items-center justify-between h-14 px-4">
           <div className="flex items-center">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center mr-3">
-              <FileText className="w-5 h-5 text-primary-foreground" aria-hidden="true" />
+            <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center mr-2">
+              <FileText className="w-4 h-4 text-primary-foreground" aria-hidden="true" />
             </div>
-            <span className="text-xl font-bold text-foreground">TherapyBill AI</span>
+            <span className="text-lg font-bold text-foreground">TherapyBill AI</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <LanguageSwitcher compact />
             <Button
               variant="ghost"
               size="sm"
-              aria-label={mobileMenuOpen ? t('nav.closeMenu') : t('nav.openMenu')}
-              aria-expanded={mobileMenuOpen}
-              aria-controls="mobile-nav-menu"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label={themeLabel}
+              title={themeLabel}
+              onClick={cycleTheme}
+              className="h-10 w-10 min-h-[44px] min-w-[44px]"
             >
-              {mobileMenuOpen ? <X className="w-6 h-6" aria-hidden="true" /> : <Menu className="w-6 h-6" aria-hidden="true" />}
+              {(() => { const ThemeIcon = themeIcon; return <ThemeIcon className="w-4 h-4" aria-hidden="true" />; })()}
             </Button>
           </div>
         </div>
+      </div>
 
-        {/* Mobile Menu */}
-        {mobileMenuOpen && (
-          <div id="mobile-nav-menu" className="fixed inset-0 top-16 bg-background z-50 overflow-y-auto">
-            <nav role="navigation" aria-label={t('nav.mobileNavigation')} className="px-4 py-6">
-              <ul className="space-y-2" role="list">
-                {filteredNavigation.map((item) => {
+      {/* Mobile: Bottom Tab Bar */}
+      <nav
+        role="navigation"
+        aria-label={t('nav.mobileNavigation')}
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-background border-t border-border safe-area-bottom"
+      >
+        <div className="flex items-stretch justify-around h-16 px-1">
+          {bottomTabItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = isBottomTabActive(item.href);
+            return (
+              <a
+                key={item.href}
+                href={item.href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleNavClick(item.href);
+                }}
+                aria-current={isActive ? 'page' : undefined}
+                className={`flex flex-col items-center justify-center flex-1 min-h-[44px] min-w-[44px] transition-colors ${
+                  isActive
+                    ? 'text-primary'
+                    : 'text-muted-foreground'
+                }`}
+              >
+                <Icon className="w-5 h-5 mb-0.5" aria-hidden="true" />
+                <span className="text-[10px] font-medium leading-tight">{t(item.nameKey)}</span>
+              </a>
+            );
+          })}
+          {/* More tab */}
+          <button
+            onClick={() => setMoreSheetOpen(!moreSheetOpen)}
+            aria-expanded={moreSheetOpen}
+            aria-label="More navigation options"
+            className={`flex flex-col items-center justify-center flex-1 min-h-[44px] min-w-[44px] transition-colors ${
+              isMoreActive || moreSheetOpen
+                ? 'text-primary'
+                : 'text-muted-foreground'
+            }`}
+          >
+            <MoreHorizontal className="w-5 h-5 mb-0.5" aria-hidden="true" />
+            <span className="text-[10px] font-medium leading-tight">More</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* Mobile: "More" slide-up sheet */}
+      {moreSheetOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="md:hidden fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+            onClick={() => setMoreSheetOpen(false)}
+            aria-hidden="true"
+          />
+          {/* Sheet */}
+          <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-background rounded-t-2xl border-t border-border max-h-[75vh] flex flex-col animate-in slide-in-from-bottom duration-300">
+            {/* Handle */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 bg-muted-foreground/30 rounded-full" />
+            </div>
+            {/* User info row */}
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-border">
+              <Avatar className="h-9 w-9">
+                <AvatarImage src={(user as any)?.profileImageUrl} />
+                <AvatarFallback className="text-xs">{getUserInitials()}</AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">
+                  {(user as any)?.firstName && (user as any)?.lastName
+                    ? `${(user as any).firstName} ${(user as any).lastName}`
+                    : (user as any)?.email || 'User'
+                  }
+                </p>
+                <p className="text-xs text-muted-foreground capitalize">{currentRole}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={t('nav.logOut')}
+                onClick={() => window.location.href = '/api/logout'}
+                className="min-h-[44px] min-w-[44px]"
+              >
+                <LogOut className="w-4 h-4" aria-hidden="true" />
+              </Button>
+            </div>
+            {/* Nav items grid */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 pb-20">
+              <ul className="grid grid-cols-3 gap-2" role="list">
+                {moreNavItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = location === item.href;
                   return (
@@ -232,26 +356,26 @@ export default function SimpleNavigation() {
                         onClick={(e) => {
                           e.preventDefault();
                           handleNavClick(item.href);
-                          setMobileMenuOpen(false);
+                          setMoreSheetOpen(false);
                         }}
                         aria-current={isActive ? 'page' : undefined}
-                        className={`flex items-center px-3 py-3 rounded-lg text-base font-medium transition-colors ${
+                        className={`flex flex-col items-center justify-center p-3 rounded-xl min-h-[72px] text-center transition-colors ${
                           isActive
                             ? 'bg-primary/10 text-primary'
                             : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                         }`}
                       >
-                        <Icon className="w-6 h-6 mr-3" aria-hidden="true" />
-                        {t(item.nameKey)}
+                        <Icon className="w-5 h-5 mb-1.5" aria-hidden="true" />
+                        <span className="text-[11px] font-medium leading-tight">{t(item.nameKey)}</span>
                       </a>
                     </li>
                   );
                 })}
               </ul>
-            </nav>
+            </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </>
   );
 }

@@ -26,6 +26,7 @@ import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
+import { predictDenial } from '../services/aiDenialPredictor';
 
 const router = Router();
 const claimOptimizer = new AiClaimOptimizer();
@@ -1508,6 +1509,112 @@ router.get('/analytics/denial-reasons', isAuthenticated, async (req: any, res) =
   } catch (error) {
     logger.error('Error fetching denial reasons', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch denial reasons' });
+  }
+});
+
+// ==================== AI DENIAL PREDICTION ====================
+
+/**
+ * @openapi
+ * /api/claims/{id}/predict-denial:
+ *   post:
+ *     tags: [Claims]
+ *     summary: Predict denial risk for a draft claim
+ *     description: Uses AI to analyze a draft claim and predict the likelihood of denial, with actionable suggestions.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Denial prediction result
+ *       400:
+ *         description: Invalid claim ID or claim not in draft status
+ *       404:
+ *         description: Claim not found
+ *       500:
+ *         description: Server error
+ */
+router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = validatePositiveInt(req.params.id);
+    if (claimId === null) {
+      return res.status(400).json({ message: 'Invalid claim ID' });
+    }
+
+    const claim = await storage.getClaim(claimId);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    // Security: Verify user has access to this claim's practice
+    const userPracticeId = req.userPracticeId;
+    const userRole = req.userRole;
+    if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Get line items with enriched CPT/ICD-10 data
+    const lineItems = await storage.getClaimLineItems(claimId);
+    const cptCodesAll = await storage.getCptCodes();
+    const icd10CodesAll = await storage.getIcd10Codes();
+
+    const enrichedLineItems = lineItems.map((item: any) => {
+      const cptCode = cptCodesAll.find((c: any) => c.id === item.cptCodeId);
+      const icd10Code = icd10CodesAll.find((i: any) => i.id === item.icd10CodeId);
+      return {
+        ...item,
+        cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+        icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
+      };
+    });
+
+    // Get SOAP note if session exists
+    let soapNote = null;
+    if (claim.sessionId) {
+      soapNote = await storage.getSoapNoteBySession(claim.sessionId);
+    }
+
+    // Get patient
+    const patient = await storage.getPatient(claim.patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    // Run prediction
+    const prediction = await predictDenial(
+      {
+        id: claim.id,
+        claimNumber: claim.claimNumber,
+        totalAmount: claim.totalAmount,
+        status: claim.status,
+        insuranceId: claim.insuranceId,
+        sessionId: claim.sessionId,
+      },
+      enrichedLineItems,
+      soapNote ?? null,
+      {
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        dateOfBirth: patient.dateOfBirth,
+        insuranceProvider: patient.insuranceProvider,
+        insuranceId: patient.insuranceId,
+      }
+    );
+
+    // Store prediction on the claim
+    await storage.updateClaim(claimId, {
+      denialPrediction: prediction as any,
+    });
+
+    res.json(prediction);
+  } catch (error) {
+    logger.error('Error predicting denial', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    safeErrorResponse(res, 500, 'Failed to predict denial risk', error);
   }
 });
 

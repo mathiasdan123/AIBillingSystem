@@ -92,12 +92,12 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 mb-2">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+      <div className="mb-6 md:mb-8">
+        <h1 className="text-xl md:text-2xl font-bold text-slate-900 mb-1 md:mb-2">
           {t('dashboard.welcomeBack', { name: user?.firstName || 'User' })}
         </h1>
-        <p className="text-slate-600">
+        <p className="text-sm md:text-base text-slate-600">
           {t('dashboard.practiceOverview')}
         </p>
       </div>
@@ -107,39 +107,39 @@ export default function Dashboard() {
 
       {/* Denied Claims Alert */}
       {deniedClaimsReport && deniedClaimsReport.summary?.totalDenied > 0 && (
-        <Card className="mt-6 border-red-200 bg-red-50">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Ban className="w-5 h-5 text-red-600" />
-                <CardTitle className="text-red-900">{t('dashboard.deniedClaimsToday')}</CardTitle>
+        <Card className="mt-4 md:mt-6 border-red-200 bg-red-50">
+          <CardHeader className="pb-3 px-4 md:px-6">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center space-x-2 min-w-0">
+                <Ban className="w-5 h-5 text-red-600 flex-shrink-0" />
+                <CardTitle className="text-red-900 text-sm md:text-base truncate">{t('dashboard.deniedClaimsToday')}</CardTitle>
               </div>
               <Link href="/reports">
-                <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100">
+                <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 whitespace-nowrap text-xs md:text-sm">
                   {t('dashboard.viewFullReport')}
                 </Button>
               </Link>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-              <div className="text-center p-3 bg-white rounded-lg border border-red-100">
-                <p className="text-2xl font-bold text-red-600">{deniedClaimsReport.summary.totalDenied}</p>
-                <p className="text-xs text-slate-600">{t('dashboard.claimsDenied')}</p>
+          <CardContent className="px-4 md:px-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mb-4">
+              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-red-100">
+                <p className="text-xl md:text-2xl font-bold text-red-600">{deniedClaimsReport.summary.totalDenied}</p>
+                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.claimsDenied')}</p>
               </div>
-              <div className="text-center p-3 bg-white rounded-lg border border-red-100">
-                <p className="text-2xl font-bold text-red-600">
+              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-red-100">
+                <p className="text-xl md:text-2xl font-bold text-red-600">
                   ${deniedClaimsReport.summary.totalAmountAtRisk?.toLocaleString() || '0'}
                 </p>
-                <p className="text-xs text-slate-600">{t('dashboard.amountAtRisk')}</p>
+                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.amountAtRisk')}</p>
               </div>
-              <div className="text-center p-3 bg-white rounded-lg border border-green-100">
-                <p className="text-2xl font-bold text-green-600">{deniedClaimsReport.summary.appealsGenerated}</p>
-                <p className="text-xs text-slate-600">{t('dashboard.appealsGenerated')}</p>
+              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-green-100">
+                <p className="text-xl md:text-2xl font-bold text-green-600">{deniedClaimsReport.summary.appealsGenerated}</p>
+                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.appealsGenerated')}</p>
               </div>
-              <div className="text-center p-3 bg-white rounded-lg border border-blue-100">
-                <p className="text-2xl font-bold text-blue-600">{deniedClaimsReport.summary.appealsSent}</p>
-                <p className="text-xs text-slate-600">{t('dashboard.appealsSent')}</p>
+              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-blue-100">
+                <p className="text-xl md:text-2xl font-bold text-blue-600">{deniedClaimsReport.summary.appealsSent}</p>
+                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.appealsSent')}</p>
               </div>
             </div>
 
@@ -148,16 +148,16 @@ export default function Dashboard() {
                 <p className="text-sm font-medium text-red-800 mb-2">{t('dashboard.todaysDeniedClaims')}</p>
                 {deniedClaimsReport.claims.slice(0, 3).map((claim: any) => (
                   <div key={claim.id} className="flex items-center justify-between p-2 bg-white rounded border border-red-100">
-                    <div className="flex items-center space-x-3">
-                      <XCircle className="w-4 h-4 text-red-500" />
-                      <div>
-                        <p className="font-medium text-slate-900 text-sm">{claim.claimNumber}</p>
-                        <p className="text-xs text-slate-600">{claim.patientName}</p>
+                    <div className="flex items-center space-x-2 md:space-x-3 min-w-0">
+                      <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-900 text-xs md:text-sm truncate">{claim.claimNumber}</p>
+                        <p className="text-[10px] md:text-xs text-slate-600 truncate">{claim.patientName}</p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-medium text-red-600 text-sm">${claim.amount}</p>
-                      <p className="text-xs text-slate-500">{claim.appealStatus === 'none' ? t('dashboard.noAppeal') : t('dashboard.appeal', { status: claim.appealStatus })}</p>
+                    <div className="text-right flex-shrink-0 ml-2">
+                      <p className="font-medium text-red-600 text-xs md:text-sm">${claim.amount}</p>
+                      <p className="text-[10px] md:text-xs text-slate-500">{claim.appealStatus === 'none' ? t('dashboard.noAppeal') : t('dashboard.appeal', { status: claim.appealStatus })}</p>
                     </div>
                   </div>
                 ))}
@@ -172,21 +172,21 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mt-6 md:mt-8">
         {/* Recent Claims */}
         <Card>
-          <CardHeader>
+          <CardHeader className="px-4 md:px-6">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>{t('dashboard.recentClaims')}</CardTitle>
-                <CardDescription>{t('dashboard.latestBilling')}</CardDescription>
+                <CardTitle className="text-base md:text-lg">{t('dashboard.recentClaims')}</CardTitle>
+                <CardDescription className="text-xs md:text-sm">{t('dashboard.latestBilling')}</CardDescription>
               </div>
               <Link href="/claims">
-                <Button size="sm">{t('common.viewAll')}</Button>
+                <Button size="sm" className="text-xs md:text-sm">{t('common.viewAll')}</Button>
               </Link>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 md:px-6">
             {claimsLoading ? (
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -203,33 +203,33 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : recentClaims?.length ? (
-              <div className="space-y-3">
+              <div className="space-y-2 md:space-y-3">
                 {recentClaims.slice(0, 5).map((claim: any) => (
-                  <div key={claim.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50">
-                    <div className="flex items-center space-x-3">
+                  <div key={claim.id} className="flex items-center justify-between p-2.5 md:p-3 rounded-lg bg-slate-50">
+                    <div className="flex items-center space-x-2 md:space-x-3 min-w-0">
                       {getClaimStatusIcon(claim.status)}
-                      <div>
-                        <p className="font-medium text-slate-900">{claim.claimNumber}</p>
-                        <p className="text-sm text-slate-600">
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-900 text-sm truncate">{claim.claimNumber}</p>
+                        <p className="text-xs md:text-sm text-slate-600 truncate">
                           ${claim.totalAmount} • {new Date(claim.createdAt).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(claim.status)}`}>
+                    <span className={`px-2 py-1 rounded-full text-[10px] md:text-xs font-medium flex-shrink-0 ${getStatusColor(claim.status)}`}>
                       {claim.status}
                     </span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <FileText className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">{t('dashboard.noClaimsYet')}</h3>
-                <p className="text-muted-foreground mb-6 max-w-md">
+              <div className="flex flex-col items-center justify-center py-8 md:py-12 text-center">
+                <FileText className="h-10 w-10 md:h-12 md:w-12 text-muted-foreground mb-3 md:mb-4" />
+                <h3 className="text-base md:text-lg font-semibold mb-2">{t('dashboard.noClaimsYet')}</h3>
+                <p className="text-muted-foreground mb-4 md:mb-6 max-w-md text-sm">
                   {t('dashboard.noClaimsDescription')}
                 </p>
                 <Link href="/claims">
-                  <Button size="sm">
+                  <Button size="sm" className="w-full sm:w-auto">
                     <Plus className="w-4 h-4 mr-2" />
                     {t('dashboard.createFirstClaim')}
                   </Button>
@@ -241,18 +241,18 @@ export default function Dashboard() {
 
         {/* Recent Patients */}
         <Card>
-          <CardHeader>
+          <CardHeader className="px-4 md:px-6">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>{t('dashboard.recentPatients')}</CardTitle>
-                <CardDescription>{t('dashboard.newlyAdded')}</CardDescription>
+                <CardTitle className="text-base md:text-lg">{t('dashboard.recentPatients')}</CardTitle>
+                <CardDescription className="text-xs md:text-sm">{t('dashboard.newlyAdded')}</CardDescription>
               </div>
               <Link href="/patients">
-                <Button size="sm">{t('common.viewAll')}</Button>
+                <Button size="sm" className="text-xs md:text-sm">{t('common.viewAll')}</Button>
               </Link>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 md:px-6">
             {patientsLoading ? (
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -269,33 +269,33 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : recentPatients?.length ? (
-              <div className="space-y-3">
+              <div className="space-y-2 md:space-y-3">
                 {recentPatients.slice(0, 5).map((patient: any) => (
-                  <div key={patient.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50">
-                    <div>
-                      <p className="font-medium text-slate-900">
+                  <div key={patient.id} className="flex items-center justify-between p-2.5 md:p-3 rounded-lg bg-slate-50 gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900 text-sm truncate">
                         {patient.firstName} {patient.lastName}
                       </p>
-                      <p className="text-sm text-slate-600">
+                      <p className="text-xs md:text-sm text-slate-600 truncate">
                         {patient.email} • {new Date(patient.createdAt).toLocaleDateString()}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium text-slate-900">{patient.insuranceProvider}</p>
-                      <p className="text-xs text-slate-600">{patient.insuranceId}</p>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-xs md:text-sm font-medium text-slate-900 truncate max-w-[120px]">{patient.insuranceProvider}</p>
+                      <p className="text-[10px] md:text-xs text-slate-600 truncate max-w-[120px]">{patient.insuranceId}</p>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Users className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">{t('dashboard.welcomeGetStarted')}</h3>
-                <p className="text-muted-foreground mb-6 max-w-md">
+              <div className="flex flex-col items-center justify-center py-8 md:py-12 text-center">
+                <Users className="h-10 w-10 md:h-12 md:w-12 text-muted-foreground mb-3 md:mb-4" />
+                <h3 className="text-base md:text-lg font-semibold mb-2">{t('dashboard.welcomeGetStarted')}</h3>
+                <p className="text-muted-foreground mb-4 md:mb-6 max-w-md text-sm">
                   {t('dashboard.noPatientDescription')}
                 </p>
                 <Link href="/patients">
-                  <Button size="sm">
+                  <Button size="sm" className="w-full sm:w-auto">
                     <Plus className="w-4 h-4 mr-2" />
                     {t('dashboard.addFirstPatient')}
                   </Button>
@@ -307,39 +307,39 @@ export default function Dashboard() {
       </div>
 
       {/* Patient AR Aging Summary */}
-      <div className="mt-6">
+      <div className="mt-4 md:mt-6">
         <PatientArAgingSummary />
       </div>
 
       {/* Quick Actions */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>{t('dashboard.quickActions')}</CardTitle>
-          <CardDescription>{t('dashboard.commonTasks')}</CardDescription>
+      <Card className="mt-4 md:mt-6">
+        <CardHeader className="px-4 md:px-6">
+          <CardTitle className="text-base md:text-lg">{t('dashboard.quickActions')}</CardTitle>
+          <CardDescription className="text-xs md:text-sm">{t('dashboard.commonTasks')}</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <CardContent className="px-4 md:px-6">
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             <Link href="/patients">
-              <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
-                <Plus className="w-6 h-6" />
+              <Button variant="outline" className="w-full h-16 md:h-20 flex flex-col items-center justify-center space-y-1 md:space-y-2 text-xs md:text-sm">
+                <Plus className="w-5 h-5 md:w-6 md:h-6" />
                 <span>{t('dashboard.addPatient')}</span>
               </Button>
             </Link>
             <Link href="/claims">
-              <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
-                <Plus className="w-6 h-6" />
+              <Button variant="outline" className="w-full h-16 md:h-20 flex flex-col items-center justify-center space-y-1 md:space-y-2 text-xs md:text-sm">
+                <Plus className="w-5 h-5 md:w-6 md:h-6" />
                 <span>{t('dashboard.createClaim')}</span>
               </Button>
             </Link>
             <Link href="/expenses">
-              <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
-                <Plus className="w-6 h-6" />
+              <Button variant="outline" className="w-full h-16 md:h-20 flex flex-col items-center justify-center space-y-1 md:space-y-2 text-xs md:text-sm">
+                <Plus className="w-5 h-5 md:w-6 md:h-6" />
                 <span>{t('dashboard.addExpense')}</span>
               </Button>
             </Link>
             <Link href="/analytics">
-              <Button variant="outline" className="w-full h-20 flex flex-col items-center justify-center space-y-2">
-                <Plus className="w-6 h-6" />
+              <Button variant="outline" className="w-full h-16 md:h-20 flex flex-col items-center justify-center space-y-1 md:space-y-2 text-xs md:text-sm">
+                <Plus className="w-5 h-5 md:w-6 md:h-6" />
                 <span>{t('dashboard.viewReports')}</span>
               </Button>
             </Link>

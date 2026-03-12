@@ -32,6 +32,7 @@ const SoapNotes = lazy(() => import("@/pages/soap-notes"));
 const InvitePage = lazy(() => import("@/pages/invite"));
 const PayerManagement = lazy(() => import("@/pages/payer-management"));
 const BreachIncidents = lazy(() => import("@/pages/breach-incidents"));
+const ComplianceDashboard = lazy(() => import("@/pages/compliance"));
 const Waitlist = lazy(() => import("@/pages/waitlist"));
 const Reviews = lazy(() => import("@/pages/reviews"));
 const PublicBooking = lazy(() => import("@/pages/public-booking"));
@@ -50,11 +51,15 @@ const Billing = lazy(() => import("@/pages/billing"));
 const Reimbursement = lazy(() => import("@/pages/reimbursement"));
 const PayerContracts = lazy(() => import("@/pages/payer-contracts"));
 const RemittancePage = lazy(() => import("@/pages/remittance"));
+const TreatmentPlans = lazy(() => import("@/pages/treatment-plans"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
 const ResetPassword = lazy(() => import("@/pages/reset-password"));
 const VerifyEmail = lazy(() => import("@/pages/verify-email"));
+
+// SSO settings (admin only)
+const SsoSettings = lazy(() => import("@/pages/sso-settings"));
 
 // Error boundary for route-level errors
 class ErrorBoundary extends Component<
@@ -174,6 +179,7 @@ function Router() {
               <Route path="/soap-notes" component={SoapNotes} />
               <Route path="/session-recorder" component={SessionRecorder} />
               <Route path="/outcome-measures" component={OutcomeMeasures} />
+              <Route path="/treatment-plans" component={TreatmentPlans} />
               {isAdmin && <Route path="/accounting" component={Accounting} />}
               {isAdmin && <Route path="/analytics" component={Analytics} />}
               <Route path="/reports" component={Reports} />
@@ -187,6 +193,8 @@ function Router() {
               <Route path="/payer-contracts" component={PayerContracts} />
               <Route path="/subscription" component={Billing} />
               {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
+              {isAdmin && <Route path="/compliance" component={ComplianceDashboard} />}
+              {isAdmin && <Route path="/sso-settings" component={SsoSettings} />}
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />
               <Route path="/feedback/:token" component={PublicFeedback} />
