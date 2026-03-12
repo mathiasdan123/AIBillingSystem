@@ -1,3 +1,14 @@
+/**
+ * Form components built on react-hook-form.
+ *
+ * Inline validation UX:
+ *  - FormControl automatically passes `aria-invalid` and `aria-describedby` to
+ *    child inputs when the field has a validation error.
+ *  - FormMessage renders with `role="alert"` so screen readers announce errors.
+ *  - For best inline-validation UX, configure useForm() with `mode: "onTouched"`
+ *    (or `mode: "onBlur"`) so errors surface as the user moves between fields
+ *    rather than only on submit.
+ */
 "use client"
 
 import * as React from "react"
@@ -157,6 +168,7 @@ const FormMessage = React.forwardRef<
     <p
       ref={ref}
       id={formMessageId}
+      role="alert"
       className={cn("text-sm font-medium text-destructive", className)}
       {...props}
     >

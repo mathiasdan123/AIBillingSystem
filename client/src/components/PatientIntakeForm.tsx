@@ -204,6 +204,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
   const totalSteps = 15;
 
   const form = useForm<PatientFormData>({
+    mode: "onTouched",
     resolver: zodResolver(patientSchema),
     defaultValues: {
       firstName: "",

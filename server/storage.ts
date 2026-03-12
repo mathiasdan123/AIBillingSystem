@@ -829,6 +829,25 @@ export class DatabaseStorage implements IStorage {
     return claim;
   }
 
+  /**
+   * Batch fetch claims by IDs in a single query.
+   */
+  async getClaimsByIds(ids: number[]): Promise<Map<number, Claim>> {
+    const result = new Map<number, Claim>();
+    if (ids.length === 0) return result;
+
+    const rows = await db
+      .select()
+      .from(claims)
+      .where(inArray(claims.id, ids));
+
+    for (const row of rows) {
+      result.set(row.id, row);
+    }
+
+    return result;
+  }
+
   async updateClaim(id: number, claim: Partial<InsertClaim>): Promise<Claim> {
     const [updatedClaim] = await db
       .update(claims)
@@ -2061,6 +2080,29 @@ export class DatabaseStorage implements IStorage {
         lte(appointments.startTime, future)
       ))
       .orderBy(appointments.startTime);
+  }
+
+  async getUpcomingAppointmentsForReminders(hoursAhead: number): Promise<Appointment[]> {
+    const now = new Date();
+    const future = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
+
+    return await db
+      .select()
+      .from(appointments)
+      .where(and(
+        eq(appointments.status, 'scheduled'),
+        eq(appointments.reminderSent, false),
+        gte(appointments.startTime, now),
+        lte(appointments.startTime, future)
+      ))
+      .orderBy(appointments.startTime);
+  }
+
+  async markReminderSent(appointmentId: number): Promise<void> {
+    await db
+      .update(appointments)
+      .set({ reminderSent: true, reminderSentAt: new Date(), updatedAt: new Date() })
+      .where(eq(appointments.id, appointmentId));
   }
 
   // ==================== RECURRING APPOINTMENTS ====================
@@ -6539,6 +6581,74 @@ export class DatabaseStorage implements IStorage {
       hasConsent: missingConsents.length === 0,
       missingConsents,
     };
+  }
+
+  /**
+   * Batch consent check: single query for multiple patients.
+   * Returns a Map from patientId to { hasConsent, missingConsents }.
+   */
+  async batchGetConsentStatus(patientIds: number[]): Promise<Map<number, { hasConsent: boolean; missingConsents: string[] }>> {
+    const result = new Map<number, { hasConsent: boolean; missingConsents: string[] }>();
+    const requiredConsents = ['hipaa_release', 'treatment'];
+
+    if (patientIds.length === 0) return result;
+
+    // Single query: get all active (non-revoked) consents of required types for all patient IDs
+    const allConsents = await db
+      .select()
+      .from(patientConsents)
+      .where(
+        and(
+          inArray(patientConsents.patientId, patientIds),
+          inArray(patientConsents.consentType, requiredConsents),
+          eq(patientConsents.isRevoked, false)
+        )
+      );
+
+    // Build a set of active consent types per patient
+    const activeConsentsMap = new Map<number, Set<string>>();
+    for (const consent of allConsents) {
+      // Check expiration (same logic as hasActiveConsent)
+      if (consent.expirationDate && new Date(consent.expirationDate) < new Date()) {
+        continue;
+      }
+      if (!activeConsentsMap.has(consent.patientId)) {
+        activeConsentsMap.set(consent.patientId, new Set());
+      }
+      activeConsentsMap.get(consent.patientId)!.add(consent.consentType);
+    }
+
+    // Compute status for each patient
+    for (const patientId of patientIds) {
+      const activeTypes = activeConsentsMap.get(patientId) || new Set();
+      const missingConsents = requiredConsents.filter(type => !activeTypes.has(type));
+      result.set(patientId, {
+        hasConsent: missingConsents.length === 0,
+        missingConsents,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Batch fetch patients by IDs in a single query.
+   */
+  async getPatientsByIds(ids: number[]): Promise<Map<number, Patient>> {
+    const result = new Map<number, Patient>();
+    if (ids.length === 0) return result;
+
+    const rows = await db
+      .select()
+      .from(patients)
+      .where(and(inArray(patients.id, ids), isNull(patients.deletedAt)));
+
+    for (const row of rows) {
+      const patient = decryptPatientRecord(row) as Patient;
+      result.set(patient.id, patient);
+    }
+
+    return result;
   }
 
   // Therapy Bank operations

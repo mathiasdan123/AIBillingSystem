@@ -451,6 +451,7 @@ export const appointments = pgTable("appointments", {
   status: varchar("status").default("scheduled"), // scheduled, completed, cancelled, no_show
   notes: text("notes"),
   reminderSent: boolean("reminder_sent").default(false),
+  reminderSentAt: timestamp("reminder_sent_at"),
   cancelledAt: timestamp("cancelled_at"),
   cancelledBy: varchar("cancelled_by"), // patient, therapist, admin
   cancellationReason: varchar("cancellation_reason"), // patient_request, sick, schedule_conflict, weather, no_show, other

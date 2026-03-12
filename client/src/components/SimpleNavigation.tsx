@@ -26,8 +26,12 @@ import {
   MessageSquare,
   BarChart3,
   Mic,
-  CreditCard
+  CreditCard,
+  Sun,
+  Moon,
+  Monitor
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
 
 const navigation = [
@@ -60,6 +64,16 @@ export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
   const { user, isAdmin, currentRole } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+
+  const cycleTheme = () => {
+    if (theme === 'light') setTheme('dark');
+    else if (theme === 'dark') setTheme('system');
+    else setTheme('light');
+  };
+
+  const themeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
+  const themeLabel = theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System theme';
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -95,13 +109,13 @@ export default function SimpleNavigation() {
       <nav
         role="navigation"
         aria-label="Main navigation"
-        className="hidden md:flex fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-slate-200 flex-col z-10"
+        className="hidden md:flex fixed left-0 top-0 bottom-0 w-64 bg-background border-r border-border flex-col z-10"
       >
-        <div className="flex items-center h-16 px-6 border-b border-slate-200">
-          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mr-3">
-            <FileText className="w-5 h-5 text-white" aria-hidden="true" />
+        <div className="flex items-center h-16 px-6 border-b border-border">
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center mr-3">
+            <FileText className="w-5 h-5 text-primary-foreground" aria-hidden="true" />
           </div>
-          <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
+          <span className="text-xl font-bold text-foreground">TherapyBill AI</span>
         </div>
 
         <div className="flex-1 px-6 py-6 overflow-y-auto">
@@ -120,8 +134,8 @@ export default function SimpleNavigation() {
                     aria-current={isActive ? 'page' : undefined}
                     className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                       isActive
-                        ? 'bg-blue-50 text-blue-600'
-                        : 'text-slate-700 hover:bg-slate-50'
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                     }`}
                   >
                     <Icon className="w-5 h-5 mr-3" aria-hidden="true" />
@@ -133,21 +147,30 @@ export default function SimpleNavigation() {
           </ul>
         </div>
 
-        <div className="p-6 border-t border-slate-200 space-y-4">
+        <div className="p-6 border-t border-border space-y-4">
           <div className="flex items-center space-x-3">
             <Avatar>
               <AvatarImage src={(user as any)?.profileImageUrl} />
               <AvatarFallback>{getUserInitials()}</AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <p className="text-sm font-medium text-slate-900">
+              <p className="text-sm font-medium text-foreground">
                 {(user as any)?.firstName && (user as any)?.lastName
                   ? `${(user as any).firstName} ${(user as any).lastName}`
                   : (user as any)?.email || 'User'
                 }
               </p>
-              <p className="text-xs text-slate-500 capitalize">{currentRole}</p>
+              <p className="text-xs text-muted-foreground capitalize">{currentRole}</p>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={themeLabel}
+              title={themeLabel}
+              onClick={cycleTheme}
+            >
+              {(() => { const ThemeIcon = themeIcon; return <ThemeIcon className="w-4 h-4" aria-hidden="true" />; })()}
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -162,12 +185,12 @@ export default function SimpleNavigation() {
 
       {/* Mobile Navigation */}
       <div className="md:hidden">
-        <div className="flex items-center justify-between h-16 px-4 bg-white border-b border-slate-200">
+        <div className="flex items-center justify-between h-16 px-4 bg-background border-b border-border">
           <div className="flex items-center">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mr-3">
-              <FileText className="w-5 h-5 text-white" aria-hidden="true" />
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center mr-3">
+              <FileText className="w-5 h-5 text-primary-foreground" aria-hidden="true" />
             </div>
-            <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
+            <span className="text-xl font-bold text-foreground">TherapyBill AI</span>
           </div>
           <Button
             variant="ghost"
@@ -183,7 +206,7 @@ export default function SimpleNavigation() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div id="mobile-nav-menu" className="fixed inset-0 top-16 bg-white z-50 overflow-y-auto">
+          <div id="mobile-nav-menu" className="fixed inset-0 top-16 bg-background z-50 overflow-y-auto">
             <nav role="navigation" aria-label="Mobile navigation" className="px-4 py-6">
               <ul className="space-y-2" role="list">
                 {filteredNavigation.map((item) => {
@@ -201,8 +224,8 @@ export default function SimpleNavigation() {
                         aria-current={isActive ? 'page' : undefined}
                         className={`flex items-center px-3 py-3 rounded-lg text-base font-medium transition-colors ${
                           isActive
-                            ? 'bg-blue-50 text-blue-600'
-                            : 'text-slate-700 hover:bg-slate-50'
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                         }`}
                       >
                         <Icon className="w-6 h-6 mr-3" aria-hidden="true" />

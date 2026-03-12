@@ -23,6 +23,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { validate } from '../middleware/validate';
+import { requirePatientConsent } from '../middleware/consentCheck';
 import { createPatientSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
@@ -112,19 +113,22 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const { page, limit, offset } = parsePagination(req.query);
     const patients = allPatients.slice(offset, offset + limit);
 
-    // HIPAA: Include consent status for each patient (for UI indicators)
-    const patientsWithConsent = await Promise.all(
-      patients.map(async (patient: any) => {
-        const consentStatus = await storage.hasRequiredTreatmentConsents(patient.id);
-        return {
-          ...patient,
-          consentStatus: {
-            hasRequiredConsents: consentStatus.hasConsent,
-            missingConsents: consentStatus.missingConsents,
-          },
-        };
-      })
-    );
+    // HIPAA: Include consent status for each patient (batch query, not N+1)
+    const patientIds = patients.map((p: any) => p.id);
+    const consentStatusMap = await storage.batchGetConsentStatus(patientIds);
+    const patientsWithConsent = patients.map((patient: any) => {
+      const consentStatus = consentStatusMap.get(patient.id) || {
+        hasConsent: false,
+        missingConsents: ['hipaa_release', 'treatment'],
+      };
+      return {
+        ...patient,
+        consentStatus: {
+          hasRequiredConsents: consentStatus.hasConsent,
+          missingConsents: consentStatus.missingConsents,
+        },
+      };
+    });
 
     res.json(paginatedResponse(patientsWithConsent, total, page, limit));
   } catch (error) {
@@ -171,7 +175,7 @@ router.get('/:id/consents/:type', isAuthenticated, async (req: any, res) => {
 // ==================== PATIENT ELIGIBILITY ====================
 
 // Get most recent eligibility for a patient
-router.get('/:id/eligibility', isAuthenticated, async (req: any, res) => {
+router.get('/:id/eligibility', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const eligibility = await storage.getPatientEligibility(patientId);
@@ -183,7 +187,7 @@ router.get('/:id/eligibility', isAuthenticated, async (req: any, res) => {
 });
 
 // Get eligibility history for a patient
-router.get('/:id/eligibility/history', isAuthenticated, async (req: any, res) => {
+router.get('/:id/eligibility/history', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const history = await storage.getEligibilityHistory(patientId);
@@ -197,7 +201,7 @@ router.get('/:id/eligibility/history', isAuthenticated, async (req: any, res) =>
 // ==================== COST ESTIMATION ====================
 
 // Get cost estimate for a specific patient
-router.get('/:id/cost-estimate', isAuthenticated, async (req: any, res) => {
+router.get('/:id/cost-estimate', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const { getQuickEstimate } = await import('../services/insuranceCostEstimator');
     const patientId = parseInt(req.params.id);
@@ -228,7 +232,7 @@ router.get('/:id/cost-estimate', isAuthenticated, async (req: any, res) => {
 // ==================== PATIENT DOCUMENTS ====================
 
 // Get patient documents
-router.get('/:id/documents', isAuthenticated, async (req: any, res) => {
+router.get('/:id/documents', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const documents = await storage.getPatientDocuments(patientId);
@@ -240,7 +244,7 @@ router.get('/:id/documents', isAuthenticated, async (req: any, res) => {
 });
 
 // Upload document for patient
-router.post('/:id/documents', isAuthenticated, async (req: any, res) => {
+router.post('/:id/documents', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const { name, description, category, fileUrl, fileType, fileSize, visibleToPatient, requiresSignature } = req.body;
@@ -281,7 +285,7 @@ router.post('/:id/documents', isAuthenticated, async (req: any, res) => {
 // ==================== PATIENT STATEMENTS ====================
 
 // Get patient statements
-router.get('/:id/statements', isAuthenticated, async (req: any, res) => {
+router.get('/:id/statements', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const statements = await storage.getPatientStatements(patientId);
@@ -293,7 +297,7 @@ router.get('/:id/statements', isAuthenticated, async (req: any, res) => {
 });
 
 // Create statement for patient
-router.post('/:id/statements', isAuthenticated, async (req: any, res) => {
+router.post('/:id/statements', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const { totalAmount, dueDate, lineItems } = req.body;
@@ -329,7 +333,7 @@ router.post('/:id/statements', isAuthenticated, async (req: any, res) => {
 // ==================== TREATMENT PLANS ====================
 
 // Get patient's treatment plans
-router.get('/:id/treatment-plans', isAuthenticated, async (req: any, res) => {
+router.get('/:id/treatment-plans', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const plans = await storage.getPatientTreatmentPlans(patientId);
@@ -341,7 +345,7 @@ router.get('/:id/treatment-plans', isAuthenticated, async (req: any, res) => {
 });
 
 // Get patient's active treatment plan
-router.get('/:id/active-treatment-plan', isAuthenticated, async (req: any, res) => {
+router.get('/:id/active-treatment-plan', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const plan = await storage.getActiveTreatmentPlan(patientId);
@@ -359,7 +363,7 @@ router.get('/:id/active-treatment-plan', isAuthenticated, async (req: any, res) 
 // ==================== ASSESSMENTS ====================
 
 // Get patient's assessments
-router.get('/:id/assessments', isAuthenticated, async (req: any, res) => {
+router.get('/:id/assessments', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const templateId = req.query.templateId ? parseInt(req.query.templateId as string) : undefined;
@@ -372,7 +376,7 @@ router.get('/:id/assessments', isAuthenticated, async (req: any, res) => {
 });
 
 // Get patient's assessment history with trend analysis
-router.get('/:id/assessments/:templateId/history', isAuthenticated, async (req: any, res) => {
+router.get('/:id/assessments/:templateId/history', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const templateId = parseInt(req.params.templateId);
@@ -385,7 +389,7 @@ router.get('/:id/assessments/:templateId/history', isAuthenticated, async (req: 
 });
 
 // Get patient's latest assessment for a template
-router.get('/:id/assessments/:templateId/latest', isAuthenticated, async (req: any, res) => {
+router.get('/:id/assessments/:templateId/latest', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const templateId = parseInt(req.params.templateId);
@@ -398,7 +402,7 @@ router.get('/:id/assessments/:templateId/latest', isAuthenticated, async (req: a
 });
 
 // Get patient's assessment schedules
-router.get('/:id/assessment-schedules', isAuthenticated, async (req: any, res) => {
+router.get('/:id/assessment-schedules', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const schedules = await storage.getPatientAssessmentSchedules(patientId);
@@ -412,7 +416,7 @@ router.get('/:id/assessment-schedules', isAuthenticated, async (req: any, res) =
 // ==================== REFERRALS ====================
 
 // Get patient's referrals
-router.get('/:id/referrals', isAuthenticated, async (req: any, res) => {
+router.get('/:id/referrals', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const patientReferrals = await storage.getPatientReferrals(patientId);
@@ -426,7 +430,7 @@ router.get('/:id/referrals', isAuthenticated, async (req: any, res) => {
 // ==================== PAYMENT METHODS ====================
 
 // Get patient's payment methods
-router.get('/:id/payment-methods', isAuthenticated, async (req: any, res) => {
+router.get('/:id/payment-methods', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const methods = await storage.getPatientPaymentMethods(patientId);
@@ -438,7 +442,7 @@ router.get('/:id/payment-methods', isAuthenticated, async (req: any, res) => {
 });
 
 // Get patient's default payment method
-router.get('/:id/payment-methods/default', isAuthenticated, async (req: any, res) => {
+router.get('/:id/payment-methods/default', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const method = await storage.getDefaultPaymentMethod(patientId);
@@ -450,7 +454,7 @@ router.get('/:id/payment-methods/default', isAuthenticated, async (req: any, res
 });
 
 // Add payment method
-router.post('/:id/payment-methods', isAuthenticated, async (req: any, res) => {
+router.post('/:id/payment-methods', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const method = await storage.createPatientPaymentMethod({
@@ -467,7 +471,7 @@ router.post('/:id/payment-methods', isAuthenticated, async (req: any, res) => {
 // ==================== TRANSACTIONS ====================
 
 // Get patient's transactions
-router.get('/:id/transactions', isAuthenticated, async (req: any, res) => {
+router.get('/:id/transactions', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const transactions = await storage.getPatientPaymentHistory(patientId);
@@ -479,7 +483,7 @@ router.get('/:id/transactions', isAuthenticated, async (req: any, res) => {
 });
 
 // Get patient's balance
-router.get('/:id/balance', isAuthenticated, async (req: any, res) => {
+router.get('/:id/balance', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const balance = await storage.getPatientBalance(patientId);
@@ -493,7 +497,7 @@ router.get('/:id/balance', isAuthenticated, async (req: any, res) => {
 // ==================== PAYMENT PLANS ====================
 
 // Get patient's payment plans
-router.get('/:id/payment-plans', isAuthenticated, async (req: any, res) => {
+router.get('/:id/payment-plans', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const plans = await storage.getPatientPaymentPlans(patientId);
@@ -507,7 +511,7 @@ router.get('/:id/payment-plans', isAuthenticated, async (req: any, res) => {
 // ==================== PORTAL ACCESS ====================
 
 // Create or get portal access for a patient
-router.post('/:id/portal-access', isAuthenticated, async (req: any, res) => {
+router.post('/:id/portal-access', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const patient = await storage.getPatient(patientId);
@@ -531,7 +535,7 @@ router.post('/:id/portal-access', isAuthenticated, async (req: any, res) => {
 });
 
 // Send magic link to patient
-router.post('/:id/send-portal-link', isAuthenticated, async (req: any, res) => {
+router.post('/:id/send-portal-link', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
     const patient = await storage.getPatient(patientId);
@@ -619,7 +623,7 @@ router.post('/:id/send-portal-link', isAuthenticated, async (req: any, res) => {
 // ==================== INSURANCE DATA ====================
 
 // Refresh patient insurance data via Stedi
-router.post('/:id/insurance-data/refresh', isAuthenticated, async (req: any, res) => {
+router.post('/:id/insurance-data/refresh', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id, 10);
     const patient = await storage.getPatient(patientId);
@@ -666,7 +670,7 @@ router.post('/:id/insurance-data/refresh', isAuthenticated, async (req: any, res
 });
 
 // Get patient insurance data from cache
-router.get('/:id/insurance-data', isAuthenticated, async (req: any, res) => {
+router.get('/:id/insurance-data', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id, 10);
     const cached = await storage.getCachedInsuranceData(patientId);

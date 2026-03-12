@@ -2158,19 +2158,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const patients = await storage.getAllPatients();
 
-      // HIPAA: Include consent status for each patient (for UI indicators)
-      const patientsWithConsent = await Promise.all(
-        patients.map(async (patient: any) => {
-          const consentStatus = await storage.hasRequiredTreatmentConsents(patient.id);
-          return {
-            ...patient,
-            consentStatus: {
-              hasRequiredConsents: consentStatus.hasConsent,
-              missingConsents: consentStatus.missingConsents,
-            },
-          };
-        })
-      );
+      // HIPAA: Include consent status for each patient (batch query, not N+1)
+      const patientIds = patients.map((p: any) => p.id);
+      const consentStatusMap = await storage.batchGetConsentStatus(patientIds);
+      const patientsWithConsent = patients.map((patient: any) => {
+        const consentStatus = consentStatusMap.get(patient.id) || {
+          hasConsent: false,
+          missingConsents: ['hipaa_release', 'treatment'],
+        };
+        return {
+          ...patient,
+          consentStatus: {
+            hasRequiredConsents: consentStatus.hasConsent,
+            missingConsents: consentStatus.missingConsents,
+          },
+        };
+      });
 
       res.json(patientsWithConsent);
     } catch (error) {
@@ -4909,14 +4912,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const practiceId = getAuthorizedPracticeId(req);
       const deniedClaims = await storage.getDeniedClaimsForAppeals(practiceId);
 
-      // Enrich with patient info
-      const enrichedClaims = await Promise.all(deniedClaims.map(async (claim: any) => {
-        const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
+      // Enrich with patient info (batch query, not N+1)
+      const claimPatientIds = Array.from(new Set(deniedClaims.map((c: any) => c.patientId).filter((id: any): id is number => id != null)));
+      const claimPatientsMap = await storage.getPatientsByIds(claimPatientIds);
+      const enrichedClaims = deniedClaims.map((claim: any) => {
+        const patient = claim.patientId ? claimPatientsMap.get(claim.patientId) : undefined;
         return {
           ...claim,
           patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
         };
-      }));
+      });
 
       res.json(enrichedClaims);
     } catch (error) {
@@ -4937,10 +4942,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const appeals = await storage.getAppeals(practiceId, filters);
 
-      // Enrich with claim and patient info
-      const enrichedAppeals = await Promise.all(appeals.map(async (appeal: any) => {
-        const claim = await storage.getClaim(appeal.claimId);
-        const patient = claim?.patientId ? await storage.getPatient(claim.patientId) : null;
+      // Enrich with claim and patient info (batch queries, not N+1)
+      const appealClaimIds = Array.from(new Set(appeals.map((a: any) => a.claimId).filter((id: any): id is number => id != null)));
+      const appealsClaimsMap = await storage.getClaimsByIds(appealClaimIds);
+      const appealPatientIds = Array.from(new Set(
+        Array.from(appealsClaimsMap.values()).map(c => c.patientId).filter((id): id is number => id != null)
+      ));
+      const appealPatientsMap = await storage.getPatientsByIds(appealPatientIds);
+      const enrichedAppeals = appeals.map((appeal: any) => {
+        const claim = appealsClaimsMap.get(appeal.claimId);
+        const patient = claim?.patientId ? appealPatientsMap.get(claim.patientId) : undefined;
         return {
           ...appeal,
           claim: claim ? {
@@ -4951,7 +4962,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } : null,
           patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
         };
-      }));
+      });
 
       res.json(enrichedAppeals);
     } catch (error) {
@@ -7547,17 +7558,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const therapistId = req.query.therapistId as string | undefined;
       const sessions = await storage.getTodaysTelehealthSessions(practiceId, therapistId);
 
-      // Enrich with patient info
-      const enrichedSessions = await Promise.all(sessions.map(async (session) => {
+      // Enrich with patient info (batch query, not N+1)
+      const sessionPatientIds = Array.from(new Set(sessions.map(s => s.patientId).filter((id): id is number => id != null)));
+      const sessionPatientsMap = await storage.getPatientsByIds(sessionPatientIds);
+      const enrichedSessions = sessions.map((session) => {
         let patientName = 'Unknown Patient';
         if (session.patientId) {
-          const patient = await storage.getPatient(session.patientId);
+          const patient = sessionPatientsMap.get(session.patientId);
           if (patient) {
             patientName = `${patient.firstName} ${patient.lastName}`;
           }
         }
         return { ...session, patientName };
-      }));
+      });
 
       res.json(enrichedSessions);
     } catch (error) {
@@ -8904,16 +8917,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       const feedback = await storage.getPatientFeedback(practiceId, filters);
 
-      // Enrich with patient info
-      const enrichedFeedback = await Promise.all(feedback.map(async (fb) => {
-        const patient = await storage.getPatient(fb.patientId);
+      // Enrich with patient info (batch query, not N+1)
+      const feedbackPatientIds = Array.from(new Set(feedback.map(fb => fb.patientId).filter((id): id is number => id != null)));
+      const feedbackPatientsMap = await storage.getPatientsByIds(feedbackPatientIds);
+      const enrichedFeedback = feedback.map((fb) => {
+        const patient = feedbackPatientsMap.get(fb.patientId);
         return {
           ...fb,
           patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown',
           patientEmail: patient?.email,
           patientPhone: patient?.phone,
         };
-      }));
+      });
 
       res.json(enrichedFeedback);
     } catch (error) {
@@ -11068,9 +11083,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const status = req.query.status as string || undefined;
       const requests = await storage.getPracticeAppointmentRequests(practiceId, status);
 
-      // Enrich with patient and type names
+      // Enrich with patient info (batch query for patients, not N+1)
+      const reqPatientIds = Array.from(new Set(requests.map(r => r.patientId).filter((id): id is number => id != null)));
+      const reqPatientsMap = await storage.getPatientsByIds(reqPatientIds);
       const enrichedRequests = await Promise.all(requests.map(async (request) => {
-        const patient = await storage.getPatient(request.patientId);
+        const patient = reqPatientsMap.get(request.patientId);
         const appointmentType = request.appointmentTypeId
           ? await storage.getAppointmentType(request.appointmentTypeId)
           : null;

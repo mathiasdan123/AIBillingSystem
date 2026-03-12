@@ -4,8 +4,9 @@
  */
 
 import { storage } from '../storage';
-import { sendAppointmentReminderSMS, sendAppointmentConfirmationSMS, isSMSConfigured } from './smsService';
+import { sendAppointmentReminderSMS, isSMSConfigured } from './smsService';
 import { isEmailConfigured } from '../email';
+import logger from './logger';
 import nodemailer from 'nodemailer';
 
 // Email configuration
@@ -268,6 +269,121 @@ export async function processAppointmentReminders(
 }
 
 /**
+ * Send appointment reminders for all appointments in the next 24 hours
+ * that haven't had reminders sent yet. Queries across all practices.
+ * If SMS/email fails for one appointment, continues with the others.
+ */
+export async function sendAppointmentReminders(): Promise<ReminderResult[]> {
+  const results: ReminderResult[] = [];
+
+  if (!isEmailConfigured() && !isSMSConfigured()) {
+    logger.info('Neither email nor SMS configured, skipping appointment reminders');
+    return results;
+  }
+
+  try {
+    const upcomingAppointments = await storage.getUpcomingAppointmentsForReminders(24);
+
+    logger.info(`Found ${upcomingAppointments.length} appointments needing reminders in the next 24 hours`);
+
+    for (const appointment of upcomingAppointments) {
+      const result: ReminderResult = {
+        appointmentId: appointment.id,
+        patientName: '',
+        emailSent: false,
+        smsSent: false,
+      };
+
+      try {
+        const patient = appointment.patientId
+          ? await storage.getPatient(appointment.patientId)
+          : null;
+
+        if (!patient) {
+          result.error = 'Patient not found';
+          results.push(result);
+          continue;
+        }
+
+        result.patientName = `${patient.firstName} ${patient.lastName}`;
+
+        // Look up practice for name and contact info
+        const practice = appointment.practiceId
+          ? await storage.getPractice(appointment.practiceId)
+          : null;
+        const practiceName = practice?.name || 'Your Practice';
+
+        const appointmentTime = new Date(appointment.startTime).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+
+        // Send SMS reminder if Twilio is configured and patient has phone
+        if (isSMSConfigured() && patient.phone) {
+          try {
+            const smsMessage = `Reminder: You have an appointment with ${practiceName} tomorrow at ${appointmentTime}. Please contact us if you need to reschedule.`;
+            const { sendSMS } = await import('./smsService');
+            const smsResult = await sendSMS(patient.phone, smsMessage);
+            result.smsSent = smsResult.success;
+            if (!smsResult.success) {
+              logger.error(`SMS reminder failed for appointment ${appointment.id}`, { error: smsResult.error });
+            }
+          } catch (smsError) {
+            logger.error(`SMS reminder error for appointment ${appointment.id}`, {
+              error: smsError instanceof Error ? smsError.message : 'Unknown SMS error',
+            });
+          }
+        }
+
+        // Send email reminder if SMTP is configured and patient has email
+        if (isEmailConfigured() && patient.email) {
+          try {
+            const emailResult = await sendAppointmentReminderEmail(patient.email, {
+              patientName: patient.firstName,
+              appointmentDate: new Date(appointment.startTime),
+              appointmentTime,
+              practiceName,
+              practiceAddress: practice?.address || undefined,
+              practicePhone: practice?.phone || undefined,
+            });
+            result.emailSent = emailResult.success;
+            if (!emailResult.success) {
+              logger.error(`Email reminder failed for appointment ${appointment.id}`, { error: emailResult.error });
+            }
+          } catch (emailError) {
+            logger.error(`Email reminder error for appointment ${appointment.id}`, {
+              error: emailError instanceof Error ? emailError.message : 'Unknown email error',
+            });
+          }
+        }
+
+        // Mark the appointment as reminded if at least one notification was sent
+        if (result.emailSent || result.smsSent) {
+          await storage.markReminderSent(appointment.id);
+          logger.info(`Reminder sent for appointment ${appointment.id}`, {
+            patient: result.patientName,
+            emailSent: result.emailSent,
+            smsSent: result.smsSent,
+          });
+        }
+      } catch (error) {
+        result.error = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`Error processing reminder for appointment ${appointment.id}`, { error: result.error });
+      }
+
+      results.push(result);
+    }
+  } catch (error) {
+    logger.error('Error in sendAppointmentReminders', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+
+  return results;
+}
+
+/**
  * Get reminder status
  */
 export function getReminderStatus() {
@@ -279,6 +395,7 @@ export function getReminderStatus() {
 
 export default {
   processAppointmentReminders,
+  sendAppointmentReminders,
   sendAppointmentReminderEmail,
   getReminderStatus,
 };

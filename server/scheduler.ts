@@ -346,7 +346,12 @@ export function startScheduler() {
   const hardDeletionTask = cron.schedule('0 3 * * *', async () => {
     try {
       logger.info('Starting hard deletion of expired soft-deleted patients');
-      const retentionDays = 365;
+      // Default 7-year retention covers federal (6 years) and most state requirements.
+      // Configure via DATA_RETENTION_DAYS env var.
+      const retentionDays = parseInt(process.env.DATA_RETENTION_DAYS || '2555');
+      if (retentionDays < 2190) {
+        logger.warn('DATA_RETENTION_DAYS is set below 2190 (6 years) — this may not comply with federal HIPAA retention requirements', { retentionDays });
+      }
       const expiredPatients = await storage.getExpiredSoftDeletedPatients(retentionDays);
       logger.info('Found expired soft-deleted patients', { count: expiredPatients.length });
 
@@ -452,28 +457,25 @@ export function startScheduler() {
   });
   scheduledTasks.set('amendmentDeadlineCheck', amendmentDeadlineTask);
 
-  // Appointment reminders - runs every 15 minutes
-  const appointmentReminderTask = cron.schedule('*/15 * * * *', async () => {
+  // Appointment reminders - daily at 9:00 AM
+  const appointmentReminderTask = cron.schedule('0 9 * * *', async () => {
     try {
-      const { processAppointmentReminders } = await import('./services/appointmentReminderService');
+      const { sendAppointmentReminders } = await import('./services/appointmentReminderService');
+      const { isSMSConfigured } = await import('./services/smsService');
+      const { isEmailConfigured: isEmailReady } = await import('./email');
 
-      // Process 24-hour reminders
-      const results24h = await processAppointmentReminders(1, 24);
-      if (results24h.length > 0) {
-        logger.info('24-hour appointment reminders processed', {
-          count: results24h.length,
-          emailsSent: results24h.filter(r => r.emailSent).length,
-          smsSent: results24h.filter(r => r.smsSent).length,
-        });
+      if (!isSMSConfigured() && !isEmailReady()) {
+        logger.info('Neither SMS nor email configured, skipping appointment reminders');
+        return;
       }
 
-      // Process 2-hour reminders
-      const results2h = await processAppointmentReminders(1, 2);
-      if (results2h.length > 0) {
-        logger.info('2-hour appointment reminders processed', {
-          count: results2h.length,
-          emailsSent: results2h.filter(r => r.emailSent).length,
-          smsSent: results2h.filter(r => r.smsSent).length,
+      const results = await sendAppointmentReminders();
+      if (results.length > 0) {
+        logger.info('Daily appointment reminders processed', {
+          total: results.length,
+          emailsSent: results.filter(r => r.emailSent).length,
+          smsSent: results.filter(r => r.smsSent).length,
+          errors: results.filter(r => r.error).length,
         });
       }
     } catch (error: any) {
@@ -793,7 +795,12 @@ export async function triggerDailyReportNow(practiceId: number = 1) {
 
 // Manual trigger for hard deletion of expired patients
 export async function triggerHardDeletionNow(): Promise<{ deletedCount: number; errors: string[] }> {
-  const retentionDays = 365;
+  // Default 7-year retention covers federal (6 years) and most state requirements.
+  // Configure via DATA_RETENTION_DAYS env var.
+  const retentionDays = parseInt(process.env.DATA_RETENTION_DAYS || '2555');
+  if (retentionDays < 2190) {
+    logger.warn('DATA_RETENTION_DAYS is set below 2190 (6 years) — this may not comply with federal HIPAA retention requirements', { retentionDays });
+  }
   const errors: string[] = [];
   const expiredPatients = await storage.getExpiredSoftDeletedPatients(retentionDays);
 
