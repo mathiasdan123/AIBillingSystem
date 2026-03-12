@@ -137,7 +137,9 @@ export const patients = pgTable("patients", {
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_patients_practice_deleted").on(table.practiceId, table.deletedAt),
+]);
 
 // Insurance information
 export const insurances = pgTable("insurances", {
@@ -239,7 +241,10 @@ export const treatmentSessions = pgTable("treatment_sessions", {
   aiExtractedData: jsonb("ai_extracted_data"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_treatment_sessions_practice_date").on(table.practiceId, table.sessionDate),
+  index("idx_treatment_sessions_patient_id").on(table.patientId),
+]);
 
 // SOAP Notes for treatment sessions
 export const soapNotes = pgTable("soap_notes", {
@@ -273,7 +278,9 @@ export const soapNotes = pgTable("soap_notes", {
   cosignRejectionReason: text("cosign_rejection_reason"), // Reason if rejected
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_soap_notes_session_created").on(table.sessionId, table.createdAt),
+]);
 
 // Co-sign status enum values (for reference)
 export const COSIGN_STATUS = {
@@ -325,7 +332,10 @@ export const claims = pgTable("claims", {
   clearinghouseSubmittedAt: timestamp("clearinghouse_submitted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_claims_practice_status_created").on(table.practiceId, table.status, table.createdAt),
+  index("idx_claims_patient_id").on(table.patientId),
+]);
 
 // Claim Line Items (multiple CPT codes per claim/superbill)
 export const claimLineItems = pgTable("claim_line_items", {
@@ -451,7 +461,9 @@ export const appointments = pgTable("appointments", {
   isRecurringInstance: boolean("is_recurring_instance").default(false), // True for instances generated from a recurring parent
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_appointments_practice_start").on(table.practiceId, table.startTime),
+]);
 
 // Waitlist - for patients wanting earlier/different appointment times
 export const waitlist = pgTable("waitlist", {
@@ -1535,7 +1547,9 @@ export const auditLog = pgTable("audit_log", {
   success: boolean("success").default(true),
   integrityHash: varchar("integrity_hash"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_audit_log_user_practice_category").on(table.userId, table.practiceId, table.eventCategory),
+]);
 
 // Breach Incidents (45 CFR §§ 164.400-414)
 export const breachIncidents = pgTable("breach_incidents", {
@@ -2527,3 +2541,15 @@ export const insertPatientPlanBenefitsSchema = createInsertSchema(patientPlanBen
 export type PatientPlanBenefits = typeof patientPlanBenefits.$inferSelect;
 export type InsertPatientPlanBenefits = z.infer<typeof insertPatientPlanBenefitsSchema>;
 
+// Webhook Events - idempotency tracking for Stripe webhooks
+export const webhookEvents = pgTable("webhook_events", {
+  id: serial("id").primaryKey(),
+  eventId: text("event_id").notNull().unique(), // Stripe event ID
+  eventType: text("event_type").notNull(), // e.g. 'payment_intent.succeeded'
+  processedAt: timestamp("processed_at").defaultNow(),
+  status: text("status").notNull(), // 'processed' or 'failed'
+  metadata: jsonb("metadata"), // store event summary
+});
+
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type InsertWebhookEvent = typeof webhookEvents.$inferInsert;

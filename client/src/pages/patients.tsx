@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import PatientIntakeForm from "@/components/PatientIntakeForm";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
 import BenefitsSummary from "@/components/BenefitsSummary";
+import { Skeleton, CardGridSkeleton } from "@/components/ui/skeleton";
 
 interface EligibilityCheck {
   id: number;
@@ -273,12 +274,40 @@ export default function Patients() {
 
   if (isLoading || patientsLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div>
-          <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-slate-600">Loading patients...</p>
-          {patientsError && <p className="text-red-500 text-sm">Error: {String(patientsError)}</p>}
+      <div className="p-6 pt-20 md:pt-6 md:ml-64">
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <Skeleton className="h-8 w-48 mb-2" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <Skeleton className="h-10 w-32 rounded-md" />
         </div>
+
+        {/* Search skeleton */}
+        <div className="mb-6">
+          <Skeleton className="h-10 w-full rounded-md" />
+        </div>
+
+        {/* Stats cards skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-4 rounded" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Patient cards skeleton */}
+        <CardGridSkeleton />
+
+        {patientsError && <p className="text-red-500 text-sm mt-4">Error: {String(patientsError)}</p>}
       </div>
     );
   }

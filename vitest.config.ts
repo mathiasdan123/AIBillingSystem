@@ -11,8 +11,21 @@ export default defineConfig({
     exclude: ['node_modules', 'dist'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      exclude: ['node_modules', 'dist', '**/*.test.ts'],
+      reporter: ['text', 'json', 'html', 'lcov'],
+      exclude: [
+        'node_modules',
+        'dist',
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        'migrations/**',
+        'supabase/**',
+      ],
+      thresholds: {
+        statements: 20,
+        branches: 15,
+        functions: 20,
+        lines: 20,
+      },
     },
   },
   resolve: {

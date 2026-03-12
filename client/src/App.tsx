@@ -1,5 +1,6 @@
 import { Switch, Route } from "wouter";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, Component } from "react";
+import type { ReactNode, ErrorInfo } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -51,6 +52,43 @@ const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
 const ResetPassword = lazy(() => import("@/pages/reset-password"));
 const VerifyEmail = lazy(() => import("@/pages/verify-email"));
 
+// Error boundary for route-level errors
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 text-center p-6" role="alert">
+          <h2 className="text-lg font-semibold text-slate-900 mb-2">Something went wrong</h2>
+          <p className="text-sm text-slate-600 mb-4">An unexpected error occurred. Please try refreshing the page.</p>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Loading fallback component
 function PageLoader() {
   return (
@@ -73,26 +111,30 @@ function Router() {
 
   if (!isAuthenticated) {
     return (
-      <Suspense fallback={<PageLoader />}>
-        <Switch>
-          <Route path="/" component={Landing} />
-          <Route path="/intake" component={PatientIntake} />
-          <Route path="/invite/:token" component={InvitePage} />
-          <Route path="/mfa-challenge" component={MfaChallenge} />
-          <Route path="/book/:slug" component={PublicBooking} />
-          <Route path="/join/:code" component={TelehealthJoin} />
-          <Route path="/portal" component={PatientPortal} />
-          <Route path="/portal/login/:token" component={PatientPortal} />
-          <Route path="/patient-portal" component={NewPatientPortal} />
-          <Route path="/patient-portal/login" component={NewPatientPortal} />
-          <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
-          <Route path="/feedback/:token" component={PublicFeedback} />
-          <Route path="/forgot-password" component={ForgotPassword} />
-          <Route path="/reset-password/:token" component={ResetPassword} />
-          <Route path="/verify-email/:token" component={VerifyEmail} />
-          <Route component={NotFound} />
-        </Switch>
-      </Suspense>
+      <main id="main-content">
+        <ErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            <Switch>
+              <Route path="/" component={Landing} />
+              <Route path="/intake" component={PatientIntake} />
+              <Route path="/invite/:token" component={InvitePage} />
+              <Route path="/mfa-challenge" component={MfaChallenge} />
+              <Route path="/book/:slug" component={PublicBooking} />
+              <Route path="/join/:code" component={TelehealthJoin} />
+              <Route path="/portal" component={PatientPortal} />
+              <Route path="/portal/login/:token" component={PatientPortal} />
+              <Route path="/patient-portal" component={NewPatientPortal} />
+              <Route path="/patient-portal/login" component={NewPatientPortal} />
+              <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
+              <Route path="/feedback/:token" component={PublicFeedback} />
+              <Route path="/forgot-password" component={ForgotPassword} />
+              <Route path="/reset-password/:token" component={ResetPassword} />
+              <Route path="/verify-email/:token" component={VerifyEmail} />
+              <Route component={NotFound} />
+            </Switch>
+          </Suspense>
+        </ErrorBoundary>
+      </main>
     );
   }
 
@@ -100,41 +142,45 @@ function Router() {
     <>
       <SimpleNavigation />
       <IdleTimeoutWarning />
-      <Suspense fallback={<PageLoader />}>
-        <Switch>
-          <Route path="/" component={Dashboard} />
-          <Route path="/claims" component={Claims} />
-          <Route path="/appeals" component={Appeals} />
-          <Route path="/waitlist" component={Waitlist} />
-          <Route path="/reviews" component={Reviews} />
-          <Route path="/online-booking" component={BookingSettings} />
-          <Route path="/telehealth" component={Telehealth} />
-          <Route path="/messages" component={Messages} />
-          <Route path="/join/:code" component={TelehealthJoin} />
-          <Route path="/book/:slug" component={PublicBooking} />
-          <Route path="/patients" component={Patients} />
-          <Route path="/intake" component={PatientIntake} />
-          <Route path="/calendar" component={Calendar} />
-          <Route path="/soap-notes" component={SoapNotes} />
-          <Route path="/session-recorder" component={SessionRecorder} />
-          <Route path="/outcome-measures" component={OutcomeMeasures} />
-          {isAdmin && <Route path="/accounting" component={Accounting} />}
-          {isAdmin && <Route path="/analytics" component={Analytics} />}
-          <Route path="/reports" component={Reports} />
-          <Route path="/expenses" component={Expenses} />
-          <Route path="/settings" component={Settings} />
-          <Route path="/data-upload" component={DataUpload} />
-          <Route path="/payer-management" component={PayerManagement} />
-          <Route path="/insurance-rates" component={InsuranceRates} />
-          <Route path="/reimbursement" component={Reimbursement} />
-          <Route path="/subscription" component={Billing} />
-          {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
-          <Route path="/invite/:token" component={InvitePage} />
-          <Route path="/mfa-challenge" component={MfaChallenge} />
-          <Route path="/feedback/:token" component={PublicFeedback} />
-          <Route component={NotFound} />
-        </Switch>
-      </Suspense>
+      <main id="main-content">
+        <ErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/claims" component={Claims} />
+              <Route path="/appeals" component={Appeals} />
+              <Route path="/waitlist" component={Waitlist} />
+              <Route path="/reviews" component={Reviews} />
+              <Route path="/online-booking" component={BookingSettings} />
+              <Route path="/telehealth" component={Telehealth} />
+              <Route path="/messages" component={Messages} />
+              <Route path="/join/:code" component={TelehealthJoin} />
+              <Route path="/book/:slug" component={PublicBooking} />
+              <Route path="/patients" component={Patients} />
+              <Route path="/intake" component={PatientIntake} />
+              <Route path="/calendar" component={Calendar} />
+              <Route path="/soap-notes" component={SoapNotes} />
+              <Route path="/session-recorder" component={SessionRecorder} />
+              <Route path="/outcome-measures" component={OutcomeMeasures} />
+              {isAdmin && <Route path="/accounting" component={Accounting} />}
+              {isAdmin && <Route path="/analytics" component={Analytics} />}
+              <Route path="/reports" component={Reports} />
+              <Route path="/expenses" component={Expenses} />
+              <Route path="/settings" component={Settings} />
+              <Route path="/data-upload" component={DataUpload} />
+              <Route path="/payer-management" component={PayerManagement} />
+              <Route path="/insurance-rates" component={InsuranceRates} />
+              <Route path="/reimbursement" component={Reimbursement} />
+              <Route path="/subscription" component={Billing} />
+              {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
+              <Route path="/invite/:token" component={InvitePage} />
+              <Route path="/mfa-challenge" component={MfaChallenge} />
+              <Route path="/feedback/:token" component={PublicFeedback} />
+              <Route component={NotFound} />
+            </Switch>
+          </Suspense>
+        </ErrorBoundary>
+      </main>
     </>
   );
 }

@@ -199,6 +199,8 @@ import {
   patientPlanBenefits,
   type PatientPlanBenefits,
   type InsertPatientPlanBenefits,
+  webhookEvents,
+  type WebhookEvent,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -442,6 +444,11 @@ export interface IStorage {
   getExerciseBank(practiceId: number, category?: string): Promise<ExerciseBank[]>;
   createExerciseBankEntry(entry: InsertExerciseBank): Promise<ExerciseBank>;
   deleteExerciseBankEntry(id: number): Promise<void>;
+
+  // Webhook event idempotency operations
+  getWebhookEvent(eventId: string): Promise<WebhookEvent | undefined>;
+  createWebhookEvent(eventId: string, eventType: string, status: string, metadata?: any): Promise<WebhookEvent>;
+  updateWebhookEventStatus(eventId: string, status: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -6756,6 +6763,31 @@ export class DatabaseStorage implements IStorage {
       .where(eq(patientPlanBenefits.id, id))
       .returning();
     return updated;
+  }
+
+  // Webhook event idempotency operations
+  async getWebhookEvent(eventId: string): Promise<WebhookEvent | undefined> {
+    const [event] = await db
+      .select()
+      .from(webhookEvents)
+      .where(eq(webhookEvents.eventId, eventId))
+      .limit(1);
+    return event;
+  }
+
+  async createWebhookEvent(eventId: string, eventType: string, status: string, metadata?: any): Promise<WebhookEvent> {
+    const [event] = await db
+      .insert(webhookEvents)
+      .values({ eventId, eventType, status, metadata: metadata ?? null })
+      .returning();
+    return event;
+  }
+
+  async updateWebhookEventStatus(eventId: string, status: string): Promise<void> {
+    await db
+      .update(webhookEvents)
+      .set({ status })
+      .where(eq(webhookEvents.eventId, eventId));
   }
 }
 

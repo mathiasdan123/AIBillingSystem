@@ -4,6 +4,8 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static";
+import { requestTimeout } from "./middleware/requestTimeout";
+import { globalErrorHandler } from "./middleware/errorHandler";
 import { seedDatabase } from "./seeds";
 import { startScheduler } from "./scheduler";
 
@@ -216,6 +218,9 @@ app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
+// Request timeout middleware (skips multipart/file uploads)
+app.use(requestTimeout());
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -252,13 +257,8 @@ app.use((req, res, next) => {
   
   const server = await registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    res.status(status).json({ message });
-    throw err;
-  });
+  // Global error handler — must be AFTER all routes
+  app.use(globalErrorHandler);
 
   // Setup static file serving or vite dev server
   // In production: always use static file serving

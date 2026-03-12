@@ -12,8 +12,21 @@ export default defineConfig({
     setupFiles: ['./client/src/__tests__/setup.ts'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      exclude: ['node_modules', 'dist', '**/*.test.{ts,tsx}'],
+      reporter: ['text', 'json', 'html', 'lcov'],
+      exclude: [
+        'node_modules',
+        'dist',
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        'migrations/**',
+        'supabase/**',
+      ],
+      thresholds: {
+        statements: 20,
+        branches: 15,
+        functions: 20,
+        lines: 20,
+      },
     },
   },
   resolve: {

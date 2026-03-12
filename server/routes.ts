@@ -3051,14 +3051,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       logger.info('Stripe webhook verified', { eventType: event.type, eventId: event.id });
 
-      // Handle different event types
-      switch (event.type) {
-        case 'payment_intent.succeeded':
-          const paymentIntent = event.data.object as any;
-          logger.info('Payment succeeded', { paymentIntentId: paymentIntent.id });
+      // Idempotency check: skip if this event was already processed
+      const existingEvent = await storage.getWebhookEvent(event.id);
+      if (existingEvent && existingEvent.status === 'processed') {
+        logger.info('Webhook event already processed, skipping', { eventId: event.id });
+        return res.json({ received: true, deduplicated: true });
+      }
 
-          // Record payment in database
-          try {
+      // Record the event before processing (status: 'processing')
+      if (!existingEvent) {
+        await storage.createWebhookEvent(event.id, event.type, 'processing');
+      }
+
+      try {
+        // Handle different event types
+        switch (event.type) {
+          case 'payment_intent.succeeded':
+            const paymentIntent = event.data.object as any;
+            logger.info('Payment succeeded', { paymentIntentId: paymentIntent.id });
+
+            // Record payment in database
             const metadata = paymentIntent.metadata || {};
             const practiceId = parseInt(metadata.practiceId);
 
@@ -3088,25 +3100,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 paymentIntentId: paymentIntent.id
               });
             }
-          } catch (recordError: any) {
-            logger.error('Failed to record payment in database', {
-              paymentIntentId: paymentIntent.id,
-              error: recordError.message,
+            break;
+
+          case 'payment_intent.payment_failed':
+            const failedPayment = event.data.object as any;
+            logger.warn('Payment failed', {
+              paymentId: failedPayment.id,
+              failureCode: failedPayment.last_payment_error?.code,
+              failureMessage: failedPayment.last_payment_error?.message,
             });
-            // Don't fail the webhook - Stripe payment succeeded even if our recording failed
-          }
-          break;
 
-        case 'payment_intent.payment_failed':
-          const failedPayment = event.data.object as any;
-          logger.warn('Payment failed', {
-            paymentId: failedPayment.id,
-            failureCode: failedPayment.last_payment_error?.code,
-            failureMessage: failedPayment.last_payment_error?.message,
-          });
-
-          // Record failed payment and notify practice
-          try {
+            // Record failed payment and notify practice
             const failedMetadata = failedPayment.metadata || {};
             const failedPracticeId = parseInt(failedMetadata.practiceId);
 
@@ -3134,25 +3138,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 failureReason: failedPayment.last_payment_error?.message,
               });
             }
-          } catch (notifyError: any) {
-            logger.error('Failed to record/notify failed payment', {
-              paymentIntentId: failedPayment.id,
-              error: notifyError.message,
-            });
-          }
-          break;
+            break;
 
-        case 'setup_intent.succeeded':
-          const setupIntent = event.data.object as any;
-          logger.info('Setup intent succeeded', { setupIntentId: setupIntent.id });
-          // Payment method saved
-          break;
+          case 'setup_intent.succeeded':
+            const setupIntent = event.data.object as any;
+            logger.info('Setup intent succeeded', { setupIntentId: setupIntent.id });
+            // Payment method saved
+            break;
 
-        default:
-          logger.info('Unhandled event type', { eventType: event.type });
+          default:
+            logger.info('Unhandled event type', { eventType: event.type });
+        }
+
+        // Mark event as successfully processed
+        await storage.updateWebhookEventStatus(event.id, 'processed');
+        res.json({ received: true });
+      } catch (processingError: any) {
+        // Mark event as failed so it can be retried on next webhook delivery
+        logger.error('Webhook event processing failed', {
+          eventId: event.id,
+          eventType: event.type,
+          error: processingError.message,
+        });
+        await storage.updateWebhookEventStatus(event.id, 'failed');
+        // Still return 200 to Stripe to avoid infinite retries for non-transient errors
+        res.json({ received: true, processingFailed: true });
       }
-
-      res.json({ received: true });
     } catch (error: any) {
       logger.error('Stripe webhook verification failed', {
         error: error.message,

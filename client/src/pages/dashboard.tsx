@@ -8,6 +8,7 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 import DashboardStats from "@/components/DashboardStats";
 import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText } from "lucide-react";
 import { Link } from "wouter";
+import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -54,11 +55,7 @@ export default function Dashboard() {
   }) as any;
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   if (!isAuthenticated) {
@@ -188,8 +185,19 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             {claimsLoading ? (
-              <div className="flex items-center justify-center h-32">
-                <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+              <div className="space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50">
+                    <div className="flex items-center space-x-3">
+                      <Skeleton className="h-4 w-4 rounded-full" />
+                      <div>
+                        <Skeleton className="h-4 w-24 mb-1" />
+                        <Skeleton className="h-3 w-32" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-6 w-16 rounded-full" />
+                  </div>
+                ))}
               </div>
             ) : recentClaims?.length ? (
               <div className="space-y-3">
@@ -239,8 +247,19 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             {patientsLoading ? (
-              <div className="flex items-center justify-center h-32">
-                <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+              <div className="space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50">
+                    <div>
+                      <Skeleton className="h-4 w-32 mb-1" />
+                      <Skeleton className="h-3 w-48" />
+                    </div>
+                    <div className="text-right">
+                      <Skeleton className="h-4 w-24 mb-1" />
+                      <Skeleton className="h-3 w-16" />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : recentPatients?.length ? (
               <div className="space-y-3">

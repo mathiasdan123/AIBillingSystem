@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -61,6 +61,11 @@ export default function SimpleNavigation() {
   const { user, isAdmin, currentRole } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Close mobile menu on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location]);
+
   // Filter navigation items based on role
   const filteredNavigation = navigation.filter(item => !item.adminOnly || isAdmin);
 
@@ -78,36 +83,54 @@ export default function SimpleNavigation() {
 
   return (
     <>
+      {/* Skip to main content link */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[200] focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-md focus:outline-none"
+      >
+        Skip to main content
+      </a>
+
       {/* Desktop Navigation */}
-      <nav className="hidden md:flex fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-slate-200 flex-col z-10">
+      <nav
+        role="navigation"
+        aria-label="Main navigation"
+        className="hidden md:flex fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-slate-200 flex-col z-10"
+      >
         <div className="flex items-center h-16 px-6 border-b border-slate-200">
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mr-3">
-            <FileText className="w-5 h-5 text-white" />
+            <FileText className="w-5 h-5 text-white" aria-hidden="true" />
           </div>
           <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
         </div>
 
         <div className="flex-1 px-6 py-6 overflow-y-auto">
-          <nav className="space-y-2">
+          <ul className="space-y-2" role="list">
             {filteredNavigation.map((item) => {
               const Icon = item.icon;
               const isActive = location === item.href;
               return (
-                <div
-                  key={item.name}
-                  onClick={() => handleNavClick(item.href)}
-                  className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                    isActive
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <Icon className="w-5 h-5 mr-3" />
-                  {item.name}
-                </div>
+                <li key={item.name}>
+                  <a
+                    href={item.href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleNavClick(item.href);
+                    }}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-blue-50 text-blue-600'
+                        : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5 mr-3" aria-hidden="true" />
+                    {item.name}
+                  </a>
+                </li>
               );
             })}
-          </nav>
+          </ul>
         </div>
 
         <div className="p-6 border-t border-slate-200 space-y-4">
@@ -128,9 +151,10 @@ export default function SimpleNavigation() {
             <Button
               variant="ghost"
               size="sm"
+              aria-label="Log out"
               onClick={() => window.location.href = '/api/logout'}
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-4 h-4" aria-hidden="true" />
             </Button>
           </div>
         </div>
@@ -141,44 +165,53 @@ export default function SimpleNavigation() {
         <div className="flex items-center justify-between h-16 px-4 bg-white border-b border-slate-200">
           <div className="flex items-center">
             <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mr-3">
-              <FileText className="w-5 h-5 text-white" />
+              <FileText className="w-5 h-5 text-white" aria-hidden="true" />
             </div>
             <span className="text-xl font-bold text-slate-900">TherapyBill AI</span>
           </div>
           <Button
             variant="ghost"
             size="sm"
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-nav-menu"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            {mobileMenuOpen ? <X className="w-6 h-6" aria-hidden="true" /> : <Menu className="w-6 h-6" aria-hidden="true" />}
           </Button>
         </div>
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="fixed inset-0 top-16 bg-white z-50 overflow-y-auto">
-            <nav className="px-4 py-6 space-y-2">
-              {filteredNavigation.map((item) => {
-                const Icon = item.icon;
-                const isActive = location === item.href;
-                return (
-                  <div
-                    key={item.name}
-                    onClick={() => {
-                      handleNavClick(item.href);
-                      setMobileMenuOpen(false);
-                    }}
-                    className={`flex items-center px-3 py-3 rounded-lg text-base font-medium transition-colors cursor-pointer ${
-                      isActive
-                        ? 'bg-blue-50 text-blue-600'
-                        : 'text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Icon className="w-6 h-6 mr-3" />
-                    {item.name}
-                  </div>
-                );
-              })}
+          <div id="mobile-nav-menu" className="fixed inset-0 top-16 bg-white z-50 overflow-y-auto">
+            <nav role="navigation" aria-label="Mobile navigation" className="px-4 py-6">
+              <ul className="space-y-2" role="list">
+                {filteredNavigation.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = location === item.href;
+                  return (
+                    <li key={item.name}>
+                      <a
+                        href={item.href}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleNavClick(item.href);
+                          setMobileMenuOpen(false);
+                        }}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`flex items-center px-3 py-3 rounded-lg text-base font-medium transition-colors ${
+                          isActive
+                            ? 'bg-blue-50 text-blue-600'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Icon className="w-6 h-6 mr-3" aria-hidden="true" />
+                        {item.name}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
             </nav>
           </div>
         )}
