@@ -27,6 +27,8 @@ import { requirePatientConsent } from '../middleware/consentCheck';
 import { createPatientSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
+import { sendEmail } from '../services/emailService';
+import { portalWelcome } from '../services/emailTemplates';
 
 const router = Router();
 
@@ -861,43 +863,24 @@ router.post('/:id/send-portal-link', isAuthenticated, requirePatientConsent, asy
     // Send email with magic link
     if (patient.email) {
       try {
-        const nodemailer = await import('nodemailer');
-        const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.SMTP_PORT || '587'),
-          secure: process.env.SMTP_SECURE === 'true',
-          auth: {
-            user: process.env.SMTP_USER || '',
-            pass: process.env.SMTP_PASS || '',
-          },
-        });
-
         if (!patient.practiceId) {
           logger.warn('Patient has no assigned practice, using default name');
         }
         const practice = patient.practiceId ? await storage.getPractice(patient.practiceId) : null;
         const practiceName = practice?.name || 'Your Healthcare Provider';
 
-        await transporter.sendMail({
-          from: `"${practiceName}" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+        const { subject, html, text } = portalWelcome({
+          patientName: patient.firstName,
+          practiceName,
+          portalUrl,
+        });
+
+        await sendEmail({
           to: patient.email,
-          subject: `Access Your Patient Portal - ${practiceName}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2>Hello ${patient.firstName},</h2>
-              <p>You've been invited to access your patient portal at ${practiceName}.</p>
-              <p>Click the button below to securely access your portal:</p>
-              <p style="text-align: center; margin: 30px 0;">
-                <a href="${portalUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-                  Access Patient Portal
-                </a>
-              </p>
-              <p style="color: #666; font-size: 14px;">This link expires in 15 minutes for security purposes.</p>
-              <p style="color: #666; font-size: 14px;">If you didn't request this link, please ignore this email.</p>
-              <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-              <p style="color: #999; font-size: 12px;">${practiceName}</p>
-            </div>
-          `,
+          subject,
+          html,
+          text,
+          fromName: practiceName,
         });
 
         res.json({ message: 'Portal access link sent', email: patient.email });

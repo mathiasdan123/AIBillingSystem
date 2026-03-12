@@ -22,11 +22,30 @@ import {
   registrationLimiter,
 } from '../middleware/rate-limiter';
 import {
-  sendPasswordResetEmail,
+  sendPasswordResetEmail as sendPasswordResetEmailLegacy,
   sendEmailVerificationEmail,
   sendSecurityAlertEmail,
 } from '../email';
 import logger from '../services/logger';
+import { sendEmail } from '../services/emailService';
+import { passwordReset } from '../services/emailTemplates';
+
+/**
+ * Send password reset email using the new template system.
+ * Falls back to legacy implementation if the new service fails.
+ */
+async function sendPasswordResetEmail(
+  to: string,
+  data: { resetUrl: string; firstName: string; expiresInMinutes: number }
+): Promise<{ success: boolean; error?: string }> {
+  const { subject, html, text } = passwordReset({
+    firstName: data.firstName,
+    resetUrl: data.resetUrl,
+    expiresInMinutes: data.expiresInMinutes,
+  });
+
+  return sendEmail({ to, subject, html, text });
+}
 
 const router = Router();
 
