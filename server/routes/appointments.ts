@@ -15,6 +15,7 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { validate } from '../middleware/validate';
 import { createAppointmentSchema } from '../validation/schemas';
+import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 
 const router = Router();
@@ -98,13 +99,14 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const start = req.query.start ? new Date(req.query.start as string) : undefined;
     const end = req.query.end ? new Date(req.query.end as string) : undefined;
 
-    if (start && end) {
-      const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
-      res.json(appts);
-    } else {
-      const appts = await storage.getAppointments(practiceId);
-      res.json(appts);
-    }
+    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
+    const allAppts = (start && end)
+      ? await storage.getAppointmentsByDateRange(practiceId, start, end)
+      : await storage.getAppointments(practiceId);
+    const total = allAppts.length;
+    const { page, limit, offset } = parsePagination(req.query);
+    const appts = allAppts.slice(offset, offset + limit);
+    res.json(paginatedResponse(appts, total, page, limit));
   } catch (error) {
     logger.error('Error fetching appointments', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch appointments' });

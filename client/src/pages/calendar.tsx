@@ -466,7 +466,17 @@ export default function CalendarPage() {
                   </div>
                 ))}
               {appointments.filter(a => new Date(a.startTime) >= new Date() && a.status !== "cancelled").length === 0 && (
-                <p className="text-center text-slate-500 py-4">No upcoming appointments</p>
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <ClipboardList className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No upcoming appointments</h3>
+                  <p className="text-muted-foreground mb-6 max-w-md">
+                    Schedule your first appointment to start managing your calendar. You can set availability, book sessions, and track cancellations all in one place.
+                  </p>
+                  <Button onClick={() => setShowNewAppointment(true)}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Schedule an Appointment
+                  </Button>
+                </div>
               )}
             </div>
           </CardContent>

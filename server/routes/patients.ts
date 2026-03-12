@@ -24,6 +24,7 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { validate } from '../middleware/validate';
 import { createPatientSchema } from '../validation/schemas';
+import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 
 const router = Router();
@@ -105,7 +106,11 @@ const verifyPatientAccess = async (req: any, patientId: number): Promise<{
 // Get all patients
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
-    const patients = await storage.getAllPatients();
+    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
+    const allPatients = await storage.getAllPatients();
+    const total = allPatients.length;
+    const { page, limit, offset } = parsePagination(req.query);
+    const patients = allPatients.slice(offset, offset + limit);
 
     // HIPAA: Include consent status for each patient (for UI indicators)
     const patientsWithConsent = await Promise.all(
@@ -121,7 +126,7 @@ router.get('/', isAuthenticated, async (req: any, res) => {
       })
     );
 
-    res.json(patientsWithConsent);
+    res.json(paginatedResponse(patientsWithConsent, total, page, limit));
   } catch (error) {
     logger.error('Error fetching patients', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to fetch patients' });

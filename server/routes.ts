@@ -23,7 +23,7 @@ import { parsePlanDocument, parsePlanDocumentFromPDF, benefitsToInsertFormat } f
 import * as stripeService from "./services/stripeService";
 import { textToSpeech, isTextToSpeechAvailable, getAvailableVoices, soapNoteToSpeech, appealLetterToSpeech, VOICE_PRESETS } from "./services/textToSpeechService";
 import { auditMiddleware } from "./middleware/auditMiddleware";
-import { setMfaVerified, clearMfaVerification, mfaRequired, conditionalMfaRequired, adminMfaRequired, MFA_PROTECTED_ROUTES, MFA_CONFIG } from "./middleware/mfa-required";
+import { setMfaVerified, clearMfaVerification, mfaRequired, conditionalMfaRequired, requireMfaSetup, conditionalRequireMfaSetup, adminMfaRequired, MFA_PROTECTED_ROUTES, MFA_CONFIG } from "./middleware/mfa-required";
 import { authLimiter, apiLimiter, uploadLimiter, exportLimiter } from "./middleware/rate-limiter";
 import { createFileValidator, FileValidationContexts } from "./middleware/file-validator";
 import { validate } from "./middleware/validate";
@@ -506,6 +506,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // HIPAA audit middleware
   app.use('/api', auditMiddleware);
 
+  // HIPAA MFA enforcement: require MFA setup for all PHI routes
+  // This checks that the user has MFA enabled before allowing access.
+  // Applied before route handlers so both modular and legacy routes are covered.
+  app.use('/api', conditionalRequireMfaSetup);
+  // After setup check passes, enforce active MFA session verification
+  app.use('/api', conditionalMfaRequired);
+
   // Register HIPAA compliance routes
   registerPatientRightsRoutes(app);
   registerBaaRoutes(app);
@@ -539,7 +546,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
       const user = await storage.getUser(userId);
-      res.json(user);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      // Include mfaRequired flag: true if MFA is not yet set up (all roles must set up MFA)
+      const mfaRequired = !user.mfaEnabled;
+      res.json({ ...user, mfaRequired });
     } catch (error) {
       logger.error("Error fetching user", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: "Failed to fetch user" });
@@ -5950,10 +5962,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/mfa/disable', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
+      // MFA is mandatory for HIPAA compliance - only admins can disable for account recovery
+      const currentUser = await storage.getUser(userId);
+      if (currentUser?.role !== 'admin') {
+        return res.status(403).json({
+          message: 'MFA is mandatory for HIPAA compliance and cannot be disabled. Contact an administrator for account recovery.',
+          code: 'MFA_DISABLE_FORBIDDEN'
+        });
+      }
       await storage.updateUserMfa(userId, { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: null });
       // Clear MFA session verification since MFA is now disabled
       clearMfaVerification(req.session);
-      logger.info('MFA disabled for user', { userId });
+      logger.warn('MFA disabled by admin for account recovery', { userId });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: 'Failed to disable MFA' });

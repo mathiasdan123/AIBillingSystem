@@ -15,6 +15,7 @@ import * as crypto from 'crypto';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { optimizeBillingCodes, getInsuranceBillingRules } from '../services/aiBillingOptimizer';
+import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 
 const router = Router();
@@ -82,8 +83,12 @@ const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => 
 // Get all SOAP notes
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
-    const soapNotes = await storage.getAllSoapNotes();
-    res.json(soapNotes);
+    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
+    const allSoapNotes = await storage.getAllSoapNotes();
+    const total = allSoapNotes.length;
+    const { page, limit, offset } = parsePagination(req.query);
+    const soapNotes = allSoapNotes.slice(offset, offset + limit);
+    res.json(paginatedResponse(soapNotes, total, page, limit));
   } catch (error) {
     logger.error('Error fetching SOAP notes', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to fetch SOAP notes' });

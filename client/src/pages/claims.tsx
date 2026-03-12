@@ -1189,21 +1189,33 @@ export default function Claims() {
           ))
         ) : (
           <Card>
-            <CardContent className="p-12 text-center">
-              <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">No Claims Found</h3>
-              <p className="text-slate-600 mb-4">
-                {searchTerm || statusFilter !== "all"
-                  ? "No claims match your search criteria"
-                  : "Get started by creating your first claim"
-                }
-              </p>
-              {!searchTerm && statusFilter === "all" && (
-                <Button onClick={() => setShowCreateDialog(true)}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create First Claim
-                </Button>
-              )}
+            <CardContent className="p-12">
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                {searchTerm || statusFilter !== "all" ? (
+                  <>
+                    <h3 className="text-lg font-semibold mb-2">No claims match your filters</h3>
+                    <p className="text-muted-foreground mb-6 max-w-md">
+                      Try adjusting your search term or status filter to find what you're looking for.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-lg font-semibold mb-2">Create your first claim</h3>
+                    <p className="text-muted-foreground mb-4 max-w-md">
+                      Claims are how you bill insurance for patient sessions. Once created, you can:
+                    </p>
+                    <ul className="text-muted-foreground text-sm mb-6 space-y-1">
+                      <li>Submit claims electronically to payers</li>
+                      <li>Track payment status and denied claims</li>
+                    </ul>
+                    <Button onClick={() => setShowCreateDialog(true)}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create Your First Claim
+                    </Button>
+                  </>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}

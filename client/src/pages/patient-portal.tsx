@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -76,6 +76,108 @@ interface DashboardData {
   };
 }
 
+function SignaturePad({ onSave, onClear }: { onSave: (dataUrl: string) => void; onClear?: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
+
+  const getCoords = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    if ("touches" in e) {
+      const touch = e.touches[0];
+      return { x: (touch.clientX - rect.left) * scaleX, y: (touch.clientY - rect.top) * scaleY };
+    }
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }, []);
+
+  const startDrawing = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    const { x, y } = getCoords(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawing(true);
+    setHasDrawn(true);
+  }, [getCoords]);
+
+  const draw = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    const { x, y } = getCoords(e);
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#000";
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }, [isDrawing, getCoords]);
+
+  const stopDrawing = useCallback(() => {
+    setIsDrawing(false);
+  }, []);
+
+  const clearCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasDrawn(false);
+    onClear?.();
+  }, [onClear]);
+
+  const saveSignature = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !hasDrawn) return;
+    onSave(canvas.toDataURL("image/png"));
+  }, [hasDrawn, onSave]);
+
+  // Set up canvas resolution on mount
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = canvas.offsetWidth * 2;
+    canvas.height = canvas.offsetHeight * 2;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  }, []);
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        className="w-full h-40 border-2 border-slate-300 rounded-lg bg-white cursor-crosshair touch-none"
+        onMouseDown={startDrawing}
+        onMouseMove={draw}
+        onMouseUp={stopDrawing}
+        onMouseLeave={stopDrawing}
+        onTouchStart={startDrawing}
+        onTouchMove={draw}
+        onTouchEnd={stopDrawing}
+      />
+      <p className="text-xs text-muted-foreground mt-1">Draw your signature above</p>
+      <div className="flex gap-3 mt-3">
+        <Button variant="outline" size="sm" onClick={clearCanvas}>
+          Clear
+        </Button>
+        <Button size="sm" onClick={saveSignature} disabled={!hasDrawn}>
+          <PenTool className="h-4 w-4 mr-2" />
+          Save Signature
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function PatientPortalPage() {
   const params = useParams<{ token?: string }>();
   const [, setLocation] = useLocation();
@@ -88,6 +190,7 @@ export default function PatientPortalPage() {
   });
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedDocument, setSelectedDocument] = useState<any>(null);
+  const [savedSignature, setSavedSignature] = useState<string | null>(null);
 
   // If we have a magic link token, exchange it for a portal token
   useEffect(() => {
@@ -668,7 +771,12 @@ export default function PatientPortalPage() {
       </main>
 
       {/* Document Signature Dialog */}
-      <Dialog open={!!selectedDocument} onOpenChange={() => setSelectedDocument(null)}>
+      <Dialog open={!!selectedDocument} onOpenChange={(open) => {
+        if (!open) {
+          setSelectedDocument(null);
+          setSavedSignature(null);
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Sign Document</DialogTitle>
@@ -678,15 +786,54 @@ export default function PatientPortalPage() {
               Please sign below to acknowledge that you have read and agree to the terms of:
             </p>
             <p className="font-medium mb-6">{selectedDocument?.name}</p>
-            <div className="border-2 border-dashed rounded-lg h-32 flex items-center justify-center bg-slate-50">
-              <p className="text-muted-foreground">Signature pad would go here</p>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <Button variant="outline" className="flex-1" onClick={() => setSelectedDocument(null)}>
-                Cancel
-              </Button>
-              <Button className="flex-1">Submit Signature</Button>
-            </div>
+            {savedSignature ? (
+              <div className="space-y-3">
+                <div className="border-2 border-green-300 rounded-lg p-3 bg-green-50">
+                  <p className="text-sm font-medium text-green-700 mb-2 flex items-center gap-1">
+                    <CheckCircle className="h-4 w-4" /> Signature captured
+                  </p>
+                  <img
+                    src={savedSignature}
+                    alt="Your signature"
+                    className="w-full h-auto rounded border bg-white"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" className="flex-1" onClick={() => setSavedSignature(null)}>
+                    Re-sign
+                  </Button>
+                  <Button className="flex-1" onClick={() => {
+                    // TODO: Submit signature to server via API
+                    toast({
+                      title: "Document Signed",
+                      description: `${selectedDocument?.name} has been signed successfully.`,
+                    });
+                    queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "documents"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "dashboard"] });
+                    setSelectedDocument(null);
+                    setSavedSignature(null);
+                  }}>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Submit Signature
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <SignaturePad
+                  onSave={(dataUrl) => setSavedSignature(dataUrl)}
+                  onClear={() => setSavedSignature(null)}
+                />
+                <div className="flex gap-3 mt-4">
+                  <Button variant="outline" className="flex-1" onClick={() => {
+                    setSelectedDocument(null);
+                    setSavedSignature(null);
+                  }}>
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

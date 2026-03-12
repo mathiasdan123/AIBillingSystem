@@ -501,24 +501,36 @@ export default function Patients() {
         ) : (
           <div className="col-span-full">
             <Card>
-              <CardContent className="p-12 text-center">
-                <Users className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-slate-900 mb-2">No Patients Found</h3>
-                <p className="text-slate-600 mb-4">
-                  {searchTerm 
-                    ? "No patients match your search criteria"
-                    : "Get started by adding your first patient"
-                  }
-                </p>
-                {!searchTerm && (
-                  <Button 
-                    onClick={() => setShowIntakeDialog(true)}
-                    className="bg-medical-blue-500 hover:bg-medical-blue-600"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add First Patient
-                  </Button>
-                )}
+              <CardContent className="p-12">
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Users className="h-12 w-12 text-muted-foreground mb-4" />
+                  {searchTerm ? (
+                    <>
+                      <h3 className="text-lg font-semibold mb-2">No patients match your search</h3>
+                      <p className="text-muted-foreground mb-6 max-w-md">
+                        Try adjusting your search term or clearing the filter to see all patients.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-lg font-semibold mb-2">Welcome! Add your first patient</h3>
+                      <p className="text-muted-foreground mb-4 max-w-md">
+                        Your patient roster is empty. Adding a patient lets you:
+                      </p>
+                      <ul className="text-muted-foreground text-sm mb-6 space-y-1">
+                        <li>Store demographics and contact information</li>
+                        <li>Verify insurance eligibility in real time</li>
+                      </ul>
+                      <Button
+                        onClick={() => setShowIntakeDialog(true)}
+                        className="bg-medical-blue-500 hover:bg-medical-blue-600"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Your First Patient
+                      </Button>
+                    </>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </div>

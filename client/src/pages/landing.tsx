@@ -187,7 +187,7 @@ export default function Landing() {
       </section>
 
       {/* Practice Management Features */}
-      <section className="py-20 bg-slate-50">
+      <section id="practice-management" className="py-20 bg-slate-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-slate-900 mb-4">
@@ -275,7 +275,7 @@ export default function Landing() {
       </section>
 
       {/* ROI Section */}
-      <section className="py-20 bg-white">
+      <section id="how-it-works" className="py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div>
@@ -446,7 +446,7 @@ export default function Landing() {
       </section>
 
       {/* Trust Section */}
-      <section className="py-16 bg-white">
+      <section id="compliance" className="py-16 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-2xl font-bold text-slate-900 mb-4">Built for Healthcare Compliance</h2>
@@ -522,38 +522,36 @@ export default function Landing() {
             <div>
               <h3 className="text-white font-semibold mb-6">Platform</h3>
               <ul className="space-y-3">
-                <li><a href="#" className="hover:text-white transition-colors">Patient Intake</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Scheduling</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Documentation</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Billing & Claims</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Telehealth</a></li>
+                <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
+                <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
+                <li><a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a></li>
+                <li><a href="#practice-management" className="hover:text-white transition-colors">Practice Management</a></li>
+                <li><a href="#compliance" className="hover:text-white transition-colors">Compliance</a></li>
               </ul>
             </div>
 
             <div>
-              <h3 className="text-white font-semibold mb-6">Resources</h3>
+              <h3 className="text-white font-semibold mb-6">Support</h3>
               <ul className="space-y-3">
-                <li><a href="#" className="hover:text-white transition-colors">Help Center</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Webinars</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">API Docs</a></li>
+                <li><a href="mailto:support@therapybill.ai" className="hover:text-white transition-colors">Contact Support</a></li>
+                <li><a href="mailto:sales@therapybill.ai" className="hover:text-white transition-colors">Contact Sales</a></li>
+                <li><a href="mailto:support@therapybill.ai" className="hover:text-white transition-colors">Request a Demo</a></li>
               </ul>
             </div>
 
             <div>
-              <h3 className="text-white font-semibold mb-6">Company</h3>
+              <h3 className="text-white font-semibold mb-6">Legal</h3>
               <ul className="space-y-3">
-                <li><a href="#" className="hover:text-white transition-colors">About Us</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Privacy Policy</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Terms of Service</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">BAA Request</a></li>
+                <li><span className="cursor-default" title="Coming soon">Privacy Policy</span></li>
+                <li><span className="cursor-default" title="Coming soon">Terms of Service</span></li>
+                <li><span className="cursor-default" title="Coming soon">HIPAA Compliance</span></li>
+                <li><a href="mailto:compliance@therapybill.ai" className="hover:text-white transition-colors">BAA Request</a></li>
               </ul>
             </div>
           </div>
 
           <div className="border-t border-slate-800 mt-12 pt-8 flex flex-col md:flex-row justify-between items-center">
-            <p className="text-slate-400">© 2024 TherapyBill AI. All rights reserved.</p>
+            <p className="text-slate-400">© 2026 TherapyBill AI. All rights reserved.</p>
             <div className="flex items-center space-x-6 mt-4 md:mt-0">
               <span className="text-sm">HIPAA Compliant</span>
               <span className="text-sm">SOC 2 Certified</span>

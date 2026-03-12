@@ -74,7 +74,12 @@ router.get('/auth/user', isAuthenticated, async (req: any, res) => {
   try {
     const userId = req.user.claims.sub;
     const user = await storage.getUser(userId);
-    res.json(user);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    // Include mfaRequired flag: true if MFA is not yet set up (all roles must set up MFA)
+    const mfaRequired = !user.mfaEnabled;
+    res.json({ ...user, mfaRequired });
   } catch (error) {
     logger.error("Error fetching user", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch user" });
@@ -206,9 +211,17 @@ router.post('/mfa/verify', isAuthenticated, async (req: any, res) => {
 router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
   try {
     const userId = req.user.claims.sub;
+    // MFA is mandatory for HIPAA compliance - only admins can disable for account recovery
+    const currentUser = await storage.getUser(userId);
+    if (currentUser?.role !== 'admin') {
+      return res.status(403).json({
+        message: 'MFA is mandatory for HIPAA compliance and cannot be disabled. Contact an administrator for account recovery.',
+        code: 'MFA_DISABLE_FORBIDDEN'
+      });
+    }
     await storage.updateUserMfa(userId, { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: null });
     clearMfaVerification(req.session);
-    logger.info('MFA disabled for user', { userId });
+    logger.warn('MFA disabled by admin for account recovery', { userId });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ message: 'Failed to disable MFA' });

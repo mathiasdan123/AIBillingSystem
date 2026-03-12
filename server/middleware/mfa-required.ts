@@ -248,7 +248,8 @@ export const mfaRequired = async (req: Request, res: Response, next: NextFunctio
  */
 export const conditionalMfaRequired = async (req: Request, res: Response, next: NextFunction) => {
   const userRole = (req as any).userRole;
-  const path = req.path;
+  // Use originalUrl to get the full path including mount prefix (e.g., /api/patients not /patients)
+  const path = req.originalUrl || req.path;
 
   // Check if this route requires MFA
   if (!requiresMfaEnforcement(path, userRole)) {
@@ -287,6 +288,98 @@ export const adminMfaRequired = async (req: Request, res: Response, next: NextFu
 
   // Apply MFA check for admin
   return mfaRequired(req, res, next);
+};
+
+/**
+ * MFA Setup Required Middleware
+ *
+ * Checks whether the user has MFA enabled on their account.
+ * Unlike `mfaRequired` (which also checks session verification),
+ * this middleware only checks whether MFA has been set up at all.
+ *
+ * Returns 403 with MFA_REQUIRED code if MFA is not enabled,
+ * allowing the frontend to redirect users to MFA setup before
+ * they can access PHI routes.
+ *
+ * HIPAA Security Rule: MFA must be mandatory for all users
+ * accessing electronic Protected Health Information (ePHI).
+ *
+ * Usage:
+ *   app.use('/api/patients', isAuthenticated, requireMfaSetup, mfaRequired);
+ */
+export const requireMfaSetup = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = (req as any).user;
+    const userId = user?.claims?.sub;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: 'Authentication required',
+        code: 'AUTH_REQUIRED'
+      });
+    }
+
+    // Fetch user from database to check MFA status
+    const dbUser = await storage.getUser(userId);
+
+    if (!dbUser) {
+      logger.warn('MFA setup check failed: User not found', { userId });
+      return res.status(401).json({
+        message: 'User not found',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
+    // If MFA is already enabled, proceed to next middleware (e.g., mfaRequired for session check)
+    if (dbUser.mfaEnabled) {
+      return next();
+    }
+
+    // MFA is not set up — block access to PHI
+    logger.warn('MFA setup required: user has not enabled MFA', {
+      userId,
+      path: req.path,
+      userRole: dbUser.role
+    });
+
+    return res.status(403).json({
+      error: {
+        code: 'MFA_REQUIRED',
+        message: 'Multi-factor authentication must be enabled to access this resource. Please set up MFA in your account settings.'
+      }
+    });
+  } catch (error) {
+    logger.error('MFA setup check middleware error', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return res.status(500).json({
+      message: 'Failed to verify MFA status',
+      code: 'MFA_CHECK_FAILED'
+    });
+  }
+};
+
+/**
+ * Conditional MFA Setup Middleware
+ *
+ * Only enforces MFA setup for routes that match sensitive patterns.
+ * Use this for applying MFA setup enforcement across a router.
+ *
+ * Usage:
+ *   app.use('/api', isAuthenticated, conditionalRequireMfaSetup);
+ */
+export const conditionalRequireMfaSetup = async (req: Request, res: Response, next: NextFunction) => {
+  const userRole = (req as any).userRole;
+  // Use originalUrl to get the full path including mount prefix (e.g., /api/patients not /patients)
+  const path = req.originalUrl || req.path;
+
+  // Check if this route requires MFA
+  if (!requiresMfaEnforcement(path, userRole)) {
+    return next();
+  }
+
+  // Apply MFA setup check
+  return requireMfaSetup(req, res, next);
 };
 
 /**

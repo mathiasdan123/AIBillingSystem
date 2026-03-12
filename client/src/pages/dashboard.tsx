@@ -6,7 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import DashboardStats from "@/components/DashboardStats";
-import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText } from "lucide-react";
+import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
 
@@ -219,12 +219,16 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8">
-                <p className="text-slate-500">No claims yet</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                <h3 className="text-lg font-semibold mb-2">No claims yet</h3>
+                <p className="text-muted-foreground mb-6 max-w-md">
+                  Claims track your billing activity. Create a claim after a patient session to start billing insurance or tracking payments.
+                </p>
                 <Link href="/claims">
-                  <Button size="sm" className="mt-2">
+                  <Button size="sm">
                     <Plus className="w-4 h-4 mr-2" />
-                    Create First Claim
+                    Create Your First Claim
                   </Button>
                 </Link>
               </div>
@@ -281,12 +285,16 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8">
-                <p className="text-slate-500">No patients yet</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Users className="h-12 w-12 text-muted-foreground mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Welcome! Let's get started</h3>
+                <p className="text-muted-foreground mb-6 max-w-md">
+                  Add your first patient to begin managing their information, verifying insurance eligibility, and tracking sessions.
+                </p>
                 <Link href="/patients">
-                  <Button size="sm" className="mt-2">
+                  <Button size="sm">
                     <Plus className="w-4 h-4 mr-2" />
-                    Add First Patient
+                    Add Your First Patient
                   </Button>
                 </Link>
               </div>

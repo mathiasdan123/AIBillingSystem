@@ -20,6 +20,7 @@ import { validate } from '../middleware/validate';
 import { createClaimSchema } from '../validation/schemas';
 import { AiClaimOptimizer } from '../aiClaimOptimizer';
 import { appealGenerator } from '../aiAppealGenerator';
+import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
 
@@ -105,8 +106,12 @@ const generateSecureClaimNumber = (prefix: string): string => {
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const claims = await storage.getClaims(practiceId);
-    res.json(claims);
+    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
+    const allClaims = await storage.getClaims(practiceId);
+    const total = allClaims.length;
+    const { page, limit, offset } = parsePagination(req.query);
+    const claims = allClaims.slice(offset, offset + limit);
+    res.json(paginatedResponse(claims, total, page, limit));
   } catch (error) {
     logger.error('Error fetching claims', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch claims' });
