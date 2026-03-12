@@ -25,6 +25,7 @@ const navigation = [
   { name: 'Patients', href: '/patients', icon: Users },
   { name: 'SOAP Notes', href: '/soap-notes', icon: ClipboardList },
   { name: 'Claims', href: '/claims', icon: FileText },
+  { name: 'ERA / 835', href: '/remittance', icon: Receipt },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
   { name: 'Expenses', href: '/expenses', icon: Receipt },

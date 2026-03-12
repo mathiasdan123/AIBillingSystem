@@ -18,6 +18,8 @@ import BenefitsSummary from "@/components/BenefitsSummary";
 import { Skeleton, CardGridSkeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import PatientBillingTab from "@/components/PatientBillingTab";
 
 interface EligibilityCheck {
   id: number;
@@ -569,6 +571,11 @@ export default function Patients() {
                     <Badge variant="outline">
                       {patient.insuranceProvider || "No Insurance"}
                     </Badge>
+                    {patient.secondaryInsuranceProvider && (
+                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 text-xs">
+                        2nd: {patient.secondaryInsuranceProvider}
+                      </Badge>
+                    )}
                     {getEligibilityBadge(patient.id)}
                   </div>
                 </div>
@@ -768,15 +775,29 @@ export default function Patients() {
       {/* Patient Details Modal */}
       {selectedPatient && (
         <Dialog open={!!selectedPatient} onOpenChange={() => setSelectedPatient(null)}>
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {selectedPatient.firstName} {selectedPatient.lastName}
               </DialogTitle>
               <DialogDescription>
-                Patient details and insurance information
+                Patient details, insurance, and billing
               </DialogDescription>
             </DialogHeader>
+            <Tabs defaultValue="details" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="details">Details & Insurance</TabsTrigger>
+                <TabsTrigger value="billing">Billing</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="billing" className="mt-4">
+                <PatientBillingTab
+                  patientId={selectedPatient.id}
+                  patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
+                />
+              </TabsContent>
+
+              <TabsContent value="details" className="mt-4">
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -827,6 +848,50 @@ export default function Patients() {
                   </div>
                 </div>
               </div>
+
+              {/* Secondary Insurance */}
+              {selectedPatient.secondaryInsuranceProvider && (
+                <div className="border-t pt-4">
+                  <h4 className="font-medium text-slate-900 mb-2 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-purple-600" />
+                    Secondary Insurance
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Provider</label>
+                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceProvider}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Member ID</label>
+                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceMemberId || "Not provided"}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Policy Number</label>
+                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsurancePolicyNumber || "Not provided"}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Group Number</label>
+                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceGroupNumber || "Not provided"}</p>
+                    </div>
+                  </div>
+                  {selectedPatient.secondaryInsuranceRelationship && (
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Relationship</label>
+                        <p className="text-sm text-slate-600 capitalize">{selectedPatient.secondaryInsuranceRelationship}</p>
+                      </div>
+                      {selectedPatient.secondaryInsuranceSubscriberName && (
+                        <div>
+                          <label className="text-sm font-medium text-slate-700">Subscriber Name</label>
+                          <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceSubscriberName}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Benefits Summary */}
               <div className="border-t pt-4">
@@ -1049,6 +1114,8 @@ export default function Patients() {
                 </div>
               )}
             </div>
+              </TabsContent>
+            </Tabs>
           </DialogContent>
         </Dialog>
       )}

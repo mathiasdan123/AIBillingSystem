@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
@@ -61,7 +61,14 @@ export default function CalendarPage() {
     startTime: "09:00",
     type: "Individual Therapy",
     notes: "",
+    recurrencePattern: "none" as "none" | "weekly" | "biweekly" | "monthly",
+    recurrenceEndType: "occurrences" as "occurrences" | "endDate",
+    numberOfOccurrences: "12",
+    recurrenceEndDate: "",
   });
+  const [showSeriesActionDialog, setShowSeriesActionDialog] = useState(false);
+  const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
+  const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
 
   // Fetch patients for the dropdown
   const { data: patients = [] } = useQuery<any[]>({
@@ -107,11 +114,51 @@ export default function CalendarPage() {
       const res = await apiRequest("POST", "/api/appointments", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       setShowNewAppointment(false);
-      toast({ title: "Appointment Scheduled", description: "Appointment created successfully." });
-      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "" });
+      const desc = data.seriesInfo
+        ? `Created ${data.seriesInfo.totalCreated} appointments (${data.seriesInfo.recurrenceDescription})`
+        : "Appointment created successfully.";
+      toast({ title: "Appointment Scheduled", description: desc });
+      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Cancel series mutation
+  const cancelSeriesMutation = useMutation({
+    mutationFn: async ({ seriesId, reason, notes, cancelledBy }: { seriesId: string; reason: string; notes?: string; cancelledBy?: string }) => {
+      const res = await apiRequest("POST", `/api/appointments/series/${seriesId}/cancel`, { reason, notes, cancelledBy });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      setShowSeriesActionDialog(false);
+      setSeriesActionAppointment(null);
+      setCancelReason("");
+      setCancelNotes("");
+      setCancelledBy("");
+      toast({ title: "Series Cancelled", description: `${data.cancelledCount} future appointments cancelled.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Delete series mutation
+  const deleteSeriesMutation = useMutation({
+    mutationFn: async ({ seriesId }: { seriesId: string }) => {
+      const res = await apiRequest("DELETE", `/api/appointments/series/${seriesId}`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      setShowSeriesActionDialog(false);
+      setSeriesActionAppointment(null);
+      toast({ title: "Series Deleted", description: `${data.deletedCount} appointments deleted.` });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -149,7 +196,7 @@ export default function CalendarPage() {
     const startDt = new Date(`${newAppointment.date}T${newAppointment.startTime}:00`);
     const endDt = new Date(`${newAppointment.date}T${endTime}:00`);
 
-    createMutation.mutate({
+    const payload: any = {
       practiceId: 1,
       patientId: parseInt(newAppointment.patientId),
       therapistId: newAppointment.therapistId || null,
@@ -158,12 +205,35 @@ export default function CalendarPage() {
       endTime: endDt.toISOString(),
       status: "scheduled",
       notes: newAppointment.notes || null,
-    });
+    };
+
+    if (newAppointment.recurrencePattern !== "none") {
+      payload.recurrencePattern = newAppointment.recurrencePattern;
+      if (newAppointment.recurrenceEndType === "occurrences") {
+        payload.numberOfOccurrences = parseInt(newAppointment.numberOfOccurrences) || 12;
+      } else if (newAppointment.recurrenceEndDate) {
+        payload.recurrenceEndDate = new Date(newAppointment.recurrenceEndDate).toISOString();
+      }
+    }
+
+    createMutation.mutate(payload);
   };
 
   const handleCancelAppointment = () => {
     if (!selectedAppointment || !cancelReason) {
       toast({ title: "Error", description: "Please select a cancellation reason", variant: "destructive" });
+      return;
+    }
+    // Check if we're cancelling a whole series
+    const seriesCancelId = (window as any).__cancelSeriesId;
+    if (seriesCancelId) {
+      delete (window as any).__cancelSeriesId;
+      cancelSeriesMutation.mutate({
+        seriesId: seriesCancelId,
+        reason: cancelReason,
+        notes: cancelNotes || undefined,
+        cancelledBy: cancelledBy || undefined,
+      });
       return;
     }
     cancelMutation.mutate({
@@ -175,11 +245,42 @@ export default function CalendarPage() {
   };
 
   const openCancelDialog = (apt: Appointment) => {
-    setSelectedAppointment(apt);
-    setCancelReason("");
-    setCancelNotes("");
-    setCancelledBy("");
-    setShowCancelDialog(true);
+    // If this is a recurring appointment, ask whether to cancel this one or the whole series
+    if ((apt as any).isRecurring && (apt as any).seriesId) {
+      setSeriesActionAppointment(apt);
+      setSeriesAction("cancel");
+      setCancelReason("");
+      setCancelNotes("");
+      setCancelledBy("");
+      setShowSeriesActionDialog(true);
+    } else {
+      setSelectedAppointment(apt);
+      setCancelReason("");
+      setCancelNotes("");
+      setCancelledBy("");
+      setShowCancelDialog(true);
+    }
+  };
+
+  const handleSeriesActionSingle = () => {
+    if (!seriesActionAppointment) return;
+    setShowSeriesActionDialog(false);
+    if (seriesAction === "cancel") {
+      setSelectedAppointment(seriesActionAppointment);
+      setShowCancelDialog(true);
+    }
+  };
+
+  const handleSeriesActionAll = () => {
+    if (!seriesActionAppointment || !(seriesActionAppointment as any).seriesId) return;
+    if (seriesAction === "cancel") {
+      setShowSeriesActionDialog(false);
+      setSelectedAppointment(seriesActionAppointment);
+      setShowCancelDialog(true);
+      // We'll use a flag to distinguish series cancel from single cancel
+    } else if (seriesAction === "delete") {
+      deleteSeriesMutation.mutate({ seriesId: (seriesActionAppointment as any).seriesId });
+    }
   };
 
   const navigateWeek = (dir: number) => {
@@ -319,11 +420,64 @@ export default function CalendarPage() {
                     <Label>Notes (optional)</Label>
                     <Input placeholder="Any special notes..." value={newAppointment.notes} onChange={(e) => setNewAppointment({ ...newAppointment, notes: e.target.value })} />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Repeats</Label>
+                    <Select value={newAppointment.recurrencePattern} onValueChange={(v) => setNewAppointment({ ...newAppointment, recurrencePattern: v as any })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Does not repeat</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="biweekly">Every 2 weeks</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {newAppointment.recurrencePattern !== "none" && (
+                    <div className="space-y-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
+                        <Repeat className="w-4 h-4" />
+                        Recurring Appointment
+                      </div>
+                      <div className="space-y-2">
+                        <Label>End After</Label>
+                        <Select value={newAppointment.recurrenceEndType} onValueChange={(v) => setNewAppointment({ ...newAppointment, recurrenceEndType: v as any })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="occurrences">Number of sessions</SelectItem>
+                            <SelectItem value="endDate">End date</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {newAppointment.recurrenceEndType === "occurrences" ? (
+                        <div className="space-y-2">
+                          <Label>Number of sessions (2-52)</Label>
+                          <Input
+                            type="number"
+                            min="2"
+                            max="52"
+                            value={newAppointment.numberOfOccurrences}
+                            onChange={(e) => setNewAppointment({ ...newAppointment, numberOfOccurrences: e.target.value })}
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Label>End Date</Label>
+                          <Input
+                            type="date"
+                            value={newAppointment.recurrenceEndDate}
+                            onChange={(e) => setNewAppointment({ ...newAppointment, recurrenceEndDate: e.target.value })}
+                            min={newAppointment.date}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setShowNewAppointment(false)}>Cancel</Button>
                   <Button onClick={handleCreateAppointment} disabled={createMutation.isPending}>
-                    <Mail className="w-4 h-4 mr-2" />Schedule
+                    {newAppointment.recurrencePattern !== "none" && <Repeat className="w-4 h-4 mr-2" />}
+                    {newAppointment.recurrencePattern !== "none" ? "Schedule Series" : "Schedule"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -413,7 +567,10 @@ export default function CalendarPage() {
                           }
                         }}
                       >
-                        <div className="text-xs font-medium truncate">{apt.title || "Appointment"}</div>
+                        <div className="text-xs font-medium truncate flex items-center gap-1">
+                          {(apt as any).isRecurring && <Repeat className="w-3 h-3 flex-shrink-0" />}
+                          {apt.title || "Appointment"}
+                        </div>
                         <div className="text-xs text-slate-600 truncate">
                           {formatTime(apt.startTime)}
                           {apt.therapistId && (() => {
@@ -447,7 +604,10 @@ export default function CalendarPage() {
                         <User className="w-5 h-5 text-blue-600" />
                       </div>
                       <div>
-                        <div className="font-medium">{apt.title || "Appointment"}</div>
+                        <div className="font-medium flex items-center gap-1">
+                          {(apt as any).isRecurring && <Repeat className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
+                          {apt.title || "Appointment"}
+                        </div>
                         <div className="text-sm text-slate-600">
                           {new Date(apt.startTime).toLocaleDateString()} at {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
                           {apt.therapistId && (() => {
@@ -483,7 +643,7 @@ export default function CalendarPage() {
         </Card>
 
         {/* Cancel Appointment Dialog */}
-        <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <Dialog open={showCancelDialog} onOpenChange={(open) => { setShowCancelDialog(open); if (!open) { delete (window as any).__cancelSeriesId; } }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Cancel Appointment</DialogTitle>
@@ -530,6 +690,54 @@ export default function CalendarPage() {
               <Button variant="destructive" onClick={handleCancelAppointment} disabled={cancelMutation.isPending || !cancelReason}>
                 <XCircle className="w-4 h-4 mr-2" />Confirm Cancel
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Series Action Dialog — "This appointment only" vs "All future" */}
+        <Dialog open={showSeriesActionDialog} onOpenChange={setShowSeriesActionDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Recurring Appointment</DialogTitle>
+              <DialogDescription>
+                This appointment is part of a recurring series. What would you like to do?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-4">
+              <Button
+                variant="outline"
+                className="w-full justify-start h-auto p-4"
+                onClick={handleSeriesActionSingle}
+              >
+                <div className="text-left">
+                  <div className="font-medium">This appointment only</div>
+                  <div className="text-sm text-slate-500">Cancel only this single appointment</div>
+                </div>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start h-auto p-4"
+                onClick={() => {
+                  if (!seriesActionAppointment || !(seriesActionAppointment as any).seriesId) return;
+                  setShowSeriesActionDialog(false);
+                  // For cancel-all, go through the cancel dialog with a series flag
+                  setCancelReason("");
+                  setCancelNotes("");
+                  setCancelledBy("");
+                  setSelectedAppointment(seriesActionAppointment);
+                  // Mark that we want to cancel the whole series
+                  (window as any).__cancelSeriesId = (seriesActionAppointment as any).seriesId;
+                  setShowCancelDialog(true);
+                }}
+              >
+                <div className="text-left">
+                  <div className="font-medium">This and all future appointments</div>
+                  <div className="text-sm text-slate-500">Cancel all remaining appointments in this series</div>
+                </div>
+              </Button>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowSeriesActionDialog(false)}>Back</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

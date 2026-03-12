@@ -29,7 +29,8 @@ import {
   CreditCard,
   Sun,
   Moon,
-  Monitor
+  Monitor,
+  Handshake,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
@@ -50,6 +51,8 @@ const navigation = [
   { name: 'Claims', href: '/claims', icon: FileText, adminOnly: false },
   { name: 'Insurance Rates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
   { name: 'Reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
+  { name: 'ERA / 835', href: '/remittance', icon: Receipt, adminOnly: false },
+  { name: 'Payer Contracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
   { name: 'Appeals', href: '/appeals', icon: Scale, adminOnly: false },
   { name: 'Accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },

@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { Upload, FileText, CheckCircle, Loader2, Info, Shield, FileSignature, CreditCard } from "lucide-react";
+import { Upload, FileText, CheckCircle, Loader2, Info, Shield, FileSignature, CreditCard, ChevronDown, ChevronRight } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -48,6 +48,15 @@ const patientSchema = z.object({
   insuranceId: z.string().optional(),
   policyNumber: z.string().optional(),
   groupNumber: z.string().optional(),
+
+  // Secondary Insurance
+  secondaryInsuranceProvider: z.string().optional(),
+  secondaryInsurancePolicyNumber: z.string().optional(),
+  secondaryInsuranceMemberId: z.string().optional(),
+  secondaryInsuranceGroupNumber: z.string().optional(),
+  secondaryInsuranceRelationship: z.string().optional(),
+  secondaryInsuranceSubscriberName: z.string().optional(),
+  secondaryInsuranceSubscriberDob: z.string().optional(),
 
   // Parent 1
   parent1Name: z.string().optional(),
@@ -197,6 +206,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
   const [step, setStep] = useState(1);
   const [planDocument, setPlanDocument] = useState<File | null>(null);
   const [documentType, setDocumentType] = useState<string>("sbc");
+  const [showSecondaryInsurance, setShowSecondaryInsurance] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [documentUploaded, setDocumentUploaded] = useState(false);
@@ -221,6 +231,13 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
       insuranceId: "",
       policyNumber: "",
       groupNumber: "",
+      secondaryInsuranceProvider: "",
+      secondaryInsurancePolicyNumber: "",
+      secondaryInsuranceMemberId: "",
+      secondaryInsuranceGroupNumber: "",
+      secondaryInsuranceRelationship: "",
+      secondaryInsuranceSubscriberName: "",
+      secondaryInsuranceSubscriberDob: "",
       hipaaConsent: false,
       waiverConsent: false,
       financialConsent: false,
@@ -371,6 +388,13 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
         insuranceId: data.insuranceId,
         policyNumber: data.policyNumber,
         groupNumber: data.groupNumber,
+        secondaryInsuranceProvider: data.secondaryInsuranceProvider || null,
+        secondaryInsurancePolicyNumber: data.secondaryInsurancePolicyNumber || null,
+        secondaryInsuranceMemberId: data.secondaryInsuranceMemberId || null,
+        secondaryInsuranceGroupNumber: data.secondaryInsuranceGroupNumber || null,
+        secondaryInsuranceRelationship: data.secondaryInsuranceRelationship || null,
+        secondaryInsuranceSubscriberName: data.secondaryInsuranceSubscriberName || null,
+        secondaryInsuranceSubscriberDob: data.secondaryInsuranceSubscriberDob || null,
         practiceId,
         intakeData: JSON.stringify(intakeData),
         intakeCompletedAt: new Date().toISOString(),
@@ -2050,6 +2074,132 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
                   </FormItem>
                 )}
               />
+            </div>
+
+            {/* Secondary Insurance (Collapsible) */}
+            <div className="border rounded-lg overflow-hidden">
+              <button
+                type="button"
+                className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+                onClick={() => setShowSecondaryInsurance(!showSecondaryInsurance)}
+              >
+                <span className="font-medium text-slate-700 flex items-center gap-2">
+                  <Shield className="w-4 h-4" />
+                  Secondary Insurance
+                </span>
+                {showSecondaryInsurance ? (
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                )}
+              </button>
+              {showSecondaryInsurance && (
+                <div className="p-4 space-y-4">
+                  <p className="text-sm text-slate-500">
+                    If the patient has a secondary insurance plan, enter those details below.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="secondaryInsuranceProvider"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Insurance Provider</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Aetna" {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="secondaryInsuranceMemberId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Member ID</FormLabel>
+                          <FormControl>
+                            <Input placeholder="XYZ987654321" {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="secondaryInsurancePolicyNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Policy Number</FormLabel>
+                          <FormControl>
+                            <Input placeholder="POL789012" {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="secondaryInsuranceGroupNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Group Number</FormLabel>
+                          <FormControl>
+                            <Input placeholder="GRP456" {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="secondaryInsuranceRelationship"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Relationship to Subscriber</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select relationship" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="self">Self</SelectItem>
+                              <SelectItem value="spouse">Spouse</SelectItem>
+                              <SelectItem value="child">Child</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="secondaryInsuranceSubscriberDob"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Subscriber Date of Birth</FormLabel>
+                          <FormControl>
+                            <Input type="date" {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="secondaryInsuranceSubscriberName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Subscriber Name (if different from patient)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Jane Doe" {...field} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
             </div>
 
             <Separator />

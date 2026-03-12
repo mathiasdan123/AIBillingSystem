@@ -201,6 +201,9 @@ import {
   type InsertPatientPlanBenefits,
   webhookEvents,
   type WebhookEvent,
+  patientPayments,
+  type PatientPayment,
+  type InsertPatientPayment,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -461,6 +464,18 @@ export interface IStorage {
   getWebhookEvent(eventId: string): Promise<WebhookEvent | undefined>;
   createWebhookEvent(eventId: string, eventType: string, status: string, metadata?: any): Promise<WebhookEvent>;
   updateWebhookEventStatus(eventId: string, status: string): Promise<void>;
+
+  // Patient Payments operations
+  createPatientPayment(payment: InsertPatientPayment): Promise<PatientPayment>;
+  getPatientPayments(patientId: number): Promise<PatientPayment[]>;
+  getPatientPaymentsByPractice(practiceId: number): Promise<PatientPayment[]>;
+
+  // Patient Billing AR Aging (statement-based)
+  getPatientArAging(practiceId: number): Promise<{
+    totalOutstanding: number;
+    buckets: { bucket: string; count: number; amount: number }[];
+    byPatient: { patientId: number; patientName: string; totalOwed: number; oldestDays: number }[];
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2138,10 +2153,15 @@ export class DatabaseStorage implements IStorage {
     parentAppointment: InsertAppointment,
     instanceDates: Date[]
   ): Promise<{ parent: Appointment; instances: Appointment[] }> {
+    const { nanoid } = await import('nanoid');
+    const seriesId = nanoid();
+
     // Create the parent appointment first
     const [parent] = await db.insert(appointments).values({
       ...parentAppointment,
       isRecurringInstance: false,
+      isRecurring: true,
+      seriesId,
     }).returning();
 
     // Create all instances linked to the parent
@@ -2162,6 +2182,9 @@ export class DatabaseStorage implements IStorage {
         recurrenceParentId: parent.id,
         recurrenceRule: null, // Only parent has the rule
         isRecurringInstance: true,
+        isRecurring: true,
+        seriesId,
+        recurrenceEndDate: parentAppointment.recurrenceEndDate || null,
       }).returning();
       instances.push(instance);
     }
@@ -2310,6 +2333,108 @@ export class DatabaseStorage implements IStorage {
 
     const [parent] = await db.select().from(appointments).where(eq(appointments.id, apt.recurrenceParentId));
     return parent;
+  }
+
+  /**
+   * Get all appointments in a series by seriesId
+   */
+  async getAppointmentsBySeriesId(seriesId: string): Promise<Appointment[]> {
+    return db
+      .select()
+      .from(appointments)
+      .where(eq(appointments.seriesId, seriesId))
+      .orderBy(appointments.startTime);
+  }
+
+  /**
+   * Update future appointments in a series by seriesId
+   */
+  async updateSeriesBySeriesId(
+    seriesId: string,
+    updates: Partial<InsertAppointment>,
+    fromDate?: Date
+  ): Promise<Appointment[]> {
+    const effectiveFromDate = fromDate || new Date();
+    const series = await this.getAppointmentsBySeriesId(seriesId);
+    const updatedAppointments: Appointment[] = [];
+
+    for (const apt of series) {
+      if (new Date(apt.startTime) >= effectiveFromDate && apt.status === 'scheduled') {
+        const [updated] = await db
+          .update(appointments)
+          .set({
+            ...updates,
+            updatedAt: new Date(),
+            id: undefined,
+            recurrenceParentId: undefined,
+            recurrenceRule: undefined,
+            isRecurringInstance: undefined,
+            seriesId: undefined,
+            createdAt: undefined,
+          })
+          .where(eq(appointments.id, apt.id))
+          .returning();
+        updatedAppointments.push(updated);
+      }
+    }
+
+    return updatedAppointments;
+  }
+
+  /**
+   * Delete future appointments in a series by seriesId
+   */
+  async deleteSeriesBySeriesId(seriesId: string, includeCompleted: boolean = false): Promise<number> {
+    if (includeCompleted) {
+      const result = await db
+        .delete(appointments)
+        .where(eq(appointments.seriesId, seriesId))
+        .returning();
+      return result.length;
+    }
+
+    const result = await db
+      .delete(appointments)
+      .where(and(
+        eq(appointments.seriesId, seriesId),
+        ne(appointments.status, 'completed')
+      ))
+      .returning();
+    return result.length;
+  }
+
+  /**
+   * Cancel future appointments in a series by seriesId
+   */
+  async cancelSeriesBySeriesId(
+    seriesId: string,
+    reason: string,
+    notes?: string,
+    cancelledBy?: string
+  ): Promise<Appointment[]> {
+    const now = new Date();
+    const series = await this.getAppointmentsBySeriesId(seriesId);
+    const cancelledAppointments: Appointment[] = [];
+
+    for (const apt of series) {
+      if (new Date(apt.startTime) >= now && apt.status === 'scheduled') {
+        const [cancelled] = await db
+          .update(appointments)
+          .set({
+            status: 'cancelled',
+            cancelledAt: new Date(),
+            cancelledBy: cancelledBy || null,
+            cancellationReason: reason,
+            cancellationNotes: notes || null,
+            updatedAt: new Date(),
+          })
+          .where(eq(appointments.id, apt.id))
+          .returning();
+        cancelledAppointments.push(cancelled);
+      }
+    }
+
+    return cancelledAppointments;
   }
 
   // ==================== WAITLIST MANAGEMENT ====================
@@ -6927,6 +7052,137 @@ export class DatabaseStorage implements IStorage {
       .update(webhookEvents)
       .set({ status })
       .where(eq(webhookEvents.eventId, eventId));
+  }
+
+  // ==================== Patient Payments ====================
+
+  async createPatientPayment(payment: InsertPatientPayment): Promise<PatientPayment> {
+    const [result] = await db.insert(patientPayments).values(payment).returning();
+    return result;
+  }
+
+  async getPatientPayments(patientId: number): Promise<PatientPayment[]> {
+    return db
+      .select()
+      .from(patientPayments)
+      .where(eq(patientPayments.patientId, patientId))
+      .orderBy(desc(patientPayments.paymentDate));
+  }
+
+  async getPatientPaymentsByPractice(practiceId: number): Promise<PatientPayment[]> {
+    return db
+      .select()
+      .from(patientPayments)
+      .where(eq(patientPayments.practiceId, practiceId))
+      .orderBy(desc(patientPayments.paymentDate));
+  }
+
+  // ==================== Patient Billing AR Aging ====================
+
+  async getPatientArAging(practiceId: number): Promise<{
+    totalOutstanding: number;
+    buckets: { bucket: string; count: number; amount: number }[];
+    byPatient: { patientId: number; patientName: string; totalOwed: number; oldestDays: number }[];
+  }> {
+    const now = new Date();
+
+    // Get all outstanding (non-paid, non-cancelled) statements for the practice
+    const outstandingStatements = await db
+      .select()
+      .from(patientStatements)
+      .where(and(
+        eq(patientStatements.practiceId, practiceId),
+        or(
+          eq(patientStatements.status, 'pending'),
+          eq(patientStatements.status, 'sent'),
+          eq(patientStatements.status, 'viewed'),
+          eq(patientStatements.status, 'overdue')
+        )
+      ));
+
+    const bucketsMap: Record<string, { count: number; amount: number }> = {
+      '0-30': { count: 0, amount: 0 },
+      '31-60': { count: 0, amount: 0 },
+      '61-90': { count: 0, amount: 0 },
+      '90+': { count: 0, amount: 0 },
+    };
+
+    let totalOutstanding = 0;
+    const patientMap: Record<number, { totalOwed: number; oldestDays: number }> = {};
+
+    for (const stmt of outstandingStatements) {
+      const balance = parseFloat(stmt.balanceDue || '0');
+      if (balance <= 0) continue;
+
+      const stmtDate = new Date(stmt.statementDate);
+      const days = Math.floor((now.getTime() - stmtDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      totalOutstanding += balance;
+
+      if (days <= 30) {
+        bucketsMap['0-30'].count++;
+        bucketsMap['0-30'].amount += balance;
+      } else if (days <= 60) {
+        bucketsMap['31-60'].count++;
+        bucketsMap['31-60'].amount += balance;
+      } else if (days <= 90) {
+        bucketsMap['61-90'].count++;
+        bucketsMap['61-90'].amount += balance;
+      } else {
+        bucketsMap['90+'].count++;
+        bucketsMap['90+'].amount += balance;
+      }
+
+      // Aggregate by patient
+      if (!patientMap[stmt.patientId]) {
+        patientMap[stmt.patientId] = { totalOwed: 0, oldestDays: 0 };
+      }
+      patientMap[stmt.patientId].totalOwed += balance;
+      if (days > patientMap[stmt.patientId].oldestDays) {
+        patientMap[stmt.patientId].oldestDays = days;
+      }
+    }
+
+    const buckets = Object.entries(bucketsMap).map(([bucket, data]) => ({
+      bucket,
+      count: data.count,
+      amount: Math.round(data.amount * 100) / 100,
+    }));
+
+    // Get patient names
+    const patientIds = Object.keys(patientMap).map(Number);
+    const byPatient: { patientId: number; patientName: string; totalOwed: number; oldestDays: number }[] = [];
+
+    if (patientIds.length > 0) {
+      const patientRecords = await db
+        .select({ id: patients.id, firstName: patients.firstName, lastName: patients.lastName })
+        .from(patients)
+        .where(inArray(patients.id, patientIds));
+
+      const nameMap = new Map<number, string>();
+      for (const p of patientRecords) {
+        nameMap.set(p.id, `${p.firstName} ${p.lastName}`);
+      }
+
+      for (const [pidStr, data] of Object.entries(patientMap)) {
+        const pid = Number(pidStr);
+        byPatient.push({
+          patientId: pid,
+          patientName: nameMap.get(pid) || 'Unknown',
+          totalOwed: Math.round(data.totalOwed * 100) / 100,
+          oldestDays: data.oldestDays,
+        });
+      }
+
+      // Sort by totalOwed descending
+      byPatient.sort((a, b) => b.totalOwed - a.totalOwed);
+    }
+
+    return {
+      totalOutstanding: Math.round(totalOutstanding * 100) / 100,
+      buckets,
+      byPatient,
+    };
   }
 }
 

@@ -48,6 +48,8 @@ const SessionRecorder = lazy(() => import("@/pages/session-recorder"));
 const InsuranceRates = lazy(() => import("@/pages/insurance-rates"));
 const Billing = lazy(() => import("@/pages/billing"));
 const Reimbursement = lazy(() => import("@/pages/reimbursement"));
+const PayerContracts = lazy(() => import("@/pages/payer-contracts"));
+const RemittancePage = lazy(() => import("@/pages/remittance"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -181,6 +183,8 @@ function Router() {
               <Route path="/payer-management" component={PayerManagement} />
               <Route path="/insurance-rates" component={InsuranceRates} />
               <Route path="/reimbursement" component={Reimbursement} />
+              <Route path="/remittance" component={RemittancePage} />
+              <Route path="/payer-contracts" component={PayerContracts} />
               <Route path="/subscription" component={Billing} />
               {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
               <Route path="/invite/:token" component={InvitePage} />

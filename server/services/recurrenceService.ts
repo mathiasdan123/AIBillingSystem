@@ -5,7 +5,7 @@
  */
 
 export interface RecurrenceRule {
-  frequency: 'WEEKLY';
+  frequency: 'WEEKLY' | 'MONTHLY';
   interval: number; // 1 = weekly, 2 = biweekly
   byDay?: string[]; // ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
   until?: Date; // End date for recurrence
@@ -92,7 +92,7 @@ export function parseRRule(rrule: string): ParsedRRule | null {
  * Generate an RRULE string from parameters
  */
 export function generateRRule(params: {
-  frequency?: 'WEEKLY';
+  frequency?: 'WEEKLY' | 'MONTHLY';
   interval: number;
   byDay?: string[];
   until?: Date;
@@ -138,13 +138,48 @@ export function generateOccurrences(
     return [startDate];
   }
 
-  // Only support WEEKLY frequency for therapy appointments
-  if (rule.frequency !== 'WEEKLY') {
-    console.warn(`Unsupported frequency: ${rule.frequency}. Only WEEKLY is supported.`);
+  // Support WEEKLY and MONTHLY frequencies
+  if (rule.frequency !== 'WEEKLY' && rule.frequency !== 'MONTHLY') {
+    console.warn(`Unsupported frequency: ${rule.frequency}. Only WEEKLY and MONTHLY are supported.`);
     return [startDate];
   }
 
   const occurrences: Date[] = [];
+
+  // Determine end condition
+  const maxCount = rule.count || maxOccurrences;
+  const untilDate = rule.until;
+
+  if (rule.frequency === 'MONTHLY') {
+    // Monthly recurrence: same day-of-month as start date
+    const dayOfMonth = startDate.getDate();
+    let current = new Date(startDate);
+    current.setHours(startDate.getHours(), startDate.getMinutes(), startDate.getSeconds(), 0);
+
+    let monthCount = 0;
+    while (occurrences.length < maxCount) {
+      if (untilDate && current > untilDate) break;
+
+      occurrences.push(new Date(current));
+
+      // Advance by interval months
+      monthCount += rule.interval;
+      current = new Date(startDate);
+      current.setMonth(startDate.getMonth() + monthCount);
+      // Handle months where the day doesn't exist (e.g., Jan 31 -> Feb 28)
+      if (current.getDate() !== dayOfMonth) {
+        current.setDate(0); // Last day of previous month
+      }
+      current.setHours(startDate.getHours(), startDate.getMinutes(), startDate.getSeconds(), 0);
+
+      // Safety limit
+      if (monthCount > 120) break; // 10 years
+    }
+
+    return occurrences;
+  }
+
+  // WEEKLY frequency
   const startDayOfWeek = startDate.getDay();
 
   // Determine which days of the week to generate appointments
@@ -155,10 +190,6 @@ export function generateOccurrences(
     // Default to the same day as the start date
     targetDays = [startDayOfWeek];
   }
-
-  // Determine end condition
-  const maxCount = rule.count || maxOccurrences;
-  const untilDate = rule.until;
 
   // Start from the beginning of the week containing startDate
   let currentWeekStart = new Date(startDate);
@@ -216,7 +247,13 @@ export function describeRecurrence(rrule: string | ParsedRRule): string {
   let description = '';
 
   // Frequency and interval
-  if (rule.interval === 1) {
+  if (rule.frequency === 'MONTHLY') {
+    if (rule.interval === 1) {
+      description = 'Monthly';
+    } else {
+      description = `Every ${rule.interval} months`;
+    }
+  } else if (rule.interval === 1) {
     description = 'Weekly';
   } else if (rule.interval === 2) {
     description = 'Biweekly (every 2 weeks)';
@@ -264,8 +301,8 @@ export function validateRecurrenceRule(rrule: string): string[] {
     return errors;
   }
 
-  if (rule.frequency !== 'WEEKLY') {
-    errors.push('Only weekly frequency is supported for therapy appointments');
+  if (rule.frequency !== 'WEEKLY' && rule.frequency !== 'MONTHLY') {
+    errors.push('Only weekly and monthly frequencies are supported for therapy appointments');
   }
 
   if (rule.interval < 1 || rule.interval > 4) {

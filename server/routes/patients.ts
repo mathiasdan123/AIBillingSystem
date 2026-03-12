@@ -296,7 +296,7 @@ router.get('/:id/statements', isAuthenticated, requirePatientConsent, async (req
   }
 });
 
-// Create statement for patient
+// Create statement for patient (manual or from body data)
 router.post('/:id/statements', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
@@ -327,6 +327,219 @@ router.post('/:id/statements', isAuthenticated, requirePatientConsent, async (re
   } catch (error) {
     logger.error('Error creating statement', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to create statement' });
+  }
+});
+
+// Generate statement from unpaid claim balances
+router.post('/:id/statements/generate', isAuthenticated, requirePatientConsent, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!patient.practiceId) {
+      return res.status(400).json({ message: 'Patient has no assigned practice' });
+    }
+
+    // Get all claims for this patient's practice, then filter to this patient
+    const allClaims = await storage.getClaims(patient.practiceId);
+    const patientClaims = allClaims.filter((c: any) => c.patientId === patientId);
+
+    // Find claims that have been paid by insurance but have a remaining patient balance
+    // or claims that are denied (patient responsible for full amount)
+    const unpaidClaims = patientClaims.filter((c: any) => {
+      if (c.status === 'paid') {
+        const total = parseFloat(c.totalAmount || '0');
+        const paid = parseFloat(c.paidAmount || '0');
+        return total > paid; // insurance didn't cover the full amount
+      }
+      if (c.status === 'denied') {
+        return true; // patient owes the full amount
+      }
+      return false;
+    });
+
+    if (unpaidClaims.length === 0) {
+      return res.status(400).json({ message: 'No unpaid claim balances found for this patient' });
+    }
+
+    // Build line items from unpaid claims
+    const lineItems: Array<{
+      description: string;
+      serviceDate: string | null;
+      cptCode: string | null;
+      chargeAmount: string;
+      insurancePaid: string;
+      adjustments: string;
+      patientResponsibility: string;
+    }> = [];
+    let totalPatientResponsibility = 0;
+
+    for (const claim of unpaidClaims) {
+      const chargeAmount = parseFloat(claim.totalAmount || '0');
+      const insurancePaid = claim.status === 'denied' ? 0 : parseFloat(claim.paidAmount || '0');
+      const patientResp = chargeAmount - insurancePaid;
+
+      // Try to get line item details
+      const claimLineItems = await storage.getClaimLineItems(claim.id);
+      if (claimLineItems.length > 0) {
+        for (const li of claimLineItems) {
+          const liAmount = parseFloat(li.amount || '0');
+          const liInsurancePortion = claim.status === 'denied' ? 0 : (insurancePaid / chargeAmount) * liAmount;
+          const liPatientResp = liAmount - liInsurancePortion;
+
+          lineItems.push({
+            description: `Claim #${claim.claimNumber || claim.id}`,
+            serviceDate: li.dateOfService || null,
+            cptCode: null, // Would need to join with cptCodes table
+            chargeAmount: liAmount.toFixed(2),
+            insurancePaid: liInsurancePortion.toFixed(2),
+            adjustments: '0.00',
+            patientResponsibility: liPatientResp.toFixed(2),
+          });
+          totalPatientResponsibility += liPatientResp;
+        }
+      } else {
+        lineItems.push({
+          description: `Claim #${claim.claimNumber || claim.id}${claim.status === 'denied' ? ' (Denied)' : ''}`,
+          serviceDate: null,
+          cptCode: null,
+          chargeAmount: chargeAmount.toFixed(2),
+          insurancePaid: insurancePaid.toFixed(2),
+          adjustments: '0.00',
+          patientResponsibility: patientResp.toFixed(2),
+        });
+        totalPatientResponsibility += patientResp;
+      }
+    }
+
+    // Create the statement with a due date 30 days from now
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 30);
+
+    const statement = await storage.createPatientStatement({
+      patientId,
+      practiceId: patient.practiceId,
+      totalAmount: totalPatientResponsibility.toFixed(2),
+      balanceDue: totalPatientResponsibility.toFixed(2),
+      dueDate,
+      lineItems,
+      status: 'pending',
+    });
+
+    res.status(201).json(statement);
+  } catch (error) {
+    logger.error('Error generating statement', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to generate statement' });
+  }
+});
+
+// Mark statement as sent
+router.post('/:id/statements/:statementId/send', isAuthenticated, requirePatientConsent, async (req: any, res) => {
+  try {
+    const statementId = parseInt(req.params.statementId);
+    const { method } = req.body; // email, mail, portal
+
+    const statement = await storage.getPatientStatement(statementId);
+    if (!statement) {
+      return res.status(404).json({ message: 'Statement not found' });
+    }
+
+    // Verify statement belongs to this patient
+    const patientId = parseInt(req.params.id);
+    if (statement.patientId !== patientId) {
+      return res.status(403).json({ message: 'Statement does not belong to this patient' });
+    }
+
+    const updated = await storage.updatePatientStatement(statementId, {
+      status: 'sent',
+      sentVia: method || 'email',
+      sentAt: new Date(),
+    });
+
+    // Placeholder: In production, this would trigger actual email/mail sending
+    logger.info('Statement marked as sent', {
+      statementId,
+      patientId,
+      method: method || 'email',
+    });
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error sending statement', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to send statement' });
+  }
+});
+
+// ==================== PATIENT PAYMENTS ====================
+
+// Get patient payments
+router.get('/:id/payments', isAuthenticated, requirePatientConsent, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const payments = await storage.getPatientPayments(patientId);
+    res.json(payments);
+  } catch (error) {
+    logger.error('Error fetching payments', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch payments' });
+  }
+});
+
+// Record a patient payment
+router.post('/:id/payments', isAuthenticated, requirePatientConsent, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    const { amount, paymentMethod, statementId, referenceNumber, notes } = req.body;
+
+    if (!amount || parseFloat(amount) <= 0) {
+      return res.status(400).json({ message: 'Valid payment amount is required' });
+    }
+    if (!paymentMethod) {
+      return res.status(400).json({ message: 'Payment method is required (cash, check, card, ach)' });
+    }
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!patient.practiceId) {
+      return res.status(400).json({ message: 'Patient has no assigned practice' });
+    }
+
+    // If a statementId is provided, verify it belongs to this patient
+    if (statementId) {
+      const statement = await storage.getPatientStatement(statementId);
+      if (!statement || statement.patientId !== patientId) {
+        return res.status(400).json({ message: 'Invalid statement ID' });
+      }
+    }
+
+    // Record the payment
+    const payment = await storage.createPatientPayment({
+      patientId,
+      practiceId: patient.practiceId,
+      statementId: statementId || null,
+      amount: parseFloat(amount).toFixed(2),
+      paymentMethod,
+      paymentDate: new Date(),
+      referenceNumber: referenceNumber || null,
+      notes: notes || null,
+    });
+
+    // If linked to a statement, update the statement's paid amount and balance
+    if (statementId) {
+      await storage.markStatementPaid(statementId, {
+        paymentMethod,
+        paymentReference: referenceNumber,
+        amount: parseFloat(amount).toFixed(2),
+      });
+    }
+
+    res.status(201).json(payment);
+  } catch (error) {
+    logger.error('Error recording payment', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to record payment' });
   }
 });
 

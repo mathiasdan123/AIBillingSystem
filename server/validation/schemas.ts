@@ -73,6 +73,39 @@ export const createPatientSchema = z.object({
     .transform((s) => s.trim())
     .optional()
     .nullable(),
+  // Secondary insurance fields
+  secondaryInsuranceProvider: z.string()
+    .max(200, 'Secondary insurance provider name must be 200 characters or less')
+    .transform((s) => s.trim())
+    .optional()
+    .nullable(),
+  secondaryInsurancePolicyNumber: z.string()
+    .max(100, 'Secondary policy number must be 100 characters or less')
+    .transform((s) => s.trim())
+    .optional()
+    .nullable(),
+  secondaryInsuranceMemberId: z.string()
+    .max(100, 'Secondary member ID must be 100 characters or less')
+    .transform((s) => s.trim())
+    .optional()
+    .nullable(),
+  secondaryInsuranceGroupNumber: z.string()
+    .max(100, 'Secondary group number must be 100 characters or less')
+    .transform((s) => s.trim())
+    .optional()
+    .nullable(),
+  secondaryInsuranceRelationship: z.enum(['self', 'spouse', 'child', 'other'])
+    .optional()
+    .nullable(),
+  secondaryInsuranceSubscriberName: z.string()
+    .max(200, 'Secondary subscriber name must be 200 characters or less')
+    .transform((s) => s.trim())
+    .optional()
+    .nullable(),
+  secondaryInsuranceSubscriberDob: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Subscriber DOB must be in YYYY-MM-DD format')
+    .optional()
+    .nullable(),
   phoneType: z.enum(['mobile', 'landline', 'work'])
     .optional()
     .default('mobile'),
@@ -126,6 +159,12 @@ export const createClaimSchema = z.object({
   status: z.enum(['draft', 'submitted', 'paid', 'denied', 'appeal', 'optimized'])
     .optional()
     .default('draft'),
+  billingOrder: z.enum(['primary', 'secondary'])
+    .optional()
+    .default('primary'),
+  primaryClaimId: z.number().int().positive('Primary claim ID must be a positive integer')
+    .optional()
+    .nullable(),
 });
 
 export type CreateClaimInput = z.infer<typeof createClaimSchema>;

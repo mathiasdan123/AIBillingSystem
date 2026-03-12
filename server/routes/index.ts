@@ -19,6 +19,9 @@ export { default as patientsRouter } from './patients';
 export { default as claimsRouter } from './claims';
 export { default as appointmentsRouter } from './appointments';
 
+export { default as payerContractsRouter } from './payerContracts';
+export { default as remittanceRouter } from './remittance';
+
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
 export { default as insuranceDataRoutes } from './insuranceDataRoutes';

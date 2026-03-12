@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import DashboardStats from "@/components/DashboardStats";
+import PatientArAgingSummary from "@/components/PatientArAgingSummary";
 import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
@@ -301,6 +302,11 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Patient AR Aging Summary */}
+      <div className="mt-6">
+        <PatientArAgingSummary />
       </div>
 
       {/* Quick Actions */}

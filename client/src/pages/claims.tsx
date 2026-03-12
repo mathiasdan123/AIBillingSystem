@@ -51,6 +51,11 @@ interface Claim {
   paidAt: string | null;
   clearinghouseClaimId?: string | null;
   clearinghouseStatus?: string | null;
+  billingOrder?: string | null;
+  primaryClaimId?: number | null;
+  primaryPaidAmount?: string | null;
+  primaryAdjustmentAmount?: string | null;
+  cobData?: any;
 }
 
 export default function Claims() {
@@ -435,6 +440,27 @@ export default function Claims() {
       toast({
         title: "Error",
         description: "Failed to mark claim as paid",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const submitSecondaryMutation = useMutation({
+    mutationFn: async (claimId: number) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/submit-secondary`, {});
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      toast({
+        title: "Secondary Claim Created",
+        description: `Secondary claim ${data.claim?.claimNumber || ''} created for $${parseFloat(data.claim?.totalAmount || '0').toFixed(2)}`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create secondary claim",
         variant: "destructive",
       });
     },
@@ -1277,6 +1303,16 @@ export default function Claims() {
                         <Badge variant="secondary" className={getStatusBadge(claim.status)}>
                           {claim.status.charAt(0).toUpperCase() + claim.status.slice(1)}
                         </Badge>
+                        {claim.billingOrder === 'secondary' && (
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                            Secondary
+                          </Badge>
+                        )}
+                        {claim.billingOrder === 'primary' && claims?.some((c: Claim) => c.primaryClaimId === claim.id) && (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                            Primary
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-sm text-slate-600 mt-1">
                         {getPatientName(claim.patientId)} • {getInsuranceName(claim.insuranceId)}
@@ -1355,6 +1391,18 @@ export default function Claims() {
                                   </DropdownMenuItem>
                                 </>
                               )}
+                            </>
+                          )}
+                          {claim.status === 'paid' && claim.billingOrder !== 'secondary' && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => submitSecondaryMutation.mutate(claim.id)}
+                                disabled={submitSecondaryMutation.isPending}
+                              >
+                                <Copy className="w-4 h-4 mr-2 text-purple-600" />
+                                Submit to Secondary
+                              </DropdownMenuItem>
                             </>
                           )}
                         </DropdownMenuContent>
@@ -1443,9 +1491,16 @@ export default function Claims() {
                 </div>
                 <div>
                   <Label className="text-slate-500">Status</Label>
-                  <Badge className={getStatusBadge(selectedClaim.status)}>
-                    {selectedClaim.status.charAt(0).toUpperCase() + selectedClaim.status.slice(1)}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge className={getStatusBadge(selectedClaim.status)}>
+                      {selectedClaim.status.charAt(0).toUpperCase() + selectedClaim.status.slice(1)}
+                    </Badge>
+                    {selectedClaim.billingOrder === 'secondary' && (
+                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                        Secondary
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 {selectedClaim.paidAmount && (
                   <div>
@@ -1457,6 +1512,24 @@ export default function Claims() {
                   <div>
                     <Label className="text-slate-500">AI Review Score</Label>
                     <p className="font-medium">{parseFloat(selectedClaim.aiReviewScore).toFixed(0)}%</p>
+                  </div>
+                )}
+                {/* COB / Secondary Insurance Info */}
+                {selectedClaim.billingOrder === 'secondary' && selectedClaim.primaryPaidAmount && (
+                  <div className="col-span-2 bg-purple-50 rounded-lg p-3 border border-purple-200">
+                    <Label className="text-purple-700 font-semibold">Coordination of Benefits</Label>
+                    <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+                      <div>
+                        <span className="text-slate-500">Primary Paid:</span>{' '}
+                        <span className="font-medium text-green-600">${parseFloat(selectedClaim.primaryPaidAmount).toFixed(2)}</span>
+                      </div>
+                      {selectedClaim.primaryAdjustmentAmount && (
+                        <div>
+                          <span className="text-slate-500">Primary Adjustment:</span>{' '}
+                          <span className="font-medium">${parseFloat(selectedClaim.primaryAdjustmentAmount).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1566,6 +1639,32 @@ export default function Claims() {
                 <div>
                   <Label className="text-slate-500">Denial Reason</Label>
                   <p className="text-sm mt-1 p-3 bg-red-50 rounded-lg text-red-800">{selectedClaim.denialReason}</p>
+                </div>
+              )}
+
+              {/* Submit to Secondary Insurance */}
+              {selectedClaim.status === 'paid' && selectedClaim.billingOrder !== 'secondary' && (
+                <div className="border-t pt-4 mt-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-slate-700 font-semibold">Secondary Insurance</Label>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Submit remaining balance to patient's secondary insurance
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => submitSecondaryMutation.mutate(selectedClaim.id)}
+                      disabled={submitSecondaryMutation.isPending}
+                      className="bg-purple-600 hover:bg-purple-700"
+                    >
+                      {submitSecondaryMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Copy className="w-4 h-4 mr-2" />
+                      )}
+                      Submit to Secondary
+                    </Button>
+                  </div>
                 </div>
               )}
 

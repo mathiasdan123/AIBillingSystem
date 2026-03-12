@@ -11,6 +11,7 @@
  * - /api/claims/:id/deny - Deny claim (with AI appeal generation)
  * - /api/claims/:id/appeals - Appeal management
  * - /api/claims/:id/regenerate-appeal - Regenerate AI appeal
+ * - /api/claims/:id/submit-secondary - Submit claim to secondary insurance
  * - /api/claims/analytics/* - Claims analytics
  */
 
@@ -24,6 +25,7 @@ import { appealGenerator } from '../aiAppealGenerator';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
+import { checkClaimUnderpayment } from './payerContracts';
 
 const router = Router();
 const claimOptimizer = new AiClaimOptimizer();
@@ -162,9 +164,43 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
       };
     });
 
+    // If this is a secondary claim, include primary claim info
+    let primaryClaimInfo = null;
+    if (claim.billingOrder === 'secondary' && claim.primaryClaimId) {
+      const primaryClaim = await storage.getClaim(claim.primaryClaimId);
+      if (primaryClaim) {
+        primaryClaimInfo = {
+          id: primaryClaim.id,
+          claimNumber: primaryClaim.claimNumber,
+          paidAmount: primaryClaim.paidAmount,
+          status: primaryClaim.status,
+        };
+      }
+    }
+
+    // Check if this primary claim has secondary claims
+    let secondaryClaimInfo = null;
+    if (claim.billingOrder === 'primary' || !claim.billingOrder) {
+      const allClaims = await storage.getClaims(claim.practiceId);
+      const secondaryClaims = allClaims.filter(
+        (c: any) => c.primaryClaimId === claim.id && c.billingOrder === 'secondary'
+      );
+      if (secondaryClaims.length > 0) {
+        secondaryClaimInfo = secondaryClaims.map((sc: any) => ({
+          id: sc.id,
+          claimNumber: sc.claimNumber,
+          status: sc.status,
+          totalAmount: sc.totalAmount,
+          paidAmount: sc.paidAmount,
+        }));
+      }
+    }
+
     res.json({
       ...claim,
       lineItems: enrichedLineItems,
+      primaryClaimInfo,
+      secondaryClaimInfo,
     });
   } catch (error) {
     logger.error('Error fetching claim', { error: error instanceof Error ? error.message : String(error) });
@@ -175,10 +211,11 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
 // Create new claim with AI optimization
 router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, res) => {
   try {
-    const { patientId, insuranceId, totalAmount, submittedAmount, sessionId } = req.body;
+    const { patientId, insuranceId, totalAmount, submittedAmount, sessionId, billingOrder, primaryClaimId } = req.body;
     const practiceId = getAuthorizedPracticeId(req);
 
-    const claimNumber = generateSecureClaimNumber("CLM");
+    const prefix = billingOrder === 'secondary' ? 'SEC' : 'CLM';
+    const claimNumber = generateSecureClaimNumber(prefix);
 
     let aiReviewScore = null;
     let aiReviewNotes = null;
@@ -216,6 +253,8 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
       status: 'draft',
       aiReviewScore,
       aiReviewNotes,
+      billingOrder: billingOrder || 'primary',
+      primaryClaimId: primaryClaimId || null,
     });
 
     res.json({
@@ -921,13 +960,136 @@ router.post('/:id/paid', isAuthenticated, isAdminOrBilling, async (req: any, res
       paidAmount: paidAmount?.toString() || claim.submittedAmount || claim.totalAmount,
     });
 
+    // Check for underpayment against contracted rates
+    let underpaymentInfo = null;
+    try {
+      underpaymentInfo = await checkClaimUnderpayment(claimId);
+    } catch (underpaymentError) {
+      logger.warn('Underpayment check failed (non-blocking)', {
+        claimId,
+        error: underpaymentError instanceof Error ? underpaymentError.message : String(underpaymentError),
+      });
+    }
+
     res.json({
       message: 'Claim marked as paid',
-      claim: updatedClaim
+      claim: updatedClaim,
+      underpayment: underpaymentInfo,
     });
   } catch (error) {
     logger.error('Error marking claim paid', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to mark claim as paid' });
+  }
+});
+
+// Submit to secondary insurance
+router.post('/:id/submit-secondary', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+  try {
+    const primaryClaimId = parseInt(req.params.id);
+    const practiceId = getAuthorizedPracticeId(req);
+
+    const primaryClaim = await storage.getClaim(primaryClaimId);
+    if (!primaryClaim) {
+      return res.status(404).json({ message: 'Primary claim not found' });
+    }
+
+    // Verify primary claim is paid/adjudicated
+    if (primaryClaim.status !== 'paid') {
+      return res.status(400).json({
+        message: 'Primary claim must be paid/adjudicated before submitting to secondary insurance',
+      });
+    }
+
+    // Get the patient to check for secondary insurance
+    const patient = await storage.getPatient(primaryClaim.patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    if (!patient.secondaryInsuranceProvider) {
+      return res.status(400).json({
+        message: 'Patient does not have secondary insurance on file',
+      });
+    }
+
+    // Calculate remaining balance after primary payment
+    const totalAmount = parseFloat(primaryClaim.totalAmount || '0');
+    const primaryPaidAmount = parseFloat(primaryClaim.paidAmount || '0');
+    const primaryAdjustment = totalAmount - primaryPaidAmount;
+    const secondaryBilledAmount = totalAmount - primaryPaidAmount;
+
+    if (secondaryBilledAmount <= 0) {
+      return res.status(400).json({
+        message: 'Primary insurance already covered the full amount. No balance for secondary.',
+      });
+    }
+
+    // Copy line items from primary claim
+    const primaryLineItems = await storage.getClaimLineItems(primaryClaimId);
+
+    // Build COB (Coordination of Benefits) data
+    const cobData = {
+      primaryInsuranceProvider: patient.insuranceProvider,
+      primaryClaimNumber: primaryClaim.claimNumber,
+      primaryPaidAmount: primaryPaidAmount,
+      primaryAdjustmentAmount: primaryAdjustment,
+      primaryPaidAt: primaryClaim.paidAt,
+      totalBilledAmount: totalAmount,
+      remainingBalance: secondaryBilledAmount,
+    };
+
+    // Create the secondary claim
+    const claimNumber = generateSecureClaimNumber("SEC");
+    const secondaryClaim = await storage.createClaim({
+      practiceId,
+      patientId: primaryClaim.patientId,
+      sessionId: primaryClaim.sessionId,
+      claimNumber,
+      insuranceId: primaryClaim.insuranceId,
+      totalAmount: secondaryBilledAmount.toFixed(2),
+      submittedAmount: secondaryBilledAmount.toFixed(2),
+      status: 'draft',
+      billingOrder: 'secondary',
+      primaryClaimId: primaryClaimId,
+      primaryPaidAmount: primaryPaidAmount.toFixed(2),
+      primaryAdjustmentAmount: primaryAdjustment.toFixed(2),
+      cobData,
+    });
+
+    // Copy line items to the secondary claim, adjusting amounts proportionally
+    for (const item of primaryLineItems) {
+      const itemAmount = parseFloat(item.amount || '0');
+      const ratio = secondaryBilledAmount / totalAmount;
+      const adjustedAmount = (itemAmount * ratio).toFixed(2);
+
+      await storage.createClaimLineItem({
+        claimId: secondaryClaim.id,
+        cptCodeId: item.cptCodeId,
+        icd10CodeId: item.icd10CodeId,
+        units: item.units,
+        rate: item.rate,
+        amount: adjustedAmount,
+        dateOfService: item.dateOfService,
+        modifier: item.modifier,
+        notes: item.notes ? `${item.notes} (Secondary to ${primaryClaim.claimNumber})` : `Secondary to ${primaryClaim.claimNumber}`,
+      });
+    }
+
+    logger.info('Secondary claim created', {
+      primaryClaimId,
+      secondaryClaimId: secondaryClaim.id,
+      secondaryBilledAmount,
+      patientId: patient.id,
+    });
+
+    res.json({
+      message: 'Secondary claim created successfully',
+      claim: secondaryClaim,
+      cobData,
+    });
+  } catch (error) {
+    logger.error('Error creating secondary claim', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to create secondary claim' });
   }
 });
 

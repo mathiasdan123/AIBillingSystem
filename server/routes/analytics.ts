@@ -223,6 +223,18 @@ router.get('/ar-aging', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// Patient billing AR aging (statement-based, separate from insurance claims AR)
+router.get('/patient-ar-aging', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const data = await storage.getPatientArAging(practiceId);
+    res.json(data);
+  } catch (error) {
+    logger.error('Error fetching patient AR aging', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch patient AR aging' });
+  }
+});
+
 // ==================== REFERRALS ====================
 
 // Referrals analytics

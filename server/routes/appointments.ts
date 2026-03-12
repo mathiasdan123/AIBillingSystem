@@ -77,15 +77,92 @@ const generateMockEligibility = (patient: any, insurance: any) => {
 
 // ==================== APPOINTMENT CRUD ====================
 
-// Create appointment
-router.post('/', isAuthenticated, validate(createAppointmentSchema), async (req: any, res) => {
+// Create appointment (supports optional recurrence)
+router.post('/', isAuthenticated, async (req: any, res) => {
   try {
-    const data = { ...req.body };
-    // Convert validated ISO strings to Date objects for storage
-    data.startTime = new Date(data.startTime);
-    data.endTime = new Date(data.endTime);
-    const appointment = await storage.createAppointment(data);
-    res.json(appointment);
+    const { recurrencePattern, recurrenceEndDate, numberOfOccurrences, ...appointmentData } = req.body;
+
+    // Convert date strings to Date objects
+    appointmentData.startTime = new Date(appointmentData.startTime);
+    appointmentData.endTime = new Date(appointmentData.endTime);
+
+    // If no recurrence, create a single appointment
+    if (!recurrencePattern || recurrencePattern === 'none') {
+      const appointment = await storage.createAppointment(appointmentData);
+      return res.json(appointment);
+    }
+
+    // Build recurrence rule from simple pattern
+    const {
+      generateRRule,
+      generateOccurrences,
+      validateRecurrenceRule,
+      describeRecurrence,
+      getDayCode,
+    } = await import('../services/recurrenceService');
+
+    let interval = 1;
+    let frequency: 'WEEKLY' | 'MONTHLY' = 'WEEKLY';
+    if (recurrencePattern === 'weekly') {
+      frequency = 'WEEKLY';
+      interval = 1;
+    } else if (recurrencePattern === 'biweekly') {
+      frequency = 'WEEKLY';
+      interval = 2;
+    } else if (recurrencePattern === 'monthly') {
+      frequency = 'MONTHLY';
+      interval = 1;
+    } else {
+      return res.status(400).json({ message: `Invalid recurrence pattern: ${recurrencePattern}. Use "weekly", "biweekly", or "monthly".` });
+    }
+
+    const dayCode = getDayCode(appointmentData.startTime);
+    const count = numberOfOccurrences ? Math.min(Math.max(numberOfOccurrences, 2), 52) : undefined;
+    const until = recurrenceEndDate ? new Date(recurrenceEndDate) : undefined;
+
+    if (!count && !until) {
+      return res.status(400).json({ message: 'Either recurrenceEndDate or numberOfOccurrences is required for recurring appointments.' });
+    }
+
+    const rrule = generateRRule({
+      frequency,
+      interval,
+      byDay: frequency === 'WEEKLY' ? [dayCode] : undefined,
+      count,
+      until,
+    });
+
+    const validationErrors = validateRecurrenceRule(rrule);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ message: 'Invalid recurrence configuration', errors: validationErrors });
+    }
+
+    const occurrences = generateOccurrences(appointmentData.startTime, rrule);
+    if (occurrences.length === 0) {
+      return res.status(400).json({ message: 'No occurrences generated from recurrence rule' });
+    }
+
+    const parsedEndDate = until || (occurrences.length > 0 ? occurrences[occurrences.length - 1] : null);
+
+    const result = await storage.createRecurringAppointmentSeries(
+      {
+        ...appointmentData,
+        recurrenceRule: rrule,
+        isRecurring: true,
+        recurrenceEndDate: parsedEndDate,
+      },
+      occurrences
+    );
+
+    res.status(201).json({
+      ...result.parent,
+      seriesInfo: {
+        seriesId: result.parent.seriesId,
+        totalCreated: result.instances.length + 1,
+        recurrenceDescription: describeRecurrence(rrule),
+        instances: result.instances,
+      },
+    });
   } catch (error) {
     logger.error('Error creating appointment', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to create appointment' });
@@ -271,6 +348,101 @@ router.get('/:id/eligibility-alerts', isAuthenticated, async (req: any, res) => 
   } catch (error) {
     logger.error('Error fetching appointment eligibility alerts', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch eligibility alerts' });
+  }
+});
+
+// ==================== SERIES ENDPOINTS (by seriesId) ====================
+
+// Get all appointments in a series
+router.get('/series/:seriesId', isAuthenticated, async (req: any, res) => {
+  try {
+    const { seriesId } = req.params;
+    const series = await storage.getAppointmentsBySeriesId(seriesId);
+    if (series.length === 0) {
+      return res.status(404).json({ message: 'Series not found' });
+    }
+    const parent = series.find((a: any) => !a.isRecurringInstance);
+    const { describeRecurrence } = await import('../services/recurrenceService');
+    const recurrenceDescription = parent?.recurrenceRule
+      ? describeRecurrence(parent.recurrenceRule)
+      : 'Recurring appointment';
+    res.json({
+      seriesId,
+      recurrenceDescription,
+      appointments: series,
+      totalCount: series.length,
+    });
+  } catch (error) {
+    logger.error('Error fetching series', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch series' });
+  }
+});
+
+// Update all future appointments in a series
+router.put('/series/:seriesId', isAuthenticated, async (req: any, res) => {
+  try {
+    const { seriesId } = req.params;
+    const { fromDate, ...updates } = req.body;
+    const effectiveFromDate = fromDate ? new Date(fromDate) : undefined;
+    const updatedAppointments = await storage.updateSeriesBySeriesId(
+      seriesId,
+      updates,
+      effectiveFromDate
+    );
+    res.json({
+      message: 'Series updated',
+      updatedCount: updatedAppointments.length,
+      updatedAppointments,
+    });
+  } catch (error) {
+    logger.error('Error updating series', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to update series' });
+  }
+});
+
+// Delete all future appointments in a series
+router.delete('/series/:seriesId', isAuthenticated, async (req: any, res) => {
+  try {
+    const { seriesId } = req.params;
+    const includeCompleted = req.query.includeCompleted === 'true';
+    const deletedCount = await storage.deleteSeriesBySeriesId(seriesId, includeCompleted);
+    res.json({ message: 'Series deleted', deletedCount });
+  } catch (error) {
+    logger.error('Error deleting series', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to delete series' });
+  }
+});
+
+// Cancel all future appointments in a series
+router.post('/series/:seriesId/cancel', isAuthenticated, async (req: any, res) => {
+  try {
+    const { seriesId } = req.params;
+    const { reason, notes, cancelledBy } = req.body;
+    if (!reason) {
+      return res.status(400).json({ message: 'Cancellation reason is required' });
+    }
+    let whoCancelled = cancelledBy;
+    if (!whoCancelled) {
+      const userId = req.user?.claims?.sub;
+      if (userId) {
+        const user = await storage.getUser(userId);
+        whoCancelled = user?.role || 'therapist';
+      }
+    }
+    const cancelledAppointments = await storage.cancelSeriesBySeriesId(
+      seriesId,
+      reason,
+      notes,
+      whoCancelled
+    );
+    res.json({
+      message: 'Series cancelled',
+      cancelledCount: cancelledAppointments.length,
+      cancelledAppointments,
+    });
+  } catch (error) {
+    logger.error('Error cancelling series', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to cancel series' });
   }
 });
 

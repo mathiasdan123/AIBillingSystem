@@ -126,6 +126,14 @@ export const patients = pgTable("patients", {
   insuranceId: varchar("insurance_id"),
   policyNumber: varchar("policy_number"),
   groupNumber: varchar("group_number"),
+  // Secondary insurance fields
+  secondaryInsuranceProvider: varchar("secondary_insurance_provider"),
+  secondaryInsurancePolicyNumber: varchar("secondary_insurance_policy_number"),
+  secondaryInsuranceMemberId: varchar("secondary_insurance_member_id"),
+  secondaryInsuranceGroupNumber: varchar("secondary_insurance_group_number"),
+  secondaryInsuranceRelationship: varchar("secondary_insurance_relationship"), // self, spouse, child, other
+  secondaryInsuranceSubscriberName: varchar("secondary_insurance_subscriber_name"),
+  secondaryInsuranceSubscriberDob: date("secondary_insurance_subscriber_dob"),
   // Contact preferences
   phoneType: varchar("phone_type").default("mobile"), // mobile, landline, work
   preferredContactMethod: varchar("preferred_contact_method").default("email"), // email, sms, both
@@ -330,6 +338,12 @@ export const claims = pgTable("claims", {
   clearinghouseStatus: varchar("clearinghouse_status"), // accepted, rejected, pending
   clearinghouseResponse: jsonb("clearinghouse_response"), // Raw response from clearinghouse
   clearinghouseSubmittedAt: timestamp("clearinghouse_submitted_at"),
+  // Secondary insurance billing
+  billingOrder: varchar("billing_order").default("primary"), // primary, secondary
+  primaryClaimId: integer("primary_claim_id"), // links secondary claim to its primary claim
+  primaryPaidAmount: decimal("primary_paid_amount", { precision: 10, scale: 2 }), // what primary insurance paid
+  primaryAdjustmentAmount: decimal("primary_adjustment_amount", { precision: 10, scale: 2 }), // primary adjustments
+  cobData: jsonb("cob_data"), // Coordination of Benefits data
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -460,6 +474,9 @@ export const appointments = pgTable("appointments", {
   recurrenceRule: varchar("recurrence_rule"), // iCal RRULE format (e.g., "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO")
   recurrenceParentId: integer("recurrence_parent_id"), // Links to parent recurring appointment (self-reference)
   isRecurringInstance: boolean("is_recurring_instance").default(false), // True for instances generated from a recurring parent
+  isRecurring: boolean("is_recurring").default(false), // True for any appointment that is part of a recurring series
+  seriesId: varchar("series_id"), // Groups all appointments in a recurring series (nanoid)
+  recurrenceEndDate: timestamp("recurrence_end_date"), // When the recurrence series ends
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -2542,6 +2559,49 @@ export const insertPatientPlanBenefitsSchema = createInsertSchema(patientPlanBen
 export type PatientPlanBenefits = typeof patientPlanBenefits.$inferSelect;
 export type InsertPatientPlanBenefits = z.infer<typeof insertPatientPlanBenefitsSchema>;
 
+// Payer Contracts - stores negotiated contracts with insurance payers
+export const payerContracts = pgTable("payer_contracts", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerName: varchar("payer_name").notNull(),
+  payerId: varchar("payer_id"), // External payer identifier
+  contractName: varchar("contract_name").notNull(),
+  effectiveDate: date("effective_date").notNull(),
+  terminationDate: date("termination_date"),
+  status: varchar("status").default("active").notNull(), // active, expired, pending
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_payer_contracts_practice").on(table.practiceId),
+  index("idx_payer_contracts_status").on(table.status),
+]);
+
+export const insertPayerContractSchema = createInsertSchema(payerContracts).omit({ id: true, createdAt: true, updatedAt: true });
+export type PayerContract = typeof payerContracts.$inferSelect;
+export type InsertPayerContract = z.infer<typeof insertPayerContractSchema>;
+
+// Payer Rates - per-CPT contracted rates within a payer contract
+export const payerRates = pgTable("payer_rates", {
+  id: serial("id").primaryKey(),
+  contractId: integer("contract_id").references(() => payerContracts.id).notNull(),
+  cptCode: varchar("cpt_code").notNull(),
+  description: text("description"),
+  contractedRate: decimal("contracted_rate", { precision: 10, scale: 2 }).notNull(),
+  medicareRate: decimal("medicare_rate", { precision: 10, scale: 2 }), // For comparison
+  effectiveDate: date("effective_date"),
+  terminationDate: date("termination_date"),
+  modifiers: jsonb("modifiers"), // e.g., telehealth modifier rates
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_payer_rates_contract").on(table.contractId),
+  index("idx_payer_rates_cpt").on(table.cptCode),
+]);
+
+export const insertPayerRateSchema = createInsertSchema(payerRates).omit({ id: true, createdAt: true });
+export type PayerRate = typeof payerRates.$inferSelect;
+export type InsertPayerRate = z.infer<typeof insertPayerRateSchema>;
+
 // Webhook Events - idempotency tracking for Stripe webhooks
 export const webhookEvents = pgTable("webhook_events", {
   id: serial("id").primaryKey(),
@@ -2554,3 +2614,110 @@ export const webhookEvents = pgTable("webhook_events", {
 
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
 export type InsertWebhookEvent = typeof webhookEvents.$inferInsert;
+
+// ==================== Patient Payments (Patient-side billing) ====================
+
+// Patient Payments - tracks payments made by patients toward statements/balances
+export const patientPayments = pgTable("patient_payments", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  statementId: integer("statement_id").references(() => patientStatements.id),
+  // Payment details
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  paymentMethod: varchar("payment_method").notNull(), // cash, check, card, ach
+  paymentDate: timestamp("payment_date").defaultNow().notNull(),
+  referenceNumber: varchar("reference_number"),
+  // Status
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_patient_payments_patient").on(table.patientId),
+  index("idx_patient_payments_practice").on(table.practiceId),
+  index("idx_patient_payments_statement").on(table.statementId),
+]);
+
+export const insertPatientPaymentSchema = createInsertSchema(patientPayments).omit({ id: true, createdAt: true });
+export type PatientPayment = typeof patientPayments.$inferSelect;
+export type InsertPatientPayment = z.infer<typeof insertPatientPaymentSchema>;
+
+// ==================== 835 Remittance Advice ====================
+
+// Remittance Advice (ERA/835) - payment explanation from insurance
+export const remittanceAdvice = pgTable("remittance_advice", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  receivedDate: date("received_date").notNull(),
+  payerName: varchar("payer_name").notNull(),
+  payerId: varchar("payer_id"),
+  checkNumber: varchar("check_number"),
+  checkDate: date("check_date"),
+  totalPaymentAmount: decimal("total_payment_amount", { precision: 10, scale: 2 }).notNull(),
+  rawData: jsonb("raw_data"), // Full 835 parsed data
+  processedAt: timestamp("processed_at"),
+  status: varchar("status").default("pending").notNull(), // pending, processed, error
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_remittance_advice_practice_status").on(table.practiceId, table.status),
+  index("idx_remittance_advice_practice_date").on(table.practiceId, table.receivedDate),
+]);
+
+// Remittance Line Items - individual claim-level payment details
+export const remittanceLineItems = pgTable("remittance_line_items", {
+  id: serial("id").primaryKey(),
+  remittanceId: integer("remittance_id").references(() => remittanceAdvice.id).notNull(),
+  claimId: integer("claim_id").references(() => claims.id), // nullable - linked after matching
+  patientName: varchar("patient_name").notNull(),
+  memberId: varchar("member_id"),
+  serviceDate: date("service_date"),
+  cptCode: varchar("cpt_code"),
+  chargedAmount: decimal("charged_amount", { precision: 10, scale: 2 }),
+  allowedAmount: decimal("allowed_amount", { precision: 10, scale: 2 }),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
+  adjustmentAmount: decimal("adjustment_amount", { precision: 10, scale: 2 }),
+  adjustmentReasonCodes: jsonb("adjustment_reason_codes"), // e.g. [{ code: "CO-45", description: "..." }]
+  remarkCodes: jsonb("remark_codes"), // e.g. [{ code: "N130", description: "..." }]
+  status: varchar("status").default("unmatched").notNull(), // matched, unmatched, partial
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_remittance_line_items_remittance").on(table.remittanceId),
+  index("idx_remittance_line_items_claim").on(table.claimId),
+  index("idx_remittance_line_items_status").on(table.status),
+]);
+
+// Relations for remittance tables
+export const remittanceAdviceRelations = relations(remittanceAdvice, ({ one, many }) => ({
+  practice: one(practices, {
+    fields: [remittanceAdvice.practiceId],
+    references: [practices.id],
+  }),
+  lineItems: many(remittanceLineItems),
+}));
+
+export const remittanceLineItemsRelations = relations(remittanceLineItems, ({ one }) => ({
+  remittance: one(remittanceAdvice, {
+    fields: [remittanceLineItems.remittanceId],
+    references: [remittanceAdvice.id],
+  }),
+  claim: one(claims, {
+    fields: [remittanceLineItems.claimId],
+    references: [claims.id],
+  }),
+}));
+
+// Insert schemas for remittance
+export const insertRemittanceAdviceSchema = createInsertSchema(remittanceAdvice).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRemittanceLineItemSchema = createInsertSchema(remittanceLineItems).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Types for remittance
+export type RemittanceAdvice = typeof remittanceAdvice.$inferSelect;
+export type InsertRemittanceAdvice = z.infer<typeof insertRemittanceAdviceSchema>;
+export type RemittanceLineItem = typeof remittanceLineItems.$inferSelect;
+export type InsertRemittanceLineItem = z.infer<typeof insertRemittanceLineItemSchema>;

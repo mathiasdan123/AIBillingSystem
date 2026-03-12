@@ -12,7 +12,7 @@ import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedCl
 import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport, triggerHardDeletionNow } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
-import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter } from "./routes/index";
+import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter, payerContractsRouter, remittanceRouter } from "./routes/index";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
@@ -535,6 +535,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/claims', claimsRouter);
   // Appointment routes: /api/appointments/*
   app.use('/api/appointments', appointmentsRouter);
+  // Payer Contracts routes: /api/payer-contracts/*
+  app.use('/api/payer-contracts', payerContractsRouter);
+  // Remittance (ERA/835) routes: /api/remittance/*
+  app.use('/api/remittance', remittanceRouter);
 
   // TODO: The routes below are duplicated in the modular routers above.
   // They are kept here temporarily for backward compatibility during migration.
@@ -2851,6 +2855,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       logger.error('Error revoking consent', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to revoke consent' });
+    }
+  });
+
+  // ==================== PATIENT BILLING AR AGING ====================
+
+  // AR aging report for patient billing (statement-based)
+  app.get('/api/billing/ar-aging', isAuthenticated, async (req: any, res) => {
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      const data = await storage.getPatientArAging(practiceId);
+      res.json(data);
+    } catch (error: any) {
+      logger.error('Error fetching billing AR aging', { error: error?.message || String(error) });
+      res.status(500).json({ message: 'Failed to fetch AR aging data' });
     }
   });
 
