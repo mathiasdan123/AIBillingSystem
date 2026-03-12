@@ -1,8 +1,16 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Home,
   Users,
@@ -33,6 +41,8 @@ import {
   Handshake,
   Target,
   MoreHorizontal,
+  Building2,
+  Brain,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
@@ -59,12 +69,15 @@ const navigationItems = [
   { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
   { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
   { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
+  { nameKey: 'nav.aiInsights', href: '/ai-insights', icon: Brain, adminOnly: false },
   { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+  { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
   { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
   { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
   { nameKey: 'nav.breachIncidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
   { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
+  { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
   { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
@@ -83,6 +96,18 @@ export default function SimpleNavigation() {
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
+
+  // Location switcher data
+  const { data: practiceLocations = [] } = useQuery<Array<{ id: number; name: string; isMainLocation: boolean }>>({
+    queryKey: ['/api/locations'],
+    queryFn: async () => {
+      const res = await fetch('/api/locations');
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const [selectedLocationId, setSelectedLocationId] = useState<string>('all');
 
   const cycleTheme = () => {
     if (theme === 'light') setTheme('dark');
@@ -162,6 +187,23 @@ export default function SimpleNavigation() {
           </div>
           <span className="text-xl font-bold text-foreground">TherapyBill AI</span>
         </div>
+
+        {practiceLocations.length > 0 && (
+          <div className="px-6 py-3 border-b border-border">
+            <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
+              <SelectTrigger className="w-full h-9 text-sm">
+                <Building2 className="w-4 h-4 mr-2 text-muted-foreground" aria-hidden="true" />
+                <SelectValue placeholder={t('locations.allLocations')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('locations.allLocations')}</SelectItem>
+                {practiceLocations.map((loc) => (
+                  <SelectItem key={loc.id} value={String(loc.id)}>{loc.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <div className="flex-1 px-6 py-6 overflow-y-auto">
           <ul className="space-y-2" role="list">

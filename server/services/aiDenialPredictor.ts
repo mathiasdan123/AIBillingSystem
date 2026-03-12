@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import logger from "./logger";
+import { getRecommendationsForClaim } from "./aiLearningService";
 
 let openai: OpenAI | null = null;
 
@@ -312,6 +313,21 @@ export async function predictDenial(
       }
     : null;
 
+  // Fetch historical AI insights for this claim
+  let historicalInsights: any[] = [];
+  try {
+    historicalInsights = await getRecommendationsForClaim(claim.id);
+  } catch (insightError) {
+    logger.warn("Failed to fetch historical insights for denial prediction (non-blocking)", {
+      claimId: claim.id,
+      error: insightError instanceof Error ? insightError.message : String(insightError),
+    });
+  }
+
+  const historicalInsightsText = historicalInsights.length > 0
+    ? `\nHISTORICAL INSIGHTS FROM CLAIM OUTCOMES:\n${historicalInsights.map((i: any) => `- [${i.insightType}] ${i.title}: ${i.description} (confidence: ${i.confidence}, data points: ${i.dataPoints})`).join("\n")}`
+    : "";
+
   const prompt = `You are an expert medical billing analyst specializing in therapy claims (OT, PT, SLP). Analyze this claim for denial risk.
 
 CLAIM DETAILS:
@@ -327,6 +343,7 @@ ${soapSummary ? JSON.stringify(soapSummary, null, 2) : "No SOAP note available"}
 
 RULE-BASED ISSUES ALREADY IDENTIFIED:
 ${ruleIssues.length > 0 ? JSON.stringify(ruleIssues, null, 2) : "None"}
+${historicalInsightsText}
 
 Analyze for:
 1. CPT/ICD-10 code compatibility and medical necessity linkage
@@ -334,6 +351,7 @@ Analyze for:
 3. Common denial triggers: missing modifiers, authorization requirements, bundling conflicts, frequency limits
 4. Payer-specific patterns if the insurance provider is known
 5. Any additional issues not caught by the rule-based checks
+6. Patterns from historical claim outcomes (if available above)
 
 Return a JSON object with this exact structure:
 {

@@ -27,6 +27,7 @@ import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
 import { predictDenial } from '../services/aiDenialPredictor';
+import { recordClaimOutcome } from '../services/aiLearningService';
 
 const router = Router();
 const claimOptimizer = new AiClaimOptimizer();
@@ -1121,6 +1122,22 @@ router.post('/:id/paid', isAuthenticated, isAdminOrBilling, async (req: any, res
       });
     }
 
+    // Record outcome for AI learning (non-blocking)
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      await recordClaimOutcome({
+        claimId,
+        practiceId,
+        status: 'paid',
+        paidAmount: paidAmount?.toString() || claim.submittedAmount || claim.totalAmount,
+      });
+    } catch (learningError) {
+      logger.warn('AI learning record failed (non-blocking)', {
+        claimId,
+        error: learningError instanceof Error ? learningError.message : String(learningError),
+      });
+    }
+
     res.json({
       message: 'Claim marked as paid',
       claim: updatedClaim,
@@ -1259,6 +1276,21 @@ router.post('/:id/deny', isAuthenticated, isAdminOrBilling, async (req: any, res
       status: 'denied',
       denialReason: denialReason || 'No reason provided',
     });
+
+    // Record outcome for AI learning (non-blocking)
+    try {
+      await recordClaimOutcome({
+        claimId,
+        practiceId,
+        status: 'denied',
+        denialReason: denialReason || 'No reason provided',
+      });
+    } catch (learningError) {
+      logger.warn('AI learning record failed (non-blocking)', {
+        claimId,
+        error: learningError instanceof Error ? learningError.message : String(learningError),
+      });
+    }
 
     // Auto-generate AI appeal
     let appealResult = null;

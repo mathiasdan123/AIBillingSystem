@@ -23,6 +23,9 @@ export { default as payerContractsRouter } from './payerContracts';
 export { default as remittanceRouter } from './remittance';
 export { default as ssoRouter } from './sso';
 export { default as treatmentPlansRouter } from './treatment-plans';
+export { default as locationsRouter } from './locations';
+export { default as aiInsightsRouter } from './ai-insights';
+export { default as customReportsRouter } from './reports';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

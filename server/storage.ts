@@ -210,6 +210,9 @@ import {
   complianceChecks,
   type ComplianceCheck,
   type InsertComplianceCheck,
+  patientProgressNotes,
+  type PatientProgressNote,
+  type InsertPatientProgressNote,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -495,6 +498,14 @@ export interface IStorage {
     page: number;
     limit: number;
   }): Promise<{ logs: AuditLog[]; total: number }>;
+
+  // Patient Progress Notes operations
+  createPatientProgressNote(note: InsertPatientProgressNote): Promise<PatientProgressNote>;
+  getPatientProgressNotes(patientId: number): Promise<PatientProgressNote[]>;
+  getPatientProgressNote(id: number): Promise<PatientProgressNote | undefined>;
+  getSharedPatientProgressNotes(patientId: number): Promise<PatientProgressNote[]>;
+  sharePatientProgressNote(id: number, sharedBy: string): Promise<PatientProgressNote | undefined>;
+  unsharePatientProgressNote(id: number): Promise<PatientProgressNote | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -7312,6 +7323,60 @@ export class DatabaseStorage implements IStorage {
       .offset((filters.page - 1) * filters.limit);
 
     return { logs, total: totalResult?.count || 0 };
+  }
+
+  // Patient Progress Notes operations
+  async createPatientProgressNote(note: InsertPatientProgressNote): Promise<PatientProgressNote> {
+    const [result] = await db
+      .insert(patientProgressNotes)
+      .values(note)
+      .returning();
+    return result;
+  }
+
+  async getPatientProgressNotes(patientId: number): Promise<PatientProgressNote[]> {
+    return await db
+      .select()
+      .from(patientProgressNotes)
+      .where(eq(patientProgressNotes.patientId, patientId))
+      .orderBy(desc(patientProgressNotes.sessionDate));
+  }
+
+  async getPatientProgressNote(id: number): Promise<PatientProgressNote | undefined> {
+    const [result] = await db
+      .select()
+      .from(patientProgressNotes)
+      .where(eq(patientProgressNotes.id, id));
+    return result;
+  }
+
+  async getSharedPatientProgressNotes(patientId: number): Promise<PatientProgressNote[]> {
+    return await db
+      .select()
+      .from(patientProgressNotes)
+      .where(and(
+        eq(patientProgressNotes.patientId, patientId),
+        sql`${patientProgressNotes.sharedAt} IS NOT NULL`
+      ))
+      .orderBy(desc(patientProgressNotes.sessionDate));
+  }
+
+  async sharePatientProgressNote(id: number, sharedBy: string): Promise<PatientProgressNote | undefined> {
+    const [result] = await db
+      .update(patientProgressNotes)
+      .set({ sharedAt: new Date(), sharedBy })
+      .where(eq(patientProgressNotes.id, id))
+      .returning();
+    return result;
+  }
+
+  async unsharePatientProgressNote(id: number): Promise<PatientProgressNote | undefined> {
+    const [result] = await db
+      .update(patientProgressNotes)
+      .set({ sharedAt: null, sharedBy: null })
+      .where(eq(patientProgressNotes.id, id))
+      .returning();
+    return result;
   }
 }
 

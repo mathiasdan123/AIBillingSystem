@@ -321,6 +321,27 @@ export default function PatientPortalDashboard({ token, onNavigate }: PatientPor
         </Card>
       </div>
 
+      {/* Progress Notes Quick Access */}
+      <Card className="border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+        <CardContent className="flex items-center justify-between py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+              <FileText className="h-5 w-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="font-medium">{t('portal.progressNotes')}</p>
+              <p className="text-sm text-muted-foreground">
+                {t('portal.progressNotesDesc')}
+              </p>
+            </div>
+          </div>
+          <Button variant="outline" onClick={() => onNavigate("progress-notes")}>
+            {t('common.viewAll')}
+            <ChevronRight className="h-4 w-4 ml-2" />
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Recent Activity */}
       {dashboard.recentAppointments.length > 0 && (
         <Card>

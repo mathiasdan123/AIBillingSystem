@@ -862,6 +862,7 @@ export const practicesRelations = relations(practices, ({ many }) => ({
   claims: many(claims),
   expenses: many(expenses),
   payments: many(payments),
+  locations: many(practiceLocations),
 }));
 
 export const patientsRelations = relations(patients, ({ one, many }) => ({
@@ -948,6 +949,66 @@ export const soapNotesRelations = relations(soapNotes, ({ one }) => ({
     relationName: 'cosigner',
   }),
 }));
+
+// AI Learning Data - tracks claim outcomes for continuous AI improvement
+export const aiLearningData = pgTable("ai_learning_data", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  claimId: integer("claim_id").references(() => claims.id),
+  cptCode: varchar("cpt_code"),
+  icd10Code: varchar("icd10_code"),
+  payerName: varchar("payer_name"),
+  submittedAmount: decimal("submitted_amount", { precision: 10, scale: 2 }),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
+  outcome: varchar("outcome").notNull(), // paid, denied, partial
+  denialReason: text("denial_reason"),
+  modifier: varchar("modifier"),
+  aiScoreAtSubmission: integer("ai_score_at_submission"),
+  aiRecommendationsFollowed: jsonb("ai_recommendations_followed"),
+  processingDays: integer("processing_days"), // days from submission to resolution
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_ai_learning_data_practice").on(table.practiceId),
+  index("idx_ai_learning_data_payer_cpt").on(table.payerName, table.cptCode),
+  index("idx_ai_learning_data_outcome").on(table.outcome),
+]);
+
+// AI Model Insights - generated patterns and recommendations from learning data
+export const aiModelInsights = pgTable("ai_model_insights", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  insightType: varchar("insight_type").notNull(), // denial_pattern, underpayment_pattern, optimization_tip, payer_trend
+  payerName: varchar("payer_name"),
+  cptCode: varchar("cpt_code"),
+  title: varchar("title").notNull(),
+  description: text("description").notNull(),
+  confidence: decimal("confidence", { precision: 3, scale: 2 }).notNull(), // 0.00 - 1.00
+  dataPoints: integer("data_points").notNull(), // how many claims support this insight
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_ai_model_insights_practice_active").on(table.practiceId, table.isActive),
+  index("idx_ai_model_insights_type").on(table.insightType),
+]);
+
+// Insert schemas for AI Learning
+export const insertAiLearningDataSchema = createInsertSchema(aiLearningData).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertAiModelInsightSchema = createInsertSchema(aiModelInsights).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Types for AI Learning
+export type AiLearningData = typeof aiLearningData.$inferSelect;
+export type InsertAiLearningData = z.infer<typeof insertAiLearningDataSchema>;
+export type AiModelInsight = typeof aiModelInsights.$inferSelect;
+export type InsertAiModelInsight = z.infer<typeof insertAiModelInsightSchema>;
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -2796,3 +2857,162 @@ export const insertSsoConfigurationSchema = createInsertSchema(ssoConfigurations
 // Types for SSO configurations
 export type SsoConfiguration = typeof ssoConfigurations.$inferSelect;
 export type InsertSsoConfiguration = z.infer<typeof insertSsoConfigurationSchema>;
+
+// Practice Locations - multi-location workspace management
+export const practiceLocations = pgTable("practice_locations", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  name: varchar("name").notNull(),
+  address: text("address"),
+  city: varchar("city"),
+  state: varchar("state"),
+  zipCode: varchar("zip_code"),
+  phone: varchar("phone"),
+  fax: varchar("fax"),
+  isMainLocation: boolean("is_main_location").default(false),
+  isActive: boolean("is_active").default(true),
+  operatingHours: jsonb("operating_hours"), // {monday: {open, close}, tuesday: ...}
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_practice_locations_practice").on(table.practiceId),
+]);
+
+// User-Location assignments - links therapists/staff to locations
+export const userLocations = pgTable("user_locations", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  locationId: integer("location_id").references(() => practiceLocations.id).notNull(),
+  isPrimary: boolean("is_primary").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_user_locations_user").on(table.userId),
+  index("idx_user_locations_location").on(table.locationId),
+]);
+
+// Practice Locations relations
+export const practiceLocationsRelations = relations(practiceLocations, ({ one, many }) => ({
+  practice: one(practices, {
+    fields: [practiceLocations.practiceId],
+    references: [practices.id],
+  }),
+  userLocations: many(userLocations),
+}));
+
+// User Locations relations
+export const userLocationsRelations = relations(userLocations, ({ one }) => ({
+  user: one(users, {
+    fields: [userLocations.userId],
+    references: [users.id],
+  }),
+  location: one(practiceLocations, {
+    fields: [userLocations.locationId],
+    references: [practiceLocations.id],
+  }),
+}));
+
+// Insert schemas for locations
+export const insertPracticeLocationSchema = createInsertSchema(practiceLocations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertUserLocationSchema = createInsertSchema(userLocations).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Types for locations
+export type PracticeLocation = typeof practiceLocations.$inferSelect;
+export type InsertPracticeLocation = z.infer<typeof insertPracticeLocationSchema>;
+export type UserLocation = typeof userLocations.$inferSelect;
+export type InsertUserLocation = z.infer<typeof insertUserLocationSchema>;
+
+// Saved Reports - custom report builder configurations
+export const savedReports = pgTable("saved_reports", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  createdBy: varchar("created_by").references(() => users.id).notNull(),
+  name: varchar("name").notNull(),
+  description: text("description"),
+  reportType: varchar("report_type").notNull(), // claims, revenue, patients, appointments, payer_performance
+  filters: jsonb("filters"), // { dateRange: { start, end }, status, payer, therapist, cptCode }
+  groupBy: text("group_by"), // month, payer, therapist, cpt_code, status
+  columns: jsonb("columns"), // array of selected column names
+  chartType: varchar("chart_type").default("bar"), // bar, line, pie, table, none
+  isDefault: boolean("is_default").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_saved_reports_practice").on(table.practiceId),
+  index("idx_saved_reports_created_by").on(table.createdBy),
+]);
+
+export const savedReportsRelations = relations(savedReports, ({ one }) => ({
+  practice: one(practices, {
+    fields: [savedReports.practiceId],
+    references: [practices.id],
+  }),
+  creator: one(users, {
+    fields: [savedReports.createdBy],
+    references: [users.id],
+  }),
+}));
+
+export const insertSavedReportSchema = createInsertSchema(savedReports).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type SavedReport = typeof savedReports.$inferSelect;
+export type InsertSavedReport = z.infer<typeof insertSavedReportSchema>;
+
+// Patient Progress Notes (patient-facing, separate from SOAP notes)
+// Therapists control what patients see — this is intentionally separate from SOAP notes
+export const patientProgressNotes = pgTable("patient_progress_notes", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  sessionId: integer("session_id").references(() => treatmentSessions.id),
+  sessionDate: date("session_date").notNull(),
+  therapistName: varchar("therapist_name").notNull(),
+  summary: text("summary").notNull(), // Patient-friendly summary, NOT the full SOAP note
+  goalsDiscussed: jsonb("goals_discussed"), // Array of strings
+  homework: text("homework"),
+  nextSessionFocus: text("next_session_focus"),
+  sharedAt: timestamp("shared_at"), // When therapist approved sharing with patient
+  sharedBy: varchar("shared_by").references(() => users.id), // userId who approved sharing
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_patient_progress_notes_patient").on(table.patientId),
+  index("idx_patient_progress_notes_practice").on(table.practiceId),
+  index("idx_patient_progress_notes_session").on(table.sessionId),
+]);
+
+// Patient Progress Notes relations
+export const patientProgressNotesRelations = relations(patientProgressNotes, ({ one }) => ({
+  patient: one(patients, {
+    fields: [patientProgressNotes.patientId],
+    references: [patients.id],
+  }),
+  practice: one(practices, {
+    fields: [patientProgressNotes.practiceId],
+    references: [practices.id],
+  }),
+  session: one(treatmentSessions, {
+    fields: [patientProgressNotes.sessionId],
+    references: [treatmentSessions.id],
+  }),
+}));
+
+// Insert schema for patient progress notes
+export const insertPatientProgressNoteSchema = createInsertSchema(patientProgressNotes).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Types for patient progress notes
+export type PatientProgressNote = typeof patientProgressNotes.$inferSelect;
+export type InsertPatientProgressNote = z.infer<typeof insertPatientProgressNoteSchema>;

@@ -12,7 +12,7 @@ import { isEmailConfigured, sendTestEmail, sendDeniedClaimsReport, type DeniedCl
 import { setDailyReportRecipients, getDailyReportRecipients, triggerDailyReportNow, generateAndSendWeeklyCancellationReport, triggerHardDeletionNow } from "./scheduler";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
-import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter, treatmentPlansRouter } from "./routes/index";
+import { authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter, appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter, treatmentPlansRouter, locationsRouter, aiInsightsRouter, customReportsRouter } from "./routes/index";
 import { generateSoapNoteAndBilling } from "./services/aiSoapBillingService";
 import { optimizeBillingCodes, getInsuranceBillingRules } from "./services/aiBillingOptimizer";
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from "./services/voiceService";
@@ -545,6 +545,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/sso', ssoRouter);
   // Treatment Plans routes: /api/patients/:id/treatment-plans, /api/treatment-plans/*
   app.use('/api', treatmentPlansRouter);
+  // Locations routes: /api/locations/*
+  app.use('/api/locations', locationsRouter);
+  // AI Insights routes: /api/ai-insights/*
+  app.use('/api/ai-insights', aiInsightsRouter);
+  // Custom Reports routes: /api/reports/custom/*
+  app.use('/api/reports/custom', customReportsRouter);
 
   // Routes below are NOT yet in modular routers. See server/routes/index.ts for migration status.
 
@@ -8422,6 +8428,168 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       logger.error('Error rejecting request', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ message: 'Failed to reject request' });
+    }
+  });
+
+  // ==================== PATIENT PROGRESS NOTES ====================
+
+  // Create a progress note for a patient (therapist only)
+  app.post('/api/patients/:id/progress-notes', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const patientId = parseInt(req.params.id);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) {
+        return res.status(404).json({ message: 'Patient not found' });
+      }
+
+      const { sessionId, sessionDate, summary, goalsDiscussed, homework, nextSessionFocus, autoGenerate } = req.body;
+
+      let finalSummary = summary;
+
+      // Auto-generate patient-friendly summary from SOAP note if requested
+      if (autoGenerate && sessionId && process.env.OPENAI_API_KEY) {
+        try {
+          const soapNote = await storage.getSoapNoteBySession(sessionId);
+          if (soapNote) {
+            const OpenAI = (await import('openai')).default;
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const completion = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You are a helpful therapy assistant. Generate a patient-friendly progress note summary from a clinical SOAP note.
+The summary should:
+- Be written in plain, warm language that a patient can understand
+- Avoid clinical jargon
+- Focus on progress, activities done, and next steps
+- Be encouraging but honest
+- Be 2-4 paragraphs
+- NOT include any private clinical assessments or diagnostic reasoning
+
+Also extract:
+1. Goals discussed (as a JSON array of short strings)
+2. Homework/home exercises (if any)
+3. Next session focus (if mentioned)
+
+Return JSON: { "summary": "...", "goalsDiscussed": ["..."], "homework": "..." or null, "nextSessionFocus": "..." or null }`
+                },
+                {
+                  role: 'user',
+                  content: `SOAP Note:\nSubjective: ${soapNote.subjective}\nObjective: ${soapNote.objective}\nAssessment: ${soapNote.assessment}\nPlan: ${soapNote.plan}\n${soapNote.homeProgram ? `Home Program: ${soapNote.homeProgram}` : ''}`
+                }
+              ],
+              response_format: { type: 'json_object' },
+              temperature: 0.7,
+            });
+
+            const generated = JSON.parse(completion.choices[0].message.content || '{}');
+            finalSummary = generated.summary || summary;
+
+            const note = await storage.createPatientProgressNote({
+              patientId,
+              practiceId: patient.practiceId,
+              sessionId: sessionId || null,
+              sessionDate: sessionDate || new Date().toISOString().split('T')[0],
+              therapistName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Therapist',
+              summary: finalSummary,
+              goalsDiscussed: generated.goalsDiscussed || goalsDiscussed || [],
+              homework: generated.homework || homework || null,
+              nextSessionFocus: generated.nextSessionFocus || nextSessionFocus || null,
+              sharedAt: null,
+              sharedBy: null,
+            });
+
+            return res.json(note);
+          }
+        } catch (aiError) {
+          logger.error('Error auto-generating progress note', { error: aiError instanceof Error ? aiError.message : String(aiError) });
+          // Fall through to manual creation
+        }
+      }
+
+      const note = await storage.createPatientProgressNote({
+        patientId,
+        practiceId: patient.practiceId,
+        sessionId: sessionId || null,
+        sessionDate: sessionDate || new Date().toISOString().split('T')[0],
+        therapistName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Therapist',
+        summary: finalSummary || '',
+        goalsDiscussed: goalsDiscussed || [],
+        homework: homework || null,
+        nextSessionFocus: nextSessionFocus || null,
+        sharedAt: null,
+        sharedBy: null,
+      });
+
+      res.json(note);
+    } catch (error) {
+      logger.error('Error creating progress note', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to create progress note' });
+    }
+  });
+
+  // List all progress notes for a patient (therapist view)
+  app.get('/api/patients/:id/progress-notes', isAuthenticated, async (req: any, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const notes = await storage.getPatientProgressNotes(patientId);
+      res.json(notes);
+    } catch (error) {
+      logger.error('Error fetching progress notes', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to fetch progress notes' });
+    }
+  });
+
+  // Share a progress note (make visible in patient portal)
+  app.put('/api/patients/:id/progress-notes/:noteId/share', isAuthenticated, async (req: any, res) => {
+    try {
+      const noteId = parseInt(req.params.noteId);
+      const note = await storage.getPatientProgressNote(noteId);
+      if (!note || note.patientId !== parseInt(req.params.id)) {
+        return res.status(404).json({ message: 'Progress note not found' });
+      }
+
+      const updated = await storage.sharePatientProgressNote(noteId, req.user.id);
+      res.json(updated);
+    } catch (error) {
+      logger.error('Error sharing progress note', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to share progress note' });
+    }
+  });
+
+  // Unshare a progress note (hide from patient portal)
+  app.put('/api/patients/:id/progress-notes/:noteId/unshare', isAuthenticated, async (req: any, res) => {
+    try {
+      const noteId = parseInt(req.params.noteId);
+      const note = await storage.getPatientProgressNote(noteId);
+      if (!note || note.patientId !== parseInt(req.params.id)) {
+        return res.status(404).json({ message: 'Progress note not found' });
+      }
+
+      const updated = await storage.unsharePatientProgressNote(noteId);
+      res.json(updated);
+    } catch (error) {
+      logger.error('Error unsharing progress note', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to unshare progress note' });
+    }
+  });
+
+  // Patient portal: get shared progress notes for the logged-in patient
+  app.get('/api/patient-portal/progress-notes', async (req, res) => {
+    try {
+      const auth = await getPatientFromPortalToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: 'Invalid or expired session' });
+      }
+
+      const { patient } = auth;
+      const notes = await storage.getSharedPatientProgressNotes(patient.id);
+      res.json(notes);
+    } catch (error) {
+      logger.error('Error fetching portal progress notes', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Failed to fetch progress notes' });
     }
   });
 

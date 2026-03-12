@@ -20,6 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PatientBillingTab from "@/components/PatientBillingTab";
+import PatientProgressNotesManager from "@/components/PatientProgressNotesManager";
 
 interface EligibilityCheck {
   id: number;
@@ -791,9 +792,10 @@ export default function Patients() {
               </DialogDescription>
             </DialogHeader>
             <Tabs defaultValue="details" className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="details">Details & Insurance</TabsTrigger>
                 <TabsTrigger value="billing">Billing</TabsTrigger>
+                <TabsTrigger value="progress-notes">Progress Notes</TabsTrigger>
               </TabsList>
 
               <TabsContent value="billing" className="mt-4">
@@ -1120,6 +1122,10 @@ export default function Patients() {
                 </div>
               )}
             </div>
+              </TabsContent>
+
+              <TabsContent value="progress-notes" className="mt-4">
+                <PatientProgressNotesManager patientId={selectedPatient.id} />
               </TabsContent>
             </Tabs>
           </DialogContent>
