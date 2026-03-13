@@ -4930,12 +4930,13 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async markStatementViewed(id: number): Promise<PatientStatement> {
+  async markStatementSent(id: number, method: string): Promise<PatientStatement> {
     const [result] = await db
       .update(patientStatements)
       .set({
-        viewedAt: new Date(),
-        status: 'viewed',
+        sentAt: new Date(),
+        sentMethod: method,
+        status: 'sent',
         updatedAt: new Date(),
       })
       .where(eq(patientStatements.id, id))
@@ -4944,26 +4945,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async markStatementPaid(id: number, paymentInfo: {
-    paymentMethod: string;
-    paymentReference?: string;
     amount: string;
   }): Promise<PatientStatement> {
     const statement = await this.getPatientStatement(id);
     if (!statement) throw new Error('Statement not found');
 
     const newPaidAmount = (parseFloat(statement.paidAmount || '0') + parseFloat(paymentInfo.amount)).toFixed(2);
-    const newBalance = (parseFloat(statement.totalAmount) - parseFloat(newPaidAmount)).toFixed(2);
-    const isPaid = parseFloat(newBalance) <= 0;
+    const balance = parseFloat(statement.patientBalance) || 0;
+    const isPaid = parseFloat(newPaidAmount) >= balance;
 
     const [result] = await db
       .update(patientStatements)
       .set({
         paidAmount: newPaidAmount,
-        balanceDue: newBalance,
-        status: isPaid ? 'paid' : 'pending',
-        paymentMethod: paymentInfo.paymentMethod,
-        paymentReference: paymentInfo.paymentReference,
-        paymentDate: new Date(),
+        status: isPaid ? 'paid' : statement.status,
+        paidAt: isPaid ? new Date() : statement.paidAt,
         updatedAt: new Date(),
       })
       .where(eq(patientStatements.id, id))
@@ -4983,10 +4979,10 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(patientStatements.status, filters.status));
     }
     if (filters?.startDate) {
-      conditions.push(gte(patientStatements.statementDate, filters.startDate));
+      conditions.push(gte(patientStatements.statementDate, filters.startDate.toISOString().split('T')[0]));
     }
     if (filters?.endDate) {
-      conditions.push(lte(patientStatements.statementDate, filters.endDate));
+      conditions.push(lte(patientStatements.statementDate, filters.endDate.toISOString().split('T')[0]));
     }
 
     return await db
@@ -6514,7 +6510,7 @@ export class DatabaseStorage implements IStorage {
     // Get charges from statements
     const statements = await this.getPatientStatements(patientId);
     for (const s of statements) {
-      totalCharges += parseFloat(s.totalAmount || '0');
+      totalCharges += parseFloat(s.totalCharges || '0');
     }
 
     const currentBalance = totalCharges - totalPayments - totalAdjustments;
@@ -7173,12 +7169,7 @@ export class DatabaseStorage implements IStorage {
       .from(patientStatements)
       .where(and(
         eq(patientStatements.practiceId, practiceId),
-        or(
-          eq(patientStatements.status, 'pending'),
-          eq(patientStatements.status, 'sent'),
-          eq(patientStatements.status, 'viewed'),
-          eq(patientStatements.status, 'overdue')
-        )
+        inArray(patientStatements.status, ['draft', 'sent', 'overdue', 'collections'])
       ));
 
     const bucketsMap: Record<string, { count: number; amount: number }> = {
@@ -7192,7 +7183,7 @@ export class DatabaseStorage implements IStorage {
     const patientMap: Record<number, { totalOwed: number; oldestDays: number }> = {};
 
     for (const stmt of outstandingStatements) {
-      const balance = parseFloat(stmt.balanceDue || '0');
+      const balance = (parseFloat(stmt.patientBalance || '0')) - (parseFloat(stmt.paidAmount || '0'));
       if (balance <= 0) continue;
 
       const stmtDate = new Date(stmt.statementDate);

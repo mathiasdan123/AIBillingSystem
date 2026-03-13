@@ -62,6 +62,12 @@ export { default as auditReportsRouter } from './audit-reports';
 export { default as timeTrackingRouter } from './time-tracking';
 export { default as superbillsRouter } from './superbills';
 
+export { default as intakeFormsRouter } from './intake-forms';
+export { default as paymentPostingsRouter } from './payment-postings';
+export { default as feeSchedulesRouter } from './fee-schedules';
+export { default as treatmentAuthorizationsRouter } from './authorizations';
+export { default as patientStatementsRouter } from './patient-statements';
+
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
 export { default as insuranceDataRoutes } from './insuranceDataRoutes';

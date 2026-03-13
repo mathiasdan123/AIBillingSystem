@@ -323,10 +323,10 @@ router.get('/statements', isAuthenticated, async (req: any, res) => {
 
     const headers = [
       'id', 'patientId', 'statementNumber', 'statementDate', 'dueDate',
-      'totalAmount', 'paidAmount', 'balanceDue', 'lineItems',
-      'status', 'sentVia', 'sentAt', 'viewedAt',
-      'paymentMethod', 'paymentDate', 'paymentReference',
-      'createdAt', 'updatedAt',
+      'totalCharges', 'insurancePaid', 'adjustments', 'patientBalance',
+      'previousBalance', 'paidAmount', 'lineItems',
+      'status', 'sentMethod', 'sentAt', 'paidAt',
+      'notes', 'createdAt', 'updatedAt',
     ];
 
     const csv = toCsv(headers, results as any[]);

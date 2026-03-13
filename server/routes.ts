@@ -17,6 +17,11 @@ import {
   documentsRouter, followUpsRouter, eligibilityRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
   superbillsRouter,
+  intakeFormsRouter,
+  paymentPostingsRouter,
+  feeSchedulesRouter,
+  treatmentAuthorizationsRouter,
+  patientStatementsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -186,6 +191,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/audit-reports', auditReportsRouter);
   // Superbill routes: /api/superbills/*
   app.use('/api/superbills', superbillsRouter);
+  // Intake Forms routes: /api/intake-forms/*
+  app.use('/api/intake-forms', intakeFormsRouter);
+  // Payment Postings (ERA) routes: /api/payment-postings/*
+  app.use('/api/payment-postings', paymentPostingsRouter);
+  // Fee Schedule routes: /api/fee-schedules/*
+  app.use('/api/fee-schedules', feeSchedulesRouter);
+  // Treatment Authorization routes: /api/treatment-authorizations/*
+  app.use('/api/treatment-authorizations', treatmentAuthorizationsRouter);
+  // Patient Statement routes: /api/patient-statements/*
+  app.use('/api/patient-statements', patientStatementsRouter);
 
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);

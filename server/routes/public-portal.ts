@@ -421,9 +421,9 @@ router.get('/public/portal/:token/statements/:id', async (req, res) => {
       return res.status(404).json({ message: 'Statement not found' });
     }
 
-    // Mark as viewed if not already
-    if (!statement.viewedAt) {
-      await storage.markStatementViewed(statement.id);
+    // Mark as sent (viewed via portal) if still in draft
+    if (statement.status === 'draft') {
+      await storage.markStatementSent(statement.id, 'portal');
     }
 
     res.json(statement);

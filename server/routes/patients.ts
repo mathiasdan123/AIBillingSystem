@@ -405,12 +405,16 @@ router.post('/:id/statements', isAuthenticated, requirePatientConsent, async (re
       return res.status(400).json({ message: 'Patient has no assigned practice' });
     }
 
+    const dueDateStr = dueDate
+      ? new Date(dueDate).toISOString().split('T')[0]
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const statement = await storage.createPatientStatement({
       patientId,
       practiceId: patient.practiceId,
-      totalAmount,
-      balanceDue: totalAmount,
-      dueDate: dueDate ? new Date(dueDate) : undefined,
+      statementDate: new Date().toISOString().split('T')[0],
+      dueDate: dueDateStr,
+      totalCharges: totalAmount,
+      patientBalance: totalAmount,
       lineItems: lineItems || [],
     });
 
@@ -457,13 +461,11 @@ router.post('/:id/statements/generate', isAuthenticated, requirePatientConsent, 
 
     // Build line items from unpaid claims
     const lineItems: Array<{
+      dateOfService: string;
       description: string;
-      serviceDate: string | null;
-      cptCode: string | null;
-      chargeAmount: string;
+      charges: string;
       insurancePaid: string;
-      adjustments: string;
-      patientResponsibility: string;
+      patientOwes: string;
     }> = [];
     let totalPatientResponsibility = 0;
 
@@ -482,24 +484,20 @@ router.post('/:id/statements/generate', isAuthenticated, requirePatientConsent, 
 
           lineItems.push({
             description: `Claim #${claim.claimNumber || claim.id}`,
-            serviceDate: li.dateOfService || null,
-            cptCode: null, // Would need to join with cptCodes table
-            chargeAmount: liAmount.toFixed(2),
+            dateOfService: li.dateOfService || '',
+            charges: liAmount.toFixed(2),
             insurancePaid: liInsurancePortion.toFixed(2),
-            adjustments: '0.00',
-            patientResponsibility: liPatientResp.toFixed(2),
+            patientOwes: liPatientResp.toFixed(2),
           });
           totalPatientResponsibility += liPatientResp;
         }
       } else {
         lineItems.push({
           description: `Claim #${claim.claimNumber || claim.id}${claim.status === 'denied' ? ' (Denied)' : ''}`,
-          serviceDate: null,
-          cptCode: null,
-          chargeAmount: chargeAmount.toFixed(2),
+          dateOfService: '',
+          charges: chargeAmount.toFixed(2),
           insurancePaid: insurancePaid.toFixed(2),
-          adjustments: '0.00',
-          patientResponsibility: patientResp.toFixed(2),
+          patientOwes: patientResp.toFixed(2),
         });
         totalPatientResponsibility += patientResp;
       }
@@ -512,11 +510,12 @@ router.post('/:id/statements/generate', isAuthenticated, requirePatientConsent, 
     const statement = await storage.createPatientStatement({
       patientId,
       practiceId: patient.practiceId,
-      totalAmount: totalPatientResponsibility.toFixed(2),
-      balanceDue: totalPatientResponsibility.toFixed(2),
-      dueDate,
+      statementDate: new Date().toISOString().split('T')[0],
+      dueDate: dueDate.toISOString().split('T')[0],
+      totalCharges: totalPatientResponsibility.toFixed(2),
+      patientBalance: totalPatientResponsibility.toFixed(2),
       lineItems,
-      status: 'pending',
+      status: 'draft',
     });
 
     res.status(201).json(statement);
@@ -545,7 +544,7 @@ router.post('/:id/statements/:statementId/send', isAuthenticated, requirePatient
 
     const updated = await storage.updatePatientStatement(statementId, {
       status: 'sent',
-      sentVia: method || 'email',
+      sentMethod: method || 'email',
       sentAt: new Date(),
     });
 
@@ -621,8 +620,6 @@ router.post('/:id/payments', isAuthenticated, requirePatientConsent, async (req:
     // If linked to a statement, update the statement's paid amount and balance
     if (statementId) {
       await storage.markStatementPaid(statementId, {
-        paymentMethod,
-        paymentReference: referenceNumber,
         amount: parseFloat(amount).toFixed(2),
       });
     }

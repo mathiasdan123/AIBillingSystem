@@ -5,6 +5,7 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
   serial,
   decimal,
   integer,
@@ -1866,29 +1867,40 @@ export const patientStatements = pgTable("patient_statements", {
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
   // Statement details
   statementNumber: varchar("statement_number").unique().notNull(),
-  statementDate: timestamp("statement_date").defaultNow().notNull(),
-  dueDate: timestamp("due_date"),
+  statementDate: date("statement_date").notNull(),
+  dueDate: date("due_date").notNull(),
   // Amounts
-  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
-  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }).default("0"),
-  balanceDue: decimal("balance_due", { precision: 10, scale: 2 }).notNull(),
+  totalCharges: decimal("total_charges", { precision: 10, scale: 2 }).notNull(),
+  insurancePaid: decimal("insurance_paid", { precision: 10, scale: 2 }).notNull().default("0"),
+  adjustments: decimal("adjustments", { precision: 10, scale: 2 }).notNull().default("0"),
+  patientBalance: decimal("patient_balance", { precision: 10, scale: 2 }).notNull(),
+  previousBalance: decimal("previous_balance", { precision: 10, scale: 2 }).notNull().default("0"),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
   // Line items stored as JSON
-  lineItems: jsonb("line_items").default([]), // [{date, description, cptCode, amount, insurance, patientResponsibility}]
-  // Status
-  status: varchar("status").default("pending"), // pending, sent, viewed, paid, overdue, cancelled
+  lineItems: jsonb("line_items").$type<Array<{
+    dateOfService: string;
+    description: string;
+    charges: string;
+    insurancePaid: string;
+    patientOwes: string;
+  }>>().notNull(),
+  // Status: draft, sent, paid, overdue, collections
+  status: varchar("status").notNull().default("draft"),
   // Delivery tracking
-  sentVia: varchar("sent_via"), // email, mail, portal
   sentAt: timestamp("sent_at"),
-  viewedAt: timestamp("viewed_at"),
+  sentMethod: varchar("sent_method"), // email, portal, mail
   // Payment info
-  paymentMethod: varchar("payment_method"), // card, check, cash, insurance
-  paymentDate: timestamp("payment_date"),
-  paymentReference: varchar("payment_reference"),
-  // PDF generation
-  pdfUrl: varchar("pdf_url"),
+  paidAt: timestamp("paid_at"),
+  // Notes
+  notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_patient_statements_practice").on(table.practiceId),
+  index("idx_patient_statements_patient").on(table.patientId),
+  index("idx_patient_statements_status").on(table.status),
+  index("idx_patient_statements_due_date").on(table.dueDate),
+]);
 
 export const insertPatientPortalAccessSchema = createInsertSchema(patientPortalAccess).omit({ id: true, createdAt: true, updatedAt: true });
 export type PatientPortalAccess = typeof patientPortalAccess.$inferSelect;
@@ -3415,3 +3427,186 @@ export const insertSuperbillSchema = createInsertSchema(superbills).omit({
 });
 export type Superbill = typeof superbills.$inferSelect;
 export type InsertSuperbill = z.infer<typeof insertSuperbillSchema>;
+
+// ==================== Treatment Authorizations (Insurance Pre-Authorizations) ====================
+
+// Tracks insurance pre-authorizations for therapy sessions
+export const treatmentAuthorizations = pgTable("treatment_authorizations", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  insuranceId: integer("insurance_id").references(() => insurances.id),
+  authorizationNumber: varchar("authorization_number"),
+  diagnosisCode: varchar("diagnosis_code"),
+  cptCode: varchar("cpt_code"),
+  authorizedUnits: integer("authorized_units").notNull(),
+  usedUnits: integer("used_units").default(0).notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  status: varchar("status").default("pending").notNull(), // active, expired, exhausted, pending, denied
+  requestedDate: date("requested_date"),
+  approvedDate: date("approved_date"),
+  deniedReason: text("denied_reason"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_treatment_auths_practice").on(table.practiceId),
+  index("idx_treatment_auths_patient").on(table.patientId),
+  index("idx_treatment_auths_status").on(table.status),
+  index("idx_treatment_auths_end_date").on(table.endDate),
+  index("idx_treatment_auths_practice_patient").on(table.practiceId, table.patientId),
+]);
+
+export const treatmentAuthorizationsRelations = relations(treatmentAuthorizations, ({ one }) => ({
+  practice: one(practices, {
+    fields: [treatmentAuthorizations.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [treatmentAuthorizations.patientId],
+    references: [patients.id],
+  }),
+  insurance: one(insurances, {
+    fields: [treatmentAuthorizations.insuranceId],
+    references: [insurances.id],
+  }),
+}));
+
+export const insertTreatmentAuthorizationSchema = createInsertSchema(treatmentAuthorizations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type TreatmentAuthorization = typeof treatmentAuthorizations.$inferSelect;
+export type InsertTreatmentAuthorization = z.infer<typeof insertTreatmentAuthorizationSchema>;
+
+// Intake Form Templates - defines the structure of intake forms patients fill out
+export const intakeFormTemplates = pgTable("intake_form_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  name: varchar("name").notNull(),
+  description: text("description"),
+  fields: jsonb("fields").notNull(), // Array of { type, label, required, options? }
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertIntakeFormTemplateSchema = createInsertSchema(intakeFormTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export type IntakeFormTemplate = typeof intakeFormTemplates.$inferSelect;
+export type InsertIntakeFormTemplate = z.infer<typeof insertIntakeFormTemplateSchema>;
+
+// Intake Form Submissions - patient responses to intake forms
+export const intakeFormSubmissions = pgTable("intake_form_submissions", {
+  id: serial("id").primaryKey(),
+  templateId: integer("template_id").references(() => intakeFormTemplates.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  responses: jsonb("responses").notNull(),
+  status: varchar("status").default("pending").notNull(), // 'pending', 'submitted', 'reviewed'
+  submittedAt: timestamp("submitted_at"),
+  reviewedBy: varchar("reviewed_by").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertIntakeFormSubmissionSchema = createInsertSchema(intakeFormSubmissions).omit({ id: true, createdAt: true });
+export type IntakeFormSubmission = typeof intakeFormSubmissions.$inferSelect;
+export type InsertIntakeFormSubmission = z.infer<typeof insertIntakeFormSubmissionSchema>;
+
+// Payment Postings - ERA (Electronic Remittance Advice) processing
+export const paymentPostings = pgTable("payment_postings", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  payerName: varchar("payer_name").notNull(),
+  checkNumber: varchar("check_number"),
+  paymentDate: date("payment_date").notNull(),
+  paymentAmount: decimal("payment_amount", { precision: 10, scale: 2 }).notNull(),
+  adjustmentAmount: decimal("adjustment_amount", { precision: 10, scale: 2 }).default("0"),
+  adjustmentReason: varchar("adjustment_reason"),
+  patientResponsibility: decimal("patient_responsibility", { precision: 10, scale: 2 }).default("0"),
+  allowedAmount: decimal("allowed_amount", { precision: 10, scale: 2 }),
+  deductibleApplied: decimal("deductible_applied", { precision: 10, scale: 2 }).default("0"),
+  coinsuranceAmount: decimal("coinsurance_amount", { precision: 10, scale: 2 }).default("0"),
+  copayAmount: decimal("copay_amount", { precision: 10, scale: 2 }).default("0"),
+  remarkCode: varchar("remark_code"),
+  postedBy: varchar("posted_by").references(() => users.id),
+  postedAt: timestamp("posted_at").defaultNow(),
+  reversed: boolean("reversed").default(false),
+  reversedAt: timestamp("reversed_at"),
+  reversalReason: text("reversal_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_payment_postings_practice_id").on(table.practiceId),
+  index("idx_payment_postings_claim_id").on(table.claimId),
+  index("idx_payment_postings_payment_date").on(table.paymentDate),
+]);
+
+export const insertPaymentPostingSchema = createInsertSchema(paymentPostings).omit({
+  id: true,
+  createdAt: true,
+  postedAt: true,
+  reversed: true,
+  reversedAt: true,
+  reversalReason: true,
+});
+export type PaymentPosting = typeof paymentPostings.$inferSelect;
+export type InsertPaymentPosting = z.infer<typeof insertPaymentPostingSchema>;
+
+// ==================== Insurance Fee Schedules ====================
+
+// Fee Schedules - expected reimbursement rates from each payer for each CPT code
+export const feeSchedules = pgTable("fee_schedules", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerName: varchar("payer_name").notNull(),
+  cptCode: varchar("cpt_code").notNull(),
+  description: text("description"),
+  billedAmount: decimal("billed_amount", { precision: 10, scale: 2 }).notNull(),
+  expectedReimbursement: decimal("expected_reimbursement", { precision: 10, scale: 2 }).notNull(),
+  effectiveDate: date("effective_date").notNull(),
+  expirationDate: date("expiration_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_fee_schedules_practice_payer_cpt_effective").on(
+    table.practiceId,
+    table.payerName,
+    table.cptCode,
+    table.effectiveDate,
+  ),
+  index("idx_fee_schedules_practice").on(table.practiceId),
+  index("idx_fee_schedules_payer").on(table.payerName),
+  index("idx_fee_schedules_cpt").on(table.cptCode),
+]);
+
+export const feeSchedulesRelations = relations(feeSchedules, ({ one }) => ({
+  practice: one(practices, {
+    fields: [feeSchedules.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertFeeScheduleSchema = createInsertSchema(feeSchedules).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type FeeSchedule = typeof feeSchedules.$inferSelect;
+export type InsertFeeSchedule = z.infer<typeof insertFeeScheduleSchema>;
+
+// Note: patientStatements table is defined earlier in this file (line ~1864)
+// patientStatementsRelations kept here for organizational purposes
+export const patientStatementsRelations = relations(patientStatements, ({ one }) => ({
+  practice: one(practices, {
+    fields: [patientStatements.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [patientStatements.patientId],
+    references: [patients.id],
+  }),
+}));
