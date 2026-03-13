@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import DashboardStats from "@/components/DashboardStats";
 import PatientArAgingSummary from "@/components/PatientArAgingSummary";
-import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users } from "lucide-react";
+import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
 
@@ -57,6 +57,18 @@ export default function Dashboard() {
     retry: false,
   }) as any;
 
+  const { data: onboardingStatus } = useQuery<{ step: number; completed: boolean }>({
+    queryKey: ['/api/onboarding/status'],
+    enabled: isAuthenticated,
+    retry: false,
+  });
+
+  const { data: onboardingChecklist } = useQuery<{ progress: number; completedRequired: number; totalRequired: number }>({
+    queryKey: ['/api/onboarding/checklist'],
+    enabled: isAuthenticated && onboardingStatus?.completed === false,
+    retry: false,
+  });
+
   if (isLoading) {
     return <DashboardSkeleton />;
   }
@@ -101,6 +113,42 @@ export default function Dashboard() {
           {t('dashboard.practiceOverview')}
         </p>
       </div>
+
+      {/* Onboarding Banner */}
+      {onboardingStatus && !onboardingStatus.completed && (
+        <Card className="mb-6 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+          <CardContent className="py-4 px-4 md:px-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="w-5 h-5 text-blue-600" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-blue-900">
+                    {t('onboarding.bannerTitle')}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="w-24 bg-blue-200 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${onboardingChecklist?.progress ?? 0}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-blue-600">
+                      {onboardingChecklist?.completedRequired ?? 0}/{onboardingChecklist?.totalRequired ?? 0} {t('onboarding.bannerComplete')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <Link href="/onboarding">
+                <Button size="sm" className="gap-1 whitespace-nowrap bg-blue-600 hover:bg-blue-700">
+                  {t('onboarding.continueSetup')} <ArrowRight className="w-3.5 h-3.5" />
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Overview */}
       {stats && <DashboardStats stats={stats} />}

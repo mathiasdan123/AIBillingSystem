@@ -258,40 +258,49 @@ router.post('/login', authLimiter, (req, res, next) => {
       return res.status(401).json({ message: info?.message || 'Invalid credentials' });
     }
 
-    req.login(user, async (loginErr) => {
-      if (loginErr) {
-        logger.error('Session login error', { error: loginErr });
+    // Regenerate session before login to prevent session fixation attacks (HIPAA / SOC 2)
+    req.session.regenerate((regenErr) => {
+      if (regenErr) {
+        logger.error('Session regeneration error', { error: regenErr });
         return res.status(500).json({ message: 'Login failed' });
       }
 
-      // Check if user has MFA enabled
-      const dbUser = await storage.getUser(user.claims.sub);
-      if (dbUser?.mfaEnabled) {
-        // Store partial login state in session
-        (req.session as any).pendingMfaUserId = user.claims.sub;
-        return res.status(200).json({
-          requiresMfa: true,
-          message: 'MFA verification required',
+      // Re-initialize passport on the new session
+      req.login(user, async (loginErr) => {
+        if (loginErr) {
+          logger.error('Session login error', { error: loginErr });
+          return res.status(500).json({ message: 'Login failed' });
+        }
+
+        // Check if user has MFA enabled
+        const dbUser = await storage.getUser(user.claims.sub);
+        if (dbUser?.mfaEnabled) {
+          // Store partial login state in session
+          (req.session as any).pendingMfaUserId = user.claims.sub;
+          return res.status(200).json({
+            requiresMfa: true,
+            message: 'MFA verification required',
+          });
+        }
+
+        // Mark MFA as verified if not enabled
+        (req.session as any).mfaVerifiedAt = Date.now();
+        (req.session as any).mfaUserId = user.claims.sub;
+
+        logger.info('User logged in', { userId: user.claims.sub });
+
+        res.status(200).json({
+          message: 'Login successful',
+          user: {
+            id: dbUser?.id,
+            email: dbUser?.email,
+            firstName: dbUser?.firstName,
+            lastName: dbUser?.lastName,
+            role: dbUser?.role,
+            emailVerified: dbUser?.emailVerified,
+            mfaEnabled: dbUser?.mfaEnabled,
+          },
         });
-      }
-
-      // Mark MFA as verified if not enabled
-      (req.session as any).mfaVerifiedAt = Date.now();
-      (req.session as any).mfaUserId = user.claims.sub;
-
-      logger.info('User logged in', { userId: user.claims.sub });
-
-      res.status(200).json({
-        message: 'Login successful',
-        user: {
-          id: dbUser?.id,
-          email: dbUser?.email,
-          firstName: dbUser?.firstName,
-          lastName: dbUser?.lastName,
-          role: dbUser?.role,
-          emailVerified: dbUser?.emailVerified,
-          mfaEnabled: dbUser?.mfaEnabled,
-        },
       });
     });
   })(req, res, next);

@@ -14,12 +14,17 @@
  * - /api/analytics/referrals - Referral analytics
  * - /api/analytics/revenue-by-location-therapist - Revenue breakdown
  * - /api/analytics/cancellations/* - Cancellation analytics
+ * - /api/analytics/therapist-productivity - Per-therapist productivity metrics
+ * - /api/analytics/therapist-productivity/trends - Monthly trend data per therapist
  */
 
 import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { getDb } from '../db';
+import { users, appointments, claims, treatmentSessions, soapNotes } from '@shared/schema';
+import { eq, and, gte, lte, sql, count, sum, avg } from 'drizzle-orm';
 
 const router = Router();
 
@@ -287,6 +292,290 @@ router.get('/cancellations/trend', isAuthenticated, async (req: any, res) => {
   } catch (error) {
     logger.error('Error fetching cancellation trend', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch cancellation trend' });
+  }
+});
+
+// ==================== THERAPIST PRODUCTIVITY ====================
+
+// Therapist productivity metrics
+router.get('/therapist-productivity', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const therapistId = req.query.therapistId as string | undefined;
+
+    const defaultStart = new Date();
+    defaultStart.setMonth(defaultStart.getMonth() - 3);
+    const startDate = validateDate(req.query.start as string) || defaultStart;
+    const endDate = validateDate(req.query.end as string) || new Date();
+
+    if (startDate > endDate) {
+      return res.status(400).json({ message: 'Start date must be before end date' });
+    }
+
+    const db = await getDb();
+
+    // Get all therapists for the practice (or single therapist)
+    const therapistFilter = therapistId
+      ? and(eq(users.practiceId, practiceId), eq(users.id, therapistId), eq(users.role, 'therapist'))
+      : and(eq(users.practiceId, practiceId), eq(users.role, 'therapist'));
+
+    const therapists = await db
+      .select({ id: users.id, firstName: users.firstName, lastName: users.lastName, credentials: users.credentials })
+      .from(users)
+      .where(therapistFilter);
+
+    if (therapists.length === 0) {
+      return res.json([]);
+    }
+
+    const therapistIds = therapists.map((t: any) => t.id);
+    const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
+
+    const results = [];
+
+    for (const therapist of therapists) {
+      // Appointment metrics
+      const appointmentRows = await db
+        .select({
+          total: count(),
+          completed: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'completed')`,
+          cancelled: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'cancelled')`,
+          noShow: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'no_show')`,
+        })
+        .from(appointments)
+        .where(and(
+          eq(appointments.therapistId, therapist.id),
+          eq(appointments.practiceId, practiceId),
+          gte(appointments.startTime, startDate),
+          lte(appointments.startTime, endDate),
+        ));
+
+      const apptStats = appointmentRows[0] || { total: 0, completed: 0, cancelled: 0, noShow: 0 };
+      const totalAppts = Number(apptStats.total) || 0;
+      const completedAppts = Number(apptStats.completed) || 0;
+      const cancelledAppts = Number(apptStats.cancelled) || 0;
+      const noShowAppts = Number(apptStats.noShow) || 0;
+
+      // Claims / billing metrics
+      const claimRows = await db
+        .select({
+          totalBilled: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
+          totalCollected: sql<string>`COALESCE(SUM(${claims.paidAmount}::numeric), 0)`,
+        })
+        .from(claims)
+        .innerJoin(treatmentSessions, eq(claims.sessionId, treatmentSessions.id))
+        .where(and(
+          eq(treatmentSessions.therapistId, therapist.id),
+          eq(claims.practiceId, practiceId),
+          gte(claims.createdAt, startDate),
+          lte(claims.createdAt, endDate),
+        ));
+
+      const claimStats = claimRows[0] || { totalBilled: '0', totalCollected: '0' };
+      const totalBilled = parseFloat(claimStats.totalBilled) || 0;
+      const totalCollected = parseFloat(claimStats.totalCollected) || 0;
+
+      // Treatment sessions for sessions-per-day calculation
+      const sessionRows = await db
+        .select({
+          totalSessions: count(),
+          distinctDays: sql<number>`COUNT(DISTINCT ${treatmentSessions.sessionDate})`,
+        })
+        .from(treatmentSessions)
+        .where(and(
+          eq(treatmentSessions.therapistId, therapist.id),
+          eq(treatmentSessions.practiceId, practiceId),
+          gte(treatmentSessions.sessionDate, startStr),
+          lte(treatmentSessions.sessionDate, endStr),
+        ));
+
+      const sessionStats = sessionRows[0] || { totalSessions: 0, distinctDays: 0 };
+      const totalSessions = Number(sessionStats.totalSessions) || 0;
+      const distinctDays = Number(sessionStats.distinctDays) || 0;
+
+      // Documentation completion rate: SOAP notes completed vs treatment sessions
+      const soapNoteRows = await db
+        .select({ noteCount: count() })
+        .from(soapNotes)
+        .innerJoin(treatmentSessions, eq(soapNotes.sessionId, treatmentSessions.id))
+        .where(and(
+          eq(treatmentSessions.therapistId, therapist.id),
+          eq(treatmentSessions.practiceId, practiceId),
+          gte(treatmentSessions.sessionDate, startStr),
+          lte(treatmentSessions.sessionDate, endStr),
+        ));
+
+      const noteCount = Number(soapNoteRows[0]?.noteCount) || 0;
+
+      // Patient retention: patients seen more than once
+      const retentionRows = await db
+        .select({
+          totalPatients: sql<number>`COUNT(DISTINCT ${treatmentSessions.patientId})`,
+          returningPatients: sql<number>`COUNT(DISTINCT ${treatmentSessions.patientId}) FILTER (WHERE ${treatmentSessions.patientId} IN (
+            SELECT ${treatmentSessions.patientId} FROM ${treatmentSessions}
+            WHERE ${treatmentSessions.therapistId} = ${therapist.id}
+              AND ${treatmentSessions.practiceId} = ${practiceId}
+              AND ${treatmentSessions.sessionDate} >= ${startStr}
+              AND ${treatmentSessions.sessionDate} <= ${endStr}
+            GROUP BY ${treatmentSessions.patientId}
+            HAVING COUNT(*) > 1
+          ))`,
+        })
+        .from(treatmentSessions)
+        .where(and(
+          eq(treatmentSessions.therapistId, therapist.id),
+          eq(treatmentSessions.practiceId, practiceId),
+          gte(treatmentSessions.sessionDate, startStr),
+          lte(treatmentSessions.sessionDate, endStr),
+        ));
+
+      const totalPatients = Number(retentionRows[0]?.totalPatients) || 0;
+      const returningPatients = Number(retentionRows[0]?.returningPatients) || 0;
+
+      results.push({
+        therapistId: therapist.id,
+        therapistName: `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || 'Unknown',
+        credentials: therapist.credentials || '',
+        appointmentsScheduled: totalAppts,
+        appointmentsCompleted: completedAppts,
+        cancellationRate: totalAppts > 0 ? Math.round((cancelledAppts / totalAppts) * 10000) / 100 : 0,
+        noShowRate: totalAppts > 0 ? Math.round((noShowAppts / totalAppts) * 10000) / 100 : 0,
+        totalBilled: Math.round(totalBilled * 100) / 100,
+        totalCollected: Math.round(totalCollected * 100) / 100,
+        collectionRate: totalBilled > 0 ? Math.round((totalCollected / totalBilled) * 10000) / 100 : 0,
+        averageSessionsPerDay: distinctDays > 0 ? Math.round((totalSessions / distinctDays) * 100) / 100 : 0,
+        averageRevenuePerSession: totalSessions > 0 ? Math.round((totalCollected / totalSessions) * 100) / 100 : 0,
+        documentationCompletionRate: totalSessions > 0 ? Math.round((noteCount / totalSessions) * 10000) / 100 : 0,
+        patientRetentionRate: totalPatients > 0 ? Math.round((returningPatients / totalPatients) * 10000) / 100 : 0,
+        totalPatients,
+        totalSessions,
+      });
+    }
+
+    res.json(results);
+  } catch (error) {
+    logger.error('Error fetching therapist productivity', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch therapist productivity' });
+  }
+});
+
+// Therapist productivity trends (monthly)
+router.get('/therapist-productivity/trends', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const therapistId = req.query.therapistId as string | undefined;
+
+    const defaultStart = new Date();
+    defaultStart.setMonth(defaultStart.getMonth() - 12);
+    const startDate = validateDate(req.query.start as string) || defaultStart;
+    const endDate = validateDate(req.query.end as string) || new Date();
+
+    if (startDate > endDate) {
+      return res.status(400).json({ message: 'Start date must be before end date' });
+    }
+
+    const db = await getDb();
+
+    // Get therapists
+    const therapistFilter = therapistId
+      ? and(eq(users.practiceId, practiceId), eq(users.id, therapistId), eq(users.role, 'therapist'))
+      : and(eq(users.practiceId, practiceId), eq(users.role, 'therapist'));
+
+    const therapists = await db
+      .select({ id: users.id, firstName: users.firstName, lastName: users.lastName })
+      .from(users)
+      .where(therapistFilter);
+
+    if (therapists.length === 0) {
+      return res.json([]);
+    }
+
+    const results = [];
+
+    for (const therapist of therapists) {
+      // Monthly appointment counts
+      const monthlyAppts = await db
+        .select({
+          month: sql<string>`TO_CHAR(${appointments.startTime}, 'YYYY-MM')`,
+          total: count(),
+          completed: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'completed')`,
+          cancelled: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'cancelled')`,
+          noShow: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'no_show')`,
+        })
+        .from(appointments)
+        .where(and(
+          eq(appointments.therapistId, therapist.id),
+          eq(appointments.practiceId, practiceId),
+          gte(appointments.startTime, startDate),
+          lte(appointments.startTime, endDate),
+        ))
+        .groupBy(sql`TO_CHAR(${appointments.startTime}, 'YYYY-MM')`)
+        .orderBy(sql`TO_CHAR(${appointments.startTime}, 'YYYY-MM')`);
+
+      // Monthly revenue
+      const monthlyRevenue = await db
+        .select({
+          month: sql<string>`TO_CHAR(${claims.createdAt}, 'YYYY-MM')`,
+          billed: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
+          collected: sql<string>`COALESCE(SUM(${claims.paidAmount}::numeric), 0)`,
+        })
+        .from(claims)
+        .innerJoin(treatmentSessions, eq(claims.sessionId, treatmentSessions.id))
+        .where(and(
+          eq(treatmentSessions.therapistId, therapist.id),
+          eq(claims.practiceId, practiceId),
+          gte(claims.createdAt, startDate),
+          lte(claims.createdAt, endDate),
+        ))
+        .groupBy(sql`TO_CHAR(${claims.createdAt}, 'YYYY-MM')`)
+        .orderBy(sql`TO_CHAR(${claims.createdAt}, 'YYYY-MM')`);
+
+      // Merge appointment and revenue data by month
+      const monthMap = new Map<string, any>();
+
+      for (const row of monthlyAppts) {
+        monthMap.set(row.month, {
+          month: row.month,
+          appointmentsScheduled: Number(row.total) || 0,
+          appointmentsCompleted: Number(row.completed) || 0,
+          cancellationRate: Number(row.total) > 0 ? Math.round((Number(row.cancelled) / Number(row.total)) * 10000) / 100 : 0,
+          noShowRate: Number(row.total) > 0 ? Math.round((Number(row.noShow) / Number(row.total)) * 10000) / 100 : 0,
+          totalBilled: 0,
+          totalCollected: 0,
+          collectionRate: 0,
+        });
+      }
+
+      for (const row of monthlyRevenue) {
+        const existing = monthMap.get(row.month) || {
+          month: row.month,
+          appointmentsScheduled: 0,
+          appointmentsCompleted: 0,
+          cancellationRate: 0,
+          noShowRate: 0,
+        };
+        const billed = parseFloat(row.billed) || 0;
+        const collected = parseFloat(row.collected) || 0;
+        existing.totalBilled = Math.round(billed * 100) / 100;
+        existing.totalCollected = Math.round(collected * 100) / 100;
+        existing.collectionRate = billed > 0 ? Math.round((collected / billed) * 10000) / 100 : 0;
+        monthMap.set(row.month, existing);
+      }
+
+      const months = Array.from(monthMap.values()).sort((a, b) => a.month.localeCompare(b.month));
+
+      results.push({
+        therapistId: therapist.id,
+        therapistName: `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || 'Unknown',
+        months,
+      });
+    }
+
+    res.json(results);
+  } catch (error) {
+    logger.error('Error fetching therapist productivity trends', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch therapist productivity trends' });
   }
 });
 

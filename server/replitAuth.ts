@@ -64,8 +64,8 @@ export function getSession() {
       httpOnly: true,
       secure: true,
       maxAge: sessionTtl,
-      // CSRF Protection: 'lax' provides protection while allowing form submissions
-      sameSite: 'lax',
+      // HIPAA: strict sameSite prevents CSRF; all auth is API-based so no cross-origin form posts needed
+      sameSite: 'strict',
     },
   });
 }

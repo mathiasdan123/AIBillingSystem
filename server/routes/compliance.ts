@@ -46,7 +46,91 @@ const CHECK_LABELS: Record<string, string> = {
   backup_verified: 'Data Backup Verification',
 };
 
+// Expected security headers and their acceptable values for self-test
+const EXPECTED_SECURITY_HEADERS: Array<{
+  header: string;
+  expected: string | RegExp | null; // null = just check presence
+  description: string;
+  required: boolean;
+}> = [
+  { header: 'x-frame-options', expected: 'DENY', description: 'Clickjacking protection', required: true },
+  { header: 'x-content-type-options', expected: 'nosniff', description: 'MIME sniffing prevention', required: true },
+  { header: 'x-xss-protection', expected: '0', description: 'Legacy XSS filter disabled (CSP preferred)', required: true },
+  { header: 'referrer-policy', expected: 'strict-origin-when-cross-origin', description: 'Referrer policy for PHI protection', required: true },
+  { header: 'permissions-policy', expected: null, description: 'Browser feature permissions', required: true },
+  { header: 'cross-origin-opener-policy', expected: 'same-origin', description: 'Cross-origin isolation', required: true },
+  { header: 'cross-origin-resource-policy', expected: 'same-origin', description: 'Cross-origin resource protection', required: true },
+  { header: 'content-security-policy', expected: null, description: 'Content Security Policy (enforced)', required: true },
+  { header: 'strict-transport-security', expected: /max-age=\d+/, description: 'HSTS (production only)', required: false },
+  { header: 'x-request-id', expected: null, description: 'Request tracing ID', required: true },
+];
+
 export function registerComplianceRoutes(app: Express) {
+  // GET /api/compliance/security-headers — self-test security headers and report findings
+  app.get('/api/compliance/security-headers', isAuthenticated, isAdmin, (req: Request, res: Response) => {
+    // Read the headers that were set on THIS response (by earlier middleware)
+    const results: Array<{
+      header: string;
+      description: string;
+      status: 'pass' | 'fail' | 'warning';
+      currentValue: string | null;
+      expectedValue: string | null;
+    }> = [];
+
+    for (const check of EXPECTED_SECURITY_HEADERS) {
+      const currentValue = res.getHeader(check.header) as string | undefined;
+      let status: 'pass' | 'fail' | 'warning' = 'fail';
+
+      if (currentValue) {
+        if (check.expected === null) {
+          // Just checking presence
+          status = 'pass';
+        } else if (check.expected instanceof RegExp) {
+          status = check.expected.test(currentValue) ? 'pass' : 'warning';
+        } else {
+          status = currentValue === check.expected ? 'pass' : 'warning';
+        }
+      } else {
+        // Missing header
+        status = check.required ? 'fail' : 'warning';
+      }
+
+      results.push({
+        header: check.header,
+        description: check.description,
+        status,
+        currentValue: currentValue || null,
+        expectedValue: check.expected instanceof RegExp ? check.expected.source : check.expected,
+      });
+    }
+
+    // Also check CSP-Report-Only (dev mode uses this instead of enforced CSP)
+    const cspReportOnly = res.getHeader('content-security-policy-report-only') as string | undefined;
+    if (cspReportOnly) {
+      // In dev mode, report-only is used instead of enforced; mark CSP as warning
+      const cspResult = results.find(r => r.header === 'content-security-policy');
+      if (cspResult && cspResult.status === 'fail') {
+        cspResult.status = 'warning';
+        cspResult.currentValue = `[report-only] ${cspReportOnly}`;
+      }
+    }
+
+    const passCount = results.filter(r => r.status === 'pass').length;
+    const warnCount = results.filter(r => r.status === 'warning').length;
+    const failCount = results.filter(r => r.status === 'fail').length;
+    const score = Math.round(((passCount + warnCount * 0.5) / results.length) * 100);
+
+    return res.json({
+      score,
+      total: results.length,
+      pass: passCount,
+      warning: warnCount,
+      fail: failCount,
+      environment: process.env.NODE_ENV || 'development',
+      headers: results,
+    });
+  });
+
   // GET /api/compliance/dashboard — run automated checks and return posture
   app.get('/api/compliance/dashboard', isAuthenticated, isAdmin, async (req: Request, res: Response) => {
     try {

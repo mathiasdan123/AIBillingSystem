@@ -26,6 +26,13 @@ export { default as treatmentPlansRouter } from './treatment-plans';
 export { default as locationsRouter } from './locations';
 export { default as aiInsightsRouter } from './ai-insights';
 export { default as customReportsRouter } from './reports';
+export { default as exportRouter } from './export';
+export { default as onboardingRouter } from './onboarding';
+
+export { default as practicesRouter } from './practices';
+export { default as billingRouter } from './billing';
+export { default as telehealthRouter } from './telehealth';
+export { default as messagesRouter } from './messages';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
@@ -59,11 +66,24 @@ export { default as insuranceDataRoutes } from './insuranceDataRoutes';
  *   Includes: CRUD, cancel, check-eligibility, eligibility-alerts,
  *   recurring (create, get series, delete series, update series, cancel series)
  *
+ * - practices.ts - Practice management (/api/practices/*)
+ *   Includes: CRUD, public-info for consent forms
+ *
+ * - billing.ts - Billing routes (/api/billing/*)
+ *   Includes: AR aging, Stripe setup-intent, payment-methods, set-default,
+ *   billing info, history, patient-payment-link, Stripe webhook
+ *
+ * - telehealth.ts - Telehealth routes (/api/telehealth/*)
+ *   Includes: settings, sessions CRUD, join, end, public patient endpoints
+ *   (join by code, waiting room, status polling)
+ *
+ * - messages.ts - Secure messaging routes (/api/messages/*)
+ *   Includes: conversations CRUD, send message, archive, unread count,
+ *   delete message, public patient messaging endpoints
+ *
  * TODO: Remaining routes to split from server/routes.ts
  *
  * Medium Priority:
- * - practices.ts - Practice management (/api/practices/*)
- * - billing.ts - Billing and reimbursement (/api/estimate-reimbursement, etc.)
  * - admin.ts - Admin endpoints (/api/admin/*)
  * - appeals.ts - Appeals management routes (/api/appeals/*)
  *

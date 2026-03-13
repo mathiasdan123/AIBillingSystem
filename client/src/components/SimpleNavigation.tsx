@@ -43,6 +43,8 @@ import {
   MoreHorizontal,
   Building2,
   Brain,
+  UserCheck,
+  Download,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
@@ -72,6 +74,7 @@ const navigationItems = [
   { nameKey: 'nav.aiInsights', href: '/ai-insights', icon: Brain, adminOnly: false },
   { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+  { nameKey: 'nav.therapistProductivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false },
   { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
   { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
   { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
@@ -79,6 +82,7 @@ const navigationItems = [
   { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
   { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
   { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
+  { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
 

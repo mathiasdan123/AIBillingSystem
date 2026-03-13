@@ -53,6 +53,8 @@ const PayerContracts = lazy(() => import("@/pages/payer-contracts"));
 const RemittancePage = lazy(() => import("@/pages/remittance"));
 const TreatmentPlans = lazy(() => import("@/pages/treatment-plans"));
 const AiInsights = lazy(() => import("@/pages/ai-insights"));
+const TherapistProductivity = lazy(() => import("@/pages/therapist-productivity"));
+const Onboarding = lazy(() => import("@/pages/onboarding"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -64,6 +66,9 @@ const SsoSettings = lazy(() => import("@/pages/sso-settings"));
 
 // Locations management
 const Locations = lazy(() => import("@/pages/locations"));
+
+// Data export (admin only)
+const DataExport = lazy(() => import("@/pages/data-export"));
 
 // Error boundary for route-level errors
 class ErrorBoundary extends Component<
@@ -196,10 +201,13 @@ function Router() {
               <Route path="/remittance" component={RemittancePage} />
               <Route path="/payer-contracts" component={PayerContracts} />
               <Route path="/ai-insights" component={AiInsights} />
+              <Route path="/therapist-productivity" component={TherapistProductivity} />
               <Route path="/subscription" component={Billing} />
               {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
               {isAdmin && <Route path="/compliance" component={ComplianceDashboard} />}
               {isAdmin && <Route path="/sso-settings" component={SsoSettings} />}
+              {isAdmin && <Route path="/data-export" component={DataExport} />}
+              <Route path="/onboarding" component={Onboarding} />
               <Route path="/locations" component={Locations} />
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />

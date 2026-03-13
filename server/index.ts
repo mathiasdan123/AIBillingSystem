@@ -26,6 +26,7 @@ import rateLimit, { type Store } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static";
 import { requestTimeout } from "./middleware/requestTimeout";
+import { requestSanitizer } from "./middleware/sanitize";
 import { globalErrorHandler } from "./middleware/errorHandler";
 import { seedDatabase } from "./seeds";
 import { startScheduler } from "./scheduler";
@@ -160,16 +161,22 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   // Prevent MIME type sniffing
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  // XSS protection
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Disable legacy XSS filter — CSP is the modern replacement
+  res.setHeader('X-XSS-Protection', '0');
   // Referrer policy for PHI protection
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Permissions-Policy: disable unused APIs; allow camera/mic for telehealth
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  // Cross-Origin isolation headers
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+
   // Content Security Policy - prevents XSS and data injection attacks
   // Note: 'unsafe-inline' for styles needed for some UI libraries; review for stricter CSP
-  // For Railway/Render demo, we use a more permissive CSP
+  const cspDirectives: string[] = [];
   if (isDemoMode) {
     // Demo mode: permissive CSP for easier testing
-    res.setHeader('Content-Security-Policy', [
+    cspDirectives.push(
       "default-src 'self' https: wss:",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
       "style-src 'self' 'unsafe-inline' https:",
@@ -177,9 +184,13 @@ app.use((req, res, next) => {
       "img-src 'self' data: https: blob:",
       "connect-src 'self' https: wss:",
       "frame-src 'self' https:",
-    ].join('; '));
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+    );
   } else {
-    res.setHeader('Content-Security-Policy', [
+    cspDirectives.push(
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -187,11 +198,19 @@ app.use((req, res, next) => {
       "img-src 'self' data: https: blob:",
       "connect-src 'self' https://api.stripe.com https://api.openai.com https://*.ingest.sentry.io wss:",
       "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
+      "frame-ancestors 'none'",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
-    ].join('; '));
+    );
   }
+
+  // In development, use report-only CSP so it doesn't block during dev
+  const cspHeaderName = isDev
+    ? 'Content-Security-Policy-Report-Only'
+    : 'Content-Security-Policy';
+  res.setHeader(cspHeaderName, cspDirectives.join('; '));
+
   next();
 });
 
@@ -267,6 +286,9 @@ app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 // Body parsing with size limits (for all other routes)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
+
+// Request sanitization: strip null bytes, truncate oversized fields
+app.use(requestSanitizer());
 
 // Request timeout middleware (skips multipart/file uploads)
 app.use(requestTimeout());
