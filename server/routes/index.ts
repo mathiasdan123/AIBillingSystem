@@ -56,6 +56,11 @@ export { default as sessionsRouter } from './sessions';
 export { default as webhooksRouter } from './webhooks';
 export { default as documentsRouter } from './documents';
 export { default as followUpsRouter } from './follow-ups';
+export { default as eligibilityRouter } from './eligibility';
+export { default as practiceAnalyticsRouter } from './practice-analytics';
+export { default as auditReportsRouter } from './audit-reports';
+export { default as timeTrackingRouter } from './time-tracking';
+export { default as superbillsRouter } from './superbills';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

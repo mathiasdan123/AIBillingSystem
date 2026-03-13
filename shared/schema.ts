@@ -825,9 +825,15 @@ export type PatientConsent = typeof patientConsents.$inferSelect;
 export const eligibilityChecks = pgTable("eligibility_checks", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id),
   insuranceId: integer("insurance_id").references(() => insurances.id),
+  eligible: boolean("eligible"),
   checkDate: timestamp("check_date").defaultNow(),
-  status: varchar("status").notNull(), // "active", "inactive", "unknown"
+  checkedAt: timestamp("checked_at"),
+  expiresAt: timestamp("expires_at"),
+  status: varchar("status").notNull(), // "active", "inactive", "unknown" (coverage) or "pending", "completed", "error" (batch processing)
+  processingStatus: varchar("processing_status").default("completed"), // "pending", "completed", "error" - batch processing status
+  errorMessage: text("error_message"),
   coverageType: varchar("coverage_type"), // "HMO", "PPO", "Medicare", etc.
   effectiveDate: date("effective_date"),
   terminationDate: date("termination_date"),
@@ -842,7 +848,12 @@ export const eligibilityChecks = pgTable("eligibility_checks", {
   authRequired: boolean("auth_required"),
   rawResponse: jsonb("raw_response"), // store full API response for debugging
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_eligibility_checks_patient").on(table.patientId),
+  index("idx_eligibility_checks_practice").on(table.practiceId),
+  index("idx_eligibility_checks_processing_status").on(table.practiceId, table.processingStatus),
+  index("idx_eligibility_checks_checked_at").on(table.checkedAt),
+]);
 
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -3298,3 +3309,109 @@ export const insertClaimFollowUpSchema = createInsertSchema(claimFollowUps).omit
 });
 export type ClaimFollowUp = typeof claimFollowUps.$inferSelect;
 export type InsertClaimFollowUp = z.infer<typeof insertClaimFollowUpSchema>;
+
+// ==================== Staff Time Tracking ====================
+
+// Time Entries - tracks billable hours per therapist
+export const timeEntries = pgTable("time_entries", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  activityType: varchar("activity_type").notNull(), // session, documentation, phone_call, admin, supervision, other
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time"),
+  durationMinutes: integer("duration_minutes"),
+  notes: text("notes"),
+  billable: boolean("billable").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_time_entries_user").on(table.userId),
+  index("idx_time_entries_practice").on(table.practiceId),
+  index("idx_time_entries_patient").on(table.patientId),
+  index("idx_time_entries_activity_type").on(table.activityType),
+  index("idx_time_entries_start_time").on(table.startTime),
+]);
+
+export const timeEntriesRelations = relations(timeEntries, ({ one }) => ({
+  user: one(users, {
+    fields: [timeEntries.userId],
+    references: [users.id],
+  }),
+  practice: one(practices, {
+    fields: [timeEntries.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [timeEntries.patientId],
+    references: [patients.id],
+  }),
+  appointment: one(appointments, {
+    fields: [timeEntries.appointmentId],
+    references: [appointments.id],
+  }),
+}));
+
+export const insertTimeEntrySchema = createInsertSchema(timeEntries).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type TimeEntry = typeof timeEntries.$inferSelect;
+export type InsertTimeEntry = z.infer<typeof insertTimeEntrySchema>;
+
+// ==================== Superbills (Out-of-Network Reimbursement) ====================
+
+// Superbills - itemized forms given to patients for out-of-network insurance reimbursement
+export const superbills = pgTable("superbills", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  appointmentId: integer("appointment_id").references(() => appointments.id),
+  dateOfService: date("date_of_service").notNull(),
+  diagnosisCodes: text("diagnosis_codes").array().notNull(), // ICD-10 codes
+  procedureCodes: jsonb("procedure_codes").notNull(), // Array of {code, description, units, fee}
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  status: varchar("status").default("draft").notNull(), // draft, finalized, sent
+  sentAt: timestamp("sent_at"),
+  sentMethod: varchar("sent_method"), // email, portal, print
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_superbills_practice").on(table.practiceId),
+  index("idx_superbills_patient").on(table.patientId),
+  index("idx_superbills_provider").on(table.providerId),
+  index("idx_superbills_status").on(table.status),
+  index("idx_superbills_date").on(table.dateOfService),
+]);
+
+export const superbillsRelations = relations(superbills, ({ one }) => ({
+  practice: one(practices, {
+    fields: [superbills.practiceId],
+    references: [practices.id],
+  }),
+  patient: one(patients, {
+    fields: [superbills.patientId],
+    references: [patients.id],
+  }),
+  provider: one(users, {
+    fields: [superbills.providerId],
+    references: [users.id],
+  }),
+  appointment: one(appointments, {
+    fields: [superbills.appointmentId],
+    references: [appointments.id],
+  }),
+}));
+
+export const insertSuperbillSchema = createInsertSchema(superbills).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type Superbill = typeof superbills.$inferSelect;
+export type InsertSuperbill = z.infer<typeof insertSuperbillSchema>;

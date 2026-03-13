@@ -14,7 +14,9 @@ import {
   // New extractions
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
-  documentsRouter, followUpsRouter,
+  documentsRouter, followUpsRouter, eligibilityRouter,
+  practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
+  superbillsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -94,6 +96,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', authRouter);
   // Analytics routes: /api/analytics/*
   app.use('/api/analytics', analyticsRouter);
+  // Practice Analytics routes: /api/practice-analytics/*
+  app.use('/api/practice-analytics', practiceAnalyticsRouter);
   // SOAP Notes routes: /api/soap-notes/*
   app.use('/api/soap-notes', soapNotesRouter);
   // Backward compatibility for therapy-bank
@@ -174,6 +178,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/documents', documentsRouter);
   // Claim Follow-Up routes: /api/follow-ups/*
   app.use('/api/follow-ups', followUpsRouter);
+  // Time Tracking routes: /api/time-tracking/*
+  app.use('/api/time-tracking', timeTrackingRouter);
+  // Eligibility batch verification routes: /api/eligibility/*
+  app.use('/api/eligibility', eligibilityRouter);
+  // Audit report routes: /api/audit-reports/*
+  app.use('/api/audit-reports', auditReportsRouter);
+  // Superbill routes: /api/superbills/*
+  app.use('/api/superbills', superbillsRouter);
 
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
