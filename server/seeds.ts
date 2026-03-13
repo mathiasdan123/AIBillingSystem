@@ -59,6 +59,8 @@ export async function seedDatabase() {
         console.log("Demo user created: demo@therapybill.com / demo1234");
       }
     } else {
+      // Ensure demo user has admin role
+      await db.execute(sql`UPDATE users SET role = 'admin' WHERE email = 'demo@therapybill.com' AND role != 'admin'`);
       console.log("Demo user already exists");
     }
 
@@ -82,7 +84,14 @@ export async function seedDatabase() {
         console.log("Reviewer user created: reviewer1@demo.com / TherapyDemo2024#");
       }
     } else {
-      console.log("Reviewer user already exists");
+      // Ensure reviewer has admin role and correct practice
+      await db.execute(sql`UPDATE users SET role = 'admin' WHERE email = 'reviewer1@demo.com' AND role != 'admin'`);
+      const practiceForReviewer = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
+      if (practiceForReviewer.rows && practiceForReviewer.rows.length > 0) {
+        const pId = parseInt(practiceForReviewer.rows[0].id as string, 10);
+        await db.execute(sql`UPDATE users SET practice_id = ${pId} WHERE email = 'reviewer1@demo.com' AND practice_id IS NULL`);
+      }
+      console.log("Reviewer user already exists - ensured admin role");
     }
 
     // Check if data already exists
