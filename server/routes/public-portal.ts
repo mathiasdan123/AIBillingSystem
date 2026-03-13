@@ -1016,4 +1016,61 @@ router.get('/patient-portal/progress-notes', async (req, res) => {
   }
 });
 
+// Debug endpoint to check/fix demo data (only in demo mode)
+router.get('/debug/demo-status', async (req, res) => {
+  try {
+    const isDemoMode = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER;
+    if (!isDemoMode) {
+      return res.status(403).json({ message: 'Debug endpoint only available in demo mode' });
+    }
+
+    // Check database state
+    const practices = await storage.getAllPracticeIds();
+    const practiceCount = practices.length;
+
+    let patientCount = 0;
+    let userCount = 0;
+    let portalAccessCount = 0;
+
+    if (practiceCount > 0) {
+      const patients = await storage.getPatients(practices[0]);
+      patientCount = patients.length;
+      const users = await storage.getAllUsers();
+      userCount = users.length;
+    }
+
+    res.json({
+      demoMode: isDemoMode,
+      database: {
+        practices: practiceCount,
+        patients: patientCount,
+        users: userCount,
+      },
+      status: practiceCount > 0 && patientCount > 0 ? 'ready' : 'needs_seed',
+    });
+  } catch (error) {
+    logger.error('Error checking demo status', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to check demo status', error: String(error) });
+  }
+});
+
+// Force seed demo data
+router.post('/debug/force-seed', async (req, res) => {
+  try {
+    const isDemoMode = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER;
+    if (!isDemoMode) {
+      return res.status(403).json({ message: 'Debug endpoint only available in demo mode' });
+    }
+
+    // Import and run seed
+    const { seedDatabase } = await import('../seeds');
+    await seedDatabase();
+
+    res.json({ message: 'Seed completed', timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Error force seeding', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to seed', error: String(error) });
+  }
+});
+
 export default router;
