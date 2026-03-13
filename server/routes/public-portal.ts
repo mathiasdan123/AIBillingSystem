@@ -623,11 +623,11 @@ router.get('/patient-portal/demo-login', async (req, res) => {
     // Find first patient with portal access from first available practice
     const practiceIds = await storage.getAllPracticeIds();
     if (!practiceIds.length) {
-      return res.status(404).json({ message: 'No practices found for demo' });
+      return res.status(404).json({ message: 'No practices found for demo', step: 'getAllPracticeIds' });
     }
     const patients = await storage.getPatients(practiceIds[0]);
     if (!patients.length) {
-      return res.status(404).json({ message: 'No patients found for demo' });
+      return res.status(404).json({ message: 'No patients found for demo', step: 'getPatients', practiceId: practiceIds[0] });
     }
 
     const patient = patients[0];
@@ -659,8 +659,9 @@ router.get('/patient-portal/demo-login', async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error('Error with demo login', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'Demo login failed' });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error('Error with demo login', { error: errorMessage });
+    res.status(500).json({ message: 'Demo login failed', error: errorMessage });
   }
 });
 
