@@ -223,6 +223,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       let user = await storage.getUserByEmail(requestedEmail);
+      // Ensure role matches expected demo role
+      if (user && user.role !== demoAccount.role) {
+        await storage.updateUser(user.id, { role: demoAccount.role });
+        user = await storage.getUserByEmail(requestedEmail);
+      }
       if (!user) {
         // Find a practice to assign
         let practiceId: number | undefined;
