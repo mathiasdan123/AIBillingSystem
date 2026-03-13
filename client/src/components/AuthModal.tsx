@@ -406,6 +406,33 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                 <>
                   <Button
                     type="button"
+                    variant="default"
+                    className="w-full bg-green-600 hover:bg-green-700"
+                    disabled={isLoading}
+                    onClick={async () => {
+                      setIsLoading(true);
+                      try {
+                        const res = await fetch('/api/demo-login', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include',
+                        });
+                        if (!res.ok) throw new Error('Demo login failed');
+                        toast({ title: 'Welcome!', description: 'Logged in as Demo Admin.' });
+                        resetForm();
+                        onOpenChange(false);
+                        window.location.reload();
+                      } catch (error: any) {
+                        toast({ title: 'Error', description: error.message, variant: 'destructive' });
+                      } finally {
+                        setIsLoading(false);
+                      }
+                    }}
+                  >
+                    Try Demo
+                  </Button>
+                  <Button
+                    type="button"
                     variant="outline"
                     className="w-full"
                     onClick={() => setMode('sso')}

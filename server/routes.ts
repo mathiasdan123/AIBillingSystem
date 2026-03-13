@@ -206,6 +206,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
   app.use('/api', insuranceDataRoutes);
 
+  // Demo login endpoint - creates demo user if needed and logs in
+  app.post('/api/demo-login', authLimiter, async (req: any, res) => {
+    try {
+      const { hashPassword } = await import('./services/passwordService');
+      let user = await storage.getUserByEmail('demo@therapybill.com');
+      if (!user) {
+        // Create demo user
+        user = await storage.createUserWithPassword({
+          email: 'demo@therapybill.com',
+          passwordHash: await hashPassword('demo1234'),
+          firstName: 'Demo',
+          lastName: 'Admin',
+          practiceId: 1,
+          role: 'admin',
+        });
+      }
+      // Log in the demo user
+      const userObj = { claims: { sub: user.id } };
+      req.login(userObj, (err: any) => {
+        if (err) {
+          return res.status(500).json({ message: 'Demo login failed' });
+        }
+        (req.session as any).mfaVerifiedAt = Date.now();
+        (req.session as any).mfaUserId = user!.id;
+        res.json({
+          message: 'Demo login successful',
+          user: { id: user!.id, email: user!.email, firstName: user!.firstName, lastName: user!.lastName, role: user!.role },
+        });
+      });
+    } catch (error) {
+      logger.error('Demo login error', { error: error instanceof Error ? error.message : String(error) });
+      res.status(500).json({ message: 'Demo login failed' });
+    }
+  });
+
   // Development user endpoint - DISABLED IN PRODUCTION
   if (process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_USER === 'true') {
     app.get('/api/dev-user', authLimiter, async (req, res) => {
