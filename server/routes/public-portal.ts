@@ -697,11 +697,23 @@ router.get('/patient-portal/dashboard', async (req, res) => {
     }
 
     const { patient, access } = auth;
-    await storage.updatePortalAccess(patient.id);
+
+    try {
+      await storage.updatePortalAccess(patient.id);
+    } catch (e) {
+      logger.warn('Failed to update portal access', { error: e instanceof Error ? e.message : String(e) });
+      // Continue - non-critical
+    }
 
     // Get upcoming appointments
     const now = new Date();
-    const allAppointments = await storage.getAppointments(patient.practiceId);
+    let allAppointments: any[] = [];
+    try {
+      allAppointments = await storage.getAppointments(patient.practiceId);
+    } catch (e) {
+      logger.warn('Failed to get appointments', { error: e instanceof Error ? e.message : String(e) });
+      // Continue with empty
+    }
     const upcomingAppointments = allAppointments
       .filter(apt => apt.patientId === patient.id && new Date(apt.startTime) >= now && apt.status !== 'cancelled')
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
@@ -715,7 +727,13 @@ router.get('/patient-portal/dashboard', async (req, res) => {
       }));
 
     // Get pending appointment requests
-    const pendingRequests = await storage.getPatientAppointmentRequests(patient.id, 'pending_approval');
+    let pendingRequests: any[] = [];
+    try {
+      pendingRequests = await storage.getPatientAppointmentRequests(patient.id, 'pending_approval');
+    } catch (e) {
+      logger.warn('Failed to get appointment requests', { error: e instanceof Error ? e.message : String(e) });
+      // Continue with empty
+    }
 
     // Get recent (past) appointments
     const recentAppointments = allAppointments
@@ -768,8 +786,9 @@ router.get('/patient-portal/dashboard', async (req, res) => {
       hasPaymentMethod,
     });
   } catch (error) {
-    logger.error('Error fetching dashboard', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'Failed to fetch dashboard' });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error('Error fetching dashboard', { error: errorMessage });
+    res.status(500).json({ message: 'Failed to fetch dashboard', error: errorMessage });
   }
 });
 
