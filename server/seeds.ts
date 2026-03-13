@@ -10,6 +10,28 @@ export async function seedDatabase() {
 
     // Run schema migrations for new columns (safe to run multiple times)
     console.log("Running schema migrations...");
+
+    // Patient table migrations
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_id VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS policy_number VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS group_number VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_provider VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_policy_number VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_member_id VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_group_number VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_relationship VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_subscriber_name VARCHAR`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_subscriber_dob DATE`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS phone_type VARCHAR DEFAULT 'mobile'`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS preferred_contact_method VARCHAR DEFAULT 'email'`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS sms_consent_given BOOLEAN DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS sms_consent_date TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_data JSONB`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_completed_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
+
+    // User table migrations
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS credentials VARCHAR`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS license_number VARCHAR`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS npi_number VARCHAR`);
