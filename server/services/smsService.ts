@@ -1,7 +1,10 @@
 /**
  * SMS Service using Twilio
- * Sends appointment reminders and notifications to patients
+ * Sends appointment reminders and notifications to patients.
+ * Respects patient notification preferences when patientId is provided.
  */
+
+import { shouldSendNotification, type NotificationType } from './notificationPreferencesService';
 
 interface SMSResult {
   success: boolean;
@@ -107,6 +110,28 @@ function formatPhoneNumber(phone: string): string | null {
 }
 
 /**
+ * Send an SMS with notification preference checking.
+ * If patientId and notificationType are provided, checks preferences first.
+ */
+export async function sendSMSWithPreferenceCheck(
+  to: string,
+  message: string,
+  patientId?: number,
+  notificationType?: NotificationType,
+): Promise<SMSResult> {
+  if (patientId && notificationType) {
+    const prefResult = await shouldSendNotification(patientId, notificationType);
+    if (!prefResult.channels.sms) {
+      return { success: true, messageId: 'skipped-by-preference' };
+    }
+    if (prefResult.inQuietHours) {
+      return { success: true, messageId: 'deferred-quiet-hours' };
+    }
+  }
+  return sendSMS(to, message);
+}
+
+/**
  * Send appointment reminder SMS
  */
 export async function sendAppointmentReminderSMS(
@@ -114,7 +139,8 @@ export async function sendAppointmentReminderSMS(
   patientName: string,
   appointmentDate: Date,
   practiceName: string,
-  practicePhone?: string
+  practicePhone?: string,
+  patientId?: number,
 ): Promise<SMSResult> {
   const formattedDate = appointmentDate.toLocaleDateString('en-US', {
     weekday: 'long',
@@ -129,7 +155,7 @@ export async function sendAppointmentReminderSMS(
 
   const message = `Hi ${patientName}! This is a reminder of your appointment at ${practiceName} on ${formattedDate} at ${formattedTime}. Reply CONFIRM to confirm or call ${practicePhone || 'us'} to reschedule.`;
 
-  return sendSMS(patientPhone, message);
+  return sendSMSWithPreferenceCheck(patientPhone, message, patientId, 'appointmentReminders');
 }
 
 /**
@@ -181,6 +207,7 @@ export async function sendAppointmentCancellationSMS(
 export default {
   isSMSConfigured,
   sendSMS,
+  sendSMSWithPreferenceCheck,
   sendAppointmentReminderSMS,
   sendAppointmentConfirmationSMS,
   sendAppointmentCancellationSMS,

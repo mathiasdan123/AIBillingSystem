@@ -56,6 +56,8 @@ const AiInsights = lazy(() => import("@/pages/ai-insights"));
 const TherapistProductivity = lazy(() => import("@/pages/therapist-productivity"));
 const Onboarding = lazy(() => import("@/pages/onboarding"));
 const Surveys = lazy(() => import("@/pages/surveys"));
+const SchedulingInsights = lazy(() => import("@/pages/scheduling-insights"));
+const NotificationSettings = lazy(() => import("@/pages/notification-settings"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -186,6 +188,7 @@ function Router() {
               <Route path="/patients" component={Patients} />
               <Route path="/intake" component={PatientIntake} />
               <Route path="/calendar" component={Calendar} />
+              <Route path="/scheduling-insights" component={SchedulingInsights} />
               <Route path="/soap-notes" component={SoapNotes} />
               <Route path="/session-recorder" component={SessionRecorder} />
               <Route path="/outcome-measures" component={OutcomeMeasures} />
@@ -209,6 +212,7 @@ function Router() {
               {isAdmin && <Route path="/compliance" component={ComplianceDashboard} />}
               {isAdmin && <Route path="/sso-settings" component={SsoSettings} />}
               {isAdmin && <Route path="/data-export" component={DataExport} />}
+              <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/onboarding" component={Onboarding} />
               <Route path="/locations" component={Locations} />
               <Route path="/invite/:token" component={InvitePage} />

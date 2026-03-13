@@ -28,6 +28,7 @@ import { serveStatic, log } from "./static";
 import { requestTimeout } from "./middleware/requestTimeout";
 import { requestSanitizer } from "./middleware/sanitize";
 import { globalErrorHandler } from "./middleware/errorHandler";
+import { apiVersionMiddleware, apiVersionRewrite } from "./middleware/apiVersion";
 import { seedDatabase } from "./seeds";
 import { startScheduler } from "./scheduler";
 import { initRedisClient } from "./services/redisClient";
@@ -135,7 +136,8 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['X-API-Version', 'X-API-Deprecation', 'X-API-Sunset', 'X-Request-Id'],
 }));
 
 // Security: HTTPS enforcement in production
@@ -292,6 +294,11 @@ app.use(requestSanitizer());
 
 // Request timeout middleware (skips multipart/file uploads)
 app.use(requestTimeout());
+
+// API versioning: extract version from URL prefix or Accept header, set response headers
+app.use(apiVersionMiddleware);
+// API versioning: rewrite /api/v1/... URLs to /api/... so existing routers handle both
+app.use(apiVersionRewrite);
 
 app.use((req, res, next) => {
   const start = Date.now();

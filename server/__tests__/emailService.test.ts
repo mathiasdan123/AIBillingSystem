@@ -17,6 +17,10 @@ vi.mock('../services/logger', () => ({
   },
 }));
 
+vi.mock('../services/notificationPreferencesService', () => ({
+  shouldSendNotification: vi.fn().mockResolvedValue(true),
+}));
+
 // We need fresh module state for each test to reset internal singletons
 let sendEmail: typeof import('../services/emailService').sendEmail;
 let sendEmailImmediate: typeof import('../services/emailService').sendEmailImmediate;

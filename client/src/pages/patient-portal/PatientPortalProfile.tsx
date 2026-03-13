@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -29,6 +30,8 @@ import {
   AlertCircle,
   CheckCircle,
   CreditCard,
+  Bell,
+  Moon,
 } from "lucide-react";
 
 interface PatientProfile {
@@ -47,6 +50,20 @@ interface PatientProfile {
   insuranceId?: string;
   policyNumber?: string;
   groupNumber?: string;
+}
+
+interface NotificationPrefs {
+  id: number;
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  portalEnabled: boolean;
+  appointmentReminders: boolean;
+  billingNotifications: boolean;
+  claimUpdates: boolean;
+  surveyReminders: boolean;
+  marketingEmails: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
 }
 
 interface PatientPortalProfileProps {
@@ -478,6 +495,9 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
         </CardContent>
       </Card>
 
+      {/* Notification Preferences */}
+      <PatientNotificationPreferences token={token} />
+
       {/* Profile Completion Status */}
       <Card>
         <CardHeader>
@@ -519,5 +539,227 @@ function ProfileCheckItem({ label, completed }: { label: string; completed: bool
         </Badge>
       )}
     </div>
+  );
+}
+
+function PatientNotificationPreferences({ token }: { token: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  const [formData, setFormData] = useState<Partial<NotificationPrefs>>({});
+  const [hasChanges, setHasChanges] = useState(false);
+
+  const { data: prefs, isLoading } = useQuery<NotificationPrefs>({
+    queryKey: ["/api/patient-portal/notification-preferences", token],
+    queryFn: async () => {
+      const res = await fetch("/api/patient-portal/notification-preferences", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to fetch preferences");
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    if (prefs) {
+      setFormData(prefs);
+      setHasChanges(false);
+    }
+  }, [prefs]);
+
+  const updateMutation = useMutation({
+    mutationFn: async (updates: Partial<NotificationPrefs>) => {
+      const res = await fetch("/api/patient-portal/notification-preferences", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to update preferences");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patient-portal/notification-preferences", token],
+      });
+      setHasChanges(false);
+      toast({
+        title: t("notifications.saved", "Preferences Saved"),
+        description: t("notifications.savedDesc", "Your notification preferences have been updated."),
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: t("notifications.saveFailed", "Save Failed"),
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleToggle = (field: keyof NotificationPrefs, value: boolean) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    setHasChanges(true);
+  };
+
+  const handleTimeChange = (field: "quietHoursStart" | "quietHoursEnd", value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value || null }));
+    setHasChanges(true);
+  };
+
+  const handleSave = () => {
+    const { id, ...updates } = formData;
+    updateMutation.mutate(updates);
+  };
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-48" />
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-32 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5" />
+              {t("notifications.title", "Notification Settings")}
+            </CardTitle>
+            <CardDescription>
+              {t("notifications.subtitle", "Control how and when you receive notifications.")}
+            </CardDescription>
+          </div>
+          {hasChanges && (
+            <Button onClick={handleSave} disabled={updateMutation.isPending} size="sm">
+              {updateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              {t("notifications.save", "Save Changes")}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Channels */}
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase text-muted-foreground">
+            {t("notifications.channels", "Notification Channels")}
+          </Label>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">{t("notifications.email", "Email")}</span>
+            <Switch
+              checked={formData.emailEnabled ?? true}
+              onCheckedChange={(checked) => handleToggle("emailEnabled", checked)}
+            />
+          </div>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">{t("notifications.sms", "SMS / Text")}</span>
+            <Switch
+              checked={formData.smsEnabled ?? true}
+              onCheckedChange={(checked) => handleToggle("smsEnabled", checked)}
+            />
+          </div>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">{t("notifications.portal", "Portal")}</span>
+            <Switch
+              checked={formData.portalEnabled ?? true}
+              onCheckedChange={(checked) => handleToggle("portalEnabled", checked)}
+            />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Types */}
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase text-muted-foreground">
+            {t("notifications.types", "Notification Types")}
+          </Label>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">
+              {t("notifications.appointmentReminders", "Appointment Reminders")}
+            </span>
+            <Switch
+              checked={formData.appointmentReminders ?? true}
+              onCheckedChange={(checked) => handleToggle("appointmentReminders", checked)}
+            />
+          </div>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">
+              {t("notifications.billingNotifications", "Billing Notifications")}
+            </span>
+            <Switch
+              checked={formData.billingNotifications ?? true}
+              onCheckedChange={(checked) => handleToggle("billingNotifications", checked)}
+            />
+          </div>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">
+              {t("notifications.surveyReminders", "Survey Reminders")}
+            </span>
+            <Switch
+              checked={formData.surveyReminders ?? true}
+              onCheckedChange={(checked) => handleToggle("surveyReminders", checked)}
+            />
+          </div>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm">
+              {t("notifications.marketingEmails", "Marketing Emails")}
+            </span>
+            <Switch
+              checked={formData.marketingEmails ?? false}
+              onCheckedChange={(checked) => handleToggle("marketingEmails", checked)}
+            />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Quiet Hours */}
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
+            <Moon className="h-3 w-3" />
+            {t("notifications.quietHours", "Quiet Hours")}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {t("notifications.quietHoursDesc", "Set hours when notifications will be deferred. Leave empty to disable.")}
+          </p>
+          <div className="grid gap-3 grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs">{t("notifications.quietStart", "Start Time")}</Label>
+              <Input
+                type="time"
+                value={formData.quietHoursStart || ""}
+                onChange={(e) => handleTimeChange("quietHoursStart", e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">{t("notifications.quietEnd", "End Time")}</Label>
+              <Input
+                type="time"
+                value={formData.quietHoursEnd || ""}
+                onChange={(e) => handleTimeChange("quietHoursEnd", e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

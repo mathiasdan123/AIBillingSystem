@@ -3141,3 +3141,50 @@ export const insertSurveyResponseSchema = createInsertSchema(surveyResponses).om
 });
 export type SurveyResponse = typeof surveyResponses.$inferSelect;
 export type InsertSurveyResponse = z.infer<typeof insertSurveyResponseSchema>;
+
+// Notification Preferences - controls how patients and staff receive notifications
+export const notificationPreferences = pgTable("notification_preferences", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").references(() => users.id), // nullable — for staff
+  patientId: integer("patient_id").references(() => patients.id), // nullable — for patients
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  emailEnabled: boolean("email_enabled").default(true).notNull(),
+  smsEnabled: boolean("sms_enabled").default(true).notNull(),
+  portalEnabled: boolean("portal_enabled").default(true).notNull(),
+  appointmentReminders: boolean("appointment_reminders").default(true).notNull(),
+  billingNotifications: boolean("billing_notifications").default(true).notNull(),
+  claimUpdates: boolean("claim_updates").default(true).notNull(),
+  surveyReminders: boolean("survey_reminders").default(true).notNull(),
+  marketingEmails: boolean("marketing_emails").default(false).notNull(),
+  quietHoursStart: text("quiet_hours_start"), // e.g. "22:00"
+  quietHoursEnd: text("quiet_hours_end"), // e.g. "08:00"
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_notification_prefs_user").on(table.userId),
+  index("idx_notification_prefs_patient").on(table.patientId),
+  index("idx_notification_prefs_practice").on(table.practiceId),
+]);
+
+export const notificationPreferencesRelations = relations(notificationPreferences, ({ one }) => ({
+  user: one(users, {
+    fields: [notificationPreferences.userId],
+    references: [users.id],
+  }),
+  patient: one(patients, {
+    fields: [notificationPreferences.patientId],
+    references: [patients.id],
+  }),
+  practice: one(practices, {
+    fields: [notificationPreferences.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertNotificationPreferencesSchema = createInsertSchema(notificationPreferences).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type NotificationPreferences = typeof notificationPreferences.$inferSelect;
+export type InsertNotificationPreferences = z.infer<typeof insertNotificationPreferencesSchema>;

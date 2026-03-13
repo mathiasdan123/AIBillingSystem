@@ -6,6 +6,7 @@
 
 import nodemailer from 'nodemailer';
 import logger from './logger';
+import { shouldSendNotification, type NotificationType } from './notificationPreferencesService';
 
 // ==================== CONFIGURATION ====================
 
@@ -234,8 +235,38 @@ export async function sendEmailImmediate(params: SendEmailParams): Promise<SendR
   });
 }
 
+/**
+ * Send an email with notification preference checking.
+ * If patientId and notificationType are provided, checks preferences first.
+ */
+export async function sendEmailWithPreferenceCheck(
+  params: SendEmailParams,
+  patientId?: number,
+  notificationType?: NotificationType,
+): Promise<SendResult> {
+  if (patientId && notificationType) {
+    const prefResult = await shouldSendNotification(patientId, notificationType);
+    if (!prefResult.channels.email) {
+      logger.info('Email skipped due to notification preference', {
+        subject: params.subject,
+        notificationType,
+      });
+      return { success: true };
+    }
+    if (prefResult.inQuietHours) {
+      logger.info('Email deferred due to quiet hours', {
+        subject: params.subject,
+        notificationType,
+      });
+      return { success: true };
+    }
+  }
+  return sendEmail(params);
+}
+
 export default {
   sendEmail,
   sendEmailImmediate,
+  sendEmailWithPreferenceCheck,
   isSmtpConfigured,
 };
