@@ -1,5 +1,9 @@
 # CLAUDE.md - AI Billing System
 
+## Workflow
+- After completing a round of changes, automatically run `npx tsc --noEmit` and `npm test` to verify everything works.
+- If both pass, auto-commit the changes with a descriptive commit message without asking. Do not push unless explicitly asked.
+
 ## Project Overview
 Medical billing and practice management platform for behavioral health / therapy practices. HIPAA-compliant with PHI encryption, MFA, audit logging, and breach management.
 

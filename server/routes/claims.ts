@@ -28,6 +28,11 @@ import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
 import { predictDenial } from '../services/aiDenialPredictor';
 import { recordClaimOutcome } from '../services/aiLearningService';
+import {
+  bulkSubmitClaims,
+  bulkUpdateClaimStatus,
+  bulkExportClaims,
+} from '../services/bulkOperationsService';
 
 const router = Router();
 const claimOptimizer = new AiClaimOptimizer();
@@ -1647,6 +1652,122 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
       error: error instanceof Error ? error.message : String(error),
     });
     safeErrorResponse(res, 500, 'Failed to predict denial risk', error);
+  }
+});
+
+// ==================== BULK OPERATIONS ====================
+
+/**
+ * POST /api/claims/bulk-submit
+ * Submit multiple claims in bulk. Each claim is validated independently.
+ */
+router.post('/bulk-submit', isAuthenticated, async (req: any, res) => {
+  try {
+    const { claimIds } = req.body;
+
+    if (!Array.isArray(claimIds) || claimIds.length === 0) {
+      return res.status(400).json({ message: 'claimIds must be a non-empty array' });
+    }
+
+    if (claimIds.length > 100) {
+      return res.status(400).json({ message: 'Maximum 100 claims per bulk submission' });
+    }
+
+    // Validate and deduplicate IDs
+    const parsedIds: number[] = [];
+    for (const id of claimIds) {
+      const parsed = parseInt(id, 10);
+      if (isNaN(parsed) || parsed <= 0) {
+        return res.status(400).json({ message: `Invalid claim ID: ${id}` });
+      }
+      parsedIds.push(parsed);
+    }
+    const uniqueIds = Array.from(new Set(parsedIds));
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const results = await bulkSubmitClaims(uniqueIds, practiceId);
+
+    const succeeded = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+
+    res.json({
+      message: `Bulk submission complete: ${succeeded} succeeded, ${failed} failed`,
+      results,
+      summary: { total: uniqueIds.length, succeeded, failed },
+    });
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to process bulk claim submission', error);
+  }
+});
+
+/**
+ * PATCH /api/claims/bulk-status
+ * Update status of multiple claims in bulk.
+ */
+router.patch('/bulk-status', isAuthenticated, async (req: any, res) => {
+  try {
+    const { claimIds, status } = req.body;
+
+    if (!Array.isArray(claimIds) || claimIds.length === 0) {
+      return res.status(400).json({ message: 'claimIds must be a non-empty array' });
+    }
+
+    if (!status || typeof status !== 'string') {
+      return res.status(400).json({ message: 'status is required and must be a string' });
+    }
+
+    if (claimIds.length > 100) {
+      return res.status(400).json({ message: 'Maximum 100 claims per bulk status update' });
+    }
+
+    const parsedIds: number[] = [];
+    for (const id of claimIds) {
+      const parsed = parseInt(id, 10);
+      if (isNaN(parsed) || parsed <= 0) {
+        return res.status(400).json({ message: `Invalid claim ID: ${id}` });
+      }
+      parsedIds.push(parsed);
+    }
+    const uniqueIds = Array.from(new Set(parsedIds));
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const results = await bulkUpdateClaimStatus(uniqueIds, status, practiceId);
+
+    const succeeded = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+
+    res.json({
+      message: `Bulk status update complete: ${succeeded} succeeded, ${failed} failed`,
+      results,
+      summary: { total: uniqueIds.length, succeeded, failed },
+    });
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to process bulk status update', error);
+  }
+});
+
+/**
+ * GET /api/claims/bulk-export
+ * Export claims as CSV with optional filters.
+ */
+router.get('/bulk-export', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+
+    const filters = {
+      status: req.query.status as string | undefined,
+      dateFrom: req.query.dateFrom as string | undefined,
+      dateTo: req.query.dateTo as string | undefined,
+      payerName: req.query.payerName as string | undefined,
+    };
+
+    const csv = await bulkExportClaims(practiceId, filters);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="claims-export.csv"');
+    res.send(csv);
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to export claims', error);
   }
 });
 

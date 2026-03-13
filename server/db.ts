@@ -1,4 +1,5 @@
 import * as schema from "@shared/schema";
+import { enableSlowQueryLogging, startPoolMonitor } from "./services/dbOptimizer";
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -40,6 +41,10 @@ dbReady = (async () => {
     db = drizzleNeon({ client: pool, schema });
     console.log('Using Neon serverless driver');
   }
+
+  // Enable slow query logging and pool monitoring
+  enableSlowQueryLogging(pool);
+  startPoolMonitor(pool);
 })();
 
 // Helper to ensure db is ready before use

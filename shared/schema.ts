@@ -1824,14 +1824,14 @@ export const patientDocuments = pgTable("patient_documents", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
-  uploadedById: varchar("uploaded_by_id").references(() => users.id),
+  uploadedBy: varchar("uploaded_by").references(() => users.id).notNull(),
   // Document details
-  name: varchar("name", { length: 255 }).notNull(),
-  description: text("description"),
-  category: varchar("category").default("general"), // general, intake, consent, treatment, insurance, other
-  fileUrl: varchar("file_url").notNull(),
-  fileType: varchar("file_type"), // pdf, image, etc.
-  fileSize: integer("file_size"), // bytes
+  fileName: varchar("file_name").notNull(),
+  fileType: varchar("file_type").notNull(), // insurance_card, referral, consent_form, lab_results, other
+  fileSize: integer("file_size").notNull(), // bytes
+  mimeType: varchar("mime_type").notNull(),
+  storagePath: text("storage_path").notNull(),
+  notes: text("notes"),
   // Visibility
   visibleToPatient: boolean("visible_to_patient").default(true),
   requiresSignature: boolean("requires_signature").default(false),
@@ -1842,7 +1842,11 @@ export const patientDocuments = pgTable("patient_documents", {
   downloadedAt: timestamp("downloaded_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_patient_documents_patient").on(table.patientId),
+  index("idx_patient_documents_practice").on(table.practiceId),
+  index("idx_patient_documents_type").on(table.fileType),
+]);
 
 // Patient Statements (invoices/superbills)
 export const patientStatements = pgTable("patient_statements", {
@@ -3188,3 +3192,109 @@ export const insertNotificationPreferencesSchema = createInsertSchema(notificati
 });
 export type NotificationPreferences = typeof notificationPreferences.$inferSelect;
 export type InsertNotificationPreferences = z.infer<typeof insertNotificationPreferencesSchema>;
+
+// ==================== Webhook Endpoints ====================
+
+// Webhook Endpoints - allows practices to receive callbacks for important events
+export const webhookEndpoints = pgTable("webhook_endpoints", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(), // Used for HMAC-SHA256 signing
+  events: text("events").array().notNull(), // Array of event type strings
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_webhook_endpoints_practice").on(table.practiceId),
+  index("idx_webhook_endpoints_active").on(table.isActive),
+]);
+
+export const webhookEndpointsRelations = relations(webhookEndpoints, ({ one }) => ({
+  practice: one(practices, {
+    fields: [webhookEndpoints.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertWebhookEndpointSchema = createInsertSchema(webhookEndpoints).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect;
+export type InsertWebhookEndpoint = z.infer<typeof insertWebhookEndpointSchema>;
+
+// ==================== Patient Document File Types ====================
+
+// Patient document file types
+export const DOCUMENT_FILE_TYPES = [
+  'insurance_card',
+  'referral',
+  'consent_form',
+  'lab_results',
+  'other',
+] as const;
+export type DocumentFileType = typeof DOCUMENT_FILE_TYPES[number];
+
+// Relations for patientDocuments (table defined above near line 1823)
+export const patientDocumentsRelations = relations(patientDocuments, ({ one }) => ({
+  patient: one(patients, {
+    fields: [patientDocuments.patientId],
+    references: [patients.id],
+  }),
+  practice: one(practices, {
+    fields: [patientDocuments.practiceId],
+    references: [practices.id],
+  }),
+  uploader: one(users, {
+    fields: [patientDocuments.uploadedBy],
+    references: [users.id],
+  }),
+}));
+
+// ==================== Claim Follow-Ups ====================
+
+// Automated claim follow-up tracking for aging and denied claims
+export const claimFollowUps = pgTable("claim_follow_ups", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  followUpType: varchar("follow_up_type").notNull(), // aging_30, aging_60, aging_90, denial_appeal, missing_info
+  status: varchar("status").default("pending").notNull(), // pending, in_progress, completed, dismissed
+  priority: varchar("priority").default("medium").notNull(), // low, medium, high, urgent
+  notes: text("notes"),
+  assignedTo: varchar("assigned_to").references(() => users.id),
+  dueDate: timestamp("due_date"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_claim_follow_ups_practice_status").on(table.practiceId, table.status),
+  index("idx_claim_follow_ups_claim").on(table.claimId),
+  index("idx_claim_follow_ups_priority").on(table.priority),
+  index("idx_claim_follow_ups_assigned").on(table.assignedTo),
+]);
+
+export const claimFollowUpsRelations = relations(claimFollowUps, ({ one }) => ({
+  claim: one(claims, {
+    fields: [claimFollowUps.claimId],
+    references: [claims.id],
+  }),
+  practice: one(practices, {
+    fields: [claimFollowUps.practiceId],
+    references: [practices.id],
+  }),
+  assignedUser: one(users, {
+    fields: [claimFollowUps.assignedTo],
+    references: [users.id],
+  }),
+}));
+
+export const insertClaimFollowUpSchema = createInsertSchema(claimFollowUps).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type ClaimFollowUp = typeof claimFollowUps.$inferSelect;
+export type InsertClaimFollowUp = z.infer<typeof insertClaimFollowUpSchema>;

@@ -53,6 +53,10 @@ export { default as paymentsRouter } from './payments';
 export { default as notificationsRouter } from './notifications';
 export { default as sessionsRouter } from './sessions';
 
+export { default as webhooksRouter } from './webhooks';
+export { default as documentsRouter } from './documents';
+export { default as followUpsRouter } from './follow-ups';
+
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
 export { default as insuranceDataRoutes } from './insuranceDataRoutes';

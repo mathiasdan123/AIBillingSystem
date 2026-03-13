@@ -338,10 +338,10 @@ router.get('/:id/documents', isAuthenticated, requirePatientConsent, async (req:
 router.post('/:id/documents', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
-    const { name, description, category, fileUrl, fileType, fileSize, visibleToPatient, requiresSignature } = req.body;
+    const { fileName, fileType, fileSize, mimeType, storagePath, notes, visibleToPatient, requiresSignature } = req.body;
 
-    if (!name || !fileUrl) {
-      return res.status(400).json({ message: 'Name and file URL are required' });
+    if (!fileName || !storagePath || !fileType || !mimeType) {
+      return res.status(400).json({ message: 'fileName, fileType, mimeType, and storagePath are required' });
     }
 
     const patient = await storage.getPatient(patientId);
@@ -355,13 +355,13 @@ router.post('/:id/documents', isAuthenticated, requirePatientConsent, async (req
     const document = await storage.createPatientDocument({
       patientId,
       practiceId: patient.practiceId,
-      uploadedById: req.user?.claims?.sub,
-      name,
-      description,
-      category: category || 'general',
-      fileUrl,
+      uploadedBy: req.user?.claims?.sub,
+      fileName,
       fileType,
-      fileSize,
+      fileSize: fileSize || 0,
+      mimeType,
+      storagePath,
+      notes: notes || null,
       visibleToPatient: visibleToPatient !== false,
       requiresSignature: requiresSignature || false,
     });

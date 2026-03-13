@@ -13,7 +13,8 @@ import {
   reviewsRouter, publicPortalRouter,
   // New extractions
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
-  paymentsRouter, notificationsRouter, sessionsRouter,
+  paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
+  documentsRouter, followUpsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -167,6 +168,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Session routes: /api/cpt-codes, /api/exercise-bank/*, /api/sessions/*, /api/superbills,
   //   /api/users/:id/supervisees, /api/users/:id/supervision
   app.use('/api', sessionsRouter);
+  // Webhook routes: /api/webhooks
+  app.use('/api', webhooksRouter);
+  // Document management routes: /api/documents
+  app.use('/api/documents', documentsRouter);
+  // Claim Follow-Up routes: /api/follow-ups/*
+  app.use('/api/follow-ups', followUpsRouter);
 
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
