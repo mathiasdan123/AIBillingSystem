@@ -1024,17 +1024,28 @@ router.get('/debug/demo-status', async (req, res) => {
       return res.status(403).json({ message: 'Debug endpoint only available in demo mode' });
     }
 
+    // Import db for raw queries
+    const { getDb } = await import('../db');
+    const { sql } = await import('drizzle-orm');
+    const db = await getDb();
+
+    // Check table columns
+    const patientCols = await db.execute(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'patients' ORDER BY ordinal_position
+    `);
+
     // Check database state
     const practices = await storage.getAllPracticeIds();
     const practiceCount = practices.length;
 
     let patientCount = 0;
     let userCount = 0;
-    let portalAccessCount = 0;
 
     if (practiceCount > 0) {
-      const patients = await storage.getPatients(practices[0]);
-      patientCount = patients.length;
+      // Use raw query to avoid column issues
+      const patientResult = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE practice_id = ${practices[0]}`);
+      patientCount = parseInt(patientResult.rows[0]?.count || '0', 10);
       const users = await storage.getAllUsers();
       userCount = users.length;
     }
@@ -1046,6 +1057,7 @@ router.get('/debug/demo-status', async (req, res) => {
         patients: patientCount,
         users: userCount,
       },
+      patientColumns: patientCols.rows.map((r: any) => r.column_name),
       status: practiceCount > 0 && patientCount > 0 ? 'ready' : 'needs_seed',
     });
   } catch (error) {
