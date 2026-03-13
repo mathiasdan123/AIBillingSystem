@@ -25,6 +25,7 @@ import logger from '../services/logger';
 import { getDb } from '../db';
 import { users, appointments, claims, treatmentSessions, soapNotes } from '@shared/schema';
 import { eq, and, gte, lte, sql, count, sum, avg } from 'drizzle-orm';
+import { cache, CacheKeys, CacheTTL } from '../services/cacheService';
 
 const router = Router();
 
@@ -107,7 +108,11 @@ router.get('/revenue', isAuthenticated, async (req: any, res) => {
     const months = { '3months': 3, '6months': 6, '12months': 12 }[timeRange] || 12;
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
-    const data = await storage.getRevenueByMonth(practiceId, startDate, new Date());
+    const data = await cache.wrap(
+      CacheKeys.revenue(practiceId, timeRange),
+      CacheTTL.ANALYTICS,
+      () => storage.getRevenueByMonth(practiceId, startDate, new Date())
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching revenue analytics', { error: error instanceof Error ? error.message : String(error) });
@@ -120,7 +125,11 @@ router.get('/revenue/forecast', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const months = parseInt(req.query.months as string) || 3;
-    const data = await storage.getRevenueForecast(practiceId, months);
+    const data = await cache.wrap(
+      CacheKeys.revenueForecast(practiceId, months),
+      CacheTTL.ANALYTICS,
+      () => storage.getRevenueForecast(practiceId, months)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching revenue forecast', { error: error instanceof Error ? error.message : String(error) });
@@ -148,7 +157,11 @@ router.get('/revenue-by-location-therapist', isAuthenticated, async (req: any, r
 router.get('/claims-by-status', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getClaimsByStatus(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.claimsByStatus(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getClaimsByStatus(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching claims by status', { error: error instanceof Error ? error.message : String(error) });
@@ -160,7 +173,11 @@ router.get('/claims-by-status', isAuthenticated, async (req: any, res) => {
 router.get('/denial-reasons', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getTopDenialReasons(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.denialReasons(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getTopDenialReasons(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching denial reasons', { error: error instanceof Error ? error.message : String(error) });
@@ -172,7 +189,11 @@ router.get('/denial-reasons', isAuthenticated, async (req: any, res) => {
 router.get('/collection-rate', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getCollectionRate(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.collectionRate(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getCollectionRate(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching collection rate', { error: error instanceof Error ? error.message : String(error) });
@@ -184,7 +205,11 @@ router.get('/collection-rate', isAuthenticated, async (req: any, res) => {
 router.get('/clean-claims-rate', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getCleanClaimsRate(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.cleanClaimsRate(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getCleanClaimsRate(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching clean claims rate', { error: error instanceof Error ? error.message : String(error) });
@@ -208,7 +233,12 @@ router.get('/capacity', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'Start date must be before end date' });
     }
 
-    const data = await storage.getCapacityUtilization(practiceId, start, end);
+    const paramHash = `${start.toISOString().split('T')[0]}_${end.toISOString().split('T')[0]}`;
+    const data = await cache.wrap(
+      CacheKeys.capacity(practiceId, paramHash),
+      CacheTTL.ANALYTICS,
+      () => storage.getCapacityUtilization(practiceId, start, end)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching capacity utilization', { error: error instanceof Error ? error.message : String(error) });
@@ -220,7 +250,11 @@ router.get('/capacity', isAuthenticated, async (req: any, res) => {
 router.get('/ar-aging', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getDaysInAR(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.arAging(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getDaysInAR(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching AR aging', { error: error instanceof Error ? error.message : String(error) });
@@ -232,7 +266,11 @@ router.get('/ar-aging', isAuthenticated, async (req: any, res) => {
 router.get('/patient-ar-aging', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getPatientArAging(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.patientArAging(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getPatientArAging(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching patient AR aging', { error: error instanceof Error ? error.message : String(error) });
@@ -246,7 +284,11 @@ router.get('/patient-ar-aging', isAuthenticated, async (req: any, res) => {
 router.get('/referrals', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const data = await storage.getTopReferringProviders(practiceId);
+    const data = await cache.wrap(
+      CacheKeys.referrals(practiceId),
+      CacheTTL.ANALYTICS,
+      () => storage.getTopReferringProviders(practiceId)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching referrals', { error: error instanceof Error ? error.message : String(error) });
@@ -261,7 +303,12 @@ router.get('/cancellations', isAuthenticated, async (req: any, res) => {
     const practiceId = getAuthorizedPracticeId(req);
     const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
     const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
-    const stats = await storage.getCancellationStats(practiceId, start, end);
+    const paramHash = `stats_${start.toISOString().split('T')[0]}_${end.toISOString().split('T')[0]}`;
+    const stats = await cache.wrap(
+      CacheKeys.cancellations(practiceId, paramHash),
+      CacheTTL.ANALYTICS,
+      () => storage.getCancellationStats(practiceId, start, end)
+    );
     res.json(stats);
   } catch (error) {
     logger.error('Error fetching cancellation stats', { error: error instanceof Error ? error.message : String(error) });
@@ -274,7 +321,12 @@ router.get('/cancellations/by-patient', isAuthenticated, async (req: any, res) =
     const practiceId = getAuthorizedPracticeId(req);
     const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 6));
     const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
-    const data = await storage.getCancellationsByPatient(practiceId, start, end);
+    const paramHash = `by-patient_${start.toISOString().split('T')[0]}_${end.toISOString().split('T')[0]}`;
+    const data = await cache.wrap(
+      CacheKeys.cancellations(practiceId, paramHash),
+      CacheTTL.ANALYTICS,
+      () => storage.getCancellationsByPatient(practiceId, start, end)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching cancellations by patient', { error: error instanceof Error ? error.message : String(error) });
@@ -287,7 +339,12 @@ router.get('/cancellations/trend', isAuthenticated, async (req: any, res) => {
     const practiceId = getAuthorizedPracticeId(req);
     const start = req.query.start ? new Date(req.query.start as string) : new Date(new Date().setMonth(new Date().getMonth() - 12));
     const end = req.query.end ? new Date(req.query.end as string) : new Date(new Date().setMonth(new Date().getMonth() + 3));
-    const data = await storage.getCancellationTrend(practiceId, start, end);
+    const paramHash = `trend_${start.toISOString().split('T')[0]}_${end.toISOString().split('T')[0]}`;
+    const data = await cache.wrap(
+      CacheKeys.cancellations(practiceId, paramHash),
+      CacheTTL.ANALYTICS,
+      () => storage.getCancellationTrend(practiceId, start, end)
+    );
     res.json(data);
   } catch (error) {
     logger.error('Error fetching cancellation trend', { error: error instanceof Error ? error.message : String(error) });
@@ -312,6 +369,15 @@ router.get('/therapist-productivity', isAuthenticated, async (req: any, res) => 
       return res.status(400).json({ message: 'Start date must be before end date' });
     }
 
+    const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
+    const paramHash = `${therapistId || 'all'}_${startStr}_${endStr}`;
+    const cacheKey = CacheKeys.therapistProductivity(practiceId, paramHash);
+    const cached = await cache.get<any>(cacheKey);
+    if (cached !== null) {
+      return res.json(cached);
+    }
+
     const db = await getDb();
 
     // Get all therapists for the practice (or single therapist)
@@ -329,8 +395,6 @@ router.get('/therapist-productivity', isAuthenticated, async (req: any, res) => 
     }
 
     const therapistIds = therapists.map((t: any) => t.id);
-    const startStr = startDate.toISOString().split('T')[0];
-    const endStr = endDate.toISOString().split('T')[0];
 
     const results = [];
 
@@ -453,6 +517,7 @@ router.get('/therapist-productivity', isAuthenticated, async (req: any, res) => 
       });
     }
 
+    await cache.set(cacheKey, results, CacheTTL.ANALYTICS);
     res.json(results);
   } catch (error) {
     logger.error('Error fetching therapist productivity', { error: error instanceof Error ? error.message : String(error) });
@@ -473,6 +538,15 @@ router.get('/therapist-productivity/trends', isAuthenticated, async (req: any, r
 
     if (startDate > endDate) {
       return res.status(400).json({ message: 'Start date must be before end date' });
+    }
+
+    const trendStartStr = startDate.toISOString().split('T')[0];
+    const trendEndStr = endDate.toISOString().split('T')[0];
+    const trendParamHash = `${therapistId || 'all'}_${trendStartStr}_${trendEndStr}`;
+    const trendCacheKey = CacheKeys.therapistProductivityTrends(practiceId, trendParamHash);
+    const trendCached = await cache.get<any>(trendCacheKey);
+    if (trendCached !== null) {
+      return res.json(trendCached);
     }
 
     const db = await getDb();
@@ -572,6 +646,7 @@ router.get('/therapist-productivity/trends', isAuthenticated, async (req: any, r
       });
     }
 
+    await cache.set(trendCacheKey, results, CacheTTL.ANALYTICS);
     res.json(results);
   } catch (error) {
     logger.error('Error fetching therapist productivity trends', { error: error instanceof Error ? error.message : String(error) });

@@ -33,6 +33,13 @@ export { default as practicesRouter } from './practices';
 export { default as billingRouter } from './billing';
 export { default as telehealthRouter } from './telehealth';
 export { default as messagesRouter } from './messages';
+export { default as surveysRouter } from './surveys';
+export { default as waitlistRouter } from './waitlist';
+
+export { default as appealsRouter } from './appeals';
+export { default as adminRouter } from './admin';
+export { default as reviewsRouter } from './reviews';
+export { default as publicPortalRouter } from './public-portal';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
@@ -81,20 +88,31 @@ export { default as insuranceDataRoutes } from './insuranceDataRoutes';
  *   Includes: conversations CRUD, send message, archive, unread count,
  *   delete message, public patient messaging endpoints
  *
- * TODO: Remaining routes to split from server/routes.ts
+ * - appeals.ts - Appeals management (/api/appeals/*)
+ *   Includes: dashboard, deadlines, denied-claims, CRUD, submit, resolve,
+ *   escalate, regenerate-letter
  *
- * Medium Priority:
  * - admin.ts - Admin endpoints (/api/admin/*)
- * - appeals.ts - Appeals management routes (/api/appeals/*)
+ *   Includes: payer-integrations, payer-credentials, health-check, hard-delete-expired
+ *
+ * - waitlist.ts - Waitlist management (/api/waitlist/*)
+ *   Includes: CRUD, stats, find-matches, notify, schedule, expire, auto-fill
+ *
+ * - reviews.ts - Reviews & feedback (/api/reviews/*, /api/feedback/*, /api/public/feedback/*)
+ *   Includes: review requests, Google reviews, AI response generation,
+ *   patient feedback CRUD, automated feedback workflow
+ *
+ * - public-portal.ts - Public portal (/api/public/book/*, /api/public/portal/*, /api/patient-portal/*)
+ *   Includes: online booking, portal login, dashboard, profile, appointments,
+ *   statements, documents, appointment requests, progress notes
+ *
+ * TODO: Remaining routes to split from server/routes.ts
  *
  * Lower Priority:
  * - insurance.ts - Insurance-related endpoints (/api/insurance/*)
  * - ai.ts - AI endpoints (/api/ai/*)
- * - reports.ts - Report generation (/api/reports/*)
- * - payments.ts - Payment processing (/api/payments/*)
- * - stripe.ts - Stripe integration (/api/stripe/*)
  * - reminders.ts - Appointment reminders (/api/reminders/*)
- * - portal.ts - Patient portal public endpoints (/api/public/portal/*)
+ * - booking.ts - Booking management (admin) (/api/booking/*)
  *
  * MIGRATION NOTES:
  * - The legacy routes in server/routes.ts are kept temporarily for backward compatibility

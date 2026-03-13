@@ -237,6 +237,7 @@ import {
   encryptPracticePaymentSettingsRecord,
   decryptPracticePaymentSettingsRecord,
 } from "./services/phiEncryptionService";
+import { cache, CacheKeys } from "./services/cacheService";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
@@ -766,6 +767,9 @@ export class DatabaseStorage implements IStorage {
       .set({ ...encrypted, updatedAt: new Date() })
       .where(eq(practices.id, id))
       .returning();
+    // Invalidate practice-related caches
+    await cache.del(CacheKeys.practiceInfo(id));
+    await cache.del(CacheKeys.telehealthSettings(id));
     return decryptPracticeRecord(updatedPractice) as Practice;
   }
 
@@ -776,6 +780,10 @@ export class DatabaseStorage implements IStorage {
       .insert(patients)
       .values(encrypted as any)
       .returning();
+    // Invalidate analytics caches for the practice
+    if (patient.practiceId) {
+      await cache.delPattern(CacheKeys.analyticsPattern(patient.practiceId));
+    }
     return decryptPatientRecord(newPatient) as Patient;
   }
 
@@ -820,6 +828,10 @@ export class DatabaseStorage implements IStorage {
       .set({ ...encrypted, updatedAt: new Date() })
       .where(eq(patients.id, id))
       .returning();
+    // Invalidate analytics caches for the practice
+    if (updatedPatient.practiceId) {
+      await cache.delPattern(CacheKeys.analyticsPattern(updatedPatient.practiceId));
+    }
     return decryptPatientRecord(updatedPatient) as Patient;
   }
 
@@ -875,6 +887,10 @@ export class DatabaseStorage implements IStorage {
       .insert(claims)
       .values(claim)
       .returning();
+    // Invalidate claims-related analytics caches
+    if (claim.practiceId) {
+      await cache.delPattern(CacheKeys.analyticsPattern(claim.practiceId));
+    }
     return newClaim;
   }
 
@@ -919,6 +935,10 @@ export class DatabaseStorage implements IStorage {
       .set({ ...claim, updatedAt: new Date() })
       .where(eq(claims.id, id))
       .returning();
+    // Invalidate claims-related analytics caches
+    if (updatedClaim.practiceId) {
+      await cache.delPattern(CacheKeys.analyticsPattern(updatedClaim.practiceId));
+    }
     return updatedClaim;
   }
 
@@ -3491,9 +3511,12 @@ export class DatabaseStorage implements IStorage {
         .set({ ...encrypted, updatedAt: new Date() })
         .where(eq(telehealthSettings.id, existing.id))
         .returning();
+      // Invalidate telehealth settings cache
+      await cache.del(CacheKeys.telehealthSettings(settings.practiceId));
       return decryptTelehealthSettingsRecord(result) as TelehealthSettings;
     }
     const [result] = await db.insert(telehealthSettings).values(encrypted as any).returning();
+    await cache.del(CacheKeys.telehealthSettings(settings.practiceId));
     return decryptTelehealthSettingsRecord(result) as TelehealthSettings;
   }
 

@@ -328,7 +328,41 @@ router.post('/:id/cancel', isAuthenticated, async (req: any, res) => {
       }
     }
     const appt = await storage.cancelAppointment(parseInt(req.params.id), reason, notes, whoCancelled);
-    res.json(appt);
+
+    // Auto-fill: attempt to offer the cancelled slot to a waitlist patient
+    let autoFillResult = null;
+    try {
+      if (appt.practiceId && appt.startTime) {
+        const { autoFillSlot } = await import('./waitlist');
+        const startDate = new Date(appt.startTime);
+        const endDate = appt.endTime ? new Date(appt.endTime) : null;
+        const dateStr = startDate.toISOString().split('T')[0];
+        const startTimeStr = startDate.toTimeString().slice(0, 5);
+        const endTimeStr = endDate ? endDate.toTimeString().slice(0, 5) : undefined;
+
+        autoFillResult = await autoFillSlot(appt.practiceId, {
+          appointmentId: appt.id,
+          therapistId: appt.therapistId || undefined,
+          date: dateStr,
+          startTime: startTimeStr,
+          endTime: endTimeStr,
+          appointmentType: appt.title || undefined,
+        });
+
+        if (autoFillResult.matched) {
+          logger.info('Auto-fill triggered on cancellation', {
+            appointmentId: appt.id,
+            waitlistEntryId: autoFillResult.offeredTo?.waitlistEntryId,
+          });
+        }
+      }
+    } catch (autoFillError) {
+      logger.warn('Auto-fill after cancellation failed (non-blocking)', {
+        error: autoFillError instanceof Error ? autoFillError.message : String(autoFillError),
+      });
+    }
+
+    res.json({ ...appt, autoFillResult });
   } catch (error) {
     logger.error('Error cancelling appointment', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to cancel appointment' });

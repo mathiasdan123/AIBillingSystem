@@ -55,6 +55,7 @@ const TreatmentPlans = lazy(() => import("@/pages/treatment-plans"));
 const AiInsights = lazy(() => import("@/pages/ai-insights"));
 const TherapistProductivity = lazy(() => import("@/pages/therapist-productivity"));
 const Onboarding = lazy(() => import("@/pages/onboarding"));
+const Surveys = lazy(() => import("@/pages/surveys"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -188,6 +189,7 @@ function Router() {
               <Route path="/soap-notes" component={SoapNotes} />
               <Route path="/session-recorder" component={SessionRecorder} />
               <Route path="/outcome-measures" component={OutcomeMeasures} />
+              <Route path="/surveys" component={Surveys} />
               <Route path="/treatment-plans" component={TreatmentPlans} />
               {isAdmin && <Route path="/accounting" component={Accounting} />}
               {isAdmin && <Route path="/analytics" component={Analytics} />}

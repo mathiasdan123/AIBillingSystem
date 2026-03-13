@@ -500,10 +500,14 @@ export const waitlist = pgTable("waitlist", {
   preferredDays: jsonb("preferred_days"), // ['monday', 'wednesday', 'friday']
   preferredTimeStart: varchar("preferred_time_start"), // '09:00'
   preferredTimeEnd: varchar("preferred_time_end"), // '17:00'
-  priority: integer("priority").default(1), // 1 = normal, 2 = high, 3 = urgent
-  status: varchar("status").default("waiting"), // waiting, notified, scheduled, expired, cancelled
+  appointmentType: text("appointment_type"), // type of appointment requested
+  priority: integer("priority").default(0), // higher = more urgent
+  status: varchar("status").default("waiting"), // waiting, offered, scheduled, cancelled
   reason: text("reason"), // why they need an earlier appointment
   notes: text("notes"),
+  offeredAt: timestamp("offered_at"), // when they were offered a slot
+  offeredSlot: jsonb("offered_slot"), // {date, startTime, endTime} - the slot offered
+  respondBy: timestamp("respond_by"), // deadline to respond to offered slot
   notifiedAt: timestamp("notified_at"), // when they were notified of an opening
   notifiedSlot: jsonb("notified_slot"), // {date, time, therapist} - the slot they were notified about
   scheduledAppointmentId: integer("scheduled_appointment_id").references(() => appointments.id), // if scheduled
@@ -3019,3 +3023,121 @@ export const insertPatientProgressNoteSchema = createInsertSchema(patientProgres
 // Types for patient progress notes
 export type PatientProgressNote = typeof patientProgressNotes.$inferSelect;
 export type InsertPatientProgressNote = z.infer<typeof insertPatientProgressNoteSchema>;
+
+// ==================== Patient Outcome Surveys ====================
+
+// Survey Templates - standardized (PHQ-9, GAD-7, PCL-5) and custom surveys
+export const surveyTemplates = pgTable("survey_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
+  name: varchar("name").notNull(),
+  description: text("description"),
+  type: varchar("type").notNull(), // phq9, gad7, pcl5, custom, satisfaction
+  questions: jsonb("questions").notNull(), // Array of {id, text, type: "scale"|"text"|"multiple_choice", options?: string[], required: boolean}
+  isActive: boolean("is_active").default(true),
+  isBuiltIn: boolean("is_built_in").default(false), // true for PHQ-9, GAD-7, etc.
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_survey_templates_practice").on(table.practiceId),
+  index("idx_survey_templates_type").on(table.type),
+]);
+
+export const surveyTemplatesRelations = relations(surveyTemplates, ({ one, many }) => ({
+  practice: one(practices, {
+    fields: [surveyTemplates.practiceId],
+    references: [practices.id],
+  }),
+  assignments: many(surveyAssignments),
+  responses: many(surveyResponses),
+}));
+
+export const insertSurveyTemplateSchema = createInsertSchema(surveyTemplates).omit({
+  id: true,
+  createdAt: true,
+});
+export type SurveyTemplate = typeof surveyTemplates.$inferSelect;
+export type InsertSurveyTemplate = z.infer<typeof insertSurveyTemplateSchema>;
+
+// Survey Assignments - tracks which surveys are assigned to which patients
+export const surveyAssignments = pgTable("survey_assignments", {
+  id: serial("id").primaryKey(),
+  surveyTemplateId: integer("survey_template_id").references(() => surveyTemplates.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  assignedBy: varchar("assigned_by").references(() => users.id).notNull(),
+  dueDate: timestamp("due_date"),
+  status: varchar("status").default("pending").notNull(), // pending, completed, expired
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_survey_assignments_patient").on(table.patientId),
+  index("idx_survey_assignments_practice").on(table.practiceId),
+  index("idx_survey_assignments_status").on(table.status),
+]);
+
+export const surveyAssignmentsRelations = relations(surveyAssignments, ({ one }) => ({
+  template: one(surveyTemplates, {
+    fields: [surveyAssignments.surveyTemplateId],
+    references: [surveyTemplates.id],
+  }),
+  patient: one(patients, {
+    fields: [surveyAssignments.patientId],
+    references: [patients.id],
+  }),
+  practice: one(practices, {
+    fields: [surveyAssignments.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertSurveyAssignmentSchema = createInsertSchema(surveyAssignments).omit({
+  id: true,
+  createdAt: true,
+});
+export type SurveyAssignment = typeof surveyAssignments.$inferSelect;
+export type InsertSurveyAssignment = z.infer<typeof insertSurveyAssignmentSchema>;
+
+// Survey Responses - patient-submitted answers
+export const surveyResponses = pgTable("survey_responses", {
+  id: serial("id").primaryKey(),
+  surveyTemplateId: integer("survey_template_id").references(() => surveyTemplates.id).notNull(),
+  assignmentId: integer("assignment_id").references(() => surveyAssignments.id),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  assignedBy: varchar("assigned_by").references(() => users.id),
+  responses: jsonb("responses").notNull(), // Array of {questionId, answer}
+  totalScore: integer("total_score"), // For standardized assessments (PHQ-9: 0-27, GAD-7: 0-21)
+  severity: varchar("severity"), // minimal, mild, moderate, moderately_severe, severe
+  completedAt: timestamp("completed_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_survey_responses_patient").on(table.patientId),
+  index("idx_survey_responses_practice").on(table.practiceId),
+  index("idx_survey_responses_template").on(table.surveyTemplateId),
+]);
+
+export const surveyResponsesRelations = relations(surveyResponses, ({ one }) => ({
+  template: one(surveyTemplates, {
+    fields: [surveyResponses.surveyTemplateId],
+    references: [surveyTemplates.id],
+  }),
+  assignment: one(surveyAssignments, {
+    fields: [surveyResponses.assignmentId],
+    references: [surveyAssignments.id],
+  }),
+  patient: one(patients, {
+    fields: [surveyResponses.patientId],
+    references: [patients.id],
+  }),
+  practice: one(practices, {
+    fields: [surveyResponses.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertSurveyResponseSchema = createInsertSchema(surveyResponses).omit({
+  id: true,
+  createdAt: true,
+});
+export type SurveyResponse = typeof surveyResponses.$inferSelect;
+export type InsertSurveyResponse = z.infer<typeof insertSurveyResponseSchema>;

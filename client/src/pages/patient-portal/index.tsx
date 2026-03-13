@@ -12,6 +12,7 @@ import {
   Menu,
   X,
   FileText,
+  ClipboardList,
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import PatientPortalLogin from "./PatientPortalLogin";
@@ -19,6 +20,7 @@ import PatientPortalDashboard from "./PatientPortalDashboard";
 import PatientPortalProfile from "./PatientPortalProfile";
 import PatientPortalAppointments from "./PatientPortalAppointments";
 import PatientPortalProgressNotes from "./PatientPortalProgressNotes";
+import PatientPortalSurveys from "./PatientPortalSurveys";
 
 export default function PatientPortalPage() {
   const params = useParams<{ token?: string; tab?: string }>();
@@ -149,6 +151,14 @@ export default function PatientPortalPage() {
                 {t('portal.progressNotes')}
               </Button>
               <Button
+                variant={activeTab === "surveys" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => handleNavigate("surveys")}
+              >
+                <ClipboardList className="h-4 w-4 mr-2" />
+                {t('portal.surveys.tab', 'Surveys')}
+              </Button>
+              <Button
                 variant={activeTab === "profile" ? "default" : "ghost"}
                 size="sm"
                 onClick={() => handleNavigate("profile")}
@@ -206,6 +216,14 @@ export default function PatientPortalPage() {
                 {t('portal.progressNotes')}
               </Button>
               <Button
+                variant={activeTab === "surveys" ? "default" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => handleNavigate("surveys")}
+              >
+                <ClipboardList className="h-4 w-4 mr-2" />
+                {t('portal.surveys.tab', 'Surveys')}
+              </Button>
+              <Button
                 variant={activeTab === "profile" ? "default" : "ghost"}
                 className="w-full justify-start"
                 onClick={() => handleNavigate("profile")}
@@ -236,6 +254,9 @@ export default function PatientPortalPage() {
         )}
         {activeTab === "progress-notes" && (
           <PatientPortalProgressNotes token={portalToken} />
+        )}
+        {activeTab === "surveys" && (
+          <PatientPortalSurveys token={portalToken} />
         )}
         {activeTab === "profile" && (
           <PatientPortalProfile token={portalToken} />

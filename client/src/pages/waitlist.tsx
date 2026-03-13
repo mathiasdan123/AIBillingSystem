@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,13 @@ import {
   Phone,
   Mail,
   User,
+  ArrowUp,
+  ArrowDown,
+  TrendingUp,
+  Send,
+  ThumbsUp,
+  ThumbsDown,
+  Timer,
 } from "lucide-react";
 
 interface WaitlistEntry {
@@ -54,10 +61,14 @@ interface WaitlistEntry {
   preferredDays?: string[];
   preferredTimeStart?: string;
   preferredTimeEnd?: string;
+  appointmentType?: string;
   priority: number;
   status: string;
   reason?: string;
   notes?: string;
+  offeredAt?: string;
+  offeredSlot?: { date: string; startTime: string; endTime: string };
+  respondBy?: string;
   notifiedAt?: string;
   notifiedSlot?: { date: string; time: string; therapistId?: string };
   scheduledAppointmentId?: number;
@@ -74,6 +85,13 @@ interface Patient {
   phone?: string;
 }
 
+interface Therapist {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+
 interface WaitlistStats {
   totalWaiting: number;
   notified: number;
@@ -81,6 +99,9 @@ interface WaitlistStats {
   expired: number;
   highPriority: number;
   averageWaitDays: number;
+  offered: number;
+  fillRate: number;
+  filledThisMonth: number;
 }
 
 const DAYS_OF_WEEK = [
@@ -94,17 +115,20 @@ const DAYS_OF_WEEK = [
 ];
 
 const PRIORITY_LABELS: Record<number, { label: string; color: string }> = {
-  1: { label: "Normal", color: "bg-gray-100 text-gray-800" },
-  2: { label: "High", color: "bg-yellow-100 text-yellow-800" },
-  3: { label: "Urgent", color: "bg-red-100 text-red-800" },
+  0: { label: "Normal", color: "bg-gray-100 text-gray-800" },
+  1: { label: "Low", color: "bg-blue-100 text-blue-800" },
+  2: { label: "Medium", color: "bg-yellow-100 text-yellow-800" },
+  3: { label: "High", color: "bg-orange-100 text-orange-800" },
+  4: { label: "Urgent", color: "bg-red-100 text-red-800" },
 };
 
 const STATUS_COLORS: Record<string, string> = {
   waiting: "bg-blue-100 text-blue-800",
-  notified: "bg-purple-100 text-purple-800",
+  offered: "bg-purple-100 text-purple-800",
   scheduled: "bg-green-100 text-green-800",
   expired: "bg-gray-100 text-gray-800",
   cancelled: "bg-red-100 text-red-800",
+  notified: "bg-purple-100 text-purple-800",
 };
 
 export default function WaitlistPage() {
@@ -141,11 +165,25 @@ export default function WaitlistPage() {
   });
 
   // Fetch patients for the add dialog
-  const { data: patients = [] } = useQuery<Patient[]>({
+  const { data: patientsData } = useQuery<any>({
     queryKey: ["/api/patients"],
     queryFn: async () => {
       const res = await fetch("/api/patients?practiceId=1");
       if (!res.ok) throw new Error("Failed to fetch patients");
+      return res.json();
+    },
+  });
+
+  const patients: Patient[] = Array.isArray(patientsData)
+    ? patientsData
+    : patientsData?.data || [];
+
+  // Fetch therapists
+  const { data: therapists = [] } = useQuery<Therapist[]>({
+    queryKey: ["/api/therapists"],
+    queryFn: async () => {
+      const res = await fetch("/api/therapists");
+      if (!res.ok) return [];
       return res.json();
     },
   });
@@ -204,6 +242,58 @@ export default function WaitlistPage() {
     },
   });
 
+  // Accept offer mutation
+  const acceptOffer = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/waitlist/${id}/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Failed" }));
+        throw new Error(err.message || "Failed to accept offer");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      setSelectedEntry(null);
+      toast({
+        title: "Slot accepted",
+        description: `Appointment #${data.appointment?.id} created`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to accept offer", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Decline offer mutation
+  const declineOffer = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/waitlist/${id}/decline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error("Failed to decline offer");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist/stats"] });
+      setSelectedEntry(null);
+      const nextMsg = data.nextOffer?.matched
+        ? "Slot offered to next patient"
+        : "No other matches found";
+      toast({ title: "Offer declined", description: nextMsg });
+    },
+    onError: () => {
+      toast({ title: "Failed to decline offer", variant: "destructive" });
+    },
+  });
+
   // Notify patient mutation
   const notifyPatient = useMutation({
     mutationFn: async ({ id, date, time }: { id: number; date: string; time: string }) => {
@@ -234,6 +324,34 @@ export default function WaitlistPage() {
     },
   });
 
+  // Offer slot manually mutation
+  const offerSlot = useMutation({
+    mutationFn: async (params: { date: string; startTime: string; endTime?: string; appointmentType?: string }) => {
+      const res = await fetch("/api/waitlist/auto-fill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...params, practiceId: 1 }),
+      });
+      if (!res.ok) throw new Error("Failed to auto-fill");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist/stats"] });
+      if (data.matched) {
+        toast({
+          title: "Slot offered",
+          description: `Offered to patient (${data.matchCount} matches found)`,
+        });
+      } else {
+        toast({ title: "No matches", description: "No matching waitlist patients found" });
+      }
+    },
+    onError: () => {
+      toast({ title: "Auto-fill failed", variant: "destructive" });
+    },
+  });
+
   // Get patient name by ID
   const getPatientName = (patientId: number) => {
     const patient = patients.find((p) => p.id === patientId);
@@ -243,6 +361,13 @@ export default function WaitlistPage() {
   // Get patient by ID
   const getPatient = (patientId: number) => {
     return patients.find((p) => p.id === patientId);
+  };
+
+  // Get therapist name
+  const getTherapistName = (therapistId?: string) => {
+    if (!therapistId) return "Any therapist";
+    const therapist = therapists.find((t) => t.id === therapistId);
+    return therapist ? `${therapist.firstName || ""} ${therapist.lastName || ""}`.trim() || therapistId : therapistId;
   };
 
   // Calculate days waiting
@@ -274,7 +399,7 @@ export default function WaitlistPage() {
         <div>
           <h1 className="text-3xl font-bold">Waitlist Management</h1>
           <p className="text-muted-foreground">
-            Manage patients waiting for earlier appointments
+            Smart waitlist with auto-fill for cancelled slots
           </p>
         </div>
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -288,11 +413,12 @@ export default function WaitlistPage() {
             <DialogHeader>
               <DialogTitle>Add Patient to Waitlist</DialogTitle>
               <DialogDescription>
-                Add a patient who wants an earlier appointment
+                Add a patient who wants an earlier or different appointment slot
               </DialogDescription>
             </DialogHeader>
             <AddWaitlistForm
               patients={patients}
+              therapists={therapists}
               onSubmit={(data) => createEntry.mutate(data)}
               isLoading={createEntry.isPending}
             />
@@ -301,7 +427,7 @@ export default function WaitlistPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
@@ -327,7 +453,18 @@ export default function WaitlistPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Bell className="h-5 w-5 text-purple-500" />
+              <Send className="h-5 w-5 text-purple-500" />
+              <div>
+                <p className="text-2xl font-bold">{stats?.offered || 0}</p>
+                <p className="text-xs text-muted-foreground">Offered</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-indigo-500" />
               <div>
                 <p className="text-2xl font-bold">{stats?.notified || 0}</p>
                 <p className="text-xs text-muted-foreground">Notified</p>
@@ -349,10 +486,10 @@ export default function WaitlistPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <XCircle className="h-5 w-5 text-gray-500" />
+              <TrendingUp className="h-5 w-5 text-emerald-500" />
               <div>
-                <p className="text-2xl font-bold">{stats?.expired || 0}</p>
-                <p className="text-xs text-muted-foreground">Expired</p>
+                <p className="text-2xl font-bold">{stats?.fillRate || 0}%</p>
+                <p className="text-xs text-muted-foreground">Fill Rate</p>
               </div>
             </div>
           </CardContent>
@@ -360,7 +497,18 @@ export default function WaitlistPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-orange-500" />
+              <Calendar className="h-5 w-5 text-teal-500" />
+              <div>
+                <p className="text-2xl font-bold">{stats?.filledThisMonth || 0}</p>
+                <p className="text-xs text-muted-foreground">Filled (Month)</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-2">
+              <Timer className="h-5 w-5 text-orange-500" />
               <div>
                 <p className="text-2xl font-bold">{stats?.averageWaitDays || 0}</p>
                 <p className="text-xs text-muted-foreground">Avg Wait (days)</p>
@@ -380,9 +528,9 @@ export default function WaitlistPage() {
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
             <SelectItem value="waiting">Waiting</SelectItem>
-            <SelectItem value="notified">Notified</SelectItem>
+            <SelectItem value="offered">Offered</SelectItem>
             <SelectItem value="scheduled">Scheduled</SelectItem>
-            <SelectItem value="expired">Expired</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -416,19 +564,31 @@ export default function WaitlistPage() {
                       <p className="text-sm text-muted-foreground">
                         {formatPreferredDays(entry.preferredDays as string[])} &bull;{" "}
                         {formatPreferredTime(entry.preferredTimeStart, entry.preferredTimeEnd)}
+                        {entry.appointmentType && (
+                          <> &bull; {entry.appointmentType}</>
+                        )}
                       </p>
+                      {entry.therapistId && (
+                        <p className="text-xs text-muted-foreground">
+                          Preferred: {getTherapistName(entry.therapistId)}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {/* Offered slot countdown */}
+                    {entry.status === "offered" && entry.respondBy && (
+                      <CountdownBadge respondBy={entry.respondBy} />
+                    )}
                     <div className="text-right">
                       <p className="text-sm text-muted-foreground">
                         {getDaysWaiting(entry.createdAt)} days waiting
                       </p>
                     </div>
-                    <Badge className={PRIORITY_LABELS[entry.priority]?.color}>
-                      {PRIORITY_LABELS[entry.priority]?.label}
+                    <Badge className={PRIORITY_LABELS[entry.priority]?.color || PRIORITY_LABELS[0].color}>
+                      {PRIORITY_LABELS[entry.priority]?.label || "Normal"}
                     </Badge>
-                    <Badge className={STATUS_COLORS[entry.status]}>
+                    <Badge className={STATUS_COLORS[entry.status] || STATUS_COLORS.waiting}>
                       {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
                     </Badge>
                   </div>
@@ -451,13 +611,65 @@ export default function WaitlistPage() {
               <div className="mt-6 space-y-6">
                 {/* Status & Priority */}
                 <div className="flex gap-2">
-                  <Badge className={STATUS_COLORS[selectedEntry.status]}>
+                  <Badge className={STATUS_COLORS[selectedEntry.status] || STATUS_COLORS.waiting}>
                     {selectedEntry.status.charAt(0).toUpperCase() + selectedEntry.status.slice(1)}
                   </Badge>
-                  <Badge className={PRIORITY_LABELS[selectedEntry.priority]?.color}>
-                    {PRIORITY_LABELS[selectedEntry.priority]?.label} Priority
+                  <Badge className={PRIORITY_LABELS[selectedEntry.priority]?.color || PRIORITY_LABELS[0].color}>
+                    {PRIORITY_LABELS[selectedEntry.priority]?.label || "Normal"} Priority
                   </Badge>
                 </div>
+
+                {/* Offered Slot Info */}
+                {selectedEntry.status === "offered" && selectedEntry.offeredSlot && (
+                  <div className="p-4 border rounded-lg bg-purple-50 dark:bg-purple-900/20 space-y-3">
+                    <h4 className="font-medium flex items-center gap-2">
+                      <Send className="h-4 w-4" />
+                      Slot Offered
+                    </h4>
+                    <div className="text-sm space-y-1">
+                      <p>
+                        <span className="text-muted-foreground">Date: </span>
+                        {new Date(selectedEntry.offeredSlot.date + "T00:00:00").toLocaleDateString("en-US", {
+                          weekday: "long",
+                          month: "long",
+                          day: "numeric",
+                        })}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Time: </span>
+                        {selectedEntry.offeredSlot.startTime}
+                        {selectedEntry.offeredSlot.endTime && selectedEntry.offeredSlot.endTime !== selectedEntry.offeredSlot.startTime
+                          ? ` - ${selectedEntry.offeredSlot.endTime}`
+                          : ""}
+                      </p>
+                    </div>
+                    {selectedEntry.respondBy && (
+                      <div className="flex items-center gap-2">
+                        <Timer className="h-4 w-4 text-orange-500" />
+                        <CountdownBadge respondBy={selectedEntry.respondBy} />
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        onClick={() => acceptOffer.mutate(selectedEntry.id)}
+                        disabled={acceptOffer.isPending}
+                      >
+                        <ThumbsUp className="mr-1 h-4 w-4" />
+                        {acceptOffer.isPending ? "Accepting..." : "Accept"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => declineOffer.mutate(selectedEntry.id)}
+                        disabled={declineOffer.isPending}
+                      >
+                        <ThumbsDown className="mr-1 h-4 w-4" />
+                        {declineOffer.isPending ? "Declining..." : "Decline"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Contact Info */}
                 <div className="space-y-2">
@@ -498,6 +710,16 @@ export default function WaitlistPage() {
                         selectedEntry.preferredTimeEnd
                       )}
                     </p>
+                    {selectedEntry.appointmentType && (
+                      <p>
+                        <span className="text-muted-foreground">Type: </span>
+                        {selectedEntry.appointmentType}
+                      </p>
+                    )}
+                    <p>
+                      <span className="text-muted-foreground">Therapist: </span>
+                      {getTherapistName(selectedEntry.therapistId)}
+                    </p>
                   </div>
                 </div>
 
@@ -525,6 +747,12 @@ export default function WaitlistPage() {
                       <span className="text-muted-foreground">Added: </span>
                       {new Date(selectedEntry.createdAt).toLocaleDateString()}
                     </p>
+                    {selectedEntry.offeredAt && (
+                      <p>
+                        <span className="text-muted-foreground">Offered: </span>
+                        {new Date(selectedEntry.offeredAt).toLocaleString()}
+                      </p>
+                    )}
                     {selectedEntry.notifiedAt && (
                       <p>
                         <span className="text-muted-foreground">Notified: </span>
@@ -540,7 +768,7 @@ export default function WaitlistPage() {
                   </div>
                 </div>
 
-                {/* Actions */}
+                {/* Actions for waiting status */}
                 {selectedEntry.status === "waiting" && (
                   <div className="flex gap-2">
                     <Dialog open={isNotifyDialogOpen} onOpenChange={setIsNotifyDialogOpen}>
@@ -603,24 +831,37 @@ export default function WaitlistPage() {
                 {/* Priority Update */}
                 <div className="space-y-2">
                   <Label>Update Priority</Label>
-                  <Select
-                    value={String(selectedEntry.priority)}
-                    onValueChange={(value) =>
-                      updateEntry.mutate({
-                        id: selectedEntry.id,
-                        priority: parseInt(value),
-                      })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">Normal</SelectItem>
-                      <SelectItem value="2">High</SelectItem>
-                      <SelectItem value="3">Urgent</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedEntry.priority >= 4}
+                      onClick={() =>
+                        updateEntry.mutate({
+                          id: selectedEntry.id,
+                          priority: Math.min((selectedEntry.priority || 0) + 1, 4),
+                        })
+                      }
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm font-medium px-2">
+                      {PRIORITY_LABELS[selectedEntry.priority]?.label || "Normal"} ({selectedEntry.priority})
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedEntry.priority <= 0}
+                      onClick={() =>
+                        updateEntry.mutate({
+                          id: selectedEntry.id,
+                          priority: Math.max((selectedEntry.priority || 0) - 1, 0),
+                        })
+                      }
+                    >
+                      <ArrowDown className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Delete */}
@@ -645,22 +886,67 @@ export default function WaitlistPage() {
   );
 }
 
+// Countdown timer component for respondBy deadline
+function CountdownBadge({ respondBy }: { respondBy: string }) {
+  const [timeLeft, setTimeLeft] = useState("");
+  const [isExpired, setIsExpired] = useState(false);
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date().getTime();
+      const deadline = new Date(respondBy).getTime();
+      const diff = deadline - now;
+
+      if (diff <= 0) {
+        setTimeLeft("Expired");
+        setIsExpired(true);
+        return;
+      }
+
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+      if (hours > 0) {
+        setTimeLeft(`${hours}h ${minutes}m left`);
+      } else {
+        setTimeLeft(`${minutes}m left`);
+      }
+      setIsExpired(false);
+    };
+
+    update();
+    const interval = setInterval(update, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, [respondBy]);
+
+  return (
+    <Badge className={isExpired ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}>
+      <Timer className="mr-1 h-3 w-3" />
+      {timeLeft}
+    </Badge>
+  );
+}
+
 // Add Waitlist Form Component
 function AddWaitlistForm({
   patients,
+  therapists,
   onSubmit,
   isLoading,
 }: {
   patients: Patient[];
+  therapists: Therapist[];
   onSubmit: (data: Partial<WaitlistEntry>) => void;
   isLoading: boolean;
 }) {
   const [formData, setFormData] = useState({
     patientId: "",
-    priority: "1",
+    therapistId: "",
+    priority: "0",
     preferredDays: [] as string[],
     preferredTimeStart: "",
     preferredTimeEnd: "",
+    appointmentType: "",
     reason: "",
     notes: "",
     expiresAt: "",
@@ -671,7 +957,7 @@ function AddWaitlistForm({
       ...prev,
       preferredDays: prev.preferredDays.includes(day)
         ? prev.preferredDays.filter((d) => d !== day)
-        : [...prev.preferredDays, day],
+        : Array.from(new Set([...prev.preferredDays, day])),
     }));
   };
 
@@ -679,10 +965,12 @@ function AddWaitlistForm({
     e.preventDefault();
     onSubmit({
       patientId: parseInt(formData.patientId),
+      therapistId: formData.therapistId || undefined,
       priority: parseInt(formData.priority),
       preferredDays: formData.preferredDays.length > 0 ? formData.preferredDays : undefined,
       preferredTimeStart: formData.preferredTimeStart || undefined,
       preferredTimeEnd: formData.preferredTimeEnd || undefined,
+      appointmentType: formData.appointmentType || undefined,
       reason: formData.reason || undefined,
       notes: formData.notes || undefined,
       expiresAt: formData.expiresAt ? new Date(formData.expiresAt).toISOString() : undefined,
@@ -690,7 +978,7 @@ function AddWaitlistForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
       <div className="space-y-2">
         <Label>Patient *</Label>
         <Select
@@ -711,6 +999,35 @@ function AddWaitlistForm({
       </div>
 
       <div className="space-y-2">
+        <Label>Preferred Therapist (optional)</Label>
+        <Select
+          value={formData.therapistId}
+          onValueChange={(value) => setFormData((prev) => ({ ...prev, therapistId: value === "__none__" ? "" : value }))}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Any therapist" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Any therapist</SelectItem>
+            {therapists.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.firstName || ""} {t.lastName || ""} {t.email ? `(${t.email})` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Appointment Type (optional)</Label>
+        <Input
+          placeholder="e.g., Individual Therapy, Group Session"
+          value={formData.appointmentType}
+          onChange={(e) => setFormData((prev) => ({ ...prev, appointmentType: e.target.value }))}
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label>Priority</Label>
         <Select
           value={formData.priority}
@@ -720,9 +1037,11 @@ function AddWaitlistForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="1">Normal</SelectItem>
-            <SelectItem value="2">High</SelectItem>
-            <SelectItem value="3">Urgent</SelectItem>
+            <SelectItem value="0">Normal (0)</SelectItem>
+            <SelectItem value="1">Low (1)</SelectItem>
+            <SelectItem value="2">Medium (2)</SelectItem>
+            <SelectItem value="3">High (3)</SelectItem>
+            <SelectItem value="4">Urgent (4)</SelectItem>
           </SelectContent>
         </Select>
       </div>

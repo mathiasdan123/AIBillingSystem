@@ -64,6 +64,7 @@ const navigationItems = [
   { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
   { nameKey: 'nav.sessionRecorder', href: '/session-recorder', icon: Mic, adminOnly: false },
   { nameKey: 'nav.outcomeMeasures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
+  { nameKey: 'nav.surveys', href: '/surveys', icon: ClipboardList, adminOnly: false },
   { nameKey: 'nav.treatmentPlans', href: '/treatment-plans', icon: Target, adminOnly: false },
   { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
   { nameKey: 'nav.insuranceRates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },

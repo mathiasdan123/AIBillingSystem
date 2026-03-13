@@ -1,0 +1,156 @@
+/**
+ * Admin Routes
+ *
+ * Handles:
+ * - GET /api/admin/payer-integrations - List payer integrations
+ * - POST /api/admin/payer-credentials - Save payer credentials
+ * - POST /api/admin/payer-integrations/:name/health-check - Payer health check
+ * - POST /api/admin/hard-delete-expired - Hard delete expired patients
+ *
+ * Mounted at /api so all paths include their full prefix.
+ */
+
+import { Router, type Response, type NextFunction } from 'express';
+import { storage } from '../storage';
+import { isAuthenticated } from '../replitAuth';
+import { StediAdapter } from '../payer-integrations/adapters/payers/StediAdapter';
+import { triggerHardDeletionNow } from '../scheduler';
+import logger from '../services/logger';
+
+const router = Router();
+
+// Helper to get authorized practiceId from request
+const getAuthorizedPracticeId = (req: any): number => {
+  if (req.authorizedPracticeId) {
+    return req.authorizedPracticeId;
+  }
+
+  const userPracticeId = req.userPracticeId;
+  const userRole = req.userRole;
+  const requestedPracticeId = req.query.practiceId
+    ? parseInt(req.query.practiceId as string)
+    : undefined;
+
+  if (userRole === 'admin') {
+    return requestedPracticeId || userPracticeId || 1;
+  }
+
+  if (!userPracticeId) {
+    throw new Error('User not assigned to a practice. Contact administrator.');
+  }
+
+  if (requestedPracticeId && requestedPracticeId !== userPracticeId) {
+    logger.warn(`Practice access restricted: User requested practice ${requestedPracticeId} but assigned to ${userPracticeId}`);
+    return userPracticeId;
+  }
+
+  return requestedPracticeId || userPracticeId;
+};
+
+// Middleware to check if user has admin or billing role
+const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.claims?.sub) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const user = await storage.getUser(req.user.claims.sub);
+    if (!user || (user.role !== 'admin' && user.role !== 'billing')) {
+      return res.status(403).json({ message: "Access denied. Admin or billing role required." });
+    }
+
+    next();
+  } catch (error) {
+    logger.error("Error checking user role", { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: "Failed to verify permissions" });
+  }
+};
+
+// Middleware to check if user has admin role
+const isAdmin = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.claims?.sub) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const user = await storage.getUser(req.user.claims.sub);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ message: "Access denied. Admin role required." });
+    }
+
+    next();
+  } catch (error) {
+    logger.error("Error checking user role", { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: "Failed to verify permissions" });
+  }
+};
+
+// Get payer integrations list
+router.get('/admin/payer-integrations', isAuthenticated, isAdminOrBilling, async (req, res) => {
+  try {
+    const creds = await storage.getAllPayerCredentialsList();
+    res.json(creds);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to fetch payer integrations' });
+  }
+});
+
+// Save payer credentials
+router.post('/admin/payer-credentials', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { payerName, apiKey } = req.body;
+    await storage.upsertPayerCredentials(practiceId, { payerName, apiKey });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to save credentials' });
+  }
+});
+
+// Payer health check
+router.post('/admin/payer-integrations/:name/health-check', isAuthenticated, isAdminOrBilling, async (req, res) => {
+  try {
+    const { name } = req.params;
+    if (name === 'stedi') {
+      const creds = await storage.getPayerCredentials(1, 'stedi');
+      if (!creds) return res.status(404).json({ message: 'No Stedi credentials found' });
+      const adapter = new StediAdapter((creds.credentials as any).apiKey);
+      const result = await adapter.healthCheck();
+      await storage.updatePayerHealthStatus(creds.id, result.healthy ? 'healthy' : 'down');
+      res.json(result);
+    } else {
+      res.status(404).json({ message: 'Unknown payer' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Health check failed' });
+  }
+});
+
+// Hard delete expired patients
+router.post('/admin/hard-delete-expired', isAuthenticated, isAdmin, async (req: any, res) => {
+  try {
+    logger.info('Manual hard deletion triggered', { userId: req.user?.claims?.sub });
+    const result = await triggerHardDeletionNow();
+
+    await storage.createAuditLog({
+      userId: req.user?.claims?.sub || 'unknown',
+      eventType: 'delete',
+      eventCategory: 'data_retention',
+      resourceType: 'system',
+      resourceId: 'hard-deletion',
+      details: { deletedCount: result.deletedCount, errors: result.errors },
+      ipAddress: req.ip || '0.0.0.0',
+    });
+
+    res.json({
+      message: `Hard deletion completed. ${result.deletedCount} patient(s) permanently removed.`,
+      deletedCount: result.deletedCount,
+      errors: result.errors,
+    });
+  } catch (error: any) {
+    logger.error('Manual hard deletion failed', { error: error.message });
+    res.status(500).json({ message: 'Hard deletion failed' });
+  }
+});
+
+export default router;
