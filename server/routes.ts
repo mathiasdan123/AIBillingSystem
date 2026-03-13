@@ -210,6 +210,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastName: string; role: string }> = {
     'demo@therapybill.com': { password: 'demo1234', firstName: 'Demo', lastName: 'Admin', role: 'admin' },
     'reviewer1@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Demo', role: 'admin' },
+    'reviewer2@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Two', role: 'admin' },
   };
 
   // Demo login endpoint - creates demo user if needed and logs in

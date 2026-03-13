@@ -116,6 +116,14 @@ export async function seedDatabase() {
       console.log("Reviewer user already exists - ensured admin role");
     }
 
+    // Ensure reviewer2 has admin role
+    await db.execute(sql`UPDATE users SET role = 'admin' WHERE email = 'reviewer2@demo.com' AND role != 'admin'`);
+    const practiceForR2 = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
+    if (practiceForR2.rows && practiceForR2.rows.length > 0) {
+      const pId2 = parseInt(practiceForR2.rows[0].id as string, 10);
+      await db.execute(sql`UPDATE users SET practice_id = ${pId2} WHERE email = 'reviewer2@demo.com' AND practice_id IS NULL`);
+    }
+
     // Check if data already exists
     const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
     const count = parseInt(result.rows[0]?.count || '0', 10);
