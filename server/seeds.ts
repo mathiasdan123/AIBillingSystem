@@ -46,6 +46,29 @@ export async function seedDatabase() {
       console.log("Demo user already exists");
     }
 
+    // Always ensure reviewer user exists
+    const existingReviewer = await db.execute(sql`SELECT id FROM users WHERE email = 'reviewer1@demo.com'`);
+    if (!existingReviewer.rows || existingReviewer.rows.length === 0) {
+      console.log("Creating reviewer user...");
+      const practiceResult2 = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
+      if (practiceResult2.rows && practiceResult2.rows.length > 0) {
+        const reviewerHash = await hashPassword("TherapyDemo2024#");
+        await db.insert(users).values({
+          id: "reviewer-user-001",
+          email: "reviewer1@demo.com",
+          firstName: "Reviewer",
+          lastName: "Demo",
+          practiceId: parseInt(practiceResult2.rows[0].id as string, 10),
+          role: "admin",
+          passwordHash: reviewerHash,
+          emailVerified: true,
+        }).onConflictDoNothing();
+        console.log("Reviewer user created: reviewer1@demo.com / TherapyDemo2024#");
+      }
+    } else {
+      console.log("Reviewer user already exists");
+    }
+
     // Check if data already exists
     const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
     const count = parseInt(result.rows[0]?.count || '0', 10);

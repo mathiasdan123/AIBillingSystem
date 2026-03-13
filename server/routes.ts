@@ -206,20 +206,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
   app.use('/api', insuranceDataRoutes);
 
+  // Demo accounts that can be auto-created and logged into
+  const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastName: string; role: string }> = {
+    'demo@therapybill.com': { password: 'demo1234', firstName: 'Demo', lastName: 'Admin', role: 'admin' },
+    'reviewer1@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Demo', role: 'admin' },
+  };
+
   // Demo login endpoint - creates demo user if needed and logs in
   app.post('/api/demo-login', authLimiter, async (req: any, res) => {
     try {
       const { hashPassword } = await import('./services/passwordService');
-      let user = await storage.getUserByEmail('demo@therapybill.com');
+      const requestedEmail = (req.body?.email || 'demo@therapybill.com').toLowerCase().trim();
+      const demoAccount = DEMO_ACCOUNTS[requestedEmail];
+      if (!demoAccount) {
+        return res.status(400).json({ message: 'Invalid demo account' });
+      }
+
+      let user = await storage.getUserByEmail(requestedEmail);
       if (!user) {
-        // Create demo user
         user = await storage.createUserWithPassword({
-          email: 'demo@therapybill.com',
-          passwordHash: await hashPassword('demo1234'),
-          firstName: 'Demo',
-          lastName: 'Admin',
+          email: requestedEmail,
+          passwordHash: await hashPassword(demoAccount.password),
+          firstName: demoAccount.firstName,
+          lastName: demoAccount.lastName,
           practiceId: 1,
-          role: 'admin',
+          role: demoAccount.role,
         });
       }
       // Log in the demo user
