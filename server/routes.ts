@@ -224,31 +224,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let user = await storage.getUserByEmail(requestedEmail);
       if (!user) {
+        // Find a practice to assign
+        let practiceId: number | undefined;
+        try {
+          const practiceIds = await storage.getAllPracticeIds();
+          if (practiceIds.length > 0) practiceId = practiceIds[0];
+        } catch (e) {
+          logger.warn('Could not fetch practice IDs for demo user', { error: e instanceof Error ? e.message : String(e) });
+        }
+
         user = await storage.createUserWithPassword({
           email: requestedEmail,
           passwordHash: await hashPassword(demoAccount.password),
           firstName: demoAccount.firstName,
           lastName: demoAccount.lastName,
-          practiceId: 1,
+          practiceId,
           role: demoAccount.role,
         });
+        logger.info('Demo user created', { email: requestedEmail, practiceId });
       }
-      // Log in the demo user
+      // Log in the demo user directly via session
       const userObj = { claims: { sub: user.id } };
       req.login(userObj, (err: any) => {
         if (err) {
-          return res.status(500).json({ message: 'Demo login failed' });
+          logger.error('Demo req.login error', { error: err instanceof Error ? err.message : String(err) });
+          return res.status(500).json({ message: 'Demo login failed', detail: 'session' });
         }
-        (req.session as any).mfaVerifiedAt = Date.now();
-        (req.session as any).mfaUserId = user!.id;
+        if (req.session) {
+          (req.session as any).mfaVerifiedAt = Date.now();
+          (req.session as any).mfaUserId = user!.id;
+        }
         res.json({
           message: 'Demo login successful',
           user: { id: user!.id, email: user!.email, firstName: user!.firstName, lastName: user!.lastName, role: user!.role },
         });
       });
     } catch (error) {
-      logger.error('Demo login error', { error: error instanceof Error ? error.message : String(error) });
-      res.status(500).json({ message: 'Demo login failed' });
+      logger.error('Demo login error', { error: error instanceof Error ? error.stack : String(error) });
+      res.status(500).json({ message: 'Demo login failed', detail: error instanceof Error ? error.message : 'unknown' });
     }
   });
 
