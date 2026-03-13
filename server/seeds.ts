@@ -1,6 +1,7 @@
 import { getDb } from "./db";
-import { practices, cptCodes, icd10Codes, insurances, patients } from "@shared/schema";
+import { practices, cptCodes, icd10Codes, insurances, patients, users } from "@shared/schema";
 import { sql } from "drizzle-orm";
+import { hashPassword } from "./services/passwordService";
 
 export async function seedDatabase() {
   try {
@@ -21,6 +22,29 @@ export async function seedDatabase() {
     await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS therapist_credentials VARCHAR`);
     await db.execute(sql`ALTER TABLE soap_notes ADD COLUMN IF NOT EXISTS signature_ip_address VARCHAR`);
     console.log("Schema migrations complete");
+
+    // Always ensure demo user exists
+    const existingDemo = await db.execute(sql`SELECT id FROM users WHERE email = 'demo@therapybill.com'`);
+    if (!existingDemo.rows || existingDemo.rows.length === 0) {
+      console.log("Creating demo user...");
+      const practiceResult = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
+      if (practiceResult.rows && practiceResult.rows.length > 0) {
+        const demoHash = await hashPassword("demo1234");
+        await db.insert(users).values({
+          id: "demo-user-001",
+          email: "demo@therapybill.com",
+          firstName: "Demo",
+          lastName: "Admin",
+          practiceId: parseInt(practiceResult.rows[0].id as string, 10),
+          role: "admin",
+          passwordHash: demoHash,
+          emailVerified: true,
+        }).onConflictDoNothing();
+        console.log("Demo user created: demo@therapybill.com / demo1234");
+      }
+    } else {
+      console.log("Demo user already exists");
+    }
 
     // Check if data already exists
     const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
@@ -303,12 +327,26 @@ export async function seedDatabase() {
       },
     ]);
 
+    // Seed Demo User
+    const demoPasswordHash = await hashPassword("demo1234");
+    await db.insert(users).values({
+      id: "demo-user-001",
+      email: "demo@therapybill.com",
+      firstName: "Demo",
+      lastName: "Admin",
+      practiceId: practice.id,
+      role: "admin",
+      passwordHash: demoPasswordHash,
+      emailVerified: true,
+    }).onConflictDoNothing();
+
     console.log("Database seeded successfully with:", {
       practices: 1,
       cptCodes: 10,
       icd10Codes: 13,
       insurances: 7,
       patients: 4,
+      demoUser: "demo@therapybill.com / demo1234",
     });
   } catch (error) {
     console.error("Error seeding database:", error);
