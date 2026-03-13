@@ -379,6 +379,19 @@ export async function seedDatabase() {
       emailVerified: true,
     }).onConflictDoNothing();
 
+    // Seed Reviewer User
+    const reviewerPasswordHash = await hashPassword("TherapyDemo2024#");
+    await db.insert(users).values({
+      id: "reviewer-user-001",
+      email: "reviewer1@demo.com",
+      firstName: "Reviewer",
+      lastName: "Demo",
+      practiceId: practice.id,
+      role: "admin",
+      passwordHash: reviewerPasswordHash,
+      emailVerified: true,
+    }).onConflictDoNothing();
+
     console.log("Database seeded successfully with:", {
       practices: 1,
       cptCodes: 10,
@@ -386,6 +399,7 @@ export async function seedDatabase() {
       insurances: 7,
       patients: 4,
       demoUser: "demo@therapybill.com / demo1234",
+      reviewerUser: "reviewer1@demo.com / TherapyDemo2024#",
     });
   } catch (error) {
     console.error("Error seeding database:", error);
