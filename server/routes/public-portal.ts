@@ -635,19 +635,42 @@ router.get('/patient-portal/demo-login', async (req, res) => {
     // Check if patient has portal access, if not create it
     let access = await storage.getPatientPortalAccess(patient.id);
 
+    // Generate unique tokens with timestamp to avoid collisions
+    const uniqueToken = () => crypto.randomBytes(32).toString('hex') + Date.now().toString(36);
+
     if (!access) {
       // Create portal access for demo patient
       access = await storage.createPatientPortalAccess({
         patientId: patient.id,
         practiceId: patient.practiceId,
-        magicLinkToken: crypto.randomBytes(32).toString('hex'),
+        magicLinkToken: uniqueToken(),
         magicLinkExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-        portalToken: crypto.randomBytes(32).toString('hex'),
+        portalToken: uniqueToken(),
         portalTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
       });
     } else {
-      // Refresh the portal token
-      access = await storage.refreshPortalToken(patient.id);
+      // Return existing access if it's still valid
+      if (access.portalToken && access.portalTokenExpiresAt && new Date(access.portalTokenExpiresAt) > new Date()) {
+        // Token still valid, return it
+      } else {
+        // Try to refresh, but if it fails due to duplicate, just update the existing record directly
+        try {
+          access = await storage.refreshPortalToken(patient.id);
+        } catch (refreshError) {
+          // If refresh fails (duplicate key), update directly with a new unique token
+          const { getDb } = await import('../db');
+          const { sql } = await import('drizzle-orm');
+          const db = await getDb();
+          const newToken = uniqueToken();
+          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          await db.execute(sql`
+            UPDATE patient_portal_access
+            SET portal_token = ${newToken}, portal_token_expires_at = ${expiresAt}, updated_at = NOW()
+            WHERE patient_id = ${patient.id}
+          `);
+          access = await storage.getPatientPortalAccess(patient.id);
+        }
+      }
     }
 
     res.json({
