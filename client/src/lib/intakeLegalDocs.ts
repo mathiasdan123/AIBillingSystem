@@ -6,66 +6,51 @@
  */
 
 export const HIPAA_NOTICE_OF_PRIVACY_PRACTICES = `
+HIPAA POLICY
 NOTICE OF PRIVACY PRACTICES
 
-THIS NOTICE DESCRIBES HOW MEDICAL INFORMATION ABOUT YOU MAY BE USED AND DISCLOSED AND HOW YOU CAN GET ACCESS TO THIS INFORMATION. PLEASE REVIEW IT CAREFULLY.
+This notice describes how medical information about you may be used and disclosed and how you can get access to this information. Please review it carefully.
 
-OUR COMMITMENT TO YOUR PRIVACY
+The Health Insurance Portability & Accountability Act of 1996 (HIPAA) is a federal program that requires that all medical records and other individually identifiable health information used or disclosed by us in any form, whether electronically, on paper, or orally, are kept properly confidential. This Act gives you, the patient, significant new rights to understand and control how your health information is used. We are required by law to maintain the privacy of your protected health information and to provide you with notice of our legal duties and privacy practices with respect to protected health information. HIPAA provides penalties for covered entities that misuse personal health information.
 
-Your protected health information (PHI) is the information collected about you that could reasonably be used to identify you. This includes information about your past, present or future physical or mental health condition, treatment provided to you, and payment for your healthcare. We understand that your PHI is personal, and we are committed to protecting your privacy. This Notice of Privacy Practices describes how we may use and disclose your PHI to carry out treatment, payment or healthcare operations, and for other purposes that are permitted or required by law. It also describes your rights regarding access to and control over your PHI.
+As required by HIPAA, we have prepared this explanation of how we are required to maintain the privacy of your health information and how we may use and disclose your health information.
 
-HOW WE MAY USE AND DISCLOSE YOUR PROTECTED HEALTH INFORMATION
+Treatment means providing, coordinating, or managing health care and related services, by one or more health care providers.
 
-We may use and disclose your PHI without your authorization in the following ways:
+Payment means such activities as obtaining reimbursement for services, confirming coverage, billing or collections activities, and utilization review. An example of this would be sending a bill for your visit to your insurance company for payment.
 
-TREATMENT: We may use and disclose your PHI to coordinate the healthcare you receive. For example, we may disclose your PHI with your primary care physician, specialists, pharmacies, or other healthcare providers involved in your care.
+Health care operations include the business aspects of running our practice, such as conducting quality assessment and improvement activities, auditing functions, cost-management analysis, and customer service.
 
-PAYMENT: We may use and disclose your PHI to bill and collect payment for the services we provide. For example, we may provide your PHI to your insurance company to receive payment for treatment.
+We may create and distribute de-identified health information by removing all references to individually identifiable information.
 
-HEALTHCARE OPERATIONS: We may use and disclose your PHI for the operational purposes of this practice. For example, we may use your PHI for quality improvement activities, training staff, or administrative activities.
+We may contact you to provide appointment reminders or information about treatment alternatives or other health-related benefits and services that may be of interest to you.
 
-APPOINTMENT REMINDERS: We may contact you to remind you of scheduled appointments.
+Any other uses and disclosures will be made only with your written authorization. You may revoke such authorization in writing and we are required to honor and abide by that written request, except to the extent that we have already taken actions relying on your authorization.
 
-TREATMENT ALTERNATIVES: We may contact you about treatment options or health-related benefits and services that may be of interest to you.
+You have the following rights with respect to your protected health information, which you can exercise by presenting a written request to the Privacy Officer:
 
-REQUIRED BY LAW: We may use or disclose your PHI when required by law, such as:
-- To report suspected abuse, neglect, or domestic violence
-- To comply with legal proceedings
-- For law enforcement purposes when required
-- To public health authorities for disease prevention
-- To health oversight agencies for audits or investigations
+The right to request restrictions on certain uses and disclosures of protected health information, including those related to disclosure to family members, other relatives, close personal friends, or any other person identified by you. We are, however, not required to agree to a requested restriction. If we do agree to a restriction, we must abide by it unless you agree in writing to remove it.
 
-YOUR RIGHTS REGARDING YOUR PROTECTED HEALTH INFORMATION
+The right to reasonable requests to receive confidential communications of protected health information from us by alternative means or at alternative locations.
 
-You have the following rights regarding your PHI:
+The right to inspect and copy your protected health information.
 
-RIGHT TO INSPECT AND COPY: You have the right to inspect and obtain a copy of your PHI, with certain exceptions. You may request that we provide copies in a format other than photocopies.
+The right to amend your protected health information.
 
-RIGHT TO REQUEST AMENDMENT: If you feel that your PHI is incorrect or incomplete, you may request an amendment to your record.
+The right to obtain a paper copy of this notice from us upon request.
 
-RIGHT TO AN ACCOUNTING OF DISCLOSURES: You have the right to request a list of the disclosures we have made of your PHI.
+We are required to abide by the terms of the Notice of Privacy Practices currently in effect. We reserve the right to change the terms of our Notice of Privacy Practices and to make the new notice provisions effective for all protected health information that we maintain. We will post and you may request a written copy of a revised Notice of Privacy Practices from this office.
 
-RIGHT TO REQUEST RESTRICTIONS: You have the right to request a restriction on certain uses and disclosures of your PHI. We are not required to agree to your request, except in limited circumstances.
+You have recourse if you feel that your privacy protections have been violated. You have the right to file written complaints with our office, or with the Department of Health & Human Services, Office of Civil Rights, about violations of the provisions of this notice or the policies and procedures of our office.
 
-RIGHT TO REQUEST CONFIDENTIAL COMMUNICATIONS: You have the right to request that we communicate with you about medical matters in a certain way or at a certain location.
+We will not retaliate against you for filing a complaint.
 
-RIGHT TO A PAPER COPY OF THIS NOTICE: You have the right to a paper copy of this notice, even if you have agreed to receive it electronically.
-
-CHANGES TO THIS NOTICE
-
-We reserve the right to change the terms of this notice. Any changes will apply to all information we have about you. A revised notice will be posted in our office and on our website, and you may request a copy.
-
-COMPLAINTS
-
-If you believe your privacy rights have been violated, you may file a complaint with us or with the Secretary of the Department of Health and Human Services. We will not retaliate against you for filing a complaint.
-
-CONTACT INFORMATION
-
-If you have any questions about this notice or want to exercise any of your rights, please contact our Privacy Officer at the practice contact information provided.
-
-ACKNOWLEDGMENT
-
-By signing below, I acknowledge that I have received a copy of this Notice of Privacy Practices and understand my rights regarding my protected health information.
+For more information, please contact:
+The U.S. Department of Health & Human Services Office of Civil Rights
+200 Independence Avenue, S.W.
+Washington, D.C. 20201
+(202) 619-0257
+Toll Free: 1-877-696-6775
 `;
 
 export const WAIVER_AND_RELEASE_OF_LIABILITY = `
