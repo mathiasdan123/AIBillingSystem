@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   Home,
@@ -68,6 +70,21 @@ export default function PatientPortalPage() {
   const [activeTab, setActiveTab] = useState(params.tab || "dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Check intake completion status to gate other tabs
+  const { data: intakeStatus } = useQuery<{ intakeCompleted: boolean }>({
+    queryKey: ['intake-status', portalToken],
+    queryFn: async () => {
+      const res = await fetch('/api/patient-portal/intake/status', {
+        headers: { Authorization: `Bearer ${portalToken}` },
+      });
+      if (!res.ok) return { intakeCompleted: false };
+      return res.json();
+    },
+    enabled: !!portalToken,
+  });
+
+  const intakeCompleted = intakeStatus?.intakeCompleted ?? false;
+
   // Handle login success
   const handleLoginSuccess = (token: string) => {
     setPortalToken(token);
@@ -85,8 +102,18 @@ export default function PatientPortalPage() {
     });
   };
 
-  // Handle navigation
+  // Handle navigation — block tabs behind intake completion
   const handleNavigate = (tab: string) => {
+    if (!intakeCompleted && tab !== "dashboard" && tab !== "intake") {
+      // Redirect to intake if they try to access gated tabs
+      setActiveTab("intake");
+      toast({
+        title: t('portal.intakeRequiredTitle', 'Intake Required'),
+        description: t('portal.intakeRequiredDesc', 'Please complete your intake forms before accessing other features.'),
+      });
+      setMobileMenuOpen(false);
+      return;
+    }
     setActiveTab(tab);
     setMobileMenuOpen(false);
   };
@@ -137,8 +164,20 @@ export default function PatientPortalPage() {
                 {t('portal.dashboard')}
               </Button>
               <Button
+                variant={activeTab === "intake" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => handleNavigate("intake")}
+              >
+                <ClipboardCheck className="h-4 w-4 mr-2" />
+                {t('portal.intake', 'Intake')}
+                {!intakeCompleted && (
+                  <Badge variant="destructive" className="ml-1 text-[10px] px-1 py-0">!</Badge>
+                )}
+              </Button>
+              <Button
                 variant={activeTab === "appointments" ? "default" : "ghost"}
                 size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
                 onClick={() => handleNavigate("appointments")}
               >
                 <Calendar className="h-4 w-4 mr-2" />
@@ -147,6 +186,7 @@ export default function PatientPortalPage() {
               <Button
                 variant={activeTab === "progress-notes" ? "default" : "ghost"}
                 size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
                 onClick={() => handleNavigate("progress-notes")}
               >
                 <FileText className="h-4 w-4 mr-2" />
@@ -155,6 +195,7 @@ export default function PatientPortalPage() {
               <Button
                 variant={activeTab === "surveys" ? "default" : "ghost"}
                 size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
                 onClick={() => handleNavigate("surveys")}
               >
                 <ClipboardList className="h-4 w-4 mr-2" />
@@ -163,18 +204,11 @@ export default function PatientPortalPage() {
               <Button
                 variant={activeTab === "profile" ? "default" : "ghost"}
                 size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
                 onClick={() => handleNavigate("profile")}
               >
                 <User className="h-4 w-4 mr-2" />
                 {t('portal.profile')}
-              </Button>
-              <Button
-                variant={activeTab === "intake" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => handleNavigate("intake")}
-              >
-                <ClipboardCheck className="h-4 w-4 mr-2" />
-                {t('portal.intake', 'Intake')}
               </Button>
             </nav>
             <LanguageSwitcher compact />
@@ -210,8 +244,19 @@ export default function PatientPortalPage() {
                 {t('portal.dashboard')}
               </Button>
               <Button
-                variant={activeTab === "appointments" ? "default" : "ghost"}
+                variant={activeTab === "intake" ? "default" : "ghost"}
                 className="w-full justify-start"
+                onClick={() => handleNavigate("intake")}
+              >
+                <ClipboardCheck className="h-4 w-4 mr-2" />
+                {t('portal.intake', 'Intake')}
+                {!intakeCompleted && (
+                  <Badge variant="destructive" className="ml-1 text-[10px] px-1 py-0">!</Badge>
+                )}
+              </Button>
+              <Button
+                variant={activeTab === "appointments" ? "default" : "ghost"}
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
                 onClick={() => handleNavigate("appointments")}
               >
                 <Calendar className="h-4 w-4 mr-2" />
@@ -219,7 +264,7 @@ export default function PatientPortalPage() {
               </Button>
               <Button
                 variant={activeTab === "progress-notes" ? "default" : "ghost"}
-                className="w-full justify-start"
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
                 onClick={() => handleNavigate("progress-notes")}
               >
                 <FileText className="h-4 w-4 mr-2" />
@@ -227,7 +272,7 @@ export default function PatientPortalPage() {
               </Button>
               <Button
                 variant={activeTab === "surveys" ? "default" : "ghost"}
-                className="w-full justify-start"
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
                 onClick={() => handleNavigate("surveys")}
               >
                 <ClipboardList className="h-4 w-4 mr-2" />
@@ -235,19 +280,11 @@ export default function PatientPortalPage() {
               </Button>
               <Button
                 variant={activeTab === "profile" ? "default" : "ghost"}
-                className="w-full justify-start"
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
                 onClick={() => handleNavigate("profile")}
               >
                 <User className="h-4 w-4 mr-2" />
                 {t('portal.profile')}
-              </Button>
-              <Button
-                variant={activeTab === "intake" ? "default" : "ghost"}
-                className="w-full justify-start"
-                onClick={() => handleNavigate("intake")}
-              >
-                <ClipboardCheck className="h-4 w-4 mr-2" />
-                {t('portal.intake', 'Intake')}
               </Button>
               <Button
                 variant="outline"
