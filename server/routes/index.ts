@@ -40,6 +40,7 @@ export { default as appealsRouter } from './appeals';
 export { default as adminRouter } from './admin';
 export { default as reviewsRouter } from './reviews';
 export { default as publicPortalRouter } from './public-portal';
+export { default as patientIntakeRouter } from './patient-intake';
 export { default as notificationPreferencesRouter } from './notification-preferences';
 export { default as schedulingRouter } from './scheduling';
 

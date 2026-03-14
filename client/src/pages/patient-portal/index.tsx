@@ -13,6 +13,7 @@ import {
   X,
   FileText,
   ClipboardList,
+  ClipboardCheck,
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import PatientPortalLogin from "./PatientPortalLogin";
@@ -21,6 +22,7 @@ import PatientPortalProfile from "./PatientPortalProfile";
 import PatientPortalAppointments from "./PatientPortalAppointments";
 import PatientPortalProgressNotes from "./PatientPortalProgressNotes";
 import PatientPortalSurveys from "./PatientPortalSurveys";
+import PatientPortalIntake from "./PatientPortalIntake";
 
 export default function PatientPortalPage() {
   const params = useParams<{ token?: string; tab?: string }>();
@@ -166,6 +168,14 @@ export default function PatientPortalPage() {
                 <User className="h-4 w-4 mr-2" />
                 {t('portal.profile')}
               </Button>
+              <Button
+                variant={activeTab === "intake" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => handleNavigate("intake")}
+              >
+                <ClipboardCheck className="h-4 w-4 mr-2" />
+                {t('portal.intake', 'Intake')}
+              </Button>
             </nav>
             <LanguageSwitcher compact />
             <Button variant="outline" size="sm" onClick={handleLogout}>
@@ -232,6 +242,14 @@ export default function PatientPortalPage() {
                 {t('portal.profile')}
               </Button>
               <Button
+                variant={activeTab === "intake" ? "default" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => handleNavigate("intake")}
+              >
+                <ClipboardCheck className="h-4 w-4 mr-2" />
+                {t('portal.intake', 'Intake')}
+              </Button>
+              <Button
                 variant="outline"
                 className="w-full justify-start mt-2"
                 onClick={handleLogout}
@@ -260,6 +278,9 @@ export default function PatientPortalPage() {
         )}
         {activeTab === "profile" && (
           <PatientPortalProfile token={portalToken} />
+        )}
+        {activeTab === "intake" && (
+          <PatientPortalIntake portalToken={portalToken} />
         )}
       </main>
 

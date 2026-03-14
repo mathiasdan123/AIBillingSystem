@@ -10,7 +10,7 @@ import {
   treatmentPlansRouter, locationsRouter, aiInsightsRouter, customReportsRouter,
   exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
   messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter,
-  reviewsRouter, publicPortalRouter,
+  reviewsRouter, publicPortalRouter, patientIntakeRouter,
   // New extractions
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
@@ -152,6 +152,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', reviewsRouter);
   // Public portal routes: /api/public/book/*, /api/public/portal/*, /api/patient-portal/*
   app.use('/api', publicPortalRouter);
+  // Patient intake routes: /api/patient-portal/intake/*
+  app.use('/api', patientIntakeRouter);
 
   // ==================== NEWLY EXTRACTED ROUTERS ====================
 

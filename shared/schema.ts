@@ -83,6 +83,8 @@ export const practices = pgTable("practices", {
   brandEmailReplyTo: varchar("brand_email_reply_to"),
   brandWebsiteUrl: varchar("brand_website_url"),
   brandPrivacyPolicyUrl: varchar("brand_privacy_policy_url"),
+  // Patient portal intake settings
+  requireCardOnFile: boolean("require_card_on_file").default(true),
   // Review collection settings
   googleReviewUrl: varchar("google_review_url"), // URL for Google Business Profile reviews
   // Additional practice fields
@@ -149,6 +151,8 @@ export const patients = pgTable("patients", {
   // Comprehensive intake form data (HIPAA, medical history, developmental, sensory, consents)
   intakeData: jsonb("intake_data"),
   intakeCompletedAt: timestamp("intake_completed_at"),
+  // Stripe customer ID for patient billing
+  stripeCustomerId: varchar("stripe_customer_id"),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

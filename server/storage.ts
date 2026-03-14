@@ -7392,6 +7392,44 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return result;
   }
+
+  // ==================== PATIENT INTAKE ====================
+
+  async updatePatientIntakeData(patientId: number, intakeData: any): Promise<Patient> {
+    const [updated] = await db
+      .update(patients)
+      .set({ intakeData, updatedAt: new Date() })
+      .where(eq(patients.id, patientId))
+      .returning();
+    return decryptPatientRecord(updated) as Patient;
+  }
+
+  async completePatientIntake(patientId: number, intakeData: any): Promise<Patient> {
+    const [updated] = await db
+      .update(patients)
+      .set({
+        intakeData,
+        intakeCompletedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(patients.id, patientId))
+      .returning();
+    return decryptPatientRecord(updated) as Patient;
+  }
+
+  async updatePatientStripeCustomerId(patientId: number, stripeCustomerId: string): Promise<void> {
+    await db
+      .update(patients)
+      .set({ stripeCustomerId, updatedAt: new Date() })
+      .where(eq(patients.id, patientId));
+  }
+
+  async updatePatientPortalPaymentStatus(patientId: number, hasPaymentMethod: boolean): Promise<void> {
+    await db
+      .update(patientPortalAccess)
+      .set({ hasPaymentMethod, updatedAt: new Date() })
+      .where(eq(patientPortalAccess.patientId, patientId));
+  }
 }
 
 export const storage = new DatabaseStorage();

@@ -282,3 +282,26 @@ export function verifyWebhookSignature(
 export function getStripeInstance(): Stripe {
   return getStripe();
 }
+
+/**
+ * Create a customer (for patients or practices)
+ */
+export async function createCustomer(
+  email: string,
+  name: string,
+  metadata?: Record<string, string>
+): Promise<Stripe.Customer> {
+  const customer = await getStripe().customers.create({
+    email,
+    name,
+    metadata,
+  });
+  return customer;
+}
+
+/**
+ * Get a payment method by ID
+ */
+export async function getPaymentMethod(paymentMethodId: string): Promise<Stripe.PaymentMethod> {
+  return await getStripe().paymentMethods.retrieve(paymentMethodId);
+}
