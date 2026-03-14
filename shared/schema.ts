@@ -813,6 +813,9 @@ export const patientConsents = pgTable("patient_consents", {
   revokedBy: varchar("revoked_by"),
   revocationReason: text("revocation_reason"),
 
+  // Signature image
+  signatureData: text("signature_data"), // Base64-encoded signature image (PNG)
+
   // Audit fields
   consentVersion: varchar("consent_version").default("1.0"), // Track form version changes
   witnessName: varchar("witness_name"),

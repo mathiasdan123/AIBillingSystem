@@ -230,7 +230,7 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
     // Get client IP address
     const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
 
-    // Create the consent record
+    // Create the consent record with signature data
     const consent = await storage.createPatientConsent({
       practiceId: patient.practiceId,
       patientId: patient.id,
@@ -247,15 +247,9 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
       signatureIpAddress: Array.isArray(ipAddress) ? ipAddress[0] : ipAddress,
       witnessName: practice?.name || 'System',
       consentVersion: '1.0',
+      signatureData: signatureData || null,
       notes: `User-Agent: ${req.headers['user-agent'] || 'unknown'}`,
     });
-
-    // If this is a signature image, store it separately (could be in a document or in consent metadata)
-    if (signatureData) {
-      // Store signature image reference in consent or a separate document
-      // For now, we'll store it in the consent's metadata if the field exists
-      // This could be enhanced to store as a separate document
-    }
 
     res.json({
       consentId: consent.id,

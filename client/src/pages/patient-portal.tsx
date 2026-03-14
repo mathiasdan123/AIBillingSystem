@@ -273,6 +273,26 @@ export default function PatientPortalPage() {
     enabled: !!portalToken && dashboard?.permissions?.canViewDocuments,
   });
 
+  // Sign document mutation
+  const signDocumentMutation = useMutation({
+    mutationFn: async ({ documentId, signatureData }: { documentId: number; signatureData: string }) => {
+      const res = await fetch(`/api/public/portal/${portalToken}/documents/${documentId}/sign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signatureData }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || "Failed to sign document");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "dashboard"] });
+    },
+  });
+
   const handleLogout = () => {
     localStorage.removeItem("portalToken");
     setPortalToken(null);
@@ -802,18 +822,38 @@ export default function PatientPortalPage() {
                   <Button variant="outline" className="flex-1" onClick={() => setSavedSignature(null)}>
                     Re-sign
                   </Button>
-                  <Button className="flex-1" onClick={() => {
-                    // TODO: Submit signature to server via API
-                    toast({
-                      title: "Document Signed",
-                      description: `${selectedDocument?.name} has been signed successfully.`,
-                    });
-                    queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "documents"] });
-                    queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "dashboard"] });
-                    setSelectedDocument(null);
-                    setSavedSignature(null);
-                  }}>
-                    <CheckCircle className="h-4 w-4 mr-2" />
+                  <Button
+                    className="flex-1"
+                    disabled={signDocumentMutation.isPending}
+                    onClick={() => {
+                      if (!selectedDocument || !savedSignature) return;
+                      signDocumentMutation.mutate(
+                        { documentId: selectedDocument.id, signatureData: savedSignature },
+                        {
+                          onSuccess: () => {
+                            toast({
+                              title: "Document Signed",
+                              description: `${selectedDocument?.name} has been signed successfully.`,
+                            });
+                            setSelectedDocument(null);
+                            setSavedSignature(null);
+                          },
+                          onError: (error) => {
+                            toast({
+                              title: "Signing Failed",
+                              description: error.message,
+                              variant: "destructive",
+                            });
+                          },
+                        }
+                      );
+                    }}
+                  >
+                    {signDocumentMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                    )}
                     Submit Signature
                   </Button>
                 </div>
