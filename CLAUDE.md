@@ -92,10 +92,11 @@ migrations/          # Drizzle SQL migrations (18 files)
 - Audit trail with tamper detection
 
 ## Deployment
-- **Render:** `render.yaml` (free tier, Oregon)
-- **Railway:** `railway.json` + Dockerfile
+- **Render:** `render.yaml` (free tier, Oregon) — app hosting
+- **Neon:** Production PostgreSQL database
 - **Docker:** Multi-stage build, non-root user, health check at `/api/health`
 - Production build outputs: `dist/index.js` (server) + `dist/public/` (client)
+- Schema changes must be applied manually to Neon (db:push hangs in CI)
 
 ## Environment Variables (Required)
 ```

@@ -39,11 +39,10 @@ import { swaggerSpec } from "./swagger";
 // SECURITY: Production environment validation
 // =============================================================================
 const isProduction = process.env.NODE_ENV === 'production';
-const isRailwayDemo = !!process.env.RAILWAY_ENVIRONMENT;
 const isRenderDemo = !!process.env.RENDER;
-const isDemoMode = isRailwayDemo || isRenderDemo;
+const isDemoMode = isRenderDemo;
 
-// For Railway/Render demo, provide defaults for non-critical demo environment
+// For Render demo, provide defaults for non-critical demo environment
 if (isDemoMode && !process.env.PHI_ENCRYPTION_KEY) {
   // Demo key - only for demo with fake data, never for real PHI
   process.env.PHI_ENCRYPTION_KEY = '0'.repeat(64);
@@ -109,11 +108,6 @@ app.use(cors({
 
     // In development, allow localhost
     if (isDev && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-      return callback(null, true);
-    }
-
-    // Allow Railway domains (same-origin requests from deployed app)
-    if (isRailwayDemo && origin?.includes('.railway.app')) {
       return callback(null, true);
     }
 

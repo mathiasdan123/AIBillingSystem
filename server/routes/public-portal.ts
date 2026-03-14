@@ -1062,7 +1062,7 @@ router.get('/patient-portal/progress-notes', async (req, res) => {
 // Debug endpoint to check/fix demo data (only in demo mode)
 router.get('/debug/demo-status', async (req, res) => {
   try {
-    const isDemoMode = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER;
+    const isDemoMode = !!process.env.RENDER;
     if (!isDemoMode) {
       return res.status(403).json({ message: 'Debug endpoint only available in demo mode' });
     }
@@ -1112,7 +1112,7 @@ router.get('/debug/demo-status', async (req, res) => {
 // Force seed demo data
 router.post('/debug/force-seed', async (req, res) => {
   try {
-    const isDemoMode = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER;
+    const isDemoMode = !!process.env.RENDER;
     if (!isDemoMode) {
       return res.status(403).json({ message: 'Debug endpoint only available in demo mode' });
     }

@@ -12,11 +12,10 @@ let connectionString = process.env.DATABASE_URL;
 // Remove channel_binding parameter (Neon-specific, not supported by node-postgres)
 connectionString = connectionString.replace(/[&?]channel_binding=[^&]*/g, '');
 
-// Use regular pg for local development, Railway, and Render - neon-serverless only for Replit/Neon
+// Use regular pg driver (Render, local dev) or neon-serverless (Replit)
 const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
-const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
 const isRender = !!process.env.RENDER;
-const useRegularPg = isLocalDev || isRailway || isRender;
+const useRegularPg = isLocalDev || isRender;
 
 let pool: any;
 let db: any;
@@ -25,7 +24,7 @@ let dbReady: Promise<void>;
 // Initialize database connection
 dbReady = (async () => {
   if (useRegularPg) {
-    // Use regular pg driver for local PostgreSQL and Railway
+    // Use regular pg driver for Render and local development
     const pg = await import('pg');
     const { drizzle: drizzlePg } = await import('drizzle-orm/node-postgres');
     pool = new pg.default.Pool({ connectionString });
