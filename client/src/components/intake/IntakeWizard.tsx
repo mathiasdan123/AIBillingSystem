@@ -94,11 +94,12 @@ export function IntakeWizard({ portalToken }: IntakeWizardProps) {
     }
   }, [savedData]);
 
-  // Set current step from status
+  // Set current step from status on first load only
   useEffect(() => {
-    if (status?.currentStep) {
+    if (status?.currentStep && currentStep === 1) {
       setCurrentStep(status.currentStep);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
   // Save step data mutation
@@ -199,6 +200,14 @@ export function IntakeWizard({ portalToken }: IntakeWizardProps) {
     [createConsentMutation]
   );
 
+  // Handle navigation to any step
+  const goToStep = useCallback((step: number) => {
+    setError(null);
+    if (step >= 1 && step <= 5) {
+      setCurrentStep(step);
+    }
+  }, []);
+
   // Handle next step
   const handleNext = useCallback(() => {
     setError(null);
@@ -291,6 +300,7 @@ export function IntakeWizard({ portalToken }: IntakeWizardProps) {
         steps={steps}
         currentStep={currentStep}
         primaryColor={branding?.primaryColor}
+        onStepClick={goToStep}
       />
 
       {/* Error Alert */}
@@ -346,36 +356,60 @@ export function IntakeWizard({ portalToken }: IntakeWizardProps) {
       </Card>
 
       {/* Navigation Buttons */}
-      <div className="flex justify-between">
-        <Button
-          variant="outline"
-          onClick={handlePrevious}
-          disabled={currentStep === 1}
-        >
-          <ChevronLeft className="h-4 w-4 mr-2" />
-          Previous
-        </Button>
-        {currentStep < 5 ? (
-          <Button onClick={handleNext}>
-            Next
-            <ChevronRight className="h-4 w-4 ml-2" />
-          </Button>
-        ) : (
-          <Button
-            onClick={handleSubmit}
-            disabled={submitIntakeMutation.isPending}
-          >
-            {submitIntakeMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              'Submit Intake'
+      {(() => {
+        const canSubmit = (status?.steps.hipaaNotice.completed) &&
+          (status?.steps.waiverRelease.completed) &&
+          (status?.steps.creditCardAuth.completed || status?.steps.creditCardAuth.skipped || !status?.requireCardOnFile);
+        const missingSteps: string[] = [];
+        if (!status?.steps.hipaaNotice.completed) missingSteps.push('HIPAA Notice');
+        if (!status?.steps.waiverRelease.completed) missingSteps.push('Waiver & Release');
+        if (status?.requireCardOnFile && !status?.steps.creditCardAuth.completed && !status?.steps.creditCardAuth.skipped) {
+          missingSteps.push('Card Authorization');
+        }
+
+        return (
+          <div className="space-y-3">
+            <div className="flex justify-between">
+              <Button
+                variant="outline"
+                onClick={handlePrevious}
+                disabled={currentStep === 1}
+              >
+                <ChevronLeft className="h-4 w-4 mr-2" />
+                Previous
+              </Button>
+              {currentStep < 5 ? (
+                <Button onClick={handleNext}>
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-2" />
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleSubmit}
+                  disabled={submitIntakeMutation.isPending || !canSubmit}
+                >
+                  {submitIntakeMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    'Submit Intake'
+                  )}
+                </Button>
+              )}
+            </div>
+            {currentStep === 5 && !canSubmit && missingSteps.length > 0 && (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Please complete the following before submitting: {missingSteps.join(', ')}
+                </AlertDescription>
+              </Alert>
             )}
-          </Button>
-        )}
-      </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

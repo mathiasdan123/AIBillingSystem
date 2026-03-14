@@ -16,10 +16,12 @@ interface IntakeProgressProps {
   steps: Step[];
   currentStep: number;
   primaryColor?: string;
+  onStepClick?: (stepId: number) => void;
 }
 
-export function IntakeProgress({ steps, currentStep, primaryColor = '#2563eb' }: IntakeProgressProps) {
-  const progress = ((currentStep - 1) / (steps.length - 1)) * 100;
+export function IntakeProgress({ steps, currentStep, primaryColor = '#2563eb', onStepClick }: IntakeProgressProps) {
+  const completedCount = steps.filter(s => s.completed).length;
+  const progress = (completedCount / steps.length) * 100;
 
   return (
     <div className="mb-8">
@@ -38,14 +40,18 @@ export function IntakeProgress({ steps, currentStep, primaryColor = '#2563eb' }:
         {steps.map((step) => {
           const isCompleted = step.completed;
           const isCurrent = step.id === currentStep;
-          const isPast = step.id < currentStep;
 
           return (
-            <div key={step.id} className="flex flex-col items-center flex-1">
+            <button
+              key={step.id}
+              type="button"
+              className="flex flex-col items-center flex-1 cursor-pointer group"
+              onClick={() => onStepClick?.(step.id)}
+            >
               <div
                 className={`
                   w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
-                  transition-all duration-200 mb-2
+                  transition-all duration-200 mb-2 group-hover:ring-2 group-hover:ring-offset-2
                   ${isCompleted || isCurrent
                     ? 'text-white'
                     : 'bg-gray-200 text-gray-600'
@@ -53,6 +59,7 @@ export function IntakeProgress({ steps, currentStep, primaryColor = '#2563eb' }:
                 `}
                 style={{
                   backgroundColor: isCompleted || isCurrent ? primaryColor : undefined,
+                  ['--tw-ring-color' as any]: primaryColor,
                 }}
               >
                 {isCompleted ? (
@@ -69,7 +76,7 @@ export function IntakeProgress({ steps, currentStep, primaryColor = '#2563eb' }:
               >
                 {step.title}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
