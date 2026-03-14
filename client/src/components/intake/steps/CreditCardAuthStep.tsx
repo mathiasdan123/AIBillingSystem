@@ -23,7 +23,7 @@ import { CheckCircle2, CreditCard, Loader2, AlertCircle, SkipForward } from 'luc
 import { CREDIT_CARD_AUTHORIZATION_TEXT, FINANCIAL_RESPONSIBILITY_AGREEMENT } from '@/lib/intakeLegalDocs';
 
 // Load Stripe outside of component to avoid recreating on every render
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '');
 
 interface CreditCardAuthStepProps {
   portalToken: string;
@@ -416,6 +416,25 @@ export function CreditCardAuthStep({
         <Button className="mt-4" onClick={onComplete}>
           Continue to Next Step
         </Button>
+      </div>
+    );
+  }
+
+  // If Stripe isn't configured, show a message
+  if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
+    return (
+      <div className="text-center py-8">
+        <CreditCard className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+        <h2 className="text-xl font-semibold mb-2">Credit Card Authorization</h2>
+        <p className="text-gray-600 mb-4">
+          Online card collection is not yet configured. Please provide your card information at your first visit.
+        </p>
+        {!required && (
+          <Button onClick={onComplete}>
+            <SkipForward className="h-4 w-4 mr-2" />
+            Skip for Now
+          </Button>
+        )}
       </div>
     );
   }
