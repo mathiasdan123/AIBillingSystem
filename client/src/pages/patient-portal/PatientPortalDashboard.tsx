@@ -15,6 +15,7 @@ import {
   CheckCircle,
   AlertCircle,
   ClockIcon,
+  ClipboardCheck,
 } from "lucide-react";
 
 interface DashboardData {
@@ -52,6 +53,8 @@ interface DashboardData {
     percentage: number;
     missingFields: string[];
   };
+  intakeCompleted: boolean;
+  hasPaymentMethod: boolean;
 }
 
 interface PatientPortalDashboardProps {
@@ -156,6 +159,29 @@ export default function PatientPortalDashboard({ token, onNavigate }: PatientPor
           {t('portal.requestAppointment')}
         </Button>
       </div>
+
+      {/* Intake Completion Alert */}
+      {!dashboard.intakeCompleted && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="flex items-center justify-between py-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                <ClipboardCheck className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="font-medium">{t('portal.completeIntake', 'Complete Your Intake Form')}</p>
+                <p className="text-sm text-muted-foreground">
+                  {t('portal.intakeRequired', 'Complete the intake form to schedule appointments and access all features.')}
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => onNavigate("intake")}>
+              {t('portal.startIntake', 'Start Intake')}
+              <ChevronRight className="h-4 w-4 ml-2" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Profile Completion Alert */}
       {dashboard.profileCompletion.percentage < 100 && (
