@@ -98,6 +98,7 @@ export default function Claims() {
   const [showDenialPrediction, setShowDenialPrediction] = useState(false);
   const [denialPredictionResult, setDenialPredictionResult] = useState<Claim["denialPrediction"]>(null);
   const [predictingDenial, setPredictingDenial] = useState(false);
+  const [preSubmitClaimId, setPreSubmitClaimId] = useState<number | null>(null); // set when Submit triggers denial check
 
   // Batch submission state
   const [selectedClaimIds, setSelectedClaimIds] = useState<Set<number>>(new Set());
@@ -1468,10 +1469,18 @@ export default function Claims() {
                           </Button>
                           <Button
                             size="sm"
-                            onClick={() => submitClaimMutation.mutate(claim.id)}
-                            disabled={submitClaimMutation.isPending}
+                            onClick={() => {
+                              setSelectedClaim(claim);
+                              setPreSubmitClaimId(claim.id);
+                              predictDenialRisk(claim.id);
+                            }}
+                            disabled={submitClaimMutation.isPending || predictingDenial}
                           >
-                            <Send className="w-4 h-4 mr-1" />
+                            {predictingDenial && preSubmitClaimId === claim.id ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <Send className="w-4 h-4 mr-1" />
+                            )}
                             Submit
                           </Button>
                         </>
@@ -2034,15 +2043,18 @@ export default function Claims() {
       </Dialog>
 
       {/* Denial Risk Prediction Dialog */}
-      <Dialog open={showDenialPrediction} onOpenChange={setShowDenialPrediction}>
+      <Dialog open={showDenialPrediction} onOpenChange={(open) => {
+        setShowDenialPrediction(open);
+        if (!open) setPreSubmitClaimId(null);
+      }}>
         <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert className="w-5 h-5" />
-              Denial Risk Analysis
+              {preSubmitClaimId ? 'Pre-Submission Denial Risk Check' : 'Denial Risk Analysis'}
             </DialogTitle>
             <DialogDescription>
-              {selectedClaim?.claimNumber} - AI-powered denial prediction
+              {selectedClaim?.claimNumber} - {preSubmitClaimId ? 'Review risk factors before submitting this claim' : 'AI-powered denial prediction'}
             </DialogDescription>
           </DialogHeader>
 
@@ -2054,6 +2066,29 @@ export default function Claims() {
             </div>
           ) : denialPredictionResult ? (
             <div className="space-y-5">
+              {/* Pre-submission warning for high risk */}
+              {preSubmitClaimId && denialPredictionResult.riskLevel === 'high' && (
+                <div className="bg-red-50 border border-red-300 rounded-lg p-3 flex items-start gap-2">
+                  <CircleAlert className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-red-900 text-sm">High denial risk detected</p>
+                    <p className="text-xs text-red-700 mt-0.5">
+                      This claim has a high likelihood of denial. Review the issues below and consider fixing them before submitting.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {preSubmitClaimId && denialPredictionResult.riskLevel === 'low' && (
+                <div className="bg-green-50 border border-green-300 rounded-lg p-3 flex items-start gap-2">
+                  <ShieldCheck className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-green-900 text-sm">Claim looks good to submit</p>
+                    <p className="text-xs text-green-700 mt-0.5">
+                      No significant denial risks were found. You can proceed with submission.
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* Risk Score Gauge */}
               <div className={`rounded-lg border p-4 ${getDenialRiskColor(denialPredictionResult.riskScore).light}`}>
                 <div className="flex items-center justify-between mb-3">
@@ -2160,7 +2195,7 @@ export default function Claims() {
                   Analyzed: {new Date(denialPredictionResult.analyzedAt).toLocaleString()}
                 </p>
                 <div className="flex gap-2">
-                  {selectedClaim && (
+                  {selectedClaim && !preSubmitClaimId && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -2171,12 +2206,44 @@ export default function Claims() {
                       Re-check
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    onClick={() => setShowDenialPrediction(false)}
-                  >
-                    Close
-                  </Button>
+                  {preSubmitClaimId ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setPreSubmitClaimId(null);
+                          setShowDenialPrediction(false);
+                        }}
+                      >
+                        Go Back to Fix
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={denialPredictionResult.riskLevel === 'high' ? 'destructive' : 'default'}
+                        onClick={() => {
+                          submitClaimMutation.mutate(preSubmitClaimId);
+                          setPreSubmitClaimId(null);
+                          setShowDenialPrediction(false);
+                        }}
+                        disabled={submitClaimMutation.isPending}
+                      >
+                        {submitClaimMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4 mr-1" />
+                        )}
+                        {denialPredictionResult.riskLevel === 'high' ? 'Submit Anyway' : 'Submit Claim'}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => setShowDenialPrediction(false)}
+                    >
+                      Close
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
