@@ -24,8 +24,23 @@ export default function Landing() {
     setAuthModalOpen(true);
   };
 
-  const handleIntakeForm = () => {
-    window.location.href = '/intake';
+  const [demoLoading, setDemoLoading] = useState(false);
+  const handleTryDemo = async () => {
+    setDemoLoading(true);
+    try {
+      const res = await fetch('/api/demo-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Demo login failed');
+      window.location.href = '/dashboard';
+    } catch {
+      // Fallback: open login modal
+      setAuthModalOpen(true);
+    } finally {
+      setDemoLoading(false);
+    }
   };
 
   return (
@@ -68,8 +83,8 @@ export default function Landing() {
             <Button size="lg" onClick={handleLogin} className="px-8 py-6 text-lg bg-blue-600 hover:bg-blue-700">
               Start Free Trial <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
-            <Button size="lg" variant="outline" onClick={handleIntakeForm} className="px-8 py-6 text-lg border-green-500 text-green-600 hover:bg-green-50">
-              Try Patient Intake
+            <Button size="lg" variant="outline" onClick={handleTryDemo} disabled={demoLoading} className="px-8 py-6 text-lg border-green-500 text-green-600 hover:bg-green-50">
+              {demoLoading ? 'Loading...' : 'Try Demo'}
             </Button>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-slate-600">
