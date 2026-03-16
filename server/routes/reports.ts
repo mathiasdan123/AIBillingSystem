@@ -25,6 +25,9 @@ import {
   insurances,
   cptCodes,
   savedReports,
+  soapNotes,
+  auditLog,
+  patientConsents,
 } from '@shared/schema';
 import { eq, and, gte, lte, sql, count, sum, avg, desc } from 'drizzle-orm';
 import logger from '../services/logger';
@@ -134,6 +137,15 @@ router.post('/generate', isAuthenticated, async (req: any, res) => {
         break;
       case 'payer_performance':
         result = await generatePayerPerformanceReport(practiceId, startDate, endDate, filters, groupBy);
+        break;
+      case 'clinical':
+        result = await generateClinicalReport(practiceId, startDate, endDate, filters, groupBy);
+        break;
+      case 'operational':
+        result = await generateOperationalReport(practiceId, startDate, endDate, filters, groupBy);
+        break;
+      case 'compliance':
+        result = await generateComplianceReport(practiceId, startDate, endDate, filters, groupBy);
         break;
       default:
         return res.status(400).json({ message: `Unknown report type: ${reportType}` });
@@ -260,6 +272,15 @@ router.get('/saved/:id/run', isAuthenticated, async (req: any, res) => {
       case 'payer_performance':
         result = await generatePayerPerformanceReport(practiceId, startDate, endDate, report.filters as any, report.groupBy || undefined);
         break;
+      case 'clinical':
+        result = await generateClinicalReport(practiceId, startDate, endDate, report.filters as any, report.groupBy || undefined);
+        break;
+      case 'operational':
+        result = await generateOperationalReport(practiceId, startDate, endDate, report.filters as any, report.groupBy || undefined);
+        break;
+      case 'compliance':
+        result = await generateComplianceReport(practiceId, startDate, endDate, report.filters as any, report.groupBy || undefined);
+        break;
       default:
         return res.status(400).json({ message: `Unknown report type: ${report.reportType}` });
     }
@@ -317,6 +338,15 @@ router.get('/export/:format', isAuthenticated, async (req: any, res) => {
         break;
       case 'payer_performance':
         result = await generatePayerPerformanceReport(practiceId, startDate, endDate, filters, groupBy);
+        break;
+      case 'clinical':
+        result = await generateClinicalReport(practiceId, startDate, endDate, filters, groupBy);
+        break;
+      case 'operational':
+        result = await generateOperationalReport(practiceId, startDate, endDate, filters, groupBy);
+        break;
+      case 'compliance':
+        result = await generateComplianceReport(practiceId, startDate, endDate, filters, groupBy);
         break;
       default:
         return res.status(400).json({ message: `Unknown report type: ${reportType}` });
@@ -844,6 +874,381 @@ async function generatePayerPerformanceReport(
     totalPaid: d.totalPaid,
     denialRate: d.denialRate,
   }));
+
+  return { data, summary, chartData };
+}
+
+// ==================== CLINICAL REPORT ====================
+
+async function generateClinicalReport(
+  practiceId: number,
+  startDate: Date,
+  endDate: Date,
+  filters: any,
+  groupBy?: string,
+): Promise<{ data: any[]; summary: any; chartData: any[] }> {
+  const { db: database } = await import('../db');
+
+  const startStr = startDate.toISOString().split('T')[0];
+  const endStr = endDate.toISOString().split('T')[0];
+
+  const conditions: any[] = [
+    eq(treatmentSessions.practiceId, practiceId),
+    gte(treatmentSessions.sessionDate, startStr),
+    lte(treatmentSessions.sessionDate, endStr),
+  ];
+
+  if (filters?.therapist) {
+    conditions.push(eq(treatmentSessions.therapistId, filters.therapist));
+  }
+
+  // Sessions per patient with documentation status
+  const rows = await database
+    .select({
+      sessionId: treatmentSessions.id,
+      patientId: treatmentSessions.patientId,
+      therapistId: treatmentSessions.therapistId,
+      sessionDate: treatmentSessions.sessionDate,
+      duration: treatmentSessions.duration,
+      status: treatmentSessions.status,
+      cptCodeId: treatmentSessions.cptCodeId,
+      patientFirstName: patients.firstName,
+      patientLastName: patients.lastName,
+      therapistFirstName: users.firstName,
+      therapistLastName: users.lastName,
+      cptCode: cptCodes.code,
+      cptDescription: cptCodes.description,
+    })
+    .from(treatmentSessions)
+    .leftJoin(patients, eq(treatmentSessions.patientId, patients.id))
+    .leftJoin(users, eq(treatmentSessions.therapistId, users.id))
+    .leftJoin(cptCodes, eq(treatmentSessions.cptCodeId, cptCodes.id))
+    .where(and(...conditions))
+    .orderBy(desc(treatmentSessions.sessionDate));
+
+  const data = rows.map((r: any) => ({
+    sessionId: r.sessionId,
+    patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+    therapistName: `${r.therapistFirstName || ''} ${r.therapistLastName || ''}`.trim(),
+    sessionDate: r.sessionDate,
+    duration: r.duration || 0,
+    status: r.status,
+    cptCode: r.cptCode || '',
+    cptDescription: r.cptDescription || '',
+  }));
+
+  // Group sessions by patient for summary
+  const patientSessionCounts: Record<number, number> = {};
+  for (const r of rows) {
+    patientSessionCounts[r.patientId] = (patientSessionCounts[r.patientId] || 0) + 1;
+  }
+  const patientIds = Object.keys(patientSessionCounts);
+  const totalSessions = data.length;
+  const avgSessionsPerPatient = patientIds.length > 0
+    ? Math.round((totalSessions / patientIds.length) * 100) / 100
+    : 0;
+  const avgDuration = totalSessions > 0
+    ? Math.round(data.reduce((s: number, d: { duration: number }) => s + d.duration, 0) / totalSessions)
+    : 0;
+
+  const summary = {
+    totalSessions,
+    uniquePatients: patientIds.length,
+    avgSessionsPerPatient,
+    avgSessionDuration: avgDuration,
+  };
+
+  let chartData: any[] = [];
+  if (groupBy === 'patient') {
+    const patientMap: Record<string, { name: string; sessions: number; totalMinutes: number }> = {};
+    for (const d of data) {
+      const key = d.patientName || 'Unknown';
+      if (!patientMap[key]) patientMap[key] = { name: key, sessions: 0, totalMinutes: 0 };
+      patientMap[key].sessions++;
+      patientMap[key].totalMinutes += d.duration;
+    }
+    chartData = Object.values(patientMap).sort((a, b) => b.sessions - a.sessions).slice(0, 20);
+  } else if (groupBy === 'therapist') {
+    const therapistMap: Record<string, { name: string; sessions: number; patients: Set<string> }> = {};
+    for (const r of rows) {
+      const key = `${r.therapistFirstName || ''} ${r.therapistLastName || ''}`.trim() || 'Unknown';
+      if (!therapistMap[key]) therapistMap[key] = { name: key, sessions: 0, patients: new Set() };
+      therapistMap[key].sessions++;
+      therapistMap[key].patients.add(String(r.patientId));
+    }
+    chartData = Object.values(therapistMap).map(t => ({
+      name: t.name,
+      sessions: t.sessions,
+      uniquePatients: t.patients.size,
+    })).sort((a, b) => b.sessions - a.sessions);
+  } else if (groupBy === 'cpt_code') {
+    const cptMap: Record<string, { name: string; count: number }> = {};
+    for (const d of data) {
+      const key = d.cptCode || 'Unknown';
+      if (!cptMap[key]) cptMap[key] = { name: key, count: 0 };
+      cptMap[key].count++;
+    }
+    chartData = Object.values(cptMap).sort((a, b) => b.count - a.count);
+  } else {
+    // Default: by month
+    const monthMap: Record<string, { name: string; sessions: number; patients: Set<string> }> = {};
+    for (const r of rows) {
+      const dateStr = r.sessionDate ? r.sessionDate.slice(0, 7) : 'Unknown';
+      if (!monthMap[dateStr]) monthMap[dateStr] = { name: dateStr, sessions: 0, patients: new Set() };
+      monthMap[dateStr].sessions++;
+      monthMap[dateStr].patients.add(String(r.patientId));
+    }
+    chartData = Object.entries(monthMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, v]) => ({ name: v.name, sessions: v.sessions, uniquePatients: v.patients.size }));
+  }
+
+  return { data, summary, chartData };
+}
+
+// ==================== OPERATIONAL REPORT ====================
+
+async function generateOperationalReport(
+  practiceId: number,
+  startDate: Date,
+  endDate: Date,
+  filters: any,
+  groupBy?: string,
+): Promise<{ data: any[]; summary: any; chartData: any[] }> {
+  const { db: database } = await import('../db');
+
+  const conditions: any[] = [
+    eq(appointments.practiceId, practiceId),
+    gte(appointments.startTime, startDate),
+    lte(appointments.startTime, endDate),
+  ];
+
+  if (filters?.therapist) {
+    conditions.push(eq(appointments.therapistId, filters.therapist));
+  }
+
+  const rows = await database
+    .select({
+      id: appointments.id,
+      startTime: appointments.startTime,
+      endTime: appointments.endTime,
+      status: appointments.status,
+      therapistId: appointments.therapistId,
+      therapistFirstName: users.firstName,
+      therapistLastName: users.lastName,
+      cancellationReason: appointments.cancellationReason,
+    })
+    .from(appointments)
+    .leftJoin(users, eq(appointments.therapistId, users.id))
+    .where(and(...conditions))
+    .orderBy(desc(appointments.startTime));
+
+  const data = rows.map((r: any) => {
+    const startMs = r.startTime ? new Date(r.startTime).getTime() : 0;
+    const endMs = r.endTime ? new Date(r.endTime).getTime() : 0;
+    const durationMin = startMs && endMs ? Math.round((endMs - startMs) / 60000) : 0;
+    return {
+      id: r.id,
+      date: r.startTime ? new Date(r.startTime).toISOString().split('T')[0] : '',
+      therapistName: `${r.therapistFirstName || ''} ${r.therapistLastName || ''}`.trim(),
+      status: r.status,
+      durationMinutes: durationMin,
+      cancellationReason: r.cancellationReason || '',
+    };
+  });
+
+  const total = data.length;
+  const completed = data.filter((d: any) => d.status === 'completed').length;
+  const cancelled = data.filter((d: any) => d.status === 'cancelled').length;
+  const noShows = data.filter((d: any) => d.status === 'no_show').length;
+  const completedDurations = data.filter((d: any) => d.status === 'completed' && d.durationMinutes > 0).map((d: any) => d.durationMinutes);
+  const avgSessionLength = completedDurations.length > 0
+    ? Math.round(completedDurations.reduce((s: number, d: number) => s + d, 0) / completedDurations.length)
+    : 0;
+
+  const summary = {
+    totalAppointments: total,
+    completed,
+    cancelled,
+    noShows,
+    cancellationRate: total > 0 ? ((cancelled / total) * 100).toFixed(1) : '0',
+    noShowRate: total > 0 ? ((noShows / total) * 100).toFixed(1) : '0',
+    avgSessionLength,
+  };
+
+  let chartData: any[] = [];
+  if (groupBy === 'therapist') {
+    const therapistMap: Record<string, {
+      name: string; total: number; completed: number; cancelled: number; noShow: number; totalDuration: number; completedCount: number;
+    }> = {};
+    for (const d of data) {
+      const key = d.therapistName || 'Unassigned';
+      if (!therapistMap[key]) therapistMap[key] = { name: key, total: 0, completed: 0, cancelled: 0, noShow: 0, totalDuration: 0, completedCount: 0 };
+      therapistMap[key].total++;
+      if (d.status === 'completed') { therapistMap[key].completed++; therapistMap[key].totalDuration += d.durationMinutes; therapistMap[key].completedCount++; }
+      if (d.status === 'cancelled') therapistMap[key].cancelled++;
+      if (d.status === 'no_show') therapistMap[key].noShow++;
+    }
+    chartData = Object.values(therapistMap).map(t => ({
+      name: t.name,
+      total: t.total,
+      completed: t.completed,
+      cancelled: t.cancelled,
+      noShow: t.noShow,
+      avgDuration: t.completedCount > 0 ? Math.round(t.totalDuration / t.completedCount) : 0,
+    })).sort((a, b) => b.total - a.total);
+  } else if (groupBy === 'cancellation_reason') {
+    const reasonMap: Record<string, { name: string; count: number }> = {};
+    for (const d of data) {
+      if (d.status !== 'cancelled') continue;
+      const reason = d.cancellationReason || 'No reason';
+      if (!reasonMap[reason]) reasonMap[reason] = { name: reason, count: 0 };
+      reasonMap[reason].count++;
+    }
+    chartData = Object.values(reasonMap).sort((a, b) => b.count - a.count);
+  } else {
+    // Default: by month
+    const monthMap: Record<string, { name: string; total: number; completed: number; cancelled: number; noShow: number }> = {};
+    for (const d of data) {
+      const dateStr = d.date ? d.date.slice(0, 7) : 'Unknown';
+      if (!monthMap[dateStr]) monthMap[dateStr] = { name: dateStr, total: 0, completed: 0, cancelled: 0, noShow: 0 };
+      monthMap[dateStr].total++;
+      if (d.status === 'completed') monthMap[dateStr].completed++;
+      if (d.status === 'cancelled') monthMap[dateStr].cancelled++;
+      if (d.status === 'no_show') monthMap[dateStr].noShow++;
+    }
+    chartData = Object.values(monthMap).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return { data, summary, chartData };
+}
+
+// ==================== COMPLIANCE REPORT ====================
+
+async function generateComplianceReport(
+  practiceId: number,
+  startDate: Date,
+  endDate: Date,
+  filters: any,
+  groupBy?: string,
+): Promise<{ data: any[]; summary: any; chartData: any[] }> {
+  const { db: database } = await import('../db');
+
+  // Audit log events for the practice
+  const auditConditions: any[] = [
+    eq(auditLog.practiceId, practiceId),
+    gte(auditLog.createdAt, startDate),
+    lte(auditLog.createdAt, endDate),
+  ];
+
+  const auditRows = await database
+    .select({
+      id: auditLog.id,
+      eventCategory: auditLog.eventCategory,
+      eventType: auditLog.eventType,
+      resourceType: auditLog.resourceType,
+      userId: auditLog.userId,
+      success: auditLog.success,
+      createdAt: auditLog.createdAt,
+    })
+    .from(auditLog)
+    .where(and(...auditConditions))
+    .orderBy(desc(auditLog.createdAt));
+
+  // MFA adoption: users in practice with mfaEnabled
+  const practiceUsers = await database
+    .select({
+      id: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      role: users.role,
+      mfaEnabled: users.mfaEnabled,
+    })
+    .from(users)
+    .where(eq(users.practiceId, practiceId));
+
+  const mfaEnabled = practiceUsers.filter((u: any) => u.mfaEnabled).length;
+  const mfaTotal = practiceUsers.length;
+
+  // Consent status: active vs expired vs revoked
+  const consentRows = await database
+    .select({
+      id: patientConsents.id,
+      consentType: patientConsents.consentType,
+      isRevoked: patientConsents.isRevoked,
+      expirationDate: patientConsents.expirationDate,
+      patientId: patientConsents.patientId,
+    })
+    .from(patientConsents)
+    .where(eq(patientConsents.practiceId, practiceId));
+
+  const now = new Date();
+  const nowStr = now.toISOString().split('T')[0];
+  let activeConsents = 0;
+  let expiredConsents = 0;
+  let revokedConsents = 0;
+  for (const c of consentRows) {
+    if (c.isRevoked) { revokedConsents++; }
+    else if (c.expirationDate && c.expirationDate < nowStr) { expiredConsents++; }
+    else { activeConsents++; }
+  }
+
+  // Build audit event summary for data table
+  const categoryCounts: Record<string, number> = {};
+  const failedEvents: Record<string, number> = {};
+  for (const row of auditRows) {
+    const cat = row.eventCategory || 'unknown';
+    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+    if (!row.success) {
+      failedEvents[cat] = (failedEvents[cat] || 0) + 1;
+    }
+  }
+
+  const data = Object.entries(categoryCounts).map(([category, totalEvents]) => ({
+    eventCategory: category,
+    totalEvents,
+    failedEvents: failedEvents[category] || 0,
+    successRate: totalEvents > 0
+      ? Number((((totalEvents - (failedEvents[category] || 0)) / totalEvents) * 100).toFixed(1))
+      : 100,
+  })).sort((a, b) => b.totalEvents - a.totalEvents);
+
+  const summary = {
+    totalAuditEvents: auditRows.length,
+    failedEventCount: auditRows.filter((r: any) => !r.success).length,
+    mfaAdoptionRate: mfaTotal > 0 ? `${Math.round((mfaEnabled / mfaTotal) * 100)}%` : 'N/A',
+    mfaEnabled,
+    mfaTotal,
+    activeConsents,
+    expiredConsents,
+    revokedConsents,
+  };
+
+  let chartData: any[] = [];
+  if (groupBy === 'event_category') {
+    chartData = data.map(d => ({ name: d.eventCategory, value: d.totalEvents }));
+  } else if (groupBy === 'mfa_status') {
+    chartData = [
+      { name: 'MFA Enabled', value: mfaEnabled },
+      { name: 'MFA Disabled', value: mfaTotal - mfaEnabled },
+    ];
+  } else if (groupBy === 'consent_status') {
+    chartData = [
+      { name: 'Active', value: activeConsents },
+      { name: 'Expired', value: expiredConsents },
+      { name: 'Revoked', value: revokedConsents },
+    ];
+  } else {
+    // Default: audit events by month
+    const monthMap: Record<string, { name: string; events: number; failed: number }> = {};
+    for (const row of auditRows) {
+      const dateStr = row.createdAt ? new Date(row.createdAt).toISOString().slice(0, 7) : 'Unknown';
+      if (!monthMap[dateStr]) monthMap[dateStr] = { name: dateStr, events: 0, failed: 0 };
+      monthMap[dateStr].events++;
+      if (!row.success) monthMap[dateStr].failed++;
+    }
+    chartData = Object.values(monthMap).sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   return { data, summary, chartData };
 }

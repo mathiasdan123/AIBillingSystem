@@ -67,6 +67,9 @@ const REPORT_TYPES = [
   { value: "patients", label: "reportBuilder.types.patients" },
   { value: "appointments", label: "reportBuilder.types.appointments" },
   { value: "payer_performance", label: "reportBuilder.types.payerPerformance" },
+  { value: "clinical", label: "Clinical" },
+  { value: "operational", label: "Operational" },
+  { value: "compliance", label: "Compliance" },
 ];
 
 const DATE_PRESETS = [
@@ -102,6 +105,23 @@ const GROUP_BY_OPTIONS: Record<string, Array<{ value: string; label: string }>> 
   payer_performance: [
     { value: "payer", label: "Payer" },
     { value: "month", label: "Month" },
+  ],
+  clinical: [
+    { value: "month", label: "Month" },
+    { value: "patient", label: "Patient" },
+    { value: "therapist", label: "Therapist" },
+    { value: "cpt_code", label: "CPT Code" },
+  ],
+  operational: [
+    { value: "month", label: "Month" },
+    { value: "therapist", label: "Therapist" },
+    { value: "cancellation_reason", label: "Cancellation Reason" },
+  ],
+  compliance: [
+    { value: "month", label: "Month" },
+    { value: "event_category", label: "Event Category" },
+    { value: "mfa_status", label: "MFA Status" },
+    { value: "consent_status", label: "Consent Status" },
   ],
 };
 
@@ -591,7 +611,7 @@ export default function Reports() {
                   </div>
                 )}
 
-                {reportType === "appointments" && (
+                {(reportType === "appointments" || reportType === "clinical" || reportType === "operational") && (
                   <div className="space-y-1">
                     <Label className="text-xs">{t("reportBuilder.therapistId")}</Label>
                     <Input
