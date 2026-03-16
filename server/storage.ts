@@ -213,6 +213,9 @@ import {
   patientProgressNotes,
   type PatientProgressNote,
   type InsertPatientProgressNote,
+  ssoConfigurations,
+  type SsoConfiguration,
+  type InsertSsoConfiguration,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, lt, ne, inArray, or } from "drizzle-orm";
@@ -507,6 +510,13 @@ export interface IStorage {
   getSharedPatientProgressNotes(patientId: number): Promise<PatientProgressNote[]>;
   sharePatientProgressNote(id: number, sharedBy: string): Promise<PatientProgressNote | undefined>;
   unsharePatientProgressNote(id: number): Promise<PatientProgressNote | undefined>;
+
+  // SSO Configuration operations
+  getSsoConfigByPractice(practiceId: number): Promise<SsoConfiguration | undefined>;
+  getSsoConfigByEmailDomain(domain: string): Promise<SsoConfiguration | undefined>;
+  upsertSsoConfig(config: InsertSsoConfiguration): Promise<SsoConfiguration>;
+  updateSsoConfig(id: number, config: Partial<InsertSsoConfiguration>): Promise<SsoConfiguration | undefined>;
+  getUserBySsoExternalId(provider: string, externalId: string): Promise<User | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -725,6 +735,8 @@ export class DatabaseStorage implements IStorage {
     signatureUploadedAt: Date;
     practiceId: number;
     role: string;
+    ssoProvider: string;
+    ssoExternalId: string;
   }>): Promise<User | undefined> {
     const encrypted = encryptUserRecord(updates as any);
     const [user] = await db
@@ -7457,6 +7469,69 @@ export class DatabaseStorage implements IStorage {
       .update(patientPortalAccess)
       .set({ hasPaymentMethod, updatedAt: new Date() })
       .where(eq(patientPortalAccess.patientId, patientId));
+  }
+
+  // SSO Configuration operations
+  async getSsoConfigByPractice(practiceId: number): Promise<SsoConfiguration | undefined> {
+    const [config] = await db
+      .select()
+      .from(ssoConfigurations)
+      .where(eq(ssoConfigurations.practiceId, practiceId));
+    return config || undefined;
+  }
+
+  async getSsoConfigByEmailDomain(domain: string): Promise<SsoConfiguration | undefined> {
+    const normalizedDomain = domain.toLowerCase();
+    const [config] = await db
+      .select()
+      .from(ssoConfigurations)
+      .where(
+        and(
+          eq(ssoConfigurations.emailDomain, normalizedDomain),
+          eq(ssoConfigurations.enabled, true),
+        )
+      );
+    return config || undefined;
+  }
+
+  async upsertSsoConfig(config: InsertSsoConfiguration): Promise<SsoConfiguration> {
+    // Check if config already exists for this practice
+    const existing = await this.getSsoConfigByPractice(config.practiceId);
+    if (existing) {
+      const [updated] = await db
+        .update(ssoConfigurations)
+        .set({ ...config, updatedAt: new Date() })
+        .where(eq(ssoConfigurations.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db
+      .insert(ssoConfigurations)
+      .values(config as any)
+      .returning();
+    return created;
+  }
+
+  async updateSsoConfig(id: number, config: Partial<InsertSsoConfiguration>): Promise<SsoConfiguration | undefined> {
+    const [updated] = await db
+      .update(ssoConfigurations)
+      .set({ ...config, updatedAt: new Date() })
+      .where(eq(ssoConfigurations.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getUserBySsoExternalId(provider: string, externalId: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(
+        and(
+          eq(users.ssoProvider, provider),
+          eq(users.ssoExternalId, externalId),
+        )
+      );
+    return user ? decryptUserRecord(user) as User : undefined;
   }
 }
 

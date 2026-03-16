@@ -65,6 +65,24 @@ passport.use(
           return done(null, false, { message: 'Invalid email or password' });
         }
 
+        // Check if user's practice enforces SSO-only login
+        if (user.practiceId) {
+          try {
+            const ssoConfig = await storage.getSsoConfigByPractice(user.practiceId);
+            if (ssoConfig?.enabled && ssoConfig?.ssoEnforced) {
+              return done(null, false, {
+                message: 'Your organization requires SSO login. Please use the "Sign in with SSO" option.',
+              });
+            }
+          } catch (ssoErr) {
+            // If SSO check fails, allow password login to avoid lockout
+            logger.warn('SSO enforcement check failed, allowing password login', {
+              userId: user.id,
+              error: ssoErr instanceof Error ? ssoErr.message : String(ssoErr),
+            });
+          }
+        }
+
         // Check if account is locked
         if (isAccountLocked(user.lockoutUntil)) {
           const remainingMinutes = getRemainingLockoutMinutes(user.lockoutUntil);

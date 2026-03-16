@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -42,9 +42,37 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [forgotEmailSent, setForgotEmailSent] = useState(false);
   const [ssoPracticeId, setSsoPracticeId] = useState('');
   const [ssoStatus, setSsoStatus] = useState<{ ssoEnabled: boolean; provider: string | null } | null>(null);
+  const [domainSso, setDomainSso] = useState<{
+    ssoEnabled: boolean;
+    practiceId?: number;
+    provider?: string;
+    ssoEnforced?: boolean;
+  } | null>(null);
 
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+
+  // Check for domain-based SSO when email changes
+  useEffect(() => {
+    if (mode !== 'signin' || !email.includes('@')) {
+      setDomainSso(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/sso/check-domain?email=${encodeURIComponent(email)}`, {
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setDomainSso(data);
+        }
+      } catch {
+        // Silently fail — SSO detection is optional
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [email, mode]);
 
   const resetForm = () => {
     setEmail('');
@@ -53,6 +81,7 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
     setLastName('');
     setShowPassword(false);
     setForgotEmailSent(false);
+    setDomainSso(null);
   };
 
   const handleSignIn = async () => {
@@ -325,7 +354,27 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
               />
             </div>
 
-            {mode !== 'forgot' && (
+            {/* Domain-based SSO detection */}
+            {mode === 'signin' && domainSso?.ssoEnabled && (
+              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 space-y-2">
+                <p className="text-sm text-blue-800">
+                  {domainSso.ssoEnforced
+                    ? 'Your organization requires SSO login.'
+                    : `SSO is available for your organization${domainSso.provider ? ` (${domainSso.provider})` : ''}.`}
+                </p>
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => {
+                    window.location.href = `/api/sso/login/${domainSso.practiceId}`;
+                  }}
+                >
+                  Sign in with SSO
+                </Button>
+              </div>
+            )}
+
+            {mode !== 'forgot' && !(mode === 'signin' && domainSso?.ssoEnabled && domainSso?.ssoEnforced) && (
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <div className="relative">
@@ -373,7 +422,7 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
             <Button
               type="submit"
               className="w-full"
-              disabled={isLoading || (mode === 'signup' && !isPasswordValid)}
+              disabled={isLoading || (mode === 'signup' && !isPasswordValid) || (mode === 'signin' && domainSso?.ssoEnabled && domainSso?.ssoEnforced)}
             >
               {isLoading ? (
                 <span className="flex items-center">

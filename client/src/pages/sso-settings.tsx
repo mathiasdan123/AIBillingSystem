@@ -19,7 +19,9 @@ interface SsoConfig {
   issuerUrl: string;
   callbackUrl: string;
   metadataUrl: string;
+  emailDomain: string;
   enabled: boolean;
+  ssoEnforced: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -49,7 +51,9 @@ export default function SsoSettings() {
     issuerUrl: '',
     callbackUrl: '',
     metadataUrl: '',
+    emailDomain: '',
     enabled: false,
+    ssoEnforced: false,
   });
 
   useEffect(() => {
@@ -85,7 +89,9 @@ export default function SsoSettings() {
         issuerUrl: config.issuerUrl,
         callbackUrl: config.callbackUrl || undefined,
         metadataUrl: config.metadataUrl || undefined,
+        emailDomain: config.emailDomain || undefined,
         enabled: config.enabled,
+        ssoEnforced: config.ssoEnforced,
       };
       // Only include clientSecret if it was changed (not masked)
       if (config.clientSecret && !config.clientSecret.startsWith('****')) {
@@ -363,21 +369,61 @@ export default function SsoSettings() {
 
       <Card className="mb-6">
         <CardHeader>
+          <CardTitle>Domain & Enforcement</CardTitle>
+          <CardDescription>
+            Configure automatic SSO detection by email domain and enforcement settings.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="emailDomain">Email Domain</Label>
+            <Input
+              id="emailDomain"
+              value={config.emailDomain}
+              onChange={(e) => updateField('emailDomain', e.target.value)}
+              placeholder="acme.com"
+            />
+            <p className="text-xs text-slate-500">
+              When a user enters an email with this domain on the login page, the SSO login
+              option will be shown automatically. Leave blank to only use practice ID lookup.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader>
           <CardTitle>Settings</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="sso-enabled" className="font-medium">Enable SSO</Label>
               <p className="text-sm text-slate-500 mt-1">
                 When enabled, users can sign in with your identity provider.
-                Standard email/password login remains available.
+                Standard email/password login remains available unless SSO is enforced.
               </p>
             </div>
             <Switch
               id="sso-enabled"
               checked={config.enabled}
               onCheckedChange={(checked) => updateField('enabled', checked)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label htmlFor="sso-enforced" className="font-medium">Enforce SSO-Only Login</Label>
+              <p className="text-sm text-slate-500 mt-1">
+                When enforced, password-based login is disabled for all users in this practice.
+                Users must authenticate through the identity provider. Use with caution.
+              </p>
+            </div>
+            <Switch
+              id="sso-enforced"
+              checked={config.ssoEnforced}
+              onCheckedChange={(checked) => updateField('ssoEnforced', checked)}
+              disabled={!config.enabled}
             />
           </div>
         </CardContent>

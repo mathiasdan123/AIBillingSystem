@@ -1,29 +1,76 @@
 /**
- * SSO (SAML/OIDC) Routes for Enterprise Customers
+ * SSO (OIDC) Routes for Enterprise Customers
  *
  * Handles:
- * - GET /api/sso/config — get SSO config for a practice (admin only)
- * - POST /api/sso/config — create/update SSO configuration (admin only)
- * - GET /api/sso/login/:practiceId — initiate SSO login (redirects to IdP)
- * - POST /api/sso/callback/oidc — OIDC callback handler
- * - POST /api/sso/callback/saml — SAML callback handler
+ * - GET  /api/sso/config            - Get SSO config for current user's practice (admin only)
+ * - POST /api/sso/config            - Create/update SSO configuration (admin only)
+ * - GET  /api/sso/check/:practiceId - Check if SSO is enabled for a practice (public)
+ * - GET  /api/sso/check-domain      - Check if SSO is available for an email domain (public)
+ * - GET  /api/sso/login/:practiceId - Initiate OIDC login flow (redirects to IdP)
+ * - GET  /api/sso/callback/oidc     - Handle OIDC callback from IdP
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import * as crypto from 'crypto';
+import * as oidc from 'openid-client';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { encryptField, decryptField } from '../services/phiEncryptionService';
 import logger from '../services/logger';
-import { db } from '../db';
-import { ssoConfigurations, users } from '../../shared/schema';
-import { eq, and } from 'drizzle-orm';
 
 const router = Router();
 
-// ==================== Helpers ====================
+// ==================== OIDC Configuration Cache ====================
 
-// Admin check middleware
+// Cache discovered OIDC configurations to avoid repeated network calls
+const oidcConfigCache = new Map<number, { config: oidc.Configuration; expiresAt: number }>();
+const OIDC_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Discover and cache an openid-client Configuration for a practice's SSO config.
+ */
+async function getOidcConfiguration(ssoConfig: {
+  practiceId: number;
+  issuerUrl: string | null;
+  clientId: string | null;
+  clientSecret: any;
+}): Promise<oidc.Configuration> {
+  const cached = oidcConfigCache.get(ssoConfig.practiceId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.config;
+  }
+
+  if (!ssoConfig.issuerUrl || !ssoConfig.clientId) {
+    throw new Error('SSO configuration is incomplete: issuer URL and client ID are required');
+  }
+
+  // Decrypt client secret if stored encrypted
+  const rawSecret = ssoConfig.clientSecret
+    ? decryptField(ssoConfig.clientSecret as any)
+    : undefined;
+
+  const issuerUrl = new URL(ssoConfig.issuerUrl);
+
+  const config = await oidc.discovery(
+    issuerUrl,
+    ssoConfig.clientId,
+    rawSecret
+      ? { token_endpoint_auth_method: 'client_secret_post' }
+      : undefined,
+    rawSecret
+      ? oidc.ClientSecretPost(rawSecret)
+      : undefined,
+  );
+
+  oidcConfigCache.set(ssoConfig.practiceId, {
+    config,
+    expiresAt: Date.now() + OIDC_CACHE_TTL_MS,
+  });
+
+  return config;
+}
+
+// ==================== Middleware ====================
+
 const isAdmin = async (req: any, res: Response, next: NextFunction) => {
   try {
     if (!req.user?.claims?.sub) {
@@ -40,59 +87,30 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
   }
 };
 
-// Get the authorized practice ID from the request
-const getAuthorizedPracticeId = (req: any): number => {
-  if (req.authorizedPracticeId) {
-    return req.authorizedPracticeId;
-  }
-  const userPracticeId = req.userPracticeId;
-  const userRole = req.userRole;
-  const requestedPracticeId = req.query.practiceId
-    ? parseInt(req.query.practiceId as string)
-    : undefined;
-  if (userRole === 'admin') {
-    return requestedPracticeId || userPracticeId || 1;
-  }
-  return userPracticeId || 1;
-};
-
 // ==================== SSO Config CRUD ====================
 
-// GET /api/sso/config — retrieve SSO configuration for a practice
+/**
+ * GET /config
+ * Retrieve SSO configuration for the current user's practice.
+ */
 router.get('/config', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
-    const practiceId = getAuthorizedPracticeId(req);
+    const userId = req.user?.claims?.sub;
+    const user = await storage.getUser(userId);
+    if (!user?.practiceId) {
+      return res.status(400).json({ message: 'User is not assigned to a practice' });
+    }
 
-    const [config] = await db
-      .select()
-      .from(ssoConfigurations)
-      .where(eq(ssoConfigurations.practiceId, practiceId));
-
+    const config = await storage.getSsoConfigByPractice(user.practiceId);
     if (!config) {
       return res.json(null);
     }
 
-    // Decrypt clientSecret for display (masked)
-    const clientSecretDecrypted = config.clientSecret
-      ? decryptField(config.clientSecret as any)
-      : null;
-
+    // Mask the client secret for display
+    const hasSecret = !!config.clientSecret;
     res.json({
-      id: config.id,
-      practiceId: config.practiceId,
-      provider: config.provider,
-      protocol: config.protocol,
-      clientId: config.clientId,
-      // Mask the client secret - only show last 4 chars
-      clientSecret: clientSecretDecrypted
-        ? '****' + clientSecretDecrypted.slice(-4)
-        : null,
-      issuerUrl: config.issuerUrl,
-      callbackUrl: config.callbackUrl,
-      metadataUrl: config.metadataUrl,
-      enabled: config.enabled,
-      createdAt: config.createdAt,
-      updatedAt: config.updatedAt,
+      ...config,
+      clientSecret: hasSecret ? '****' : '',
     });
   } catch (error) {
     logger.error('Error fetching SSO config', { error: error instanceof Error ? error.message : String(error) });
@@ -100,11 +118,23 @@ router.get('/config', isAuthenticated, isAdmin, async (req: any, res: Response) 
   }
 });
 
-// POST /api/sso/config — create or update SSO configuration
+/**
+ * POST /config
+ * Create or update SSO configuration for the current user's practice.
+ */
 router.post('/config', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
-    const practiceId = getAuthorizedPracticeId(req);
-    const { provider, protocol, clientId, clientSecret, issuerUrl, callbackUrl, metadataUrl, enabled } = req.body;
+    const userId = req.user?.claims?.sub;
+    const user = await storage.getUser(userId);
+    if (!user?.practiceId) {
+      return res.status(400).json({ message: 'User is not assigned to a practice' });
+    }
+
+    const {
+      provider, protocol, clientId, clientSecret,
+      issuerUrl, callbackUrl, metadataUrl, emailDomain,
+      enabled, ssoEnforced,
+    } = req.body;
 
     // Validate required fields
     if (!provider || !protocol) {
@@ -116,83 +146,53 @@ router.post('/config', isAuthenticated, isAdmin, async (req: any, res: Response)
       return res.status(400).json({ message: `Provider must be one of: ${validProviders.join(', ')}` });
     }
 
-    const validProtocols = ['saml', 'oidc'];
-    if (!validProtocols.includes(protocol)) {
-      return res.status(400).json({ message: `Protocol must be one of: ${validProtocols.join(', ')}` });
-    }
-
     if (protocol === 'oidc' && (!clientId || !issuerUrl)) {
       return res.status(400).json({ message: 'Client ID and Issuer URL are required for OIDC' });
     }
 
-    if (protocol === 'saml' && !metadataUrl && !issuerUrl) {
-      return res.status(400).json({ message: 'Metadata URL or Issuer URL is required for SAML' });
-    }
+    // Build config data
+    const configData: any = {
+      practiceId: user.practiceId,
+      provider,
+      protocol,
+      clientId: clientId || null,
+      issuerUrl: issuerUrl || null,
+      callbackUrl: callbackUrl || null,
+      metadataUrl: metadataUrl || null,
+      emailDomain: emailDomain?.toLowerCase().trim() || null,
+      enabled: enabled ?? false,
+      ssoEnforced: ssoEnforced ?? false,
+    };
 
-    // Encrypt the client secret
-    const encryptedSecret = clientSecret ? encryptField(clientSecret) : undefined;
-
-    // Check for existing config
-    const [existing] = await db
-      .select()
-      .from(ssoConfigurations)
-      .where(eq(ssoConfigurations.practiceId, practiceId));
-
-    let result;
-    if (existing) {
-      // Update existing config
-      const updateData: Record<string, any> = {
-        provider,
-        protocol,
-        clientId: clientId || null,
-        issuerUrl: issuerUrl || null,
-        callbackUrl: callbackUrl || null,
-        metadataUrl: metadataUrl || null,
-        enabled: enabled ?? existing.enabled,
-        updatedAt: new Date(),
-      };
-      // Only update secret if a new one was provided
-      if (encryptedSecret !== undefined) {
-        updateData.clientSecret = encryptedSecret;
-      }
-      [result] = await db
-        .update(ssoConfigurations)
-        .set(updateData)
-        .where(eq(ssoConfigurations.id, existing.id))
-        .returning();
+    // Only update client secret if a new value was provided (not the masked placeholder)
+    if (clientSecret && !clientSecret.startsWith('****')) {
+      configData.clientSecret = encryptField(clientSecret);
     } else {
-      // Create new config
-      [result] = await db
-        .insert(ssoConfigurations)
-        .values({
-          practiceId,
-          provider,
-          protocol,
-          clientId: clientId || null,
-          clientSecret: encryptedSecret || null,
-          issuerUrl: issuerUrl || null,
-          callbackUrl: callbackUrl || null,
-          metadataUrl: metadataUrl || null,
-          enabled: enabled ?? false,
-        })
-        .returning();
+      // Preserve existing encrypted secret
+      const existing = await storage.getSsoConfigByPractice(user.practiceId);
+      if (existing) {
+        configData.clientSecret = existing.clientSecret;
+      }
     }
 
-    logger.info('SSO configuration saved', { practiceId, provider, protocol });
+    const saved = await storage.upsertSsoConfig(configData);
+
+    // Invalidate OIDC config cache for this practice
+    oidcConfigCache.delete(user.practiceId);
+
+    logger.info('SSO configuration updated', {
+      practiceId: user.practiceId,
+      provider,
+      protocol,
+      enabled: configData.enabled,
+      ssoEnforced: configData.ssoEnforced,
+      emailDomain: configData.emailDomain,
+      userId,
+    });
 
     res.json({
-      id: result.id,
-      practiceId: result.practiceId,
-      provider: result.provider,
-      protocol: result.protocol,
-      clientId: result.clientId,
-      clientSecret: clientSecret ? '****' + clientSecret.slice(-4) : null,
-      issuerUrl: result.issuerUrl,
-      callbackUrl: result.callbackUrl,
-      metadataUrl: result.metadataUrl,
-      enabled: result.enabled,
-      createdAt: result.createdAt,
-      updatedAt: result.updatedAt,
+      ...saved,
+      clientSecret: saved.clientSecret ? '****' : '',
     });
   } catch (error) {
     logger.error('Error saving SSO config', { error: error instanceof Error ? error.message : String(error) });
@@ -200,438 +200,12 @@ router.post('/config', isAuthenticated, isAdmin, async (req: any, res: Response)
   }
 });
 
-// ==================== SSO Login Flow ====================
-
-// GET /api/sso/login/:practiceId — initiate SSO login
-router.get('/login/:practiceId', async (req: Request, res: Response) => {
-  try {
-    const practiceId = parseInt(req.params.practiceId);
-    if (isNaN(practiceId)) {
-      return res.status(400).json({ message: 'Invalid practice ID' });
-    }
-
-    // Look up SSO config for this practice
-    const [config] = await db
-      .select()
-      .from(ssoConfigurations)
-      .where(and(
-        eq(ssoConfigurations.practiceId, practiceId),
-        eq(ssoConfigurations.enabled, true)
-      ));
-
-    if (!config) {
-      return res.status(404).json({ message: 'SSO is not configured or not enabled for this practice' });
-    }
-
-    if (config.protocol === 'oidc') {
-      return handleOidcLogin(req, res, config);
-    } else if (config.protocol === 'saml') {
-      return handleSamlLogin(req, res, config);
-    }
-
-    res.status(400).json({ message: 'Unsupported SSO protocol' });
-  } catch (error) {
-    logger.error('Error initiating SSO login', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'Failed to initiate SSO login' });
-  }
-});
-
-// OIDC login handler
-async function handleOidcLogin(req: Request, res: Response, config: any) {
-  try {
-    const { discovery } = await import('openid-client');
-
-    const issuerUrl = new URL(config.issuerUrl);
-    const clientId = config.clientId;
-    const clientSecret = config.clientSecret ? decryptField(config.clientSecret) : undefined;
-
-    // Build the callback URL
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const redirectUri = config.callbackUrl || `${baseUrl}/api/sso/callback/oidc`;
-
-    // Generate state parameter for CSRF protection
-    const state = crypto.randomBytes(32).toString('hex');
-    // Generate nonce for replay protection
-    const nonce = crypto.randomBytes(16).toString('hex');
-
-    // Store state, nonce, and practiceId in session for verification
-    const session = req.session as any;
-    session.ssoState = state;
-    session.ssoNonce = nonce;
-    session.ssoPracticeId = config.practiceId;
-
-    // Discover the OpenID Provider configuration
-    const oidcConfig = await discovery(issuerUrl, clientId, clientSecret || undefined);
-
-    // Build authorization URL
-    const authorizationUrl = new URL(oidcConfig.serverMetadata().authorization_endpoint as string);
-    authorizationUrl.searchParams.set('client_id', clientId);
-    authorizationUrl.searchParams.set('response_type', 'code');
-    authorizationUrl.searchParams.set('scope', 'openid email profile');
-    authorizationUrl.searchParams.set('redirect_uri', redirectUri);
-    authorizationUrl.searchParams.set('state', state);
-    authorizationUrl.searchParams.set('nonce', nonce);
-
-    res.redirect(authorizationUrl.toString());
-  } catch (error) {
-    logger.error('OIDC login initiation failed', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'Failed to initiate OIDC login' });
-  }
-}
-
-// SAML login handler
-async function handleSamlLogin(req: Request, res: Response, config: any) {
-  try {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const callbackUrl = config.callbackUrl || `${baseUrl}/api/sso/callback/saml`;
-
-    // Generate a SAML AuthnRequest
-    const requestId = '_' + crypto.randomBytes(16).toString('hex');
-    const issueInstant = new Date().toISOString();
-
-    // Store request ID and practice ID in session for validation
-    const session = req.session as any;
-    session.samlRequestId = requestId;
-    session.ssoPracticeId = config.practiceId;
-
-    const issuerUrl = config.issuerUrl || config.metadataUrl;
-
-    // Build SAML AuthnRequest XML
-    const authnRequest = [
-      '<samlp:AuthnRequest',
-      '  xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"',
-      '  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"',
-      `  ID="${requestId}"`,
-      '  Version="2.0"',
-      `  IssueInstant="${issueInstant}"`,
-      `  AssertionConsumerServiceURL="${callbackUrl}"`,
-      '  ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">',
-      `  <saml:Issuer>${baseUrl}</saml:Issuer>`,
-      '  <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" AllowCreate="true"/>',
-      '</samlp:AuthnRequest>',
-    ].join('\n');
-
-    // Base64 encode and URL encode the request
-    const encodedRequest = Buffer.from(authnRequest).toString('base64');
-
-    // Redirect to IdP's SSO URL with the SAML request
-    const ssoUrl = new URL(issuerUrl);
-    ssoUrl.searchParams.set('SAMLRequest', encodedRequest);
-
-    res.redirect(ssoUrl.toString());
-  } catch (error) {
-    logger.error('SAML login initiation failed', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'Failed to initiate SAML login' });
-  }
-}
-
-// ==================== SSO Callbacks ====================
-
-// POST /api/sso/callback/oidc — OIDC callback handler
-router.post('/callback/oidc', async (req: Request, res: Response) => {
-  try {
-    const session = req.session as any;
-    const { code, state } = req.body;
-
-    // Verify state to prevent CSRF
-    if (!state || state !== session.ssoState) {
-      return res.status(400).json({ message: 'Invalid state parameter - possible CSRF attack' });
-    }
-
-    const practiceId = session.ssoPracticeId;
-    if (!practiceId) {
-      return res.status(400).json({ message: 'SSO session expired, please try again' });
-    }
-
-    // Look up SSO config
-    const [config] = await db
-      .select()
-      .from(ssoConfigurations)
-      .where(and(
-        eq(ssoConfigurations.practiceId, practiceId),
-        eq(ssoConfigurations.enabled, true)
-      ));
-
-    if (!config) {
-      return res.status(404).json({ message: 'SSO configuration not found' });
-    }
-
-    const { discovery } = await import('openid-client');
-
-    const issuerUrl = new URL(config.issuerUrl!);
-    const clientId = config.clientId!;
-    const clientSecret = config.clientSecret ? decryptField(config.clientSecret as any) : undefined;
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const redirectUri = config.callbackUrl || `${baseUrl}/api/sso/callback/oidc`;
-
-    // Discover OIDC provider
-    const oidcConfig = await discovery(issuerUrl, clientId, clientSecret || undefined);
-
-    // Exchange code for tokens
-    const tokenEndpoint = oidcConfig.serverMetadata().token_endpoint;
-    if (!tokenEndpoint) {
-      return res.status(500).json({ message: 'Token endpoint not found in OIDC configuration' });
-    }
-
-    const tokenResponse = await fetch(tokenEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: redirectUri,
-        client_id: clientId,
-        ...(clientSecret ? { client_secret: clientSecret } : {}),
-      }),
-    });
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      logger.error('OIDC token exchange failed', { status: tokenResponse.status, error: errorText });
-      return res.status(400).json({ message: 'Failed to exchange authorization code' });
-    }
-
-    const tokens = await tokenResponse.json() as Record<string, any>;
-
-    // Get user info from ID token or userinfo endpoint
-    let userInfo: Record<string, any> = {};
-
-    if (tokens.id_token) {
-      // Decode the ID token (JWT) to get user claims
-      const parts = tokens.id_token.split('.');
-      if (parts.length === 3) {
-        try {
-          userInfo = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-        } catch {
-          logger.warn('Failed to decode ID token');
-        }
-      }
-    }
-
-    // If no email from id_token, try userinfo endpoint
-    if (!userInfo.email && oidcConfig.serverMetadata().userinfo_endpoint) {
-      const userinfoResponse = await fetch(oidcConfig.serverMetadata().userinfo_endpoint as string, {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      if (userinfoResponse.ok) {
-        userInfo = await userinfoResponse.json() as Record<string, any>;
-      }
-    }
-
-    if (!userInfo.email && !userInfo.sub) {
-      return res.status(400).json({ message: 'Could not retrieve user information from SSO provider' });
-    }
-
-    // Create or link user
-    const user = await findOrCreateSsoUser({
-      email: userInfo.email,
-      firstName: userInfo.given_name || userInfo.name?.split(' ')[0],
-      lastName: userInfo.family_name || userInfo.name?.split(' ').slice(1).join(' '),
-      ssoExternalId: userInfo.sub,
-      ssoProvider: config.provider,
-      practiceId,
-    });
-
-    // Create session
-    await createSsoSession(req, user);
-
-    // Clean up SSO session state
-    delete session.ssoState;
-    delete session.ssoNonce;
-    delete session.ssoPracticeId;
-
-    logger.info('OIDC SSO login successful', { userId: user.id, practiceId });
-
-    // Redirect to the dashboard
-    res.redirect('/');
-  } catch (error) {
-    logger.error('OIDC callback error', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'SSO authentication failed' });
-  }
-});
-
-// Also handle GET for OIDC callback (some providers redirect with GET)
-router.get('/callback/oidc', async (req: Request, res: Response) => {
-  try {
-    const session = req.session as any;
-    const { code, state } = req.query;
-
-    if (!state || state !== session.ssoState) {
-      return res.status(400).json({ message: 'Invalid state parameter - possible CSRF attack' });
-    }
-
-    const practiceId = session.ssoPracticeId;
-    if (!practiceId) {
-      return res.status(400).json({ message: 'SSO session expired, please try again' });
-    }
-
-    const [config] = await db
-      .select()
-      .from(ssoConfigurations)
-      .where(and(
-        eq(ssoConfigurations.practiceId, practiceId),
-        eq(ssoConfigurations.enabled, true)
-      ));
-
-    if (!config) {
-      return res.status(404).json({ message: 'SSO configuration not found' });
-    }
-
-    const { discovery } = await import('openid-client');
-
-    const issuerUrl = new URL(config.issuerUrl!);
-    const clientId = config.clientId!;
-    const clientSecret = config.clientSecret ? decryptField(config.clientSecret as any) : undefined;
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const redirectUri = config.callbackUrl || `${baseUrl}/api/sso/callback/oidc`;
-
-    const oidcConfig = await discovery(issuerUrl, clientId, clientSecret || undefined);
-
-    const tokenEndpoint = oidcConfig.serverMetadata().token_endpoint;
-    if (!tokenEndpoint) {
-      return res.status(500).json({ message: 'Token endpoint not found' });
-    }
-
-    const tokenResponse = await fetch(tokenEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code: code as string,
-        redirect_uri: redirectUri,
-        client_id: clientId,
-        ...(clientSecret ? { client_secret: clientSecret } : {}),
-      }),
-    });
-
-    if (!tokenResponse.ok) {
-      return res.status(400).json({ message: 'Failed to exchange authorization code' });
-    }
-
-    const tokens = await tokenResponse.json() as Record<string, any>;
-    let userInfo: Record<string, any> = {};
-
-    if (tokens.id_token) {
-      const parts = tokens.id_token.split('.');
-      if (parts.length === 3) {
-        try {
-          userInfo = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-        } catch {
-          logger.warn('Failed to decode ID token');
-        }
-      }
-    }
-
-    if (!userInfo.email && oidcConfig.serverMetadata().userinfo_endpoint) {
-      const userinfoResponse = await fetch(oidcConfig.serverMetadata().userinfo_endpoint as string, {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      if (userinfoResponse.ok) {
-        userInfo = await userinfoResponse.json() as Record<string, any>;
-      }
-    }
-
-    if (!userInfo.email && !userInfo.sub) {
-      return res.status(400).json({ message: 'Could not retrieve user information from SSO provider' });
-    }
-
-    const user = await findOrCreateSsoUser({
-      email: userInfo.email,
-      firstName: userInfo.given_name || userInfo.name?.split(' ')[0],
-      lastName: userInfo.family_name || userInfo.name?.split(' ').slice(1).join(' '),
-      ssoExternalId: userInfo.sub,
-      ssoProvider: config.provider,
-      practiceId,
-    });
-
-    await createSsoSession(req, user);
-
-    delete session.ssoState;
-    delete session.ssoNonce;
-    delete session.ssoPracticeId;
-
-    logger.info('OIDC SSO login successful (GET)', { userId: user.id, practiceId });
-
-    res.redirect('/');
-  } catch (error) {
-    logger.error('OIDC callback error (GET)', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'SSO authentication failed' });
-  }
-});
-
-// POST /api/sso/callback/saml — SAML callback handler
-router.post('/callback/saml', async (req: Request, res: Response) => {
-  try {
-    const session = req.session as any;
-    const { SAMLResponse } = req.body;
-
-    if (!SAMLResponse) {
-      return res.status(400).json({ message: 'Missing SAML response' });
-    }
-
-    const practiceId = session.ssoPracticeId;
-    if (!practiceId) {
-      return res.status(400).json({ message: 'SSO session expired, please try again' });
-    }
-
-    // Decode the SAML response (Base64)
-    const samlXml = Buffer.from(SAMLResponse, 'base64').toString('utf8');
-
-    // TODO: Validate SAML signature for production use.
-    // For now, we parse the assertion to extract user attributes.
-    // In production, use a library like xml-crypto to verify the XML signature
-    // against the IdP's public certificate.
-
-    // Parse user attributes from SAML assertion using basic XML extraction
-    const samlUser = parseSamlAssertion(samlXml);
-
-    if (!samlUser.email && !samlUser.nameId) {
-      return res.status(400).json({ message: 'Could not extract user information from SAML assertion' });
-    }
-
-    // Look up SSO config for the practice
-    const [config] = await db
-      .select()
-      .from(ssoConfigurations)
-      .where(and(
-        eq(ssoConfigurations.practiceId, practiceId),
-        eq(ssoConfigurations.enabled, true)
-      ));
-
-    if (!config) {
-      return res.status(404).json({ message: 'SSO configuration not found' });
-    }
-
-    // Create or link user
-    const user = await findOrCreateSsoUser({
-      email: samlUser.email || samlUser.nameId || '',
-      firstName: samlUser.firstName || undefined,
-      lastName: samlUser.lastName || undefined,
-      ssoExternalId: samlUser.nameId || samlUser.email || '',
-      ssoProvider: config.provider,
-      practiceId,
-    });
-
-    // Create session
-    await createSsoSession(req, user);
-
-    // Clean up SSO session state
-    delete session.samlRequestId;
-    delete session.ssoPracticeId;
-
-    logger.info('SAML SSO login successful', { userId: user.id, practiceId });
-
-    // Redirect to the dashboard
-    res.redirect('/');
-  } catch (error) {
-    logger.error('SAML callback error', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: 'SSO authentication failed' });
-  }
-});
-
 // ==================== SSO Lookup (Public) ====================
 
-// GET /api/sso/check/:practiceId — check if SSO is enabled for a practice (public)
+/**
+ * GET /check/:practiceId
+ * Check if SSO is enabled for a practice.
+ */
 router.get('/check/:practiceId', async (req: Request, res: Response) => {
   try {
     const practiceId = parseInt(req.params.practiceId);
@@ -639,22 +213,16 @@ router.get('/check/:practiceId', async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Invalid practice ID' });
     }
 
-    const [config] = await db
-      .select({
-        enabled: ssoConfigurations.enabled,
-        provider: ssoConfigurations.provider,
-        protocol: ssoConfigurations.protocol,
-      })
-      .from(ssoConfigurations)
-      .where(and(
-        eq(ssoConfigurations.practiceId, practiceId),
-        eq(ssoConfigurations.enabled, true)
-      ));
+    const config = await storage.getSsoConfigByPractice(practiceId);
+    if (!config || !config.enabled) {
+      return res.json({ ssoEnabled: false, provider: null, protocol: null });
+    }
 
     res.json({
-      ssoEnabled: !!config,
-      provider: config?.provider || null,
-      protocol: config?.protocol || null,
+      ssoEnabled: true,
+      provider: config.provider,
+      protocol: config.protocol,
+      ssoEnforced: config.ssoEnforced ?? false,
     });
   } catch (error) {
     logger.error('Error checking SSO status', { error: error instanceof Error ? error.message : String(error) });
@@ -662,180 +230,286 @@ router.get('/check/:practiceId', async (req: Request, res: Response) => {
   }
 });
 
-// ==================== Helper Functions ====================
+/**
+ * GET /check-domain
+ * Check if SSO is available for an email domain.
+ * Query param: ?email=user@acme.com
+ */
+router.get('/check-domain', async (req: Request, res: Response) => {
+  try {
+    const email = req.query.email as string;
+    if (!email || !email.includes('@')) {
+      return res.json({ ssoEnabled: false });
+    }
+
+    const domain = email.split('@')[1].toLowerCase();
+    const config = await storage.getSsoConfigByEmailDomain(domain);
+
+    if (!config || !config.enabled) {
+      return res.json({ ssoEnabled: false });
+    }
+
+    res.json({
+      ssoEnabled: true,
+      practiceId: config.practiceId,
+      provider: config.provider,
+      ssoEnforced: config.ssoEnforced ?? false,
+    });
+  } catch (error) {
+    logger.error('Error checking SSO domain', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to check SSO status' });
+  }
+});
+
+// ==================== OIDC Login Flow ====================
 
 /**
- * Parse a SAML assertion XML to extract user attributes.
- * This is a basic parser that extracts common attributes.
- * TODO: For production, use a proper XML parser with signature validation.
+ * GET /login/:practiceId
+ * Initiate OIDC login flow. Redirects the user to the identity provider.
  */
-function parseSamlAssertion(xml: string): {
-  nameId: string | null;
-  email: string | null;
-  firstName: string | null;
-  lastName: string | null;
-} {
-  const result = {
-    nameId: null as string | null,
-    email: null as string | null,
-    firstName: null as string | null,
-    lastName: null as string | null,
+router.get('/login/:practiceId', async (req: Request, res: Response) => {
+  try {
+    const practiceId = parseInt(req.params.practiceId);
+    if (isNaN(practiceId)) {
+      return res.status(400).json({ message: 'Invalid practice ID' });
+    }
+
+    const ssoConfig = await storage.getSsoConfigByPractice(practiceId);
+    if (!ssoConfig || !ssoConfig.enabled || ssoConfig.protocol !== 'oidc') {
+      return res.status(404).json({ message: 'SSO is not configured or not enabled for this practice' });
+    }
+
+    const oidcConfig = await getOidcConfiguration(ssoConfig);
+
+    // Generate PKCE parameters for security
+    const codeVerifier = oidc.randomPKCECodeVerifier();
+    const codeChallenge = await oidc.calculatePKCECodeChallenge(codeVerifier);
+    const state = oidc.randomState();
+    const nonce = oidc.randomNonce();
+
+    // Store OIDC session parameters for the callback
+    const session = req.session as any;
+    session.oidcState = state;
+    session.oidcNonce = nonce;
+    session.oidcCodeVerifier = codeVerifier;
+    session.oidcPracticeId = practiceId;
+
+    // Determine callback URL
+    const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    const redirectUri = ssoConfig.callbackUrl || `${baseUrl}/api/sso/callback/oidc`;
+
+    // Build the authorization URL with PKCE
+    const authUrl = oidc.buildAuthorizationUrl(oidcConfig, {
+      redirect_uri: redirectUri,
+      scope: 'openid email profile',
+      state,
+      nonce,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+    });
+
+    logger.info('Initiating OIDC SSO login', { practiceId, provider: ssoConfig.provider });
+    res.redirect(authUrl.toString());
+  } catch (error) {
+    logger.error('Failed to initiate SSO login', { error: error instanceof Error ? error.message : String(error) });
+    res.redirect('/?sso_error=configuration');
+  }
+});
+
+/**
+ * GET /callback/oidc
+ * Handle OIDC callback from the identity provider.
+ * Validates the authorization code via PKCE, fetches user info, and creates/links the user.
+ */
+router.get('/callback/oidc', async (req: Request, res: Response) => {
+  try {
+    const session = req.session as any;
+    const { oidcState, oidcNonce, oidcCodeVerifier, oidcPracticeId } = session;
+
+    if (!oidcState || !oidcCodeVerifier || !oidcPracticeId) {
+      logger.warn('SSO callback: missing session state — session may have expired');
+      return res.redirect('/?sso_error=session_expired');
+    }
+
+    const practiceId = oidcPracticeId;
+
+    // Clean up OIDC session data immediately (prevents replay)
+    delete session.oidcState;
+    delete session.oidcNonce;
+    delete session.oidcCodeVerifier;
+    delete session.oidcPracticeId;
+
+    const ssoConfig = await storage.getSsoConfigByPractice(practiceId);
+    if (!ssoConfig || !ssoConfig.enabled || ssoConfig.protocol !== 'oidc') {
+      return res.redirect('/?sso_error=configuration');
+    }
+
+    const oidcConfig = await getOidcConfiguration(ssoConfig);
+
+    // Build the current URL for the token exchange
+    const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    const redirectUri = ssoConfig.callbackUrl || `${baseUrl}/api/sso/callback/oidc`;
+    const currentUrl = new URL(
+      `${redirectUri}?${new URLSearchParams(req.query as Record<string, string>).toString()}`
+    );
+
+    // Exchange authorization code for tokens using openid-client (validates PKCE, state, nonce)
+    const tokenResponse = await oidc.authorizationCodeGrant(oidcConfig, currentUrl, {
+      expectedState: oidcState,
+      expectedNonce: oidcNonce,
+      pkceCodeVerifier: oidcCodeVerifier,
+    });
+
+    // Extract user information from the ID token claims
+    const claims = tokenResponse.claims();
+    if (!claims) {
+      logger.error('SSO callback: no ID token claims received');
+      return res.redirect('/?sso_error=no_claims');
+    }
+
+    const externalId = claims.sub;
+    const email = (claims.email as string)?.toLowerCase();
+    const firstName = (claims.given_name as string) || (claims.name as string) || '';
+    const lastName = (claims.family_name as string) || '';
+
+    if (!email) {
+      // Try fetching from userinfo endpoint
+      try {
+        const userinfo = await oidc.fetchUserInfo(
+          oidcConfig,
+          tokenResponse.access_token,
+          externalId,
+        );
+        if (userinfo.email) {
+          return await completeOidcLogin(req, res, {
+            externalId,
+            email: (userinfo.email as string).toLowerCase(),
+            firstName: (userinfo.given_name as string) || firstName,
+            lastName: (userinfo.family_name as string) || lastName,
+            provider: ssoConfig.provider,
+            practiceId,
+          });
+        }
+      } catch (userinfoErr) {
+        logger.warn('Failed to fetch userinfo', { error: userinfoErr instanceof Error ? userinfoErr.message : String(userinfoErr) });
+      }
+
+      logger.error('SSO callback: no email in claims or userinfo', { sub: externalId });
+      return res.redirect('/?sso_error=no_email');
+    }
+
+    await completeOidcLogin(req, res, {
+      externalId,
+      email,
+      firstName,
+      lastName,
+      provider: ssoConfig.provider,
+      practiceId,
+    });
+  } catch (error) {
+    logger.error('SSO callback error', { error: error instanceof Error ? error.message : String(error) });
+    res.redirect('/?sso_error=callback_failed');
+  }
+});
+
+/**
+ * Complete the OIDC login: find or create user, create session, redirect.
+ */
+async function completeOidcLogin(
+  req: Request,
+  res: Response,
+  params: {
+    externalId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    provider: string;
+    practiceId: number;
+  },
+): Promise<void> {
+  const { externalId, email, firstName, lastName, provider, practiceId } = params;
+
+  // Find or create user
+  let user = await storage.getUserBySsoExternalId(provider, externalId);
+
+  if (!user) {
+    // Check if a user with this email already exists
+    user = await storage.getUserByEmail(email);
+
+    if (user) {
+      // Link the existing user to this SSO provider
+      await storage.updateUser(user.id, {
+        ssoProvider: provider,
+        ssoExternalId: externalId,
+        practiceId: user.practiceId || practiceId,
+      } as any);
+      user = await storage.getUser(user.id);
+    } else {
+      // Auto-provision a new user
+      const { nanoid } = await import('nanoid');
+      const userId = nanoid();
+      user = await storage.upsertUser({
+        id: userId,
+        email,
+        firstName: firstName || null,
+        lastName: lastName || null,
+        practiceId,
+        role: 'therapist',
+        ssoProvider: provider,
+        ssoExternalId: externalId,
+        emailVerified: true, // SSO-verified emails are trusted
+      } as any);
+
+      logger.info('Auto-provisioned SSO user', { userId, email, provider, practiceId });
+    }
+  }
+
+  if (!user) {
+    logger.error('SSO: failed to find or create user', { email, externalId });
+    res.redirect('/?sso_error=user_creation_failed');
+    return;
+  }
+
+  // Update last login
+  await storage.updateLastLoginAt(user.id);
+
+  // Create session matching passport-local format
+  const userSession = {
+    claims: {
+      sub: user.id,
+      email: user.email,
+      first_name: user.firstName,
+      last_name: user.lastName,
+    },
+    expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours
   };
 
-  // Extract NameID
-  const nameIdMatch = xml.match(/<(?:saml2?:)?NameID[^>]*>([^<]+)<\/(?:saml2?:)?NameID>/);
-  if (nameIdMatch) {
-    result.nameId = nameIdMatch[1].trim();
-  }
-
-  // Extract email from attributes
-  const emailPatterns = [
-    /Name="(?:http:\/\/schemas\.xmlsoap\.org\/ws\/2005\/05\/identity\/claims\/emailaddress|email|Email|mail)"[^>]*>\s*<(?:saml2?:)?AttributeValue[^>]*>([^<]+)/,
-    /Name="(?:urn:oid:0\.9\.2342\.19200300\.100\.1\.3)"[^>]*>\s*<(?:saml2?:)?AttributeValue[^>]*>([^<]+)/,
-  ];
-  for (const pattern of emailPatterns) {
-    const match = xml.match(pattern);
-    if (match) {
-      result.email = match[1].trim();
-      break;
+  // Regenerate session for security (prevents session fixation)
+  req.session.regenerate((regenErr) => {
+    if (regenErr) {
+      logger.error('SSO session regeneration error', { error: regenErr });
+      res.redirect('/?sso_error=session');
+      return;
     }
-  }
 
-  // If no email found, try NameID if it looks like an email
-  if (!result.email && result.nameId && result.nameId.includes('@')) {
-    result.email = result.nameId;
-  }
-
-  // Extract first name
-  const firstNamePatterns = [
-    /Name="(?:http:\/\/schemas\.xmlsoap\.org\/ws\/2005\/05\/identity\/claims\/givenname|firstName|FirstName|givenName)"[^>]*>\s*<(?:saml2?:)?AttributeValue[^>]*>([^<]+)/,
-    /Name="(?:urn:oid:2\.5\.4\.42)"[^>]*>\s*<(?:saml2?:)?AttributeValue[^>]*>([^<]+)/,
-  ];
-  for (const pattern of firstNamePatterns) {
-    const match = xml.match(pattern);
-    if (match) {
-      result.firstName = match[1].trim();
-      break;
-    }
-  }
-
-  // Extract last name
-  const lastNamePatterns = [
-    /Name="(?:http:\/\/schemas\.xmlsoap\.org\/ws\/2005\/05\/identity\/claims\/surname|lastName|LastName|sn)"[^>]*>\s*<(?:saml2?:)?AttributeValue[^>]*>([^<]+)/,
-    /Name="(?:urn:oid:2\.5\.4\.4)"[^>]*>\s*<(?:saml2?:)?AttributeValue[^>]*>([^<]+)/,
-  ];
-  for (const pattern of lastNamePatterns) {
-    const match = xml.match(pattern);
-    if (match) {
-      result.lastName = match[1].trim();
-      break;
-    }
-  }
-
-  return result;
-}
-
-/**
- * Find an existing user by SSO external ID or email, or create a new one.
- * Auto-provisions users on first SSO login.
- */
-async function findOrCreateSsoUser(params: {
-  email: string;
-  firstName?: string;
-  lastName?: string;
-  ssoExternalId: string;
-  ssoProvider: string;
-  practiceId: number;
-}) {
-  const { email, firstName, lastName, ssoExternalId, ssoProvider, practiceId } = params;
-
-  // First, try to find by SSO external ID
-  const allUsers = await storage.getAllUsers();
-  let existingUser = allUsers.find(
-    (u) => u.ssoExternalId === ssoExternalId && u.ssoProvider === ssoProvider
-  );
-
-  if (existingUser) {
-    // Update last login
-    await storage.updateLastLoginAt(existingUser.id);
-    return existingUser;
-  }
-
-  // Try to find by email
-  if (email) {
-    existingUser = await storage.getUserByEmail(email.toLowerCase());
-    if (existingUser) {
-      // Link existing user to SSO
-      await db
-        .update(users)
-        .set({
-          ssoProvider,
-          ssoExternalId,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, existingUser.id));
-      await storage.updateLastLoginAt(existingUser.id);
-      return { ...existingUser, ssoProvider, ssoExternalId };
-    }
-  }
-
-  // Create a new user (auto-provision)
-  const { nanoid } = await import('nanoid');
-  const userId = nanoid();
-
-  const newUser = await storage.upsertUser({
-    id: userId,
-    email: email?.toLowerCase(),
-    firstName: firstName || null,
-    lastName: lastName || null,
-    practiceId,
-    role: 'therapist', // Default role for SSO-provisioned users
-  } as any);
-
-  // Set SSO fields
-  await db
-    .update(users)
-    .set({
-      ssoProvider,
-      ssoExternalId,
-      emailVerified: true, // SSO-verified emails are trusted
-    })
-    .where(eq(users.id, userId));
-
-  logger.info('Auto-provisioned SSO user', {
-    userId,
-    email,
-    ssoProvider,
-    practiceId,
-  });
-
-  return { ...newUser, ssoProvider, ssoExternalId };
-}
-
-/**
- * Create an authenticated session for an SSO user.
- * Mimics the session structure used by passport-local auth.
- */
-async function createSsoSession(req: Request, user: any): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const sessionUser = {
-      claims: {
-        sub: user.id,
-        email: user.email,
-        first_name: user.firstName,
-        last_name: user.lastName,
-      },
-      // Set expiration to 24 hours from now (SSO sessions)
-      expires_at: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
-    };
-
-    req.login(sessionUser as any, (err) => {
-      if (err) {
-        logger.error('Failed to create SSO session', { error: err.message });
-        reject(err);
-      } else {
-        resolve();
+    req.login(userSession as any, (loginErr) => {
+      if (loginErr) {
+        logger.error('SSO session login error', { error: loginErr });
+        res.redirect('/?sso_error=session');
+        return;
       }
+
+      // SSO users bypass MFA since the IdP handles strong authentication
+      (req.session as any).mfaVerifiedAt = Date.now();
+      (req.session as any).mfaUserId = user!.id;
+
+      logger.info('SSO login successful', {
+        userId: user!.id,
+        provider,
+        practiceId,
+      });
+
+      res.redirect('/');
     });
   });
 }
