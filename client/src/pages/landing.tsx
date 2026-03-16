@@ -34,7 +34,7 @@ export default function Landing() {
         credentials: 'include',
       });
       if (!res.ok) throw new Error('Demo login failed');
-      window.location.href = '/dashboard';
+      window.location.href = '/';
     } catch {
       // Fallback: open login modal
       setAuthModalOpen(true);
