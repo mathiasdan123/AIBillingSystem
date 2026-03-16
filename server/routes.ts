@@ -32,6 +32,7 @@ import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
 import { registerBaaRoutes } from "./routes/baaRoutes";
 import { registerBreachNotificationRoutes } from "./routes/breachNotificationRoutes";
 import { registerComplianceRoutes } from "./routes/compliance";
+import { registerBreachManagementRoutes } from "./routes/breach-management";
 
 // Middleware to check if user has admin role
 const isAdmin = async (req: any, res: any, next: any) => {
@@ -93,6 +94,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPatientRightsRoutes(app);
   registerBaaRoutes(app);
   registerBreachNotificationRoutes(app);
+  registerBreachManagementRoutes(app);
   registerComplianceRoutes(app);
 
   // ==================== MODULAR ROUTERS ====================

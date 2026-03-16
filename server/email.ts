@@ -1229,3 +1229,259 @@ The TherapyBill AI Security Team`,
     return { success: false, error: (error as Error).message };
   }
 }
+
+// ==================== BREACH PATIENT NOTIFICATION (45 CFR 164.404) ====================
+
+/**
+ * Generate and send HIPAA-compliant breach notification letter to affected patients.
+ * Per 45 CFR 164.404(c), must include:
+ * 1. Description of the breach
+ * 2. Types of PHI involved
+ * 3. Steps individuals should take to protect themselves
+ * 4. What the entity is doing to investigate and mitigate
+ * 5. Contact information for the entity
+ */
+export async function sendPatientBreachNotification(
+  to: string,
+  data: {
+    patientName: string;
+    practiceName: string;
+    practicePhone: string;
+    practiceAddress: string;
+    breachDate: string;
+    discoveredDate: string;
+    breachDescription: string;
+    phiTypesInvolved: string[];
+    mitigationSteps: string;
+    protectiveSteps: string[];
+    contactEmail: string;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  if (!isEmailConfigured()) {
+    console.log('Email not configured, skipping patient breach notification');
+    return { success: false, error: 'Email not configured' };
+  }
+
+  const phiList = data.phiTypesInvolved.map(t => `<li>${t}</li>`).join('');
+  const protectiveList = data.protectiveSteps.map(s => `<li style="margin-bottom:8px;">${s}</li>`).join('');
+
+  try {
+    const transport = getTransporter();
+    await transport.sendMail({
+      from: `"${data.practiceName}" <${fromAddress}>`,
+      to,
+      subject: `Important Notice: Breach of Your Protected Health Information - ${data.practiceName}`,
+      html: `
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f8fafc;">
+  <div style="max-width:650px;margin:0 auto;padding:20px;">
+    <div style="background:white;padding:40px;border:1px solid #e2e8f0;border-radius:8px;">
+      <p style="color:#1e293b;font-size:14px;margin-bottom:20px;">${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
+      <p style="color:#1e293b;font-size:14px;">Dear ${data.patientName},</p>
+
+      <p style="color:#1e293b;font-size:14px;">We are writing to notify you of a breach of your protected health information (PHI) as required by the Health Insurance Portability and Accountability Act (HIPAA).</p>
+
+      <h3 style="color:#991b1b;margin-top:24px;">What Happened</h3>
+      <p style="color:#475569;font-size:14px;">${data.breachDescription}</p>
+      <p style="color:#475569;font-size:14px;"><strong>Date of Breach:</strong> ${data.breachDate}<br/><strong>Date Discovered:</strong> ${data.discoveredDate}</p>
+
+      <h3 style="color:#991b1b;">What Information Was Involved</h3>
+      <p style="color:#475569;font-size:14px;">The following types of your protected health information may have been involved:</p>
+      <ul style="color:#475569;font-size:14px;">${phiList}</ul>
+
+      <h3 style="color:#991b1b;">What We Are Doing</h3>
+      <p style="color:#475569;font-size:14px;">${data.mitigationSteps}</p>
+
+      <h3 style="color:#991b1b;">What You Can Do</h3>
+      <p style="color:#475569;font-size:14px;">We recommend you take the following steps to protect yourself:</p>
+      <ul style="color:#475569;font-size:14px;">${protectiveList}</ul>
+
+      <div style="background:#f1f5f9;border-radius:8px;padding:20px;margin-top:24px;">
+        <h3 style="color:#1e293b;margin-top:0;">Contact Information</h3>
+        <p style="color:#475569;font-size:14px;margin:0;">
+          If you have questions or concerns, please contact us:<br/>
+          <strong>${data.practiceName}</strong><br/>
+          ${data.practiceAddress}<br/>
+          Phone: ${data.practicePhone}<br/>
+          Email: ${data.contactEmail}
+        </p>
+      </div>
+
+      <p style="color:#1e293b;font-size:14px;margin-top:24px;">
+        You may also file a complaint with the U.S. Department of Health and Human Services Office for Civil Rights at
+        <a href="https://www.hhs.gov/ocr/complaints">www.hhs.gov/ocr/complaints</a> or call 1-877-696-6775.
+      </p>
+
+      <p style="color:#1e293b;font-size:14px;">Sincerely,<br/>${data.practiceName}</p>
+    </div>
+  </div>
+</body></html>`,
+      text: `NOTICE OF BREACH OF PROTECTED HEALTH INFORMATION
+
+Dear ${data.patientName},
+
+We are writing to notify you of a breach of your protected health information (PHI) as required by HIPAA.
+
+WHAT HAPPENED: ${data.breachDescription}
+Date of Breach: ${data.breachDate}
+Date Discovered: ${data.discoveredDate}
+
+WHAT INFORMATION WAS INVOLVED: ${data.phiTypesInvolved.join(', ')}
+
+WHAT WE ARE DOING: ${data.mitigationSteps}
+
+WHAT YOU CAN DO: ${data.protectiveSteps.join('; ')}
+
+CONTACT: ${data.practiceName}, ${data.practicePhone}, ${data.contactEmail}
+
+You may also file a complaint with HHS OCR at www.hhs.gov/ocr/complaints or 1-877-696-6775.
+
+Sincerely,
+${data.practiceName}`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send patient breach notification:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+/**
+ * Generate State Attorney General notification letter content.
+ * Returns HTML and text versions for the admin to review/send.
+ */
+export function generateStateAgNotificationLetter(data: {
+  practiceName: string;
+  practiceAddress: string;
+  practicePhone: string;
+  contactName: string;
+  contactEmail: string;
+  stateName: string;
+  breachDate: string;
+  discoveredDate: string;
+  breachDescription: string;
+  breachType: string;
+  affectedCount: number;
+  phiTypesInvolved: string[];
+  mitigationSteps: string;
+  remediationSteps: string;
+}): { subject: string; text: string } {
+  return {
+    subject: `HIPAA Breach Notification - ${data.practiceName} - ${data.affectedCount} Individuals Affected`,
+    text: `${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+
+Office of the Attorney General
+State of ${data.stateName}
+
+Re: Notification of Breach of Protected Health Information
+    Pursuant to HIPAA Breach Notification Rule (45 CFR Part 164, Subpart D)
+
+Dear Attorney General:
+
+${data.practiceName} is writing to notify your office of a breach of unsecured protected health information (PHI) affecting approximately ${data.affectedCount} residents of ${data.stateName}.
+
+ENTITY INFORMATION:
+Name: ${data.practiceName}
+Address: ${data.practiceAddress}
+Contact: ${data.contactName}
+Phone: ${data.practicePhone}
+Email: ${data.contactEmail}
+
+BREACH DETAILS:
+Type: ${data.breachType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
+Date of Breach: ${data.breachDate}
+Date Discovered: ${data.discoveredDate}
+Number of Individuals Affected: ${data.affectedCount}
+
+DESCRIPTION:
+${data.breachDescription}
+
+PHI TYPES INVOLVED:
+${data.phiTypesInvolved.map(t => `- ${t}`).join('\n')}
+
+MITIGATION AND REMEDIATION:
+${data.mitigationSteps}
+
+${data.remediationSteps}
+
+NOTIFICATION TO INDIVIDUALS:
+Affected individuals have been or will be notified in writing within the timeframe required by 45 CFR 164.404.
+
+NOTIFICATION TO HHS:
+The U.S. Department of Health and Human Services has been or will be notified as required by 45 CFR 164.408.
+
+We are committed to protecting the privacy and security of our patients' health information and are taking all necessary steps to prevent future incidents.
+
+Respectfully,
+
+${data.contactName}
+${data.practiceName}
+${data.practicePhone}
+${data.contactEmail}`,
+  };
+}
+
+/**
+ * Generate HHS breach report form data per 45 CFR 164.408.
+ * This produces the structured data needed for submission to
+ * the HHS Breach Portal (https://ocrportal.hhs.gov/ocr/breach/wizard_breach.jsf).
+ */
+export function generateHhsReportData(data: {
+  practiceName: string;
+  practiceAddress: string;
+  practicePhone: string;
+  contactName: string;
+  contactEmail: string;
+  breachDate: string;
+  discoveredDate: string;
+  breachDescription: string;
+  breachType: string;
+  affectedCount: number;
+  phiTypesInvolved: string[];
+  mitigationSteps: string;
+  locationOfBreachedInfo: string;
+  safeguardsInPlace: string;
+  individualNotificationDate: string | null;
+  individualNotificationMethod: string;
+}): Record<string, any> {
+  const isLargeBreach = data.affectedCount >= 500;
+  return {
+    entityName: data.practiceName,
+    entityType: 'Healthcare Provider',
+    entityAddress: data.practiceAddress,
+    entityPhone: data.practicePhone,
+    contactPerson: data.contactName,
+    contactEmail: data.contactEmail,
+    breachDetails: {
+      dateOfBreach: data.breachDate,
+      dateDiscovered: data.discoveredDate,
+      dateReportedToHHS: new Date().toISOString().split('T')[0],
+      typeOfBreach: data.breachType,
+      locationOfBreachedInfo: data.locationOfBreachedInfo,
+      description: data.breachDescription,
+    },
+    affectedIndividuals: {
+      count: data.affectedCount,
+      isLargeBreach,
+      reportingDeadline: isLargeBreach ? '60 days from discovery' : 'Annual log submission (within 60 days of calendar year end)',
+    },
+    phiInvolved: {
+      types: data.phiTypesInvolved,
+    },
+    safeguards: {
+      priorToBreachSafeguards: data.safeguardsInPlace,
+      mitigationActions: data.mitigationSteps,
+    },
+    individualNotification: {
+      notified: !!data.individualNotificationDate,
+      dateNotified: data.individualNotificationDate,
+      method: data.individualNotificationMethod,
+      substituteNoticeRequired: data.affectedCount >= 10 && !data.individualNotificationDate,
+    },
+    mediaNotification: {
+      required: isLargeBreach,
+      reason: isLargeBreach ? 'Breach affects 500 or more individuals' : 'Not required (fewer than 500 individuals)',
+    },
+  };
+}
