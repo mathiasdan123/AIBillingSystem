@@ -22,6 +22,7 @@ interface ClaimOutcomeInput {
   status: string; // paid, denied
   paidAmount?: string | null;
   denialReason?: string | null;
+  adjustmentReasonCode?: string | null;
 }
 
 /**
@@ -79,6 +80,9 @@ export async function recordClaimOutcome(input: ClaimOutcomeInput): Promise<void
     // Get AI score at submission time
     const aiScore = claimData.aiReviewScore ? parseInt(claimData.aiReviewScore) : null;
 
+    // Determine if the claim followed AI suggestions (had an AI score and was optimized)
+    const followedAiSuggestion = aiScore !== null && aiScore >= 70 ? true : aiScore !== null ? false : null;
+
     // Record one entry per line item (or one overall if no line items)
     if (lineItems.length > 0) {
       const insertValues = lineItems.map((li: any) => ({
@@ -95,6 +99,8 @@ export async function recordClaimOutcome(input: ClaimOutcomeInput): Promise<void
         aiScoreAtSubmission: aiScore,
         aiRecommendationsFollowed: null,
         processingDays,
+        adjustmentReasonCode: input.adjustmentReasonCode || null,
+        followedAiSuggestion,
       }));
 
       await db.insert(aiLearningData).values(insertValues);
@@ -113,6 +119,8 @@ export async function recordClaimOutcome(input: ClaimOutcomeInput): Promise<void
         aiScoreAtSubmission: aiScore,
         aiRecommendationsFollowed: null,
         processingDays,
+        adjustmentReasonCode: input.adjustmentReasonCode || null,
+        followedAiSuggestion,
       });
     }
 

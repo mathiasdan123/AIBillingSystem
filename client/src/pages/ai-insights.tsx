@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import {
   Brain,
   TrendingDown,
+  TrendingUp,
   AlertTriangle,
   Lightbulb,
   Clock,
@@ -19,6 +20,9 @@ import {
   BarChart3,
   ShieldAlert,
   Zap,
+  CheckCircle,
+  XCircle,
+  Activity,
 } from "lucide-react";
 
 interface AiInsight {
@@ -48,6 +52,50 @@ interface InsightsSummary {
 interface InsightsResponse {
   insights: AiInsight[];
   summary: InsightsSummary;
+}
+
+interface DenialByPayer {
+  payerName: string | null;
+  denialReason: string | null;
+  totalDenied: number;
+}
+
+interface PayerPattern {
+  payerName: string | null;
+  totalClaims: number;
+  paidClaims: number;
+  deniedClaims: number;
+  avgProcessingDays: string | null;
+  avgPaidAmount: string | null;
+  approvalRate: string | null;
+}
+
+interface AiOptimizationRate {
+  followedAi: {
+    totalClaims: number;
+    paidClaims: number;
+    deniedClaims: number;
+    successRate: number;
+  };
+  didNotFollowAi: {
+    totalClaims: number;
+    paidClaims: number;
+    deniedClaims: number;
+    successRate: number;
+  };
+}
+
+interface DashboardResponse {
+  topDenialsByPayer: DenialByPayer[];
+  aiOptimizationRate: AiOptimizationRate;
+  payerPatterns: PayerPattern[];
+  overallStats: {
+    totalClaims: number;
+    paidClaims: number;
+    deniedClaims: number;
+    partialClaims: number;
+    avgProcessingDays: string | null;
+  };
 }
 
 function getInsightIcon(type: string) {
@@ -115,6 +163,14 @@ export default function AiInsightsPage() {
     queryKey: ["/api/ai-insights"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/ai-insights");
+      return res.json();
+    },
+  });
+
+  const { data: dashboardData } = useQuery<DashboardResponse>({
+    queryKey: ["/api/ai-insights/dashboard"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/ai-insights/dashboard");
       return res.json();
     },
   });
@@ -259,6 +315,203 @@ export default function AiInsightsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Dashboard Section */}
+      {dashboardData && (dashboardData.overallStats.totalClaims > 0 || dashboardData.topDenialsByPayer.length > 0) && (
+        <div className="space-y-6 mb-6">
+          {/* Overall outcome stats */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Total Tracked</p>
+                  <p className="text-2xl font-bold">{dashboardData.overallStats.totalClaims}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Paid</p>
+                  <p className="text-2xl font-bold text-green-600">{dashboardData.overallStats.paidClaims}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Denied</p>
+                  <p className="text-2xl font-bold text-red-600">{dashboardData.overallStats.deniedClaims}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Partial</p>
+                  <p className="text-2xl font-bold text-yellow-600">{dashboardData.overallStats.partialClaims}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Avg Days to Pay</p>
+                  <p className="text-2xl font-bold">{dashboardData.overallStats.avgProcessingDays || "N/A"}</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* AI Optimization Success Rate */}
+          {(dashboardData.aiOptimizationRate.followedAi.totalClaims > 0 ||
+            dashboardData.aiOptimizationRate.didNotFollowAi.totalClaims > 0) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Activity className="w-5 h-5" aria-hidden="true" />
+                  AI Optimization Success Rate
+                </CardTitle>
+                <CardDescription>
+                  Comparing outcomes of claims that followed AI suggestions vs those that did not
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="border rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <CheckCircle className="w-5 h-5 text-green-600" aria-hidden="true" />
+                      <h4 className="font-medium">Followed AI Suggestions</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Claims</span>
+                        <span className="font-medium">{dashboardData.aiOptimizationRate.followedAi.totalClaims}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Success Rate</span>
+                        <span className="font-medium text-green-600">
+                          {dashboardData.aiOptimizationRate.followedAi.successRate}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2.5 mt-2">
+                        <div
+                          className="bg-green-600 h-2.5 rounded-full"
+                          style={{ width: `${dashboardData.aiOptimizationRate.followedAi.successRate}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="border rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <XCircle className="w-5 h-5 text-red-500" aria-hidden="true" />
+                      <h4 className="font-medium">Did Not Follow AI</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Claims</span>
+                        <span className="font-medium">{dashboardData.aiOptimizationRate.didNotFollowAi.totalClaims}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Success Rate</span>
+                        <span className="font-medium text-red-500">
+                          {dashboardData.aiOptimizationRate.didNotFollowAi.successRate}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2.5 mt-2">
+                        <div
+                          className="bg-red-500 h-2.5 rounded-full"
+                          style={{ width: `${dashboardData.aiOptimizationRate.didNotFollowAi.successRate}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Top Denial Reasons by Payer */}
+          {dashboardData.topDenialsByPayer.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5" aria-hidden="true" />
+                  Top Denial Reasons by Payer
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {dashboardData.topDenialsByPayer.slice(0, 10).map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between border-b pb-2 last:border-0">
+                      <div className="flex-1">
+                        <span className="font-medium text-sm">{item.payerName || "Unknown Payer"}</span>
+                        <p className="text-xs text-muted-foreground mt-0.5">{item.denialReason}</p>
+                      </div>
+                      <Badge variant="destructive" className="ml-2">
+                        {item.totalDenied} denied
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Payer Patterns */}
+          {dashboardData.payerPatterns.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5" aria-hidden="true" />
+                  Payer Performance Patterns
+                </CardTitle>
+                <CardDescription>
+                  Outcome patterns and processing times by insurance payer
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 font-medium">Payer</th>
+                        <th className="text-right py-2 font-medium">Claims</th>
+                        <th className="text-right py-2 font-medium">Approval Rate</th>
+                        <th className="text-right py-2 font-medium">Avg Paid</th>
+                        <th className="text-right py-2 font-medium">Avg Days</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardData.payerPatterns.map((payer, idx) => (
+                        <tr key={idx} className="border-b last:border-0">
+                          <td className="py-2 font-medium">{payer.payerName || "Unknown"}</td>
+                          <td className="text-right py-2">{payer.totalClaims}</td>
+                          <td className="text-right py-2">
+                            <span
+                              className={
+                                parseFloat(payer.approvalRate || "0") >= 80
+                                  ? "text-green-600"
+                                  : parseFloat(payer.approvalRate || "0") >= 60
+                                  ? "text-yellow-600"
+                                  : "text-red-600"
+                              }
+                            >
+                              {payer.approvalRate || "0"}%
+                            </span>
+                          </td>
+                          <td className="text-right py-2">${payer.avgPaidAmount || "0.00"}</td>
+                          <td className="text-right py-2">{payer.avgProcessingDays || "N/A"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Insights by type */}
       {insights.length === 0 ? (

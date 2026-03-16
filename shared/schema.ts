@@ -472,6 +472,7 @@ export const appointments = pgTable("appointments", {
   practiceId: integer("practice_id").references(() => practices.id),
   patientId: integer("patient_id").references(() => patients.id),
   therapistId: varchar("therapist_id").references(() => users.id),
+  locationId: integer("location_id").references(() => practiceLocations.id),
   title: varchar("title"),
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time").notNull(),
@@ -992,6 +993,8 @@ export const aiLearningData = pgTable("ai_learning_data", {
   aiScoreAtSubmission: integer("ai_score_at_submission"),
   aiRecommendationsFollowed: jsonb("ai_recommendations_followed"),
   processingDays: integer("processing_days"), // days from submission to resolution
+  adjustmentReasonCode: varchar("adjustment_reason_code"), // CARC/RARC codes
+  followedAiSuggestion: boolean("followed_ai_suggestion"), // whether claim followed AI optimization advice
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_ai_learning_data_practice").on(table.practiceId),
@@ -1666,17 +1669,25 @@ export const breachIncidents = pgTable("breach_incidents", {
   id: serial("id").primaryKey(),
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
   discoveredAt: timestamp("discovered_at").notNull(),
+  breachDate: timestamp("breach_date"), // actual date of breach (may differ from discovery)
   description: text("description").notNull(),
   affectedIndividualsCount: integer("affected_individuals_count").default(0),
   breachType: varchar("breach_type").notNull(), // unauthorized_access, theft, loss, improper_disposal, hacking, other
   phiInvolved: text("phi_involved"),
+  phiTypesInvolved: text("phi_types_involved"), // JSON array: names, ssn, dob, diagnosis, treatment, insurance, financial
   riskAssessment: varchar("risk_assessment").default("low"), // low, medium, high
   notificationStatus: varchar("notification_status").default("pending"), // pending, individuals_notified, hhs_notified, complete
   notifiedIndividualsAt: timestamp("notified_individuals_at"),
   notifiedHhsAt: timestamp("notified_hhs_at"),
   notifiedMediaAt: timestamp("notified_media_at"),
+  notifiedStateAgAt: timestamp("notified_state_ag_at"),
+  notificationDeadline: timestamp("notification_deadline"), // 60 days from discovery
   remediationSteps: text("remediation_steps"),
-  status: varchar("status").default("open"), // open, under_review, closed
+  mitigationSteps: text("mitigation_steps"), // steps taken to mitigate harm to individuals
+  status: varchar("status").default("detected"), // detected, investigating, contained, notifying, resolved
+  requiresMediaNotification: boolean("requires_media_notification").default(false), // true if 500+ in single state
+  stateJurisdictions: text("state_jurisdictions"), // JSON array of affected states
+  hhsReportData: text("hhs_report_data"), // JSON: generated HHS report form data
   createdBy: varchar("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -2873,7 +2884,9 @@ export const ssoConfigurations = pgTable("sso_configurations", {
   issuerUrl: varchar("issuer_url"),
   callbackUrl: varchar("callback_url"),
   metadataUrl: varchar("metadata_url"), // for SAML metadata
+  emailDomain: varchar("email_domain"), // e.g. "acme.com" — used for domain-based SSO detection
   enabled: boolean("enabled").default(false),
+  ssoEnforced: boolean("sso_enforced").default(false), // when true, password login disabled for this practice
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -2909,7 +2922,9 @@ export const practiceLocations = pgTable("practice_locations", {
   state: varchar("state"),
   zipCode: varchar("zip_code"),
   phone: varchar("phone"),
+  email: varchar("email"),
   fax: varchar("fax"),
+  timezone: varchar("timezone").default("America/New_York"),
   isMainLocation: boolean("is_main_location").default(false),
   isActive: boolean("is_active").default(true),
   operatingHours: jsonb("operating_hours"), // {monday: {open, close}, tuesday: ...}

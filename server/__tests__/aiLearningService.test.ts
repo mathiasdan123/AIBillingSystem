@@ -52,7 +52,8 @@ vi.mock('@shared/schema', () => ({
     payerName: 'payerName', submittedAmount: 'submittedAmount', paidAmount: 'paidAmount',
     outcome: 'outcome', denialReason: 'denialReason', modifier: 'modifier',
     aiScoreAtSubmission: 'aiScoreAtSubmission', aiRecommendationsFollowed: 'aiRecommendationsFollowed',
-    processingDays: 'processingDays', createdAt: 'createdAt',
+    processingDays: 'processingDays', adjustmentReasonCode: 'adjustmentReasonCode',
+    followedAiSuggestion: 'followedAiSuggestion', createdAt: 'createdAt',
   },
   aiModelInsights: {
     practiceId: 'practiceId', isActive: 'isActive', confidence: 'confidence',
