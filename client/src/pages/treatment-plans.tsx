@@ -38,6 +38,7 @@ import {
   Loader2,
   AlertCircle,
   ChevronRight,
+  FileText,
 } from "lucide-react";
 
 // Types matching the schema
@@ -93,6 +94,17 @@ interface GoalProgressNote {
   homeworkAssigned: string | null;
   nextSessionFocus: string | null;
   createdAt: string;
+}
+
+interface SoapGoalProgressEntry {
+  id: number;
+  soapNoteId: number;
+  goalId: number;
+  progressNote: string | null;
+  progressPercentage: number | null;
+  createdAt: string;
+  soapNoteDate: string | null;
+  soapNoteAssessment: string | null;
 }
 
 interface Patient {
@@ -244,6 +256,15 @@ export default function TreatmentPlansPage() {
     enabled: !!showProgressTimeline && !!selectedPlanId,
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/treatment-plans/${selectedPlanId}/goals/${showProgressTimeline}/progress`);
+      return res.json();
+    },
+  });
+
+  const { data: soapGoalProgress } = useQuery<SoapGoalProgressEntry[]>({
+    queryKey: ["/api/treatment-plans", selectedPlanId, "goals", showProgressTimeline, "soap-progress"],
+    enabled: !!showProgressTimeline && !!selectedPlanId,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/treatment-plans/${selectedPlanId}/goals/${showProgressTimeline}/soap-progress`);
       return res.json();
     },
   });
@@ -710,6 +731,18 @@ export default function TreatmentPlansPage() {
                             {goal.targetMeasure && (
                               <span>Target: {goal.targetMeasure}</span>
                             )}
+                            {progressSummary && (() => {
+                              const goalSummary = progressSummary.goals.find(g => g.goalId === goal.id);
+                              if (goalSummary && goalSummary.totalSoapLinks > 0) {
+                                return (
+                                  <span className="flex items-center gap-1 text-indigo-600">
+                                    <FileText className="w-3 h-3" />
+                                    {goalSummary.totalSoapLinks} SOAP {goalSummary.totalSoapLinks === 1 ? "note" : "notes"} linked
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
                           </div>
 
                           <Separator className="my-3" />
@@ -774,32 +807,96 @@ export default function TreatmentPlansPage() {
                                 </div>
                               </div>
 
-                              {/* Timeline entries */}
-                              {goalProgressNotes && goalProgressNotes.length > 0 ? (
-                                <div className="border-l-2 border-blue-200 pl-4 space-y-3">
-                                  {goalProgressNotes.map((note) => (
-                                    <div key={note.id} className="relative">
-                                      <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-blue-400 border-2 border-white" />
-                                      <div className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-sm">
-                                        <div className="flex items-center justify-between mb-1">
-                                          <span className="text-xs text-slate-500">
-                                            {new Date(note.createdAt).toLocaleDateString()} at{" "}
-                                            {new Date(note.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                          </span>
-                                          {note.progressRating && (
-                                            <Badge variant="secondary" className="text-xs">
-                                              Rating: {note.progressRating}/5
-                                            </Badge>
-                                          )}
+                              {/* Timeline entries - merged manual progress notes + SOAP-linked progress */}
+                              {(() => {
+                                // Build unified timeline from both sources
+                                const timelineItems: Array<{
+                                  id: string;
+                                  type: "manual" | "soap";
+                                  date: string;
+                                  notes: string;
+                                  progressRating?: number | null;
+                                  progressPercentage?: number | null;
+                                  soapNoteId?: number;
+                                }> = [];
+
+                                if (goalProgressNotes) {
+                                  goalProgressNotes.forEach((note) => {
+                                    timelineItems.push({
+                                      id: `manual-${note.id}`,
+                                      type: "manual",
+                                      date: note.createdAt,
+                                      notes: note.notes,
+                                      progressRating: note.progressRating,
+                                    });
+                                  });
+                                }
+
+                                if (soapGoalProgress) {
+                                  soapGoalProgress.forEach((entry) => {
+                                    timelineItems.push({
+                                      id: `soap-${entry.id}`,
+                                      type: "soap",
+                                      date: entry.soapNoteDate || entry.createdAt,
+                                      notes: entry.progressNote || "Progress tracked via SOAP note",
+                                      progressPercentage: entry.progressPercentage,
+                                      soapNoteId: entry.soapNoteId,
+                                    });
+                                  });
+                                }
+
+                                // Sort by date descending
+                                timelineItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                                if (timelineItems.length === 0) {
+                                  return <p className="text-xs text-slate-400 italic">No progress notes yet.</p>;
+                                }
+
+                                return (
+                                  <div className="border-l-2 border-blue-200 pl-4 space-y-3">
+                                    {timelineItems.map((item) => (
+                                      <div key={item.id} className="relative">
+                                        <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white ${
+                                          item.type === "soap" ? "bg-indigo-400" : "bg-blue-400"
+                                        }`} />
+                                        <div className={`rounded-lg p-3 shadow-sm ${
+                                          item.type === "soap"
+                                            ? "bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100"
+                                            : "bg-white dark:bg-slate-800"
+                                        }`}>
+                                          <div className="flex items-center justify-between mb-1">
+                                            <div className="flex items-center gap-2">
+                                              {item.type === "soap" && (
+                                                <Badge variant="outline" className="text-xs bg-indigo-100 text-indigo-700 border-indigo-200">
+                                                  <FileText className="w-3 h-3 mr-1" />
+                                                  SOAP Note
+                                                </Badge>
+                                              )}
+                                              <span className="text-xs text-slate-500">
+                                                {new Date(item.date).toLocaleDateString()} at{" "}
+                                                {new Date(item.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              {item.progressRating && (
+                                                <Badge variant="secondary" className="text-xs">
+                                                  Rating: {item.progressRating}/5
+                                                </Badge>
+                                              )}
+                                              {item.progressPercentage != null && (
+                                                <Badge variant="secondary" className="text-xs bg-indigo-100 text-indigo-700">
+                                                  {item.progressPercentage}% achieved
+                                                </Badge>
+                                              )}
+                                            </div>
+                                          </div>
+                                          <p className="text-sm text-slate-700 dark:text-slate-300">{item.notes}</p>
                                         </div>
-                                        <p className="text-sm text-slate-700 dark:text-slate-300">{note.notes}</p>
                                       </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-slate-400 italic">No progress notes yet.</p>
-                              )}
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
                         </CardContent>

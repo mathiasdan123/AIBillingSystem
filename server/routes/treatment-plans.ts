@@ -294,6 +294,24 @@ router.get('/treatment-plans/:id/progress-summary', isAuthenticated, async (req:
   }
 });
 
+// ==================== SOAP-LINKED GOAL PROGRESS WITH DETAILS ====================
+
+// GET /api/treatment-plans/:id/goals/:goalId/soap-progress - Get SOAP-linked progress entries with note details
+router.get('/treatment-plans/:id/goals/:goalId/soap-progress', isAuthenticated, async (req: any, res) => {
+  try {
+    const goalId = parseInt(req.params.goalId);
+    if (isNaN(goalId)) {
+      return res.status(400).json({ message: 'Invalid goal ID' });
+    }
+
+    const entries = await storage.getSoapNoteGoalProgressByGoalWithDetails(goalId);
+    res.json(entries);
+  } catch (error) {
+    logger.error('Error fetching SOAP-linked goal progress', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch SOAP-linked goal progress' });
+  }
+});
+
 // ==================== SOAP NOTE GOAL PROGRESS LINKING ====================
 
 // POST /api/soap-notes/:id/goal-progress - Link goal progress to a SOAP note

@@ -5552,6 +5552,34 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(soapNoteGoalProgress.createdAt));
   }
 
+  async getSoapNoteGoalProgressByGoalWithDetails(goalId: number): Promise<Array<{
+    id: number;
+    soapNoteId: number;
+    goalId: number;
+    progressNote: string | null;
+    progressPercentage: number | null;
+    createdAt: Date | null;
+    soapNoteDate: Date | null;
+    soapNoteAssessment: string | null;
+  }>> {
+    const rows = await db
+      .select({
+        id: soapNoteGoalProgress.id,
+        soapNoteId: soapNoteGoalProgress.soapNoteId,
+        goalId: soapNoteGoalProgress.goalId,
+        progressNote: soapNoteGoalProgress.progressNote,
+        progressPercentage: soapNoteGoalProgress.progressPercentage,
+        createdAt: soapNoteGoalProgress.createdAt,
+        soapNoteDate: soapNotes.createdAt,
+        soapNoteAssessment: soapNotes.assessment,
+      })
+      .from(soapNoteGoalProgress)
+      .innerJoin(soapNotes, eq(soapNoteGoalProgress.soapNoteId, soapNotes.id))
+      .where(eq(soapNoteGoalProgress.goalId, goalId))
+      .orderBy(desc(soapNoteGoalProgress.createdAt));
+    return rows;
+  }
+
   // ==================== Treatment Plan Analytics ====================
 
   async getTreatmentPlanStats(practiceId: number): Promise<{
