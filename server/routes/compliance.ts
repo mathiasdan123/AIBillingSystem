@@ -579,4 +579,309 @@ export function registerComplianceRoutes(app: Express) {
       return res.status(500).json({ error: 'Failed to trigger notification' });
     }
   });
+
+  // GET /api/compliance/hipaa-assessment — categorized HIPAA self-assessment with next steps
+  app.get('/api/compliance/hipaa-assessment', isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
+      const user = await storage.getUser(userId);
+      if (!user?.practiceId) {
+        return res.status(400).json({ error: 'User has no associated practice' });
+      }
+      const practiceId = user.practiceId;
+
+      // Gather data
+      const allUsers = await storage.getAllUsers();
+      const practiceUsers = allUsers.filter((u: any) => u.practiceId === practiceId);
+      const baaRecordsList = await storage.getBaaRecords(practiceId);
+      const breachIncidentsList = await storage.getBreachIncidentsByPractice(practiceId);
+      const existingChecks = await storage.getComplianceChecks(practiceId);
+
+      const oneDayAgo = new Date();
+      oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+      const recentLogs = await storage.getAuditLogsPaginated({
+        practiceId,
+        startDate: oneDayAgo,
+        page: 1,
+        limit: 1,
+      });
+
+      const encryptionEnabled = !!process.env.PHI_ENCRYPTION_KEY;
+      const sessionTimeoutConfigured = process.env.NODE_ENV === 'production' || !!process.env.SESSION_SECRET;
+
+      // MFA stats
+      const mfaEnabledUsers = practiceUsers.filter((u: any) => u.mfaEnabled);
+      const mfaRatio = practiceUsers.length > 0 ? mfaEnabledUsers.length / practiceUsers.length : 0;
+
+      // Roles
+      const roleSet = new Set(practiceUsers.map((u: any) => u.role).filter(Boolean));
+      const roles = Array.from(roleSet);
+
+      // BAA stats
+      const activeBaas = baaRecordsList.filter((b: any) => b.status === 'active');
+      const expiredBaas = baaRecordsList.filter((b: any) => b.status === 'expired');
+
+      // Breach stats
+      const openBreaches = breachIncidentsList.filter((b: any) => b.status === 'open' || b.status === 'under_review');
+      const unresolvedNotifications = breachIncidentsList.filter(
+        (b: any) => b.notificationStatus !== 'complete' && b.status !== 'closed'
+      );
+
+      // Helper to get existing manual check status
+      const getManualStatus = (checkType: string) => {
+        const existing = existingChecks.find((c: any) => c.checkType === checkType);
+        return existing?.status || 'not_checked';
+      };
+      const getManualDetails = (checkType: string) => {
+        const existing = existingChecks.find((c: any) => c.checkType === checkType);
+        return existing?.details || null;
+      };
+
+      const toSafeguardStatus = (status: string): 'compliant' | 'non_compliant' | 'partially_compliant' | 'not_assessed' => {
+        if (status === 'pass') return 'compliant';
+        if (status === 'warning') return 'partially_compliant';
+        if (status === 'fail') return 'non_compliant';
+        return 'not_assessed';
+      };
+
+      // === ADMINISTRATIVE SAFEGUARDS ===
+      const adminSafeguards: any[] = [
+        {
+          id: 'workforce_training',
+          name: 'Workforce Training',
+          description: 'Track employee HIPAA awareness and security training completion',
+          status: toSafeguardStatus(getManualStatus('training_completed')),
+          details: getManualDetails('training_completed') || { note: 'Manual verification required' },
+          nextSteps: getManualStatus('training_completed') === 'pass'
+            ? ['Schedule annual refresher training']
+            : ['Conduct HIPAA awareness training for all staff', 'Document training dates and attendance', 'Mark as compliant once all staff are trained'],
+          regulation: '45 CFR 164.308(a)(5)',
+        },
+        {
+          id: 'security_officer',
+          name: 'Security Officer Designation',
+          description: 'A designated security officer responsible for HIPAA security policies',
+          status: toSafeguardStatus(getManualStatus('risk_assessment')),
+          details: getManualDetails('risk_assessment') || { note: 'Manual verification required' },
+          nextSteps: getManualStatus('risk_assessment') === 'pass'
+            ? ['Review security officer responsibilities annually']
+            : ['Designate a HIPAA Security Officer', 'Document the designation and responsibilities', 'Complete an initial risk assessment'],
+          regulation: '45 CFR 164.308(a)(2)',
+        },
+        {
+          id: 'contingency_plan',
+          name: 'Contingency Plan',
+          description: 'Data backup plan, disaster recovery plan, and emergency mode operations',
+          status: toSafeguardStatus(getManualStatus('backup_verified')),
+          details: getManualDetails('backup_verified') || { note: 'Manual verification required' },
+          nextSteps: getManualStatus('backup_verified') === 'pass'
+            ? ['Test backup restoration quarterly']
+            : ['Document data backup procedures', 'Create a disaster recovery plan', 'Test backup restoration and verify data integrity'],
+          regulation: '45 CFR 164.308(a)(7)',
+        },
+        {
+          id: 'baa_status',
+          name: 'Business Associate Agreements',
+          description: 'BAAs signed with all vendors that handle PHI',
+          status: baaRecordsList.length === 0 ? 'not_assessed' : expiredBaas.length > 0 ? 'partially_compliant' : 'compliant',
+          details: { total: baaRecordsList.length, active: activeBaas.length, expired: expiredBaas.length },
+          nextSteps: baaRecordsList.length === 0
+            ? ['Identify all vendors that handle PHI', 'Execute BAAs with each vendor', 'Record BAAs in the system']
+            : expiredBaas.length > 0
+              ? [`Renew ${expiredBaas.length} expired BAA(s)`, 'Review all vendor agreements annually']
+              : ['Review vendor agreements at next renewal date'],
+          regulation: '45 CFR 164.308(b)(1)',
+        },
+      ];
+
+      // === PHYSICAL SAFEGUARDS ===
+      const physicalSafeguards: any[] = [
+        {
+          id: 'workstation_security',
+          name: 'Workstation Security',
+          description: 'Staff acknowledgment of workstation use policies and physical access controls',
+          status: toSafeguardStatus(getManualStatus('data_retention')),
+          details: getManualDetails('data_retention') || { note: 'Manual verification required — workstation policy acknowledgment' },
+          nextSteps: getManualStatus('data_retention') === 'pass'
+            ? ['Ensure new employees sign workstation policy']
+            : ['Create a workstation use policy', 'Have all staff sign acknowledgment', 'Implement automatic screen locks on all workstations'],
+          regulation: '45 CFR 164.310(b)',
+        },
+      ];
+
+      // === TECHNICAL SAFEGUARDS ===
+      const technicalSafeguards: any[] = [
+        {
+          id: 'mfa_adoption',
+          name: 'Multi-Factor Authentication',
+          description: `MFA adoption rate across practice users`,
+          status: mfaRatio === 1 ? 'compliant' : mfaRatio >= 0.5 ? 'partially_compliant' : 'non_compliant',
+          details: {
+            totalUsers: practiceUsers.length,
+            mfaEnabled: mfaEnabledUsers.length,
+            adoptionRate: Math.round(mfaRatio * 100),
+          },
+          nextSteps: mfaRatio === 1
+            ? ['MFA fully adopted — continue to require for new users']
+            : [
+                `Enable MFA for remaining ${practiceUsers.length - mfaEnabledUsers.length} user(s)`,
+                'Consider enforcing mandatory MFA policy',
+                'Provide MFA setup instructions to non-compliant users',
+              ],
+          regulation: '45 CFR 164.312(d)',
+        },
+        {
+          id: 'phi_encryption',
+          name: 'PHI Encryption at Rest',
+          description: 'AES-256-GCM encryption for protected health information',
+          status: encryptionEnabled ? 'compliant' : 'non_compliant',
+          details: { encryptionKeyConfigured: encryptionEnabled },
+          nextSteps: encryptionEnabled
+            ? ['Rotate encryption keys per organizational policy']
+            : ['Configure PHI_ENCRYPTION_KEY environment variable', 'Ensure key is 64-character hex (32 bytes)'],
+          regulation: '45 CFR 164.312(a)(2)(iv)',
+        },
+        {
+          id: 'audit_logging',
+          name: 'Audit Log Controls',
+          description: 'Record and examine activity in systems containing PHI',
+          status: recentLogs.total > 0 ? 'compliant' : 'partially_compliant',
+          details: { recentEntries: recentLogs.total, period: '24h' },
+          nextSteps: recentLogs.total > 0
+            ? ['Review audit logs regularly for anomalies', 'Archive logs per retention policy']
+            : ['Verify audit middleware is active', 'Check for system activity in the last 24 hours'],
+          regulation: '45 CFR 164.312(b)',
+        },
+        {
+          id: 'access_controls',
+          name: 'Role-Based Access Controls',
+          description: 'Unique user identification and role-based access to PHI',
+          status: roles.length >= 2 ? 'compliant' : roles.length === 1 ? 'partially_compliant' : 'non_compliant',
+          details: { rolesInUse: roles, userCount: practiceUsers.length },
+          nextSteps: roles.length >= 2
+            ? ['Review user role assignments quarterly']
+            : ['Assign appropriate roles (admin, therapist, billing) to users', 'Ensure least-privilege access for each role'],
+          regulation: '45 CFR 164.312(a)(1)',
+        },
+        {
+          id: 'session_timeout',
+          name: 'Session Timeout Configuration',
+          description: 'Automatic logoff after inactivity to prevent unauthorized access',
+          status: sessionTimeoutConfigured ? 'compliant' : 'partially_compliant',
+          details: {
+            sessionSecretConfigured: !!process.env.SESSION_SECRET,
+            environment: process.env.NODE_ENV || 'development',
+            idleTimeout: '30 minutes (production)',
+          },
+          nextSteps: sessionTimeoutConfigured
+            ? ['Ensure idle timeout warning is enabled for all users']
+            : ['Configure SESSION_SECRET for secure sessions', 'Verify 30-minute idle timeout in production'],
+          regulation: '45 CFR 164.312(a)(2)(iii)',
+        },
+      ];
+
+      // === BREACH MANAGEMENT ===
+      const breachManagement: any[] = [
+        {
+          id: 'breach_log',
+          name: 'Breach Incident Log',
+          description: 'Documented process for identifying, reporting, and responding to breaches',
+          status: toSafeguardStatus(getManualStatus('breach_notification_plan')),
+          details: {
+            totalIncidents: breachIncidentsList.length,
+            openIncidents: openBreaches.length,
+            ...(getManualDetails('breach_notification_plan') || {}),
+          },
+          nextSteps: getManualStatus('breach_notification_plan') === 'pass'
+            ? ['Maintain breach log and review procedures annually']
+            : ['Document breach identification and response procedures', 'Train staff on breach reporting workflow', 'Mark as compliant once procedures are documented'],
+          regulation: '45 CFR 164.408',
+        },
+        {
+          id: 'breach_notifications',
+          name: 'Breach Notification Tracking',
+          description: 'Track required notifications to individuals, HHS, and media',
+          status: unresolvedNotifications.length > 0
+            ? 'non_compliant'
+            : breachIncidentsList.length > 0
+              ? 'compliant'
+              : 'not_assessed',
+          details: {
+            totalIncidents: breachIncidentsList.length,
+            pendingNotifications: unresolvedNotifications.length,
+            openBreaches: openBreaches.length,
+          },
+          nextSteps: unresolvedNotifications.length > 0
+            ? [
+                `Complete notifications for ${unresolvedNotifications.length} pending incident(s)`,
+                'Notify affected individuals without unreasonable delay',
+                'Notify HHS within 60 days of discovery (for breaches affecting 500+ individuals)',
+              ]
+            : breachIncidentsList.length === 0
+              ? ['No breach incidents recorded — continue monitoring']
+              : ['All breach notifications are up to date'],
+          regulation: '45 CFR 164.404-408',
+        },
+      ];
+
+      // Calculate overall score
+      const allItems = [...adminSafeguards, ...physicalSafeguards, ...technicalSafeguards, ...breachManagement];
+      const scoreMap: Record<string, number> = {
+        compliant: 1,
+        partially_compliant: 0.5,
+        non_compliant: 0,
+        not_assessed: 0,
+      };
+      const totalPoints = allItems.reduce((sum, item) => sum + scoreMap[item.status], 0);
+      const overallScore = Math.round((totalPoints / allItems.length) * 100);
+
+      const categoryCounts = {
+        compliant: allItems.filter(i => i.status === 'compliant').length,
+        partiallyCompliant: allItems.filter(i => i.status === 'partially_compliant').length,
+        nonCompliant: allItems.filter(i => i.status === 'non_compliant').length,
+        notAssessed: allItems.filter(i => i.status === 'not_assessed').length,
+      };
+
+      await logAuditEvent({
+        eventCategory: 'admin',
+        eventType: 'read',
+        resourceType: 'hipaa_assessment',
+        userId,
+        practiceId,
+        details: { overallScore, ...categoryCounts },
+      });
+
+      return res.json({
+        overallScore,
+        totalItems: allItems.length,
+        ...categoryCounts,
+        lastAssessedAt: new Date().toISOString(),
+        categories: {
+          administrativeSafeguards: {
+            label: 'Administrative Safeguards',
+            description: 'Policies, procedures, and workforce management',
+            items: adminSafeguards,
+          },
+          physicalSafeguards: {
+            label: 'Physical Safeguards',
+            description: 'Workstation and facility access controls',
+            items: physicalSafeguards,
+          },
+          technicalSafeguards: {
+            label: 'Technical Safeguards',
+            description: 'Technology-based access controls, encryption, and audit',
+            items: technicalSafeguards,
+          },
+          breachManagement: {
+            label: 'Breach Management',
+            description: 'Breach detection, reporting, and notification',
+            items: breachManagement,
+          },
+        },
+      });
+    } catch (err) {
+      console.error('Failed to run HIPAA assessment:', err);
+      return res.status(500).json({ error: 'Failed to run HIPAA assessment' });
+    }
+  });
 }

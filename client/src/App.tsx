@@ -33,6 +33,7 @@ const InvitePage = lazy(() => import("@/pages/invite"));
 const PayerManagement = lazy(() => import("@/pages/payer-management"));
 const BreachIncidents = lazy(() => import("@/pages/breach-incidents"));
 const ComplianceDashboard = lazy(() => import("@/pages/compliance"));
+const HipaaCompliance = lazy(() => import("@/pages/hipaa-compliance"));
 const Waitlist = lazy(() => import("@/pages/waitlist"));
 const Reviews = lazy(() => import("@/pages/reviews"));
 const PublicBooking = lazy(() => import("@/pages/public-booking"));
@@ -210,6 +211,7 @@ function Router() {
               <Route path="/subscription" component={Billing} />
               {isAdmin && <Route path="/breach-incidents" component={BreachIncidents} />}
               {isAdmin && <Route path="/compliance" component={ComplianceDashboard} />}
+              {isAdmin && <Route path="/hipaa-compliance" component={HipaaCompliance} />}
               {isAdmin && <Route path="/sso-settings" component={SsoSettings} />}
               {isAdmin && <Route path="/data-export" component={DataExport} />}
               <Route path="/notification-settings" component={NotificationSettings} />
