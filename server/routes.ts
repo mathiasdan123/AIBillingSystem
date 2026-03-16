@@ -215,8 +215,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     'reviewer2@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Two', role: 'admin' },
   };
 
-  // Demo login endpoint - creates demo user if needed and logs in
-  app.post('/api/demo-login', authLimiter, async (req: any, res) => {
+  // Demo login endpoint - creates demo user if needed and logs in (no rate limit for easy reviewer access)
+  app.post('/api/demo-login', async (req: any, res) => {
     try {
       const { hashPassword } = await import('./services/passwordService');
       const requestedEmail = (req.body?.email || 'demo@therapybill.com').toLowerCase().trim();
