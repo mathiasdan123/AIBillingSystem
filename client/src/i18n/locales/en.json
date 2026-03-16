@@ -420,7 +420,10 @@
     "state": "State",
     "zipCode": "ZIP Code",
     "phone": "Phone",
+    "email": "Email",
     "fax": "Fax",
+    "timezone": "Timezone",
+    "selectTimezone": "Select timezone",
     "mainLocation": "Main Location",
     "main": "Main",
     "setAsMainLocation": "Set as main location",
@@ -456,7 +459,11 @@
     "staffRemovedDesc": "Team member has been removed from this location.",
     "createLocation": "Create Location",
     "allLocations": "All Locations",
-    "switchLocation": "Switch Location"
+    "switchLocation": "Switch Location",
+    "totalLocations": "Total Locations",
+    "activeLocations": "Active",
+    "totalStaff": "Total Staff",
+    "mainOffice": "Main Office"
   },
   "theme": {
     "dark": "Dark mode",

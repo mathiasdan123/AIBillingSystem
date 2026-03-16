@@ -107,7 +107,7 @@ router.get('/', isAuthenticated, async (req: any, res) => {
 router.post('/', isAuthenticated, isAdmin, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { name, address, city, state, zipCode, phone, fax, isMainLocation, operatingHours } = req.body;
+    const { name, address, city, state, zipCode, phone, email, fax, timezone, isMainLocation, operatingHours } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Location name is required' });
@@ -134,7 +134,9 @@ router.post('/', isAuthenticated, isAdmin, async (req: any, res) => {
         state: state || null,
         zipCode: zipCode || null,
         phone: phone || null,
+        email: email || null,
         fax: fax || null,
+        timezone: timezone || 'America/New_York',
         isMainLocation: isMainLocation || false,
         isActive: true,
         operatingHours: operatingHours || null,
@@ -171,7 +173,7 @@ router.put('/:id', isAuthenticated, isAdmin, async (req: any, res) => {
       return res.status(404).json({ message: 'Location not found' });
     }
 
-    const { name, address, city, state, zipCode, phone, fax, isMainLocation, operatingHours } = req.body;
+    const { name, address, city, state, zipCode, phone, email, fax, timezone, isMainLocation, operatingHours } = req.body;
 
     // If setting as main location, unset any existing main location
     if (isMainLocation && !existing[0].isMainLocation) {
@@ -193,7 +195,9 @@ router.put('/:id', isAuthenticated, isAdmin, async (req: any, res) => {
         state: state !== undefined ? state : existing[0].state,
         zipCode: zipCode !== undefined ? zipCode : existing[0].zipCode,
         phone: phone !== undefined ? phone : existing[0].phone,
+        email: email !== undefined ? email : existing[0].email,
         fax: fax !== undefined ? fax : existing[0].fax,
+        timezone: timezone !== undefined ? timezone : existing[0].timezone,
         isMainLocation: isMainLocation !== undefined ? isMainLocation : existing[0].isMainLocation,
         operatingHours: operatingHours !== undefined ? operatingHours : existing[0].operatingHours,
         updatedAt: new Date(),

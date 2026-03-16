@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2 } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
@@ -64,6 +64,7 @@ export default function CalendarPage() {
     startTime: "09:00",
     type: "Individual Therapy",
     notes: "",
+    locationId: "",
     recurrencePattern: "none" as "none" | "weekly" | "biweekly" | "monthly",
     recurrenceEndType: "occurrences" as "occurrences" | "endDate",
     numberOfOccurrences: "12",
@@ -82,6 +83,19 @@ export default function CalendarPage() {
   const { data: therapists = [] } = useQuery<any[]>({
     queryKey: ["/api/users"],
   });
+
+  // Fetch locations for the dropdown
+  const { data: locations = [] } = useQuery<any[]>({
+    queryKey: ["/api/locations"],
+    queryFn: async () => {
+      const res = await fetch('/api/locations');
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  // Location filter state
+  const [filterLocationId, setFilterLocationId] = useState<string>("all");
 
   // Compute date range for the current view
   const getWeekDates = (date: Date) => {
@@ -124,7 +138,7 @@ export default function CalendarPage() {
         ? `Created ${data.seriesInfo.totalCreated} appointments (${data.seriesInfo.recurrenceDescription})`
         : "Appointment created successfully.";
       toast({ title: "Appointment Scheduled", description: desc });
-      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -203,6 +217,7 @@ export default function CalendarPage() {
       practiceId: 1,
       patientId: parseInt(newAppointment.patientId),
       therapistId: newAppointment.therapistId || null,
+      locationId: newAppointment.locationId ? parseInt(newAppointment.locationId) : null,
       title: newAppointment.type,
       startTime: startDt.toISOString(),
       endTime: endDt.toISOString(),
@@ -299,9 +314,14 @@ export default function CalendarPage() {
   const formatDate = (date: Date) => date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const formatDateFull = (date: Date) => date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
+  // Filter appointments by selected location
+  const filteredAppointments = filterLocationId === "all"
+    ? appointments
+    : appointments.filter(apt => (apt as any).locationId === parseInt(filterLocationId));
+
   const getAppointmentsForDate = (date: Date) => {
     const y = date.getFullYear(), m = date.getMonth(), d = date.getDate();
-    return appointments.filter(apt => {
+    return filteredAppointments.filter(apt => {
       const s = new Date(apt.startTime);
       return s.getUTCFullYear() === y && s.getUTCMonth() === m && s.getUTCDate() === d;
     });
@@ -370,7 +390,21 @@ export default function CalendarPage() {
             <h1 className="text-xl md:text-2xl font-bold text-slate-900">Calendar</h1>
             <p className="text-sm md:text-base text-slate-600">Manage your appointments and availability</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {locations.length > 0 && (
+              <Select value={filterLocationId} onValueChange={setFilterLocationId}>
+                <SelectTrigger className="w-[160px] min-h-[44px] text-xs md:text-sm">
+                  <Building2 className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+                  <SelectValue placeholder="All Locations" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Locations</SelectItem>
+                  {locations.map((loc: any) => (
+                    <SelectItem key={loc.id} value={String(loc.id)}>{loc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Button variant="outline" onClick={() => setShowAvailability(true)} className="min-h-[44px] text-xs md:text-sm">
               <Clock className="w-4 h-4 mr-1 md:mr-2" />
               <span className="hidden sm:inline">Availability</span>
@@ -412,6 +446,24 @@ export default function CalendarPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {locations.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Location</Label>
+                      <Select value={newAppointment.locationId} onValueChange={(v) => setNewAppointment({ ...newAppointment, locationId: v })}>
+                        <SelectTrigger><SelectValue placeholder="Select a location (optional)" /></SelectTrigger>
+                        <SelectContent>
+                          {locations.map((loc: any) => (
+                            <SelectItem key={loc.id} value={String(loc.id)}>
+                              <span className="flex items-center gap-1.5">
+                                <Building2 className="w-3 h-3" />
+                                {loc.name}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Date</Label>
@@ -610,6 +662,10 @@ export default function CalendarPage() {
                           {apt.therapistId && (() => {
                             const therapist = therapists.find((t: any) => t.id === apt.therapistId);
                             return therapist ? ` - ${therapist.firstName}` : "";
+                          })()}
+                          {(apt as any).locationId && (() => {
+                            const loc = locations.find((l: any) => l.id === (apt as any).locationId);
+                            return loc ? ` @ ${loc.name}` : "";
                           })()}
                           {apt.status === "cancelled" && ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})`}
                         </div>

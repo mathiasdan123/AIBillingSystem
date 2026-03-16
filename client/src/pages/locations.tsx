@@ -29,6 +29,8 @@ import {
   MapPin,
   Plus,
   Phone,
+  Mail,
+  Globe,
   Printer,
   Users,
   Clock,
@@ -51,7 +53,9 @@ interface PracticeLocation {
   state: string | null;
   zipCode: string | null;
   phone: string | null;
+  email: string | null;
   fax: string | null;
+  timezone: string | null;
   isMainLocation: boolean;
   isActive: boolean;
   operatingHours: OperatingHours | null;
@@ -120,6 +124,28 @@ const US_STATES = [
   'OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
 ];
 
+const US_TIMEZONES = [
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+  'America/Phoenix',
+  'America/Indiana/Indianapolis',
+];
+
+const TIMEZONE_LABELS: Record<string, string> = {
+  'America/New_York': 'Eastern (ET)',
+  'America/Chicago': 'Central (CT)',
+  'America/Denver': 'Mountain (MT)',
+  'America/Los_Angeles': 'Pacific (PT)',
+  'America/Anchorage': 'Alaska (AKT)',
+  'Pacific/Honolulu': 'Hawaii (HT)',
+  'America/Phoenix': 'Arizona (MST)',
+  'America/Indiana/Indianapolis': 'Indiana (ET)',
+};
+
 const emptyFormData = {
   name: '',
   address: '',
@@ -127,7 +153,9 @@ const emptyFormData = {
   state: '',
   zipCode: '',
   phone: '',
+  email: '',
   fax: '',
+  timezone: 'America/New_York',
   isMainLocation: false,
   operatingHours: {} as OperatingHours,
 };
@@ -324,7 +352,9 @@ export default function LocationsPage() {
       state: location.state || '',
       zipCode: location.zipCode || '',
       phone: location.phone || '',
+      email: location.email || '',
       fax: location.fax || '',
+      timezone: location.timezone || 'America/New_York',
       isMainLocation: location.isMainLocation,
       operatingHours: (location.operatingHours as OperatingHours) || {},
     });
@@ -443,10 +473,23 @@ export default function LocationsPage() {
                 <span>{selectedLocation.phone}</span>
               </div>
             )}
+            {selectedLocation.email && (
+              <div className="flex items-center gap-2 text-sm">
+                <Mail className="w-4 h-4 text-muted-foreground" />
+                <span>{selectedLocation.email}</span>
+              </div>
+            )}
             {selectedLocation.fax && (
               <div className="flex items-center gap-2 text-sm">
                 <Printer className="w-4 h-4 text-muted-foreground" />
                 <span>{selectedLocation.fax}</span>
+              </div>
+            )}
+
+            {selectedLocation.timezone && (
+              <div className="flex items-center gap-2 text-sm">
+                <Globe className="w-4 h-4 text-muted-foreground" />
+                <span>{TIMEZONE_LABELS[selectedLocation.timezone] || selectedLocation.timezone}</span>
               </div>
             )}
 
@@ -656,6 +699,50 @@ export default function LocationsPage() {
         )}
       </div>
 
+      {/* Overview Stats */}
+      {!isLoading && locations.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">{t('locations.totalLocations')}</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{locations.length}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-green-500" />
+                <span className="text-sm text-muted-foreground">{t('locations.activeLocations')}</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{locations.filter(l => l.isActive).length}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">{t('locations.totalStaff')}</span>
+              </div>
+              <p className="text-2xl font-bold mt-1">{locations.reduce((sum, l) => sum + (l.staffCount || 0), 0)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-yellow-500" />
+                <span className="text-sm text-muted-foreground">{t('locations.mainOffice')}</span>
+              </div>
+              <p className="text-2xl font-bold mt-1 truncate text-sm">
+                {locations.find(l => l.isMainLocation)?.name || '--'}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center h-48">
           <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
@@ -841,12 +928,39 @@ function LocationFormDialog({
               />
             </div>
             <div>
+              <Label>{t('locations.email')}</Label>
+              <Input
+                value={formData.email}
+                onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                placeholder="office@example.com"
+                type="email"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
               <Label>{t('locations.fax')}</Label>
               <Input
                 value={formData.fax}
                 onChange={(e) => setFormData(prev => ({ ...prev, fax: e.target.value }))}
                 placeholder="(555) 123-4568"
               />
+            </div>
+            <div>
+              <Label>{t('locations.timezone')}</Label>
+              <Select
+                value={formData.timezone}
+                onValueChange={(v) => setFormData(prev => ({ ...prev, timezone: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('locations.selectTimezone')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {US_TIMEZONES.map(tz => (
+                    <SelectItem key={tz} value={tz}>{TIMEZONE_LABELS[tz] || tz}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="flex items-center gap-2">

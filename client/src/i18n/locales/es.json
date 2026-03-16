@@ -387,7 +387,10 @@
     "state": "Estado",
     "zipCode": "Codigo Postal",
     "phone": "Telefono",
+    "email": "Correo Electronico",
     "fax": "Fax",
+    "timezone": "Zona Horaria",
+    "selectTimezone": "Seleccionar zona horaria",
     "mainLocation": "Ubicacion Principal",
     "main": "Principal",
     "setAsMainLocation": "Establecer como ubicacion principal",
@@ -423,7 +426,11 @@
     "staffRemovedDesc": "El miembro del equipo ha sido removido de esta ubicacion.",
     "createLocation": "Crear Ubicacion",
     "allLocations": "Todas las Ubicaciones",
-    "switchLocation": "Cambiar Ubicacion"
+    "switchLocation": "Cambiar Ubicacion",
+    "totalLocations": "Total Ubicaciones",
+    "activeLocations": "Activas",
+    "totalStaff": "Total Personal",
+    "mainOffice": "Oficina Principal"
   },
   "theme": {
     "dark": "Modo oscuro",
