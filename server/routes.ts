@@ -22,6 +22,7 @@ import {
   feeSchedulesRouter,
   treatmentAuthorizationsRouter,
   patientStatementsRouter,
+  benchmarkingRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -105,6 +106,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/analytics', analyticsRouter);
   // Practice Analytics routes: /api/practice-analytics/*
   app.use('/api/practice-analytics', practiceAnalyticsRouter);
+  // Benchmarking routes: /api/benchmarking/*
+  app.use('/api/benchmarking', benchmarkingRouter);
   // SOAP Notes routes: /api/soap-notes/*
   app.use('/api/soap-notes', soapNotesRouter);
   // Backward compatibility for therapy-bank

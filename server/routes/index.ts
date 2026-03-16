@@ -43,6 +43,7 @@ export { default as publicPortalRouter } from './public-portal';
 export { default as patientIntakeRouter } from './patient-intake';
 export { default as notificationPreferencesRouter } from './notification-preferences';
 export { default as schedulingRouter } from './scheduling';
+export { default as benchmarkingRouter } from './benchmarking';
 
 // Final extraction pass - all remaining route groups from legacy routes.ts
 export { default as aiRouter } from './ai';

@@ -77,6 +77,7 @@ const navigationItems = [
   { nameKey: 'nav.aiInsights', href: '/ai-insights', icon: Brain, adminOnly: false },
   { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
   { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+  { nameKey: 'nav.benchmarking', href: '/benchmarking', icon: BarChart3, adminOnly: true },
   { nameKey: 'nav.therapistProductivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false },
   { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
   { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },

@@ -38,7 +38,8 @@
     "aiInsights": "Perspectivas IA",
     "therapistProductivity": "Productividad del Terapeuta",
     "dataExport": "Exportar Datos",
-    "surveys": "Encuestas"
+    "surveys": "Encuestas",
+    "benchmarking": "Benchmarking"
   },
   "therapistProductivity": {
     "title": "Productividad del Terapeuta",

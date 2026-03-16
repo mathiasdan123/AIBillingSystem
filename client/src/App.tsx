@@ -59,6 +59,7 @@ const Onboarding = lazy(() => import("@/pages/onboarding"));
 const Surveys = lazy(() => import("@/pages/surveys"));
 const SchedulingInsights = lazy(() => import("@/pages/scheduling-insights"));
 const NotificationSettings = lazy(() => import("@/pages/notification-settings"));
+const Benchmarking = lazy(() => import("@/pages/benchmarking"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -197,6 +198,7 @@ function Router() {
               <Route path="/treatment-plans" component={TreatmentPlans} />
               {isAdmin && <Route path="/accounting" component={Accounting} />}
               {isAdmin && <Route path="/analytics" component={Analytics} />}
+              {isAdmin && <Route path="/benchmarking" component={Benchmarking} />}
               <Route path="/reports" component={Reports} />
               <Route path="/expenses" component={Expenses} />
               <Route path="/settings" component={Settings} />

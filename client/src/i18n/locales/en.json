@@ -39,7 +39,8 @@
     "therapistProductivity": "Therapist Productivity",
     "dataExport": "Data Export",
     "surveys": "Surveys",
-    "schedulingInsights": "Scheduling Insights"
+    "schedulingInsights": "Scheduling Insights",
+    "benchmarking": "Benchmarking"
   },
   "schedulingInsights": {
     "title": "Scheduling Insights",
