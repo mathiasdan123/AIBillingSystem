@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -39,6 +39,294 @@ interface EligibilityCheck {
   visitsUsed: number | null;
   authRequired: boolean | null;
   checkDate: string;
+}
+
+// Helper component to display intake data from the patient portal
+function PatientIntakeDataView({ patient }: { patient: any }) {
+  const intakeData = typeof patient.intakeData === 'string'
+    ? JSON.parse(patient.intakeData)
+    : patient.intakeData;
+
+  if (!intakeData && !patient.intakeCompletedAt) {
+    return (
+      <div className="text-center py-8">
+        <ClipboardCheck className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+        <h3 className="text-lg font-semibold text-slate-900 mb-2">No Intake Data Yet</h3>
+        <p className="text-slate-500 text-sm">
+          This patient has not completed their intake forms through the patient portal.
+        </p>
+      </div>
+    );
+  }
+
+  const sections = intakeData?.sections || {};
+  const completedAt = patient.intakeCompletedAt;
+
+  // Helper to render a labeled field
+  const Field = ({ label, value }: { label: string; value: any }) => {
+    if (!value || value === '') return null;
+    return (
+      <div>
+        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
+        <p className="text-sm text-slate-700">{String(value)}</p>
+      </div>
+    );
+  };
+
+  // Helper to render a section
+  const Section = ({ title, data, fields }: { title: string; data: any; fields: { key: string; label: string }[] }) => {
+    if (!data || Object.keys(data).length === 0) return null;
+    const visibleFields = fields.filter(f => data[f.key] && data[f.key] !== '');
+    if (visibleFields.length === 0) return null;
+    return (
+      <div className="border-t pt-4">
+        <h4 className="font-medium text-slate-900 mb-3">{title}</h4>
+        <div className="grid grid-cols-2 gap-3">
+          {visibleFields.map(f => (
+            <Field key={f.key} label={f.label} value={data[f.key]} />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Intake Status */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {completedAt ? (
+            <Badge className="bg-green-100 text-green-700">
+              <CheckCircle className="w-3 h-3 mr-1" />
+              Intake Complete
+            </Badge>
+          ) : (
+            <Badge className="bg-yellow-100 text-yellow-700">
+              <AlertCircle className="w-3 h-3 mr-1" />
+              Intake In Progress
+            </Badge>
+          )}
+        </div>
+        {completedAt && (
+          <span className="text-xs text-slate-500">
+            Completed {new Date(completedAt).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+
+      {/* Patient Info Section */}
+      <Section
+        title="Patient Information"
+        data={sections.patientInfo}
+        fields={[
+          { key: 'firstName', label: 'First Name' },
+          { key: 'lastName', label: 'Last Name' },
+          { key: 'preferredName', label: 'Preferred Name' },
+          { key: 'dateOfBirth', label: 'Date of Birth' },
+          { key: 'sex', label: 'Sex' },
+          { key: 'gender', label: 'Gender' },
+          { key: 'school', label: 'School' },
+          { key: 'grade', label: 'Grade' },
+          { key: 'teacher', label: 'Teacher' },
+          { key: 'schoolConcerns', label: 'School Concerns' },
+          { key: 'primaryLanguage', label: 'Primary Language' },
+          { key: 'referralSource', label: 'Referral Source' },
+          { key: 'referringPhysician', label: 'Referring Physician' },
+          { key: 'pediatrician', label: 'Pediatrician' },
+        ]}
+      />
+
+      {/* Parent/Guardian 1 */}
+      <Section
+        title="Parent/Guardian 1"
+        data={sections.parent1}
+        fields={[
+          { key: 'name', label: 'Name' },
+          { key: 'relationship', label: 'Relationship' },
+          { key: 'phone', label: 'Phone' },
+          { key: 'cell', label: 'Cell Phone' },
+          { key: 'email', label: 'Email' },
+          { key: 'address', label: 'Address' },
+          { key: 'city', label: 'City' },
+          { key: 'state', label: 'State' },
+          { key: 'zip', label: 'ZIP' },
+          { key: 'employer', label: 'Employer' },
+          { key: 'workPhone', label: 'Work Phone' },
+        ]}
+      />
+
+      {/* Parent/Guardian 2 */}
+      <Section
+        title="Parent/Guardian 2"
+        data={sections.parent2}
+        fields={[
+          { key: 'name', label: 'Name' },
+          { key: 'relationship', label: 'Relationship' },
+          { key: 'phone', label: 'Phone' },
+          { key: 'cell', label: 'Cell Phone' },
+          { key: 'email', label: 'Email' },
+          { key: 'address', label: 'Address' },
+        ]}
+      />
+
+      {/* Emergency Contact */}
+      <Section
+        title="Emergency Contact"
+        data={sections.emergencyContact}
+        fields={[
+          { key: 'name', label: 'Name' },
+          { key: 'relationship', label: 'Relationship' },
+          { key: 'phone', label: 'Phone' },
+          { key: 'alternatePhone', label: 'Alternate Phone' },
+        ]}
+      />
+
+      {/* Medical History */}
+      <Section
+        title="Medical History"
+        data={sections.medicalHistory}
+        fields={[
+          { key: 'diagnosis', label: 'Diagnosis' },
+          { key: 'currentMedications', label: 'Current Medications' },
+          { key: 'allergies', label: 'Allergies' },
+          { key: 'medicalConditions', label: 'Medical Conditions' },
+          { key: 'surgeries', label: 'Surgeries' },
+          { key: 'hospitalizations', label: 'Hospitalizations' },
+          { key: 'primaryPhysician', label: 'Primary Physician' },
+          { key: 'visionHearing', label: 'Vision/Hearing' },
+        ]}
+      />
+
+      {/* Birth History */}
+      <Section
+        title="Birth History"
+        data={sections.birthHistory}
+        fields={[
+          { key: 'birthWeight', label: 'Birth Weight' },
+          { key: 'gestationalAge', label: 'Gestational Age' },
+          { key: 'deliveryType', label: 'Delivery Type' },
+          { key: 'complications', label: 'Complications' },
+          { key: 'nicuStay', label: 'NICU Stay' },
+          { key: 'pregnancyComplications', label: 'Pregnancy Complications' },
+        ]}
+      />
+
+      {/* Developmental Milestones */}
+      <Section
+        title="Developmental Milestones"
+        data={sections.developmentalMilestones}
+        fields={[
+          { key: 'satAlone', label: 'Sat Alone' },
+          { key: 'crawled', label: 'Crawled' },
+          { key: 'walked', label: 'Walked' },
+          { key: 'firstWords', label: 'First Words' },
+          { key: 'sentences', label: 'Sentences' },
+          { key: 'toiletTrained', label: 'Toilet Trained' },
+          { key: 'concerns', label: 'Concerns' },
+        ]}
+      />
+
+      {/* Treatment History */}
+      <Section
+        title="Treatment History"
+        data={sections.treatmentHistory}
+        fields={[
+          { key: 'previousTherapy', label: 'Previous Therapy' },
+          { key: 'therapyType', label: 'Therapy Type' },
+          { key: 'duration', label: 'Duration' },
+          { key: 'provider', label: 'Provider' },
+          { key: 'outcomes', label: 'Outcomes' },
+        ]}
+      />
+
+      {/* Sensory Processing */}
+      <Section
+        title="Sensory Processing"
+        data={sections.sensoryProcessing}
+        fields={[
+          { key: 'tactileSensitivity', label: 'Tactile Sensitivity' },
+          { key: 'vestibularResponses', label: 'Vestibular Responses' },
+          { key: 'auditorySensitivity', label: 'Auditory Sensitivity' },
+          { key: 'visualSensitivity', label: 'Visual Sensitivity' },
+          { key: 'oralSensitivity', label: 'Oral Sensitivity' },
+          { key: 'seekingBehaviors', label: 'Seeking Behaviors' },
+          { key: 'additionalNotes', label: 'Additional Notes' },
+        ]}
+      />
+
+      {/* Social/Emotional */}
+      <Section
+        title="Social-Emotional Skills"
+        data={sections.socialEmotional}
+        fields={[
+          { key: 'socialInteraction', label: 'Social Interaction' },
+          { key: 'emotionalRegulation', label: 'Emotional Regulation' },
+          { key: 'behaviorConcerns', label: 'Behavior Concerns' },
+          { key: 'friendships', label: 'Friendships' },
+          { key: 'selfCare', label: 'Self-Care Skills' },
+        ]}
+      />
+
+      {/* Visual/Motor Skills */}
+      <Section
+        title="Visual & Motor Skills"
+        data={sections.visualMotorSkills}
+        fields={[
+          { key: 'handedness', label: 'Handedness' },
+          { key: 'handwriting', label: 'Handwriting' },
+          { key: 'scissors', label: 'Scissors Use' },
+          { key: 'drawing', label: 'Drawing' },
+          { key: 'fineMotor', label: 'Fine Motor' },
+          { key: 'grossMotor', label: 'Gross Motor' },
+          { key: 'coordination', label: 'Coordination' },
+        ]}
+      />
+
+      {/* Nutrition */}
+      <Section
+        title="Nutrition History"
+        data={sections.nutritionHistory}
+        fields={[
+          { key: 'feedingConcerns', label: 'Feeding Concerns' },
+          { key: 'dietaryRestrictions', label: 'Dietary Restrictions' },
+          { key: 'foodPreferences', label: 'Food Preferences' },
+          { key: 'mealtime', label: 'Mealtime Behavior' },
+        ]}
+      />
+
+      {/* Social History */}
+      <Section
+        title="Social History"
+        data={sections.socialHistory}
+        fields={[
+          { key: 'familyStructure', label: 'Family Structure' },
+          { key: 'siblings', label: 'Siblings' },
+          { key: 'livingSituation', label: 'Living Situation' },
+          { key: 'childcare', label: 'Childcare' },
+          { key: 'activities', label: 'Activities' },
+          { key: 'concerns', label: 'Concerns' },
+        ]}
+      />
+
+      {/* Consents Summary */}
+      {intakeData?.questionnaireCompleted && (
+        <div className="border-t pt-4">
+          <h4 className="font-medium text-slate-900 mb-2">Consent Status</h4>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm text-green-700">
+              <CheckCircle className="w-4 h-4" />
+              Intake questionnaire submitted
+            </div>
+            {intakeData?.submittedAt && (
+              <p className="text-xs text-slate-500 ml-6">
+                Submitted: {new Date(intakeData.submittedAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Patients() {
@@ -100,11 +388,14 @@ export default function Patients() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: patients, isLoading: patientsLoading, error: patientsError } = useQuery({
+  const { data: patientsResponse, isLoading: patientsLoading, error: patientsError } = useQuery({
     queryKey: ['/api/patients'],
     enabled: isAuthenticated,
     retry: false,
   }) as any;
+
+  // Handle both paginated response { data: [...] } and legacy plain array
+  const patients = Array.isArray(patientsResponse) ? patientsResponse : patientsResponse?.data || patientsResponse;
 
   const checkEligibilityMutation = useMutation({
     mutationFn: async (data: { patientId: number; insuranceId?: number }) => {
@@ -582,6 +873,17 @@ export default function Patients() {
                       </Badge>
                     )}
                     {getEligibilityBadge(patient.id)}
+                    {patient.intakeCompletedAt ? (
+                      <Badge className="bg-green-50 text-green-700 border-green-200 text-xs">
+                        <ClipboardCheck className="w-3 h-3 mr-1" />
+                        Intake Done
+                      </Badge>
+                    ) : patient.intakeData ? (
+                      <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 text-xs">
+                        <ClipboardCheck className="w-3 h-3 mr-1" />
+                        Intake Started
+                      </Badge>
+                    ) : null}
                   </div>
                 </div>
               </CardHeader>
@@ -792,10 +1094,16 @@ export default function Patients() {
               </DialogDescription>
             </DialogHeader>
             <Tabs defaultValue="details" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="details">Details & Insurance</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="intake" className="relative">
+                  Intake
+                  {selectedPatient.intakeCompletedAt && (
+                    <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block" />
+                  )}
+                </TabsTrigger>
                 <TabsTrigger value="billing">Billing</TabsTrigger>
-                <TabsTrigger value="progress-notes">Progress Notes</TabsTrigger>
+                <TabsTrigger value="progress-notes">Notes</TabsTrigger>
               </TabsList>
 
               <TabsContent value="billing" className="mt-4">
@@ -803,6 +1111,10 @@ export default function Patients() {
                   patientId={selectedPatient.id}
                   patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
                 />
+              </TabsContent>
+
+              <TabsContent value="intake" className="mt-4">
+                <PatientIntakeDataView patient={selectedPatient} />
               </TabsContent>
 
               <TabsContent value="details" className="mt-4">
