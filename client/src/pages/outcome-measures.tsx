@@ -170,8 +170,9 @@ export default function OutcomeMeasures() {
 
   const getSeverityColor = (severity: string) => {
     switch (severity?.toLowerCase()) {
-      case "minimal":
       case "none":
+        return "bg-emerald-100 text-emerald-800";
+      case "minimal":
         return "bg-green-100 text-green-800";
       case "mild":
         return "bg-yellow-100 text-yellow-800";
@@ -230,185 +231,276 @@ export default function OutcomeMeasures() {
     });
   };
 
-  // Default OT-specific outcome measure templates
-  const fimOptions = [
-    { value: 1, label: "Total Assistance" },
-    { value: 2, label: "Maximal Assistance" },
-    { value: 3, label: "Moderate Assistance" },
-    { value: 4, label: "Minimal Assistance" },
-    { value: 5, label: "Supervision" },
-    { value: 6, label: "Modified Independence" },
-    { value: 7, label: "Complete Independence" },
+  // Standard score options for recording subtest standard scores (mean=10, SD=3)
+  const standardScoreOptions = [
+    { value: 1, label: "1 - Very Poor" },
+    { value: 2, label: "2 - Very Poor" },
+    { value: 3, label: "3 - Poor" },
+    { value: 4, label: "4 - Below Average" },
+    { value: 5, label: "5 - Below Average" },
+    { value: 6, label: "6 - Below Average" },
+    { value: 7, label: "7 - Average" },
+    { value: 8, label: "8 - Average" },
+    { value: 9, label: "9 - Average" },
+    { value: 10, label: "10 - Average" },
+    { value: 11, label: "11 - Average" },
+    { value: 12, label: "12 - Above Average" },
+    { value: 13, label: "13 - Above Average" },
+    { value: 14, label: "14 - Above Average" },
+    { value: 15, label: "15 - Superior" },
+    { value: 16, label: "16 - Superior" },
+    { value: 17, label: "17 - Very Superior" },
+    { value: 18, label: "18 - Very Superior" },
+    { value: 19, label: "19 - Very Superior" },
+    { value: 20, label: "20 - Very Superior" },
   ];
 
-  const barthelOptions = [
-    { value: 0, label: "Unable" },
-    { value: 5, label: "Needs Help" },
-    { value: 10, label: "Independent" },
+  // BOT composite score options (mean=50, SD=10)
+  const compositeScoreOptions = [
+    { value: 20, label: "20 - Well-Below Average" },
+    { value: 25, label: "25 - Well-Below Average" },
+    { value: 30, label: "30 - Below Average" },
+    { value: 35, label: "35 - Below Average" },
+    { value: 40, label: "40 - Below Average" },
+    { value: 45, label: "45 - Average" },
+    { value: 50, label: "50 - Average" },
+    { value: 55, label: "55 - Average" },
+    { value: 60, label: "60 - Above Average" },
+    { value: 65, label: "65 - Above Average" },
+    { value: 70, label: "70 - Above Average" },
+    { value: 75, label: "75 - Well-Above Average" },
+    { value: 80, label: "80 - Well-Above Average" },
   ];
 
-  const bergOptions = [
-    { value: 0, label: "Unable/Lowest" },
-    { value: 1, label: "Needs Assistance" },
-    { value: 2, label: "Needs Supervision" },
-    { value: 3, label: "Minimal Difficulty" },
-    { value: 4, label: "Independent/Safe" },
+  // Peabody quotient score options (mean=100, SD=15)
+  const quotientScoreOptions = [
+    { value: 55, label: "55 - Very Poor" },
+    { value: 60, label: "60 - Very Poor" },
+    { value: 65, label: "65 - Very Poor" },
+    { value: 70, label: "70 - Poor" },
+    { value: 75, label: "75 - Poor" },
+    { value: 80, label: "80 - Below Average" },
+    { value: 85, label: "85 - Below Average" },
+    { value: 90, label: "90 - Average" },
+    { value: 95, label: "95 - Average" },
+    { value: 100, label: "100 - Average" },
+    { value: 105, label: "105 - Average" },
+    { value: 110, label: "110 - Average" },
+    { value: 115, label: "115 - Above Average" },
+    { value: 120, label: "120 - Above Average" },
+    { value: 125, label: "125 - Superior" },
+    { value: 130, label: "130 - Superior" },
+    { value: 135, label: "135 - Very Superior" },
+    { value: 140, label: "140 - Very Superior" },
+    { value: 145, label: "145 - Very Superior" },
   ];
 
+  // Default pediatric OT outcome measure templates
   const defaultTemplates: OutcomeMeasureTemplate[] = [
     {
       id: 1,
-      name: "Barthel Index",
-      abbreviation: "BI",
-      description: "Measures performance in basic activities of daily living",
-      category: "ADL",
-      maxScore: 100,
+      name: "Peabody Developmental Motor Scales (PDMS-2)",
+      abbreviation: "PDMS-2",
+      description: "Assesses gross and fine motor skills in children birth through 5 years. Record subtest standard scores after administering the test.",
+      category: "Motor Development",
+      maxScore: 120,
       isActive: true,
       questions: [
-        { id: 1, text: "Feeding", options: [{ value: 0, label: "Unable" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
-        { id: 2, text: "Bathing", options: [{ value: 0, label: "Dependent" }, { value: 5, label: "Independent" }] },
-        { id: 3, text: "Grooming", options: [{ value: 0, label: "Needs Help" }, { value: 5, label: "Independent" }] },
-        { id: 4, text: "Dressing", options: [{ value: 0, label: "Dependent" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
-        { id: 5, text: "Bowel Control", options: [{ value: 0, label: "Incontinent" }, { value: 5, label: "Occasional Accident" }, { value: 10, label: "Continent" }] },
-        { id: 6, text: "Bladder Control", options: [{ value: 0, label: "Incontinent" }, { value: 5, label: "Occasional Accident" }, { value: 10, label: "Continent" }] },
-        { id: 7, text: "Toilet Use", options: [{ value: 0, label: "Dependent" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
-        { id: 8, text: "Transfers (bed to chair)", options: [{ value: 0, label: "Unable" }, { value: 5, label: "Major Help" }, { value: 10, label: "Minor Help" }, { value: 15, label: "Independent" }] },
-        { id: 9, text: "Mobility", options: [{ value: 0, label: "Immobile" }, { value: 5, label: "Wheelchair Independent" }, { value: 10, label: "Walks with Help" }, { value: 15, label: "Independent" }] },
-        { id: 10, text: "Stairs", options: [{ value: 0, label: "Unable" }, { value: 5, label: "Needs Help" }, { value: 10, label: "Independent" }] },
+        { id: 1, text: "Reflexes (birth-11 months only, enter 0 if N/A)", options: standardScoreOptions },
+        { id: 2, text: "Stationary (body control & equilibrium)", options: standardScoreOptions },
+        { id: 3, text: "Locomotion (crawling, walking, running, hopping)", options: standardScoreOptions },
+        { id: 4, text: "Object Manipulation (catching, throwing, kicking)", options: standardScoreOptions },
+        { id: 5, text: "Grasping (hand & finger use)", options: standardScoreOptions },
+        { id: 6, text: "Visual-Motor Integration (eye-hand coordination, copying, drawing)", options: standardScoreOptions },
       ],
       scoringRanges: [
-        { min: 0, max: 20, label: "Total Dependence", severity: "severe" },
-        { min: 21, max: 60, label: "Severe Dependence", severity: "moderately severe" },
-        { min: 61, max: 90, label: "Moderate Dependence", severity: "moderate" },
-        { min: 91, max: 99, label: "Slight Dependence", severity: "mild" },
-        { min: 100, max: 100, label: "Independent", severity: "minimal" },
+        { min: 0, max: 30, label: "Very Poor", severity: "severe" },
+        { min: 31, max: 48, label: "Poor", severity: "moderately severe" },
+        { min: 49, max: 60, label: "Below Average", severity: "moderate" },
+        { min: 61, max: 78, label: "Average", severity: "minimal" },
+        { min: 79, max: 96, label: "Above Average", severity: "none" },
+        { min: 97, max: 120, label: "Superior", severity: "none" },
       ],
     },
     {
       id: 2,
-      name: "Berg Balance Scale",
-      abbreviation: "BBS",
-      description: "Assesses balance and fall risk in adults",
-      category: "Balance",
-      maxScore: 56,
+      name: "Peabody Developmental Motor Scales - Gross Motor Quotient",
+      abbreviation: "PDMS-GMQ",
+      description: "Gross Motor Quotient from PDMS-2: combines Reflexes, Stationary, Locomotion, and Object Manipulation subtest scores.",
+      category: "Gross Motor",
+      maxScore: 145,
       isActive: true,
       questions: [
-        { id: 1, text: "Sitting to standing", options: bergOptions },
-        { id: 2, text: "Standing unsupported", options: bergOptions },
-        { id: 3, text: "Sitting unsupported", options: bergOptions },
-        { id: 4, text: "Standing to sitting", options: bergOptions },
-        { id: 5, text: "Transfers", options: bergOptions },
-        { id: 6, text: "Standing with eyes closed", options: bergOptions },
-        { id: 7, text: "Standing with feet together", options: bergOptions },
-        { id: 8, text: "Reaching forward with outstretched arm", options: bergOptions },
-        { id: 9, text: "Retrieving object from floor", options: bergOptions },
-        { id: 10, text: "Turning to look behind", options: bergOptions },
-        { id: 11, text: "Turning 360 degrees", options: bergOptions },
-        { id: 12, text: "Placing alternate foot on stool", options: bergOptions },
-        { id: 13, text: "Standing with one foot in front", options: bergOptions },
-        { id: 14, text: "Standing on one foot", options: bergOptions },
+        { id: 1, text: "Gross Motor Quotient (GMQ)", options: quotientScoreOptions },
       ],
       scoringRanges: [
-        { min: 0, max: 20, label: "High Fall Risk", severity: "severe" },
-        { min: 21, max: 40, label: "Medium Fall Risk", severity: "moderate" },
-        { min: 41, max: 56, label: "Low Fall Risk", severity: "minimal" },
+        { min: 55, max: 69, label: "Very Poor", severity: "severe" },
+        { min: 70, max: 79, label: "Poor", severity: "moderately severe" },
+        { min: 80, max: 89, label: "Below Average", severity: "moderate" },
+        { min: 90, max: 110, label: "Average", severity: "minimal" },
+        { min: 111, max: 120, label: "Above Average", severity: "none" },
+        { min: 121, max: 145, label: "Superior", severity: "none" },
       ],
     },
     {
       id: 3,
-      name: "Lawton IADL Scale",
-      abbreviation: "IADL",
-      description: "Measures instrumental activities of daily living",
-      category: "IADL",
-      maxScore: 8,
+      name: "Peabody Developmental Motor Scales - Fine Motor Quotient",
+      abbreviation: "PDMS-FMQ",
+      description: "Fine Motor Quotient from PDMS-2: combines Grasping and Visual-Motor Integration subtest scores.",
+      category: "Fine Motor",
+      maxScore: 145,
       isActive: true,
       questions: [
-        { id: 1, text: "Ability to use telephone", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 2, text: "Shopping", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 3, text: "Food preparation", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 4, text: "Housekeeping", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 5, text: "Laundry", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 6, text: "Transportation", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 7, text: "Medication management", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
-        { id: 8, text: "Finances", options: [{ value: 0, label: "Unable" }, { value: 1, label: "Independent" }] },
+        { id: 1, text: "Fine Motor Quotient (FMQ)", options: quotientScoreOptions },
       ],
       scoringRanges: [
-        { min: 0, max: 2, label: "Severe Impairment", severity: "severe" },
-        { min: 3, max: 5, label: "Moderate Impairment", severity: "moderate" },
-        { min: 6, max: 7, label: "Mild Impairment", severity: "mild" },
-        { min: 8, max: 8, label: "Independent", severity: "minimal" },
+        { min: 55, max: 69, label: "Very Poor", severity: "severe" },
+        { min: 70, max: 79, label: "Poor", severity: "moderately severe" },
+        { min: 80, max: 89, label: "Below Average", severity: "moderate" },
+        { min: 90, max: 110, label: "Average", severity: "minimal" },
+        { min: 111, max: 120, label: "Above Average", severity: "none" },
+        { min: 121, max: 145, label: "Superior", severity: "none" },
       ],
     },
     {
       id: 4,
-      name: "Quick DASH",
-      abbreviation: "QuickDASH",
-      description: "Upper extremity functional outcome measure",
-      category: "Upper Extremity",
-      maxScore: 100,
+      name: "Peabody Developmental Motor Scales - Total Motor Quotient",
+      abbreviation: "PDMS-TMQ",
+      description: "Total Motor Quotient from PDMS-2: overall motor composite combining all subtests.",
+      category: "Motor Development",
+      maxScore: 145,
       isActive: true,
       questions: [
-        { id: 1, text: "Open a tight or new jar", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
-        { id: 2, text: "Do heavy household chores", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
-        { id: 3, text: "Carry a shopping bag or briefcase", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
-        { id: 4, text: "Wash your back", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
-        { id: 5, text: "Use a knife to cut food", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
-        { id: 6, text: "Recreational activities with arm force/impact", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
-        { id: 7, text: "Arm/shoulder/hand problem interfering with social activities", options: [{ value: 1, label: "Not at All" }, { value: 2, label: "Slightly" }, { value: 3, label: "Moderately" }, { value: 4, label: "Quite a Bit" }, { value: 5, label: "Extremely" }] },
-        { id: 8, text: "Limited in work or daily activities", options: [{ value: 1, label: "Not at All" }, { value: 2, label: "Slightly" }, { value: 3, label: "Moderately" }, { value: 4, label: "Quite a Bit" }, { value: 5, label: "Extremely" }] },
-        { id: 9, text: "Arm/shoulder/hand pain severity", options: [{ value: 1, label: "None" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Extreme" }] },
-        { id: 10, text: "Tingling (pins and needles) in arm/shoulder/hand", options: [{ value: 1, label: "None" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Extreme" }] },
-        { id: 11, text: "Difficulty sleeping due to pain", options: [{ value: 1, label: "No Difficulty" }, { value: 2, label: "Mild" }, { value: 3, label: "Moderate" }, { value: 4, label: "Severe" }, { value: 5, label: "Unable" }] },
+        { id: 1, text: "Total Motor Quotient (TMQ)", options: quotientScoreOptions },
       ],
       scoringRanges: [
-        { min: 0, max: 25, label: "No/Minimal Disability", severity: "minimal" },
-        { min: 26, max: 50, label: "Mild Disability", severity: "mild" },
-        { min: 51, max: 75, label: "Moderate Disability", severity: "moderate" },
-        { min: 76, max: 100, label: "Severe Disability", severity: "severe" },
+        { min: 55, max: 69, label: "Very Poor", severity: "severe" },
+        { min: 70, max: 79, label: "Poor", severity: "moderately severe" },
+        { min: 80, max: 89, label: "Below Average", severity: "moderate" },
+        { min: 90, max: 110, label: "Average", severity: "minimal" },
+        { min: 111, max: 120, label: "Above Average", severity: "none" },
+        { min: 121, max: 145, label: "Superior", severity: "none" },
       ],
     },
     {
       id: 5,
-      name: "Montreal Cognitive Assessment",
-      abbreviation: "MoCA",
-      description: "Cognitive screening for mild cognitive impairment",
-      category: "Cognitive",
-      maxScore: 30,
+      name: "Bruininks-Oseretsky Test of Motor Proficiency (BOT-2)",
+      abbreviation: "BOT-2",
+      description: "Assesses fine and gross motor proficiency in individuals ages 4-21. Record subtest scale scores after administering the test.",
+      category: "Motor Proficiency",
+      maxScore: 160,
       isActive: true,
       questions: [
-        { id: 1, text: "Visuospatial/Executive (Trail Making)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 2, text: "Visuospatial/Executive (Cube Copy)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 3, text: "Visuospatial/Executive (Clock Drawing - Contour)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 4, text: "Visuospatial/Executive (Clock Drawing - Numbers)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 5, text: "Visuospatial/Executive (Clock Drawing - Hands)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 6, text: "Naming (Lion)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 7, text: "Naming (Rhinoceros)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 8, text: "Naming (Camel)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 9, text: "Attention (Digit Span Forward)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 10, text: "Attention (Digit Span Backward)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 11, text: "Attention (Vigilance)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 12, text: "Attention (Serial 7s)", options: [{ value: 0, label: "0-1 Correct" }, { value: 1, label: "2-3 Correct" }, { value: 2, label: "4-5 Correct" }, { value: 3, label: "All Correct" }] },
-        { id: 13, text: "Language (Sentence Repetition 1)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 14, text: "Language (Sentence Repetition 2)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 15, text: "Language (Verbal Fluency)", options: [{ value: 0, label: "<11 words" }, { value: 1, label: "11+ words" }] },
-        { id: 16, text: "Abstraction (Similarity 1)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 17, text: "Abstraction (Similarity 2)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 18, text: "Delayed Recall (Word 1)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
-        { id: 19, text: "Delayed Recall (Word 2)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
-        { id: 20, text: "Delayed Recall (Word 3)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
-        { id: 21, text: "Delayed Recall (Word 4)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
-        { id: 22, text: "Delayed Recall (Word 5)", options: [{ value: 0, label: "Not Recalled" }, { value: 1, label: "Recalled" }] },
-        { id: 23, text: "Orientation (Date)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 24, text: "Orientation (Month)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 25, text: "Orientation (Year)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 26, text: "Orientation (Day)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 27, text: "Orientation (Place)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
-        { id: 28, text: "Orientation (City)", options: [{ value: 0, label: "Incorrect" }, { value: 1, label: "Correct" }] },
+        { id: 1, text: "Fine Motor Precision (drawing, cutting, coloring within lines)", options: standardScoreOptions },
+        { id: 2, text: "Fine Motor Integration (copying shapes, reproducing drawings)", options: standardScoreOptions },
+        { id: 3, text: "Manual Dexterity (goal-directed hand activities, pegboard, bead stringing)", options: standardScoreOptions },
+        { id: 4, text: "Bilateral Coordination (sequential & simultaneous bilateral movements)", options: standardScoreOptions },
+        { id: 5, text: "Balance (static & dynamic balance activities)", options: standardScoreOptions },
+        { id: 6, text: "Running Speed & Agility (shuttle run, stepping, hopping)", options: standardScoreOptions },
+        { id: 7, text: "Upper-Limb Coordination (catching, throwing, dribbling)", options: standardScoreOptions },
+        { id: 8, text: "Strength (push-ups, sit-ups, standing long jump)", options: standardScoreOptions },
       ],
       scoringRanges: [
-        { min: 0, max: 17, label: "Moderate Impairment", severity: "severe" },
-        { min: 18, max: 25, label: "Mild Cognitive Impairment", severity: "moderate" },
-        { min: 26, max: 30, label: "Normal", severity: "minimal" },
+        { min: 0, max: 40, label: "Well-Below Average", severity: "severe" },
+        { min: 41, max: 64, label: "Below Average", severity: "moderate" },
+        { min: 65, max: 96, label: "Average", severity: "minimal" },
+        { min: 97, max: 120, label: "Above Average", severity: "none" },
+        { min: 121, max: 160, label: "Well-Above Average", severity: "none" },
+      ],
+    },
+    {
+      id: 6,
+      name: "BOT-2 Fine Manual Control Composite",
+      abbreviation: "BOT-2 FMC",
+      description: "Fine Manual Control composite from BOT-2: combines Fine Motor Precision and Fine Motor Integration.",
+      category: "Fine Motor",
+      maxScore: 80,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Fine Manual Control Composite Score", options: compositeScoreOptions },
+      ],
+      scoringRanges: [
+        { min: 20, max: 30, label: "Well-Below Average", severity: "severe" },
+        { min: 31, max: 40, label: "Below Average", severity: "moderate" },
+        { min: 41, max: 59, label: "Average", severity: "minimal" },
+        { min: 60, max: 69, label: "Above Average", severity: "none" },
+        { min: 70, max: 80, label: "Well-Above Average", severity: "none" },
+      ],
+    },
+    {
+      id: 7,
+      name: "BOT-2 Manual Coordination Composite",
+      abbreviation: "BOT-2 MC",
+      description: "Manual Coordination composite from BOT-2: combines Manual Dexterity and Upper-Limb Coordination.",
+      category: "Motor Proficiency",
+      maxScore: 80,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Manual Coordination Composite Score", options: compositeScoreOptions },
+      ],
+      scoringRanges: [
+        { min: 20, max: 30, label: "Well-Below Average", severity: "severe" },
+        { min: 31, max: 40, label: "Below Average", severity: "moderate" },
+        { min: 41, max: 59, label: "Average", severity: "minimal" },
+        { min: 60, max: 69, label: "Above Average", severity: "none" },
+        { min: 70, max: 80, label: "Well-Above Average", severity: "none" },
+      ],
+    },
+    {
+      id: 8,
+      name: "BOT-2 Body Coordination Composite",
+      abbreviation: "BOT-2 BC",
+      description: "Body Coordination composite from BOT-2: combines Bilateral Coordination and Balance.",
+      category: "Gross Motor",
+      maxScore: 80,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Body Coordination Composite Score", options: compositeScoreOptions },
+      ],
+      scoringRanges: [
+        { min: 20, max: 30, label: "Well-Below Average", severity: "severe" },
+        { min: 31, max: 40, label: "Below Average", severity: "moderate" },
+        { min: 41, max: 59, label: "Average", severity: "minimal" },
+        { min: 60, max: 69, label: "Above Average", severity: "none" },
+        { min: 70, max: 80, label: "Well-Above Average", severity: "none" },
+      ],
+    },
+    {
+      id: 9,
+      name: "BOT-2 Strength & Agility Composite",
+      abbreviation: "BOT-2 SA",
+      description: "Strength & Agility composite from BOT-2: combines Running Speed & Agility and Strength.",
+      category: "Gross Motor",
+      maxScore: 80,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Strength & Agility Composite Score", options: compositeScoreOptions },
+      ],
+      scoringRanges: [
+        { min: 20, max: 30, label: "Well-Below Average", severity: "severe" },
+        { min: 31, max: 40, label: "Below Average", severity: "moderate" },
+        { min: 41, max: 59, label: "Average", severity: "minimal" },
+        { min: 60, max: 69, label: "Above Average", severity: "none" },
+        { min: 70, max: 80, label: "Well-Above Average", severity: "none" },
+      ],
+    },
+    {
+      id: 10,
+      name: "BOT-2 Total Motor Composite",
+      abbreviation: "BOT-2 TMC",
+      description: "Total Motor Composite from BOT-2: overall motor proficiency combining all 8 subtests.",
+      category: "Motor Proficiency",
+      maxScore: 80,
+      isActive: true,
+      questions: [
+        { id: 1, text: "Total Motor Composite Score", options: compositeScoreOptions },
+      ],
+      scoringRanges: [
+        { min: 20, max: 30, label: "Well-Below Average", severity: "severe" },
+        { min: 31, max: 40, label: "Below Average", severity: "moderate" },
+        { min: 41, max: 59, label: "Average", severity: "minimal" },
+        { min: 60, max: 69, label: "Above Average", severity: "none" },
+        { min: 70, max: 80, label: "Well-Above Average", severity: "none" },
       ],
     },
   ];
@@ -420,7 +512,7 @@ export default function OutcomeMeasures() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Outcome Measures</h1>
         <p className="text-muted-foreground mt-1">
-          Track patient functional progress with standardized OT assessments
+          Track patient motor development with Peabody (PDMS-2) and BOT-2 assessments
         </p>
       </div>
 
@@ -480,11 +572,10 @@ export default function OutcomeMeasures() {
                   <div className="flex items-center justify-between">
                     <Badge variant="outline">{template.abbreviation}</Badge>
                     <Badge className={
-                      template.category === "ADL" ? "bg-blue-100 text-blue-800" :
-                      template.category === "IADL" ? "bg-purple-100 text-purple-800" :
-                      template.category === "Balance" ? "bg-orange-100 text-orange-800" :
-                      template.category === "Upper Extremity" ? "bg-green-100 text-green-800" :
-                      template.category === "Cognitive" ? "bg-pink-100 text-pink-800" :
+                      template.category === "Motor Development" ? "bg-blue-100 text-blue-800" :
+                      template.category === "Motor Proficiency" ? "bg-indigo-100 text-indigo-800" :
+                      template.category === "Fine Motor" ? "bg-green-100 text-green-800" :
+                      template.category === "Gross Motor" ? "bg-orange-100 text-orange-800" :
                       "bg-gray-100 text-gray-800"
                     }>
                       {template.category}
