@@ -139,6 +139,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
         // Attach user practice info for multi-tenancy authorization
         (req as any).userPracticeId = dbUser.practiceId;
         (req as any).userRole = dbUser.role;
+        (req as any).userEmail = dbUser.email;
       }
     } catch (error) {
       console.error('Error fetching user practice info:', error);

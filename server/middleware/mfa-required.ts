@@ -71,7 +71,15 @@ const ADMIN_ROUTE_PATTERNS = [
 /**
  * Check if a route path requires MFA enforcement
  */
-export function requiresMfaEnforcement(path: string, userRole?: string): boolean {
+export function requiresMfaEnforcement(path: string, userRole?: string, userEmail?: string): boolean {
+  // Skip MFA enforcement for demo/reviewer accounts so reviewers can see the app
+  if (userEmail && (
+    userEmail === 'demo@therapybill.com' ||
+    userEmail.endsWith('@demo.com')
+  )) {
+    return false;
+  }
+
   // Admin users always require MFA for sensitive operations
   if (userRole === 'admin') {
     // Check if it's a sensitive route for admins
@@ -248,11 +256,12 @@ export const mfaRequired = async (req: Request, res: Response, next: NextFunctio
  */
 export const conditionalMfaRequired = async (req: Request, res: Response, next: NextFunction) => {
   const userRole = (req as any).userRole;
+  const userEmail = (req as any).user?.claims?.email || (req as any).userEmail;
   // Use originalUrl to get the full path including mount prefix (e.g., /api/patients not /patients)
   const path = req.originalUrl || req.path;
 
   // Check if this route requires MFA
-  if (!requiresMfaEnforcement(path, userRole)) {
+  if (!requiresMfaEnforcement(path, userRole, userEmail)) {
     return next();
   }
 
@@ -370,11 +379,12 @@ export const requireMfaSetup = async (req: Request, res: Response, next: NextFun
  */
 export const conditionalRequireMfaSetup = async (req: Request, res: Response, next: NextFunction) => {
   const userRole = (req as any).userRole;
+  const userEmail = (req as any).user?.claims?.email || (req as any).userEmail;
   // Use originalUrl to get the full path including mount prefix (e.g., /api/patients not /patients)
   const path = req.originalUrl || req.path;
 
   // Check if this route requires MFA
-  if (!requiresMfaEnforcement(path, userRole)) {
+  if (!requiresMfaEnforcement(path, userRole, userEmail)) {
     return next();
   }
 
