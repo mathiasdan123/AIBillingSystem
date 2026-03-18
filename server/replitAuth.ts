@@ -146,15 +146,14 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     }
   }
 
-  // Check token expiration
-  if (!user.expires_at) {
-    return res.status(401).json({ message: "Session expired" });
+  // Check token expiration (only for OAuth/token-based auth, not local password auth)
+  if (user.expires_at) {
+    const now = Math.floor(Date.now() / 1000);
+    if (now > user.expires_at) {
+      return res.status(401).json({ message: "Session expired" });
+    }
   }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (now > user.expires_at) {
-    return res.status(401).json({ message: "Session expired" });
-  }
+  // Local auth sessions don't have expires_at — session expiry is handled by express-session maxAge
 
   return next();
 };
