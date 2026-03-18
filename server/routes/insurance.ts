@@ -18,7 +18,7 @@
 
 import { Router, type Response, type NextFunction } from 'express';
 import multer from 'multer';
-import * as pdfParse from 'pdf-parse';
+// pdf-parse imported dynamically to avoid pdfjs-dist DOMMatrix crash at startup in Node.js
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
@@ -236,6 +236,7 @@ router.post('/insurance-rates/extract-text', uploadLimiter, isAuthenticated, upl
     const mimeType = req.file.mimetype;
 
     if (mimeType === 'application/pdf') {
+      const pdfParse = await import('pdf-parse');
       const pdfData = await (pdfParse as any).default(req.file.buffer);
       text = pdfData.text;
     } else if (mimeType === 'text/plain') {
