@@ -124,6 +124,103 @@ export async function seedDatabase() {
       await db.execute(sql`UPDATE users SET practice_id = ${pId2} WHERE email = 'reviewer2@demo.com' AND practice_id IS NULL`);
     }
 
+    // Always ensure sample patients exist for demo/review purposes
+    const existingPatients = await db.execute(sql`SELECT COUNT(*) as count FROM patients`);
+    const patientCount = parseInt(existingPatients.rows[0]?.count || '0', 10);
+    if (patientCount === 0) {
+      console.log("Seeding sample patients...");
+      const practiceForPatients = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
+      if (practiceForPatients.rows && practiceForPatients.rows.length > 0) {
+        const pId = parseInt(practiceForPatients.rows[0].id as string, 10);
+        await db.insert(patients).values([
+          {
+            practiceId: pId,
+            firstName: "Liam",
+            lastName: "Martinez",
+            dateOfBirth: "2019-06-12",
+            email: "rosa.martinez@email.com",
+            phone: "(555) 234-5678",
+            address: "456 Oak Street, Wellness City, WC 12345",
+            insuranceProvider: "Blue Cross Blue Shield",
+            insuranceId: "BCBS123456789",
+            policyNumber: "POL-2024-001",
+            groupNumber: "GRP-100",
+          },
+          {
+            practiceId: pId,
+            firstName: "Olivia",
+            lastName: "Thompson",
+            dateOfBirth: "2020-03-08",
+            email: "karen.thompson@email.com",
+            phone: "(555) 345-6789",
+            address: "789 Maple Avenue, Wellness City, WC 12346",
+            insuranceProvider: "Aetna",
+            insuranceId: "AET987654321",
+            policyNumber: "POL-2024-002",
+            groupNumber: "GRP-200",
+          },
+          {
+            practiceId: pId,
+            firstName: "Ethan",
+            lastName: "Williams",
+            dateOfBirth: "2018-11-22",
+            email: "james.williams@email.com",
+            phone: "(555) 456-7890",
+            address: "321 Pine Road, Wellness City, WC 12347",
+            insuranceProvider: "UnitedHealth",
+            insuranceId: "UHC456789123",
+            policyNumber: "POL-2024-003",
+            groupNumber: "GRP-300",
+          },
+          {
+            practiceId: pId,
+            firstName: "Sophia",
+            lastName: "Chen",
+            dateOfBirth: "2021-01-15",
+            email: "mei.chen@email.com",
+            phone: "(555) 567-8901",
+            address: "654 Elm Court, Wellness City, WC 12348",
+            insuranceProvider: "Cigna",
+            insuranceId: "CIG789123456",
+            policyNumber: "POL-2024-004",
+            groupNumber: "GRP-400",
+          },
+          {
+            practiceId: pId,
+            firstName: "Noah",
+            lastName: "Patel",
+            dateOfBirth: "2017-08-30",
+            email: "priya.patel@email.com",
+            phone: "(555) 678-9012",
+            address: "987 Birch Lane, Wellness City, WC 12349",
+            insuranceProvider: "Medicare",
+            insuranceId: "MED321654987",
+            policyNumber: "POL-2024-005",
+            groupNumber: "GRP-500",
+            secondaryInsuranceProvider: "Medicaid",
+            secondaryInsurancePolicyNumber: "MCD-2024-005",
+            secondaryInsuranceMemberId: "MCD987321654",
+          },
+          {
+            practiceId: pId,
+            firstName: "Ava",
+            lastName: "Robinson",
+            dateOfBirth: "2020-09-17",
+            email: "tanya.robinson@email.com",
+            phone: "(555) 789-0123",
+            address: "246 Cedar Drive, Wellness City, WC 12350",
+            insuranceProvider: "Humana",
+            insuranceId: "HUM654987321",
+            policyNumber: "POL-2024-006",
+            groupNumber: "GRP-600",
+          },
+        ]).onConflictDoNothing();
+        console.log("Sample patients seeded: 6 pediatric patients");
+      }
+    } else {
+      console.log(`${patientCount} patients already exist`);
+    }
+
     // Check if data already exists
     const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
     const count = parseInt(result.rows[0]?.count || '0', 10);
