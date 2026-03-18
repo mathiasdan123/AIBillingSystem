@@ -686,12 +686,8 @@ export default function DataImport() {
         });
 
         if (!res.ok) {
-          if (res.status === 401) {
-            window.location.href = '/api/login';
-            return;
-          }
           const err = await res.json().catch(() => ({ message: `Server error (${res.status})` }));
-          throw new Error(err.message || 'Upload failed');
+          throw new Error(err.message || err.error?.message || `Upload failed (${res.status})`);
         }
 
         const result: UploadResult = await res.json();
@@ -728,10 +724,6 @@ export default function DataImport() {
           description: msg,
           variant: 'destructive',
         });
-        // If session expired, redirect to login
-        if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
-          setTimeout(() => { window.location.href = '/api/login'; }, 1500);
-        }
       } finally {
         setIsUploading(false);
       }
