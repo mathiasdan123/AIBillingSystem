@@ -19,6 +19,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useForm } from "react-hook-form";
@@ -69,6 +70,544 @@ interface Claim {
     overallRecommendation: string;
     analyzedAt: string;
   } | null;
+}
+
+// Comprehensive claim detail component with tabs for billing, payments, and status
+function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation }: {
+  claim: any;
+  lineItems: any[];
+  loadingLineItems: boolean;
+  appeals: any[];
+  loadingAppeals: boolean;
+  getPatientName: (id: number) => string;
+  getInsuranceName: (id: number) => string;
+  getStatusBadge: (status: string) => string;
+  submitSecondaryMutation: any;
+  regenerateAppealMutation: any;
+}) {
+  const [showAppealLetter, setShowAppealLetter] = useState(false);
+  const { toast } = useToast();
+
+  // Fetch payment postings for this claim
+  const { data: paymentPostings = [] } = useQuery<any[]>({
+    queryKey: [`/api/payment-postings/claim/${claim.id}`],
+    enabled: !!claim.id,
+  });
+
+  const billed = parseFloat(claim.totalAmount || '0');
+  const paid = parseFloat(claim.paidAmount || '0');
+  const totalPaymentAmount = paymentPostings.reduce((sum: number, p: any) => sum + parseFloat(p.paymentAmount || '0'), 0);
+  const totalAdjustment = paymentPostings.reduce((sum: number, p: any) => sum + parseFloat(p.adjustmentAmount || '0'), 0);
+  const totalPatientResp = paymentPostings.reduce((sum: number, p: any) => sum + parseFloat(p.patientResponsibility || '0'), 0);
+  const totalDeductible = paymentPostings.reduce((sum: number, p: any) => sum + parseFloat(p.deductibleApplied || '0'), 0);
+  const totalCoinsurance = paymentPostings.reduce((sum: number, p: any) => sum + parseFloat(p.coinsuranceAmount || '0'), 0);
+  const totalCopay = paymentPostings.reduce((sum: number, p: any) => sum + parseFloat(p.copayAmount || '0'), 0);
+  const allowedAmount = paymentPostings.length > 0 ? parseFloat(paymentPostings[0].allowedAmount || '0') : 0;
+
+  const copyAppealLetter = (letter: string) => {
+    navigator.clipboard.writeText(letter);
+    toast({ title: "Copied", description: "Appeal letter copied to clipboard" });
+  };
+
+  return (
+    <Tabs defaultValue="billing" className="w-full">
+      <TabsList className="grid w-full grid-cols-4">
+        <TabsTrigger value="billing">Billing</TabsTrigger>
+        <TabsTrigger value="payments">Payments</TabsTrigger>
+        <TabsTrigger value="status">Status</TabsTrigger>
+        <TabsTrigger value="appeals">Appeals</TabsTrigger>
+      </TabsList>
+
+      {/* TAB 1: Billing Summary */}
+      <TabsContent value="billing" className="mt-4 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label className="text-slate-500 text-xs">Patient</Label>
+            <p className="font-medium">{getPatientName(claim.patientId)}</p>
+          </div>
+          <div>
+            <Label className="text-slate-500 text-xs">Insurance</Label>
+            <p className="font-medium">{getInsuranceName(claim.insuranceId)}</p>
+          </div>
+          <div>
+            <Label className="text-slate-500 text-xs">Billed Amount</Label>
+            <p className="font-medium text-lg">${billed.toFixed(2)}</p>
+          </div>
+          <div>
+            <Label className="text-slate-500 text-xs">Paid Amount</Label>
+            <p className={`font-medium text-lg ${paid > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+              {paid > 0 ? `$${paid.toFixed(2)}` : '—'}
+            </p>
+          </div>
+          {claim.aiReviewScore && (
+            <div>
+              <Label className="text-slate-500 text-xs">AI Review Score</Label>
+              <p className="font-medium">{parseFloat(claim.aiReviewScore).toFixed(0)}%</p>
+            </div>
+          )}
+        </div>
+
+        {/* COB Info */}
+        {claim.billingOrder === 'secondary' && claim.primaryPaidAmount && (
+          <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+            <Label className="text-purple-700 font-semibold text-xs">Coordination of Benefits</Label>
+            <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+              <div>
+                <span className="text-slate-500">Primary Paid:</span>{' '}
+                <span className="font-medium text-green-600">${parseFloat(claim.primaryPaidAmount).toFixed(2)}</span>
+              </div>
+              {claim.primaryAdjustmentAmount && (
+                <div>
+                  <span className="text-slate-500">Primary Adjustment:</span>{' '}
+                  <span className="font-medium">${parseFloat(claim.primaryAdjustmentAmount).toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Line Items Table */}
+        <div className="border-t pt-4">
+          <Label className="text-slate-700 font-semibold flex items-center gap-2 mb-3">
+            <FileText className="w-4 h-4" />
+            Line Items
+          </Label>
+          {loadingLineItems ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+            </div>
+          ) : lineItems.length > 0 ? (
+            <div className="bg-slate-50 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="text-left p-2 font-medium text-slate-600">CPT</th>
+                    <th className="text-left p-2 font-medium text-slate-600">Description</th>
+                    <th className="text-center p-2 font-medium text-slate-600">Mod</th>
+                    <th className="text-center p-2 font-medium text-slate-600">Units</th>
+                    <th className="text-right p-2 font-medium text-slate-600">Rate</th>
+                    <th className="text-right p-2 font-medium text-slate-600">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((item: any, index: number) => (
+                    <tr key={index} className="border-t border-slate-200">
+                      <td className="p-2">
+                        <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                          {item.cptCode?.code || item.cptCodeId}
+                        </span>
+                      </td>
+                      <td className="p-2 text-slate-600 text-xs">{item.cptCode?.description || 'N/A'}</td>
+                      <td className="p-2 text-center text-xs">{item.modifier || '—'}</td>
+                      <td className="p-2 text-center">{item.units || 1}</td>
+                      <td className="p-2 text-right text-xs">{item.rate ? `$${parseFloat(item.rate).toFixed(2)}` : '—'}</td>
+                      <td className="p-2 text-right font-medium">${parseFloat(item.amount || item.chargeAmount || '0').toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t-2 border-slate-300 bg-slate-100">
+                  <tr>
+                    <td colSpan={5} className="p-2 text-right font-semibold">Total Billed:</td>
+                    <td className="p-2 text-right font-bold">${billed.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 text-center py-4 bg-slate-50 rounded-lg">No line items</p>
+          )}
+
+          {/* ICD-10 Diagnosis Codes */}
+          {lineItems.some((item: any) => item.icd10Code) && (
+            <div className="mt-3">
+              <Label className="text-slate-500 text-xs">Diagnosis Codes (ICD-10)</Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {lineItems.filter((item: any) => item.icd10Code).map((item: any, i: number) => (
+                  <Badge key={i} variant="outline" className="text-xs">
+                    <span className="font-mono">{item.icd10Code?.code}</span>
+                    <span className="ml-1 text-slate-500">- {item.icd10Code?.description}</span>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Secondary Insurance Submit */}
+        {claim.status === 'paid' && claim.billingOrder !== 'secondary' && (
+          <div className="border-t pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-slate-700 font-semibold">Secondary Insurance</Label>
+                <p className="text-sm text-slate-500">Submit remaining balance to secondary</p>
+              </div>
+              <Button
+                onClick={() => submitSecondaryMutation.mutate(claim.id)}
+                disabled={submitSecondaryMutation.isPending}
+                className="bg-purple-600 hover:bg-purple-700"
+                size="sm"
+              >
+                {submitSecondaryMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Copy className="w-4 h-4 mr-1" />}
+                Submit to Secondary
+              </Button>
+            </div>
+          </div>
+        )}
+      </TabsContent>
+
+      {/* TAB 2: Payment & Adjustments */}
+      <TabsContent value="payments" className="mt-4 space-y-4">
+        {/* Payment Summary Bar */}
+        <div className="bg-slate-50 rounded-lg p-4 border">
+          <Label className="text-slate-700 font-semibold mb-3 block">Payment Breakdown</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+            <div className="text-center">
+              <p className="text-xs text-slate-500 uppercase">Billed</p>
+              <p className="text-lg font-bold">${billed.toFixed(2)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-slate-500 uppercase">Allowed</p>
+              <p className="text-lg font-bold text-blue-600">{allowedAmount > 0 ? `$${allowedAmount.toFixed(2)}` : '—'}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-slate-500 uppercase">Paid</p>
+              <p className="text-lg font-bold text-green-600">${(totalPaymentAmount || paid).toFixed(2)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-slate-500 uppercase">Patient Resp.</p>
+              <p className="text-lg font-bold text-amber-600">{totalPatientResp > 0 ? `$${totalPatientResp.toFixed(2)}` : '—'}</p>
+            </div>
+          </div>
+
+          {/* Visual breakdown bar */}
+          {billed > 0 && (totalPaymentAmount > 0 || paid > 0) && (
+            <div className="w-full h-6 rounded-full overflow-hidden flex bg-slate-200">
+              {(totalPaymentAmount || paid) > 0 && (
+                <div
+                  className="bg-green-500 h-full flex items-center justify-center text-[10px] text-white font-medium"
+                  style={{ width: `${Math.min(((totalPaymentAmount || paid) / billed) * 100, 100)}%` }}
+                >
+                  Paid
+                </div>
+              )}
+              {totalAdjustment > 0 && (
+                <div
+                  className="bg-orange-400 h-full flex items-center justify-center text-[10px] text-white font-medium"
+                  style={{ width: `${Math.min((totalAdjustment / billed) * 100, 50)}%` }}
+                >
+                  Adj
+                </div>
+              )}
+              {totalPatientResp > 0 && (
+                <div
+                  className="bg-amber-400 h-full flex items-center justify-center text-[10px] text-white font-medium"
+                  style={{ width: `${Math.min((totalPatientResp / billed) * 100, 50)}%` }}
+                >
+                  Patient
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Patient Responsibility Breakdown */}
+        {(totalDeductible > 0 || totalCoinsurance > 0 || totalCopay > 0) && (
+          <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+            <Label className="text-amber-800 font-semibold text-sm mb-2 block">Patient Responsibility Breakdown</Label>
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="text-slate-500">Deductible:</span>
+                <p className="font-medium">${totalDeductible.toFixed(2)}</p>
+              </div>
+              <div>
+                <span className="text-slate-500">Coinsurance:</span>
+                <p className="font-medium">${totalCoinsurance.toFixed(2)}</p>
+              </div>
+              <div>
+                <span className="text-slate-500">Copay:</span>
+                <p className="font-medium">${totalCopay.toFixed(2)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Payment Postings Timeline */}
+        <div className="border-t pt-4">
+          <Label className="text-slate-700 font-semibold flex items-center gap-2 mb-3">
+            <DollarSign className="w-4 h-4" />
+            Payment History
+          </Label>
+          {paymentPostings.length > 0 ? (
+            <div className="space-y-3">
+              {paymentPostings.map((posting: any, index: number) => (
+                <div key={posting.id || index} className={`rounded-lg p-3 border ${posting.reversed ? 'bg-red-50 border-red-200' : 'bg-white border-slate-200'}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {posting.reversed ? (
+                        <Badge className="bg-red-100 text-red-700 text-xs">Reversed</Badge>
+                      ) : (
+                        <Badge className="bg-green-100 text-green-700 text-xs">Posted</Badge>
+                      )}
+                      <span className="text-sm font-medium">${parseFloat(posting.paymentAmount || '0').toFixed(2)}</span>
+                    </div>
+                    <span className="text-xs text-slate-500">
+                      {posting.paymentDate ? new Date(posting.paymentDate).toLocaleDateString() : '—'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+                    {posting.payerName && <div><span className="text-slate-400">Payer:</span> {posting.payerName}</div>}
+                    {posting.checkNumber && <div><span className="text-slate-400">Check/EFT:</span> {posting.checkNumber}</div>}
+                    {posting.allowedAmount && <div><span className="text-slate-400">Allowed:</span> ${parseFloat(posting.allowedAmount).toFixed(2)}</div>}
+                    {posting.adjustmentAmount && parseFloat(posting.adjustmentAmount) > 0 && (
+                      <div><span className="text-slate-400">Adjustment:</span> ${parseFloat(posting.adjustmentAmount).toFixed(2)}</div>
+                    )}
+                    {posting.adjustmentReason && <div className="col-span-2"><span className="text-slate-400">Reason:</span> {posting.adjustmentReason}</div>}
+                    {posting.remarkCode && <div className="col-span-2"><span className="text-slate-400">Remark:</span> {posting.remarkCode}</div>}
+                    {posting.reversed && posting.reversalReason && (
+                      <div className="col-span-2 text-red-600"><span className="text-red-400">Reversal Reason:</span> {posting.reversalReason}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 text-center py-6 bg-slate-50 rounded-lg">
+              {claim.status === 'paid' ? 'No detailed payment postings recorded' : 'No payments posted yet'}
+            </p>
+          )}
+        </div>
+
+        {/* Adjustment Summary */}
+        {totalAdjustment > 0 && (
+          <div className="border-t pt-4">
+            <Label className="text-slate-700 font-semibold text-sm mb-2 block">Adjustment Summary</Label>
+            <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-sm">
+              <div className="flex justify-between">
+                <span>Total Adjustments:</span>
+                <span className="font-medium text-orange-700">${totalAdjustment.toFixed(2)}</span>
+              </div>
+              {billed > 0 && (
+                <div className="flex justify-between mt-1">
+                  <span>Write-off %:</span>
+                  <span className="font-medium">{((totalAdjustment / billed) * 100).toFixed(1)}%</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </TabsContent>
+
+      {/* TAB 3: Status & Clearinghouse */}
+      <TabsContent value="status" className="mt-4 space-y-4">
+        {/* Status Timeline */}
+        <div>
+          <Label className="text-slate-700 font-semibold mb-3 block">Claim Timeline</Label>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center"><FileText className="w-4 h-4 text-blue-600" /></div>
+              <div>
+                <p className="text-sm font-medium">Created</p>
+                <p className="text-xs text-slate-500">{new Date(claim.createdAt).toLocaleString()}</p>
+              </div>
+            </div>
+            {claim.submittedAt && (
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center"><Send className="w-4 h-4 text-indigo-600" /></div>
+                <div>
+                  <p className="text-sm font-medium">Submitted</p>
+                  <p className="text-xs text-slate-500">{new Date(claim.submittedAt).toLocaleString()}</p>
+                </div>
+              </div>
+            )}
+            {claim.paidAt && (
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><CheckCircle className="w-4 h-4 text-green-600" /></div>
+                <div>
+                  <p className="text-sm font-medium">Paid</p>
+                  <p className="text-xs text-slate-500">{new Date(claim.paidAt).toLocaleString()}</p>
+                </div>
+              </div>
+            )}
+            {claim.status === 'denied' && (
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center"><XCircle className="w-4 h-4 text-red-600" /></div>
+                <div>
+                  <p className="text-sm font-medium">Denied</p>
+                  {claim.denialReason && <p className="text-xs text-red-600">{claim.denialReason}</p>}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Clearinghouse Details */}
+        {(claim.clearinghouseClaimId || claim.clearinghouseStatus) && (
+          <div className="border-t pt-4">
+            <Label className="text-slate-700 font-semibold mb-3 block">Clearinghouse</Label>
+            <div className="bg-slate-50 rounded-lg p-3 border space-y-2 text-sm">
+              {claim.clearinghouseClaimId && (
+                <div className="flex justify-between"><span className="text-slate-500">Claim ID:</span><span className="font-mono">{claim.clearinghouseClaimId}</span></div>
+              )}
+              {claim.clearinghouseStatus && (
+                <div className="flex justify-between"><span className="text-slate-500">Status:</span><Badge variant="outline">{claim.clearinghouseStatus}</Badge></div>
+              )}
+              {claim.clearinghouseSubmittedAt && (
+                <div className="flex justify-between"><span className="text-slate-500">Submitted:</span><span>{new Date(claim.clearinghouseSubmittedAt).toLocaleString()}</span></div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Clearinghouse Response */}
+        {claim.clearinghouseResponse && (
+          <div className="border-t pt-4">
+            <Label className="text-slate-700 font-semibold mb-2 block">Clearinghouse Response</Label>
+            <pre className="text-xs bg-slate-50 p-3 rounded-lg border overflow-x-auto max-h-48 overflow-y-auto">
+              {typeof claim.clearinghouseResponse === 'string'
+                ? JSON.stringify(JSON.parse(claim.clearinghouseResponse), null, 2)
+                : JSON.stringify(claim.clearinghouseResponse, null, 2)}
+            </pre>
+          </div>
+        )}
+
+        {/* Denial Prediction */}
+        {claim.denialPrediction && (
+          <div className="border-t pt-4">
+            <Label className="text-slate-700 font-semibold mb-2 block">AI Denial Prediction</Label>
+            <div className={`rounded-lg p-3 border ${
+              claim.denialPrediction.riskLevel === 'high' ? 'bg-red-50 border-red-200' :
+              claim.denialPrediction.riskLevel === 'medium' ? 'bg-yellow-50 border-yellow-200' :
+              'bg-green-50 border-green-200'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-medium">Risk Level</span>
+                <Badge className={
+                  claim.denialPrediction.riskLevel === 'high' ? 'bg-red-100 text-red-700' :
+                  claim.denialPrediction.riskLevel === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-green-100 text-green-700'
+                }>
+                  {claim.denialPrediction.riskLevel?.toUpperCase()} ({claim.denialPrediction.riskScore}%)
+                </Badge>
+              </div>
+              {claim.denialPrediction.issues?.length > 0 && (
+                <ul className="text-xs text-slate-600 space-y-1 mt-2">
+                  {claim.denialPrediction.issues.map((issue: any, i: number) => (
+                    <li key={i} className="flex items-start gap-1">
+                      <AlertCircle className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
+                      {typeof issue === 'string' ? issue : issue.description || issue.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* AI Review Notes */}
+        {claim.aiReviewNotes && (
+          <div className="border-t pt-4">
+            <Label className="text-slate-500 text-xs">AI Review Notes</Label>
+            <p className="text-sm mt-1 p-3 bg-blue-50 rounded-lg">{claim.aiReviewNotes}</p>
+          </div>
+        )}
+      </TabsContent>
+
+      {/* TAB 4: Appeals */}
+      <TabsContent value="appeals" className="mt-4 space-y-4">
+        {claim.status === 'denied' ? (
+          <>
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-700 font-semibold flex items-center gap-2">
+                <Scale className="w-4 h-4 text-blue-600" />
+                AI Appeal Recommendations
+              </Label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => regenerateAppealMutation.mutate(claim.id)}
+                disabled={regenerateAppealMutation.isPending}
+              >
+                {regenerateAppealMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                <span className="ml-1">Regenerate</span>
+              </Button>
+            </div>
+
+            {loadingAppeals ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+              </div>
+            ) : appeals.length > 0 ? (
+              <div className="space-y-4">
+                {appeals.map((appeal: any) => (
+                  <div key={appeal.id} className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Badge className={
+                          appeal.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          appeal.status === 'sent' ? 'bg-blue-100 text-blue-800' :
+                          appeal.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          'bg-red-100 text-red-800'
+                        }>
+                          {appeal.status === 'pending' ? 'Pending' : appeal.status === 'sent' ? 'Sent' : appeal.status === 'completed' ? 'Won' : 'Failed'}
+                        </Badge>
+                        <Badge variant="outline" className="bg-white">
+                          {appeal.parsedNotes?.successProbability || 0}% Success Rate
+                        </Badge>
+                      </div>
+                    </div>
+                    {appeal.parsedNotes?.keyArguments && (
+                      <div className="mb-3">
+                        <p className="text-sm font-medium text-slate-700 mb-1">Key Arguments:</p>
+                        <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                          {appeal.parsedNotes.keyArguments.slice(0, 3).map((arg: string, i: number) => (
+                            <li key={i}>{arg}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {appeal.parsedNotes?.appealLetter && (
+                      <Button variant="outline" size="sm" className="w-full mb-2" onClick={() => setShowAppealLetter(!showAppealLetter)}>
+                        <FileText className="w-4 h-4 mr-2" />
+                        {showAppealLetter ? 'Hide' : 'View'} Appeal Letter
+                      </Button>
+                    )}
+                    {showAppealLetter && appeal.parsedNotes?.appealLetter && (
+                      <div className="bg-white rounded-lg p-3 border mb-3">
+                        <div className="flex justify-end mb-1">
+                          <Button variant="ghost" size="sm" onClick={() => copyAppealLetter(appeal.parsedNotes.appealLetter)}>
+                            <Copy className="w-3 h-3 mr-1" /> Copy
+                          </Button>
+                        </div>
+                        <pre className="text-xs whitespace-pre-wrap font-mono bg-slate-50 p-3 rounded max-h-48 overflow-y-auto">
+                          {appeal.parsedNotes.appealLetter}
+                        </pre>
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-400">
+                      Generated: {new Date(appeal.parsedNotes?.generatedAt || appeal.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 bg-slate-50 rounded-lg">
+                <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No appeal generated yet</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={() => regenerateAppealMutation.mutate(claim.id)} disabled={regenerateAppealMutation.isPending}>
+                  Generate Appeal
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="text-center py-8">
+            <Scale className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+            <p className="text-slate-500">Appeals are available for denied claims</p>
+          </div>
+        )}
+      </TabsContent>
+    </Tabs>
+  );
 }
 
 export default function Claims() {
@@ -1595,380 +2134,37 @@ export default function Claims() {
 
       {/* Claim Detail Dialog - full-screen on mobile */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[700px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[800px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
           <DialogHeader>
-            <DialogTitle>Claim Details</DialogTitle>
+            <DialogTitle className="flex items-center gap-3">
+              Claim {selectedClaim?.claimNumber}
+              {selectedClaim && (
+                <Badge className={getStatusBadge(selectedClaim.status)}>
+                  {selectedClaim.status.charAt(0).toUpperCase() + selectedClaim.status.slice(1)}
+                </Badge>
+              )}
+              {selectedClaim?.billingOrder === 'secondary' && (
+                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">Secondary</Badge>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              {selectedClaim?.claimNumber}
+              {selectedClaim && `${getPatientName(selectedClaim.patientId)} · ${getInsuranceName(selectedClaim.insuranceId)}`}
             </DialogDescription>
           </DialogHeader>
           {selectedClaim && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-slate-500">Patient</Label>
-                  <p className="font-medium">{getPatientName(selectedClaim.patientId)}</p>
-                </div>
-                <div>
-                  <Label className="text-slate-500">Insurance</Label>
-                  <p className="font-medium">{getInsuranceName(selectedClaim.insuranceId)}</p>
-                </div>
-                <div>
-                  <Label className="text-slate-500">Total Amount</Label>
-                  <p className="font-medium">${parseFloat(selectedClaim.totalAmount).toFixed(2)}</p>
-                </div>
-                <div>
-                  <Label className="text-slate-500">Status</Label>
-                  <div className="flex items-center gap-2">
-                    <Badge className={getStatusBadge(selectedClaim.status)}>
-                      {selectedClaim.status.charAt(0).toUpperCase() + selectedClaim.status.slice(1)}
-                    </Badge>
-                    {selectedClaim.billingOrder === 'secondary' && (
-                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                        Secondary
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-                {selectedClaim.paidAmount && (
-                  <div>
-                    <Label className="text-slate-500">Paid Amount</Label>
-                    <p className="font-medium text-green-600">${parseFloat(selectedClaim.paidAmount).toFixed(2)}</p>
-                  </div>
-                )}
-                {selectedClaim.aiReviewScore && (
-                  <div>
-                    <Label className="text-slate-500">AI Review Score</Label>
-                    <p className="font-medium">{parseFloat(selectedClaim.aiReviewScore).toFixed(0)}%</p>
-                  </div>
-                )}
-                {/* COB / Secondary Insurance Info */}
-                {selectedClaim.billingOrder === 'secondary' && selectedClaim.primaryPaidAmount && (
-                  <div className="col-span-2 bg-purple-50 rounded-lg p-3 border border-purple-200">
-                    <Label className="text-purple-700 font-semibold">Coordination of Benefits</Label>
-                    <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-                      <div>
-                        <span className="text-slate-500">Primary Paid:</span>{' '}
-                        <span className="font-medium text-green-600">${parseFloat(selectedClaim.primaryPaidAmount).toFixed(2)}</span>
-                      </div>
-                      {selectedClaim.primaryAdjustmentAmount && (
-                        <div>
-                          <span className="text-slate-500">Primary Adjustment:</span>{' '}
-                          <span className="font-medium">${parseFloat(selectedClaim.primaryAdjustmentAmount).toFixed(2)}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+            <ClaimFullDetail
+              claim={selectedClaim}
+              lineItems={claimLineItems}
+              loadingLineItems={loadingLineItems}
+              appeals={claimAppeals}
+              loadingAppeals={loadingAppeals}
+              getPatientName={getPatientName}
+              getInsuranceName={getInsuranceName}
+              getStatusBadge={getStatusBadge}
+              submitSecondaryMutation={submitSecondaryMutation}
+              regenerateAppealMutation={regenerateAppealMutation}
+            />
 
-              {/* Line Items / Superbill Details */}
-              <div className="border-t pt-4">
-                <Label className="text-slate-700 text-base font-semibold flex items-center gap-2 mb-3">
-                  <FileText className="w-4 h-4" />
-                  Bill Line Items
-                </Label>
-                {loadingLineItems ? (
-                  <div className="flex items-center justify-center py-4">
-                    <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                  </div>
-                ) : claimLineItems.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="bg-slate-50 rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead className="bg-slate-100">
-                          <tr>
-                            <th className="text-left p-2 font-medium text-slate-600">CPT Code</th>
-                            <th className="text-left p-2 font-medium text-slate-600">Description</th>
-                            <th className="text-center p-2 font-medium text-slate-600">Units</th>
-                            <th className="text-right p-2 font-medium text-slate-600">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {claimLineItems.map((item: any, index: number) => (
-                            <tr key={index} className="border-t border-slate-200">
-                              <td className="p-2">
-                                <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
-                                  {item.cptCode?.code || item.cptCodeId}
-                                </span>
-                              </td>
-                              <td className="p-2 text-slate-600">
-                                {item.cptCode?.description || 'N/A'}
-                              </td>
-                              <td className="p-2 text-center">{item.units || 1}</td>
-                              <td className="p-2 text-right font-medium">
-                                ${parseFloat(item.amount || item.chargeAmount || '0').toFixed(2)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot className="border-t-2 border-slate-300 bg-slate-100">
-                          <tr>
-                            <td colSpan={3} className="p-2 text-right font-semibold">Total:</td>
-                            <td className="p-2 text-right font-bold text-green-600">
-                              ${parseFloat(selectedClaim.totalAmount).toFixed(2)}
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-
-                    {/* ICD-10 Diagnosis Codes */}
-                    {claimLineItems.some((item: any) => item.icd10Code) && (
-                      <div className="mt-3">
-                        <Label className="text-slate-500 text-xs">Diagnosis Codes (ICD-10)</Label>
-                        <div className="flex flex-wrap gap-2 mt-1">
-                          {claimLineItems
-                            .filter((item: any) => item.icd10Code)
-                            .map((item: any, index: number) => (
-                              <Badge key={index} variant="outline" className="text-xs">
-                                <span className="font-mono">{item.icd10Code?.code}</span>
-                                <span className="ml-1 text-slate-500">- {item.icd10Code?.description}</span>
-                              </Badge>
-                            ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-4 bg-slate-50 rounded-lg">
-                    <p className="text-sm text-slate-500">No line items found for this claim</p>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <Label className="text-slate-500">Created</Label>
-                <p className="font-medium">{new Date(selectedClaim.createdAt).toLocaleString()}</p>
-              </div>
-
-              {selectedClaim.submittedAt && (
-                <div>
-                  <Label className="text-slate-500">Submitted</Label>
-                  <p className="font-medium">{new Date(selectedClaim.submittedAt).toLocaleString()}</p>
-                </div>
-              )}
-
-              {selectedClaim.paidAt && (
-                <div>
-                  <Label className="text-slate-500">Paid</Label>
-                  <p className="font-medium">{new Date(selectedClaim.paidAt).toLocaleString()}</p>
-                </div>
-              )}
-
-              {selectedClaim.aiReviewNotes && (
-                <div>
-                  <Label className="text-slate-500">AI Review Notes</Label>
-                  <p className="text-sm mt-1 p-3 bg-blue-50 rounded-lg">{selectedClaim.aiReviewNotes}</p>
-                </div>
-              )}
-
-              {selectedClaim.denialReason && (
-                <div>
-                  <Label className="text-slate-500">Denial Reason</Label>
-                  <p className="text-sm mt-1 p-3 bg-red-50 rounded-lg text-red-800">{selectedClaim.denialReason}</p>
-                </div>
-              )}
-
-              {/* Submit to Secondary Insurance */}
-              {selectedClaim.status === 'paid' && selectedClaim.billingOrder !== 'secondary' && (
-                <div className="border-t pt-4 mt-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-slate-700 font-semibold">Secondary Insurance</Label>
-                      <p className="text-sm text-slate-500 mt-1">
-                        Submit remaining balance to patient's secondary insurance
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => submitSecondaryMutation.mutate(selectedClaim.id)}
-                      disabled={submitSecondaryMutation.isPending}
-                      className="bg-purple-600 hover:bg-purple-700"
-                    >
-                      {submitSecondaryMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <Copy className="w-4 h-4 mr-2" />
-                      )}
-                      Submit to Secondary
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* AI Appeal Section */}
-              {selectedClaim.status === 'denied' && (
-                <div className="border-t pt-4 mt-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Scale className="w-5 h-5 text-blue-600" />
-                      <Label className="text-lg font-semibold">AI Appeal Recommendation</Label>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => regenerateAppealMutation.mutate(selectedClaim.id)}
-                      disabled={regenerateAppealMutation.isPending}
-                    >
-                      {regenerateAppealMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-4 h-4" />
-                      )}
-                      <span className="ml-1">Regenerate</span>
-                    </Button>
-                  </div>
-
-                  {loadingAppeals ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-                    </div>
-                  ) : claimAppeals.length > 0 ? (
-                    <div className="space-y-4">
-                      {claimAppeals.map((appeal: any) => (
-                        <div key={appeal.id} className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                          {/* Appeal Header */}
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <Badge className={
-                                appeal.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                                appeal.status === 'sent' ? 'bg-blue-100 text-blue-800' :
-                                appeal.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                'bg-red-100 text-red-800'
-                              }>
-                                {appeal.status === 'pending' ? 'Pending' :
-                                 appeal.status === 'sent' ? 'Sent' :
-                                 appeal.status === 'completed' ? 'Won' : 'Failed'}
-                              </Badge>
-                              <span className="text-sm text-slate-500">
-                                Category: {appeal.parsedNotes?.denialCategory || 'N/A'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="bg-white">
-                                {appeal.parsedNotes?.successProbability || 0}% Success Rate
-                              </Badge>
-                            </div>
-                          </div>
-
-                          {/* Key Arguments */}
-                          {appeal.parsedNotes?.keyArguments && (
-                            <div className="mb-3">
-                              <p className="text-sm font-medium text-slate-700 mb-1">Key Arguments:</p>
-                              <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
-                                {appeal.parsedNotes.keyArguments.slice(0, 3).map((arg: string, i: number) => (
-                                  <li key={i}>{arg}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {/* Suggested Actions */}
-                          {appeal.parsedNotes?.suggestedActions && (
-                            <div className="mb-3">
-                              <p className="text-sm font-medium text-slate-700 mb-1">Suggested Actions:</p>
-                              <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
-                                {appeal.parsedNotes.suggestedActions.slice(0, 3).map((action: string, i: number) => (
-                                  <li key={i}>{action}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {/* Appeal Letter Toggle */}
-                          <div className="mb-3">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setShowAppealLetter(!showAppealLetter)}
-                              className="w-full"
-                            >
-                              <FileText className="w-4 h-4 mr-2" />
-                              {showAppealLetter ? 'Hide Appeal Letter' : 'View Appeal Letter'}
-                            </Button>
-                          </div>
-
-                          {/* Appeal Letter */}
-                          {showAppealLetter && appeal.parsedNotes?.appealLetter && (
-                            <div className="bg-white rounded-lg p-4 border">
-                              <div className="flex justify-between items-center mb-2">
-                                <span className="text-sm font-medium">Appeal Letter</span>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => copyAppealLetter(appeal.parsedNotes.appealLetter)}
-                                >
-                                  <Copy className="w-4 h-4 mr-1" />
-                                  Copy
-                                </Button>
-                              </div>
-                              <pre className="text-xs whitespace-pre-wrap font-mono bg-slate-50 p-3 rounded max-h-64 overflow-y-auto">
-                                {appeal.parsedNotes.appealLetter}
-                              </pre>
-                            </div>
-                          )}
-
-                          {/* Action Buttons */}
-                          <div className="flex gap-2 mt-3">
-                            {appeal.status === 'pending' && (
-                              <Button
-                                size="sm"
-                                onClick={() => markAppealSentMutation.mutate({ claimId: selectedClaim.id, appealId: appeal.id })}
-                                disabled={markAppealSentMutation.isPending}
-                              >
-                                <Mail className="w-4 h-4 mr-1" />
-                                Mark as Sent
-                              </Button>
-                            )}
-                            {appeal.status === 'sent' && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="default"
-                                  className="bg-green-600 hover:bg-green-700"
-                                  onClick={() => markAppealCompletedMutation.mutate({ claimId: selectedClaim.id, appealId: appeal.id })}
-                                  disabled={markAppealCompletedMutation.isPending}
-                                >
-                                  <CheckCircle className="w-4 h-4 mr-1" />
-                                  Won
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => markAppealFailedMutation.mutate({ claimId: selectedClaim.id, appealId: appeal.id })}
-                                  disabled={markAppealFailedMutation.isPending}
-                                >
-                                  <XCircle className="w-4 h-4 mr-1" />
-                                  Failed
-                                </Button>
-                              </>
-                            )}
-                          </div>
-
-                          <p className="text-xs text-slate-400 mt-2">
-                            Generated: {new Date(appeal.parsedNotes?.generatedAt || appeal.createdAt).toLocaleString()}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6 bg-slate-50 rounded-lg">
-                      <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                      <p className="text-sm text-slate-500">No appeal generated yet</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-2"
-                        onClick={() => regenerateAppealMutation.mutate(selectedClaim.id)}
-                        disabled={regenerateAppealMutation.isPending}
-                      >
-                        Generate Appeal
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
           )}
         </DialogContent>
       </Dialog>
