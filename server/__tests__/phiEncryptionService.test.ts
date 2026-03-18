@@ -142,9 +142,11 @@ describe('PHI Encryption Service', () => {
     expect(encrypted.id).toBe(1);
     expect(encrypted.practiceId).toBe(5);
     expect(encrypted.status).toBe('active');
-    // PHI fields are encrypted objects, not plain strings
-    expect(typeof encrypted.firstName).toBe('object');
-    expect(encrypted.firstName).toHaveProperty('ciphertext');
+    // PHI fields are JSON-stringified encrypted objects for varchar column storage
+    expect(typeof encrypted.firstName).toBe('string');
+    expect(JSON.parse(encrypted.firstName)).toHaveProperty('ciphertext');
+    // dateOfBirth should NOT be encrypted (date type column)
+    expect(encrypted.dateOfBirth).toBe('1990-01-01');
 
     const decrypted = decryptPatientRecord(encrypted);
     expect(decrypted).not.toBeNull();

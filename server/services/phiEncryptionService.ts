@@ -179,10 +179,15 @@ const DATA_CAPTURE_EVENT_PHI_JSONB_FIELDS = [
 export function encryptPatientRecord(patient: Record<string, any>): Record<string, any> {
   const encrypted = { ...patient };
 
+  // Fields stored as date type in DB — cannot be encrypted (not varchar/text)
+  const DATE_TYPE_FIELDS = ['dateOfBirth'];
+
   // Encrypt string fields (core PHI + insurance provider)
   for (const field of [...PATIENT_PHI_STRING_FIELDS, ...PATIENT_INSURANCE_EXTRA_FIELDS]) {
-    if (encrypted[field] !== undefined) {
-      encrypted[field] = encryptField(encrypted[field] as string);
+    if (encrypted[field] !== undefined && !DATE_TYPE_FIELDS.includes(field)) {
+      const result = encryptField(encrypted[field] as string);
+      // JSON-stringify the encrypted object for storage in varchar/text columns
+      encrypted[field] = result ? JSON.stringify(result) : null;
     }
   }
 
