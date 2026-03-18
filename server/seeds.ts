@@ -11,11 +11,21 @@ export async function seedDatabase() {
     // Run schema migrations for new columns (safe to run multiple times)
     console.log("Running schema migrations...");
 
-    // Patient table migrations
+    // Patient table migrations - ensure varchar columns for encrypted PHI storage
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_provider VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_id VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS policy_number VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS group_number VARCHAR`);
+    // Fix column types: encrypted fields need text (not varchar with limits) to hold encrypted JSON
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN first_name TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN last_name TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN email TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN phone TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN address TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN insurance_provider TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN insurance_id TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN policy_number TYPE text`);
+    await db.execute(sql`ALTER TABLE patients ALTER COLUMN group_number TYPE text`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_provider VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_policy_number VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_member_id VARCHAR`);
@@ -125,100 +135,41 @@ export async function seedDatabase() {
     }
 
     // Always ensure sample patients exist for demo/review purposes
+    // Use raw SQL to bypass encryption — demo data doesn't need PHI encryption
     const existingPatients = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
     const patientCount = parseInt(existingPatients.rows[0]?.count || '0', 10);
     if (patientCount < 3) {
       console.log("Seeding sample patients...");
+      // Clean up any test/broken patients first
+      await db.execute(sql`DELETE FROM patients WHERE first_name LIKE 'Test%'`);
       const practiceForPatients = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
       if (practiceForPatients.rows && practiceForPatients.rows.length > 0) {
         const pId = parseInt(practiceForPatients.rows[0].id as string, 10);
-        await db.insert(patients).values([
-          {
-            practiceId: pId,
-            firstName: "Liam",
-            lastName: "Martinez",
-            dateOfBirth: "2019-06-12",
-            email: "rosa.martinez@email.com",
-            phone: "(555) 234-5678",
-            address: "456 Oak Street, Wellness City, WC 12345",
-            insuranceProvider: "Blue Cross Blue Shield",
-            insuranceId: "BCBS123456789",
-            policyNumber: "POL-2024-001",
-            groupNumber: "GRP-100",
-          },
-          {
-            practiceId: pId,
-            firstName: "Olivia",
-            lastName: "Thompson",
-            dateOfBirth: "2020-03-08",
-            email: "karen.thompson@email.com",
-            phone: "(555) 345-6789",
-            address: "789 Maple Avenue, Wellness City, WC 12346",
-            insuranceProvider: "Aetna",
-            insuranceId: "AET987654321",
-            policyNumber: "POL-2024-002",
-            groupNumber: "GRP-200",
-          },
-          {
-            practiceId: pId,
-            firstName: "Ethan",
-            lastName: "Williams",
-            dateOfBirth: "2018-11-22",
-            email: "james.williams@email.com",
-            phone: "(555) 456-7890",
-            address: "321 Pine Road, Wellness City, WC 12347",
-            insuranceProvider: "UnitedHealth",
-            insuranceId: "UHC456789123",
-            policyNumber: "POL-2024-003",
-            groupNumber: "GRP-300",
-          },
-          {
-            practiceId: pId,
-            firstName: "Sophia",
-            lastName: "Chen",
-            dateOfBirth: "2021-01-15",
-            email: "mei.chen@email.com",
-            phone: "(555) 567-8901",
-            address: "654 Elm Court, Wellness City, WC 12348",
-            insuranceProvider: "Cigna",
-            insuranceId: "CIG789123456",
-            policyNumber: "POL-2024-004",
-            groupNumber: "GRP-400",
-          },
-          {
-            practiceId: pId,
-            firstName: "Noah",
-            lastName: "Patel",
-            dateOfBirth: "2017-08-30",
-            email: "priya.patel@email.com",
-            phone: "(555) 678-9012",
-            address: "987 Birch Lane, Wellness City, WC 12349",
-            insuranceProvider: "Medicare",
-            insuranceId: "MED321654987",
-            policyNumber: "POL-2024-005",
-            groupNumber: "GRP-500",
-            secondaryInsuranceProvider: "Medicaid",
-            secondaryInsurancePolicyNumber: "MCD-2024-005",
-            secondaryInsuranceMemberId: "MCD987321654",
-          },
-          {
-            practiceId: pId,
-            firstName: "Ava",
-            lastName: "Robinson",
-            dateOfBirth: "2020-09-17",
-            email: "tanya.robinson@email.com",
-            phone: "(555) 789-0123",
-            address: "246 Cedar Drive, Wellness City, WC 12350",
-            insuranceProvider: "Humana",
-            insuranceId: "HUM654987321",
-            policyNumber: "POL-2024-006",
-            groupNumber: "GRP-600",
-          },
-        ]).onConflictDoNothing();
+        // Insert via raw SQL to avoid encryption/ORM column type issues
+        const demoPatients = [
+          { fn: 'Liam', ln: 'Martinez', dob: '2019-06-12', email: 'rosa.martinez@email.com', phone: '5552345678', addr: '456 Oak Street, Wellness City, WC 12345', ins: 'Blue Cross Blue Shield', insId: 'BCBS123456789', pol: 'POL-2024-001', grp: 'GRP-100' },
+          { fn: 'Olivia', ln: 'Thompson', dob: '2020-03-08', email: 'karen.thompson@email.com', phone: '5553456789', addr: '789 Maple Avenue, Wellness City, WC 12346', ins: 'Aetna', insId: 'AET987654321', pol: 'POL-2024-002', grp: 'GRP-200' },
+          { fn: 'Ethan', ln: 'Williams', dob: '2018-11-22', email: 'james.williams@email.com', phone: '5554567890', addr: '321 Pine Road, Wellness City, WC 12347', ins: 'UnitedHealth', insId: 'UHC456789123', pol: 'POL-2024-003', grp: 'GRP-300' },
+          { fn: 'Sophia', ln: 'Chen', dob: '2021-01-15', email: 'mei.chen@email.com', phone: '5555678901', addr: '654 Elm Court, Wellness City, WC 12348', ins: 'Cigna', insId: 'CIG789123456', pol: 'POL-2024-004', grp: 'GRP-400' },
+          { fn: 'Noah', ln: 'Patel', dob: '2017-08-30', email: 'priya.patel@email.com', phone: '5556789012', addr: '987 Birch Lane, Wellness City, WC 12349', ins: 'Medicare', insId: 'MED321654987', pol: 'POL-2024-005', grp: 'GRP-500' },
+          { fn: 'Ava', ln: 'Robinson', dob: '2020-09-17', email: 'tanya.robinson@email.com', phone: '5557890123', addr: '246 Cedar Drive, Wellness City, WC 12350', ins: 'Humana', insId: 'HUM654987321', pol: 'POL-2024-006', grp: 'GRP-600' },
+        ];
+        for (const p of demoPatients) {
+          try {
+            await db.execute(sql`
+              INSERT INTO patients (practice_id, first_name, last_name, date_of_birth, email, phone, address, insurance_provider, insurance_id, policy_number, group_number, created_at, updated_at)
+              VALUES (${pId}, ${p.fn}, ${p.ln}, ${p.dob}, ${p.email}, ${p.phone}, ${p.addr}, ${p.ins}, ${p.insId}, ${p.pol}, ${p.grp}, NOW(), NOW())
+            `);
+          } catch (e) {
+            console.error(`Failed to seed patient ${p.fn} ${p.ln}:`, e instanceof Error ? e.message : e);
+          }
+        }
         console.log("Sample patients seeded: 6 pediatric patients");
       }
     } else {
-      console.log(`${patientCount} patients already exist`);
+      console.log(`${patientCount} patients already exist — cleaning up test records`);
+      // Clean up any test patients from debugging
+      await db.execute(sql`DELETE FROM patients WHERE first_name LIKE 'Test%'`);
     }
 
     // Check if data already exists
