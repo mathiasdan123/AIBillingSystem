@@ -686,7 +686,11 @@ export default function DataImport() {
         });
 
         if (!res.ok) {
-          const err = await res.json();
+          if (res.status === 401) {
+            window.location.href = '/api/login';
+            return;
+          }
+          const err = await res.json().catch(() => ({ message: `Server error (${res.status})` }));
           throw new Error(err.message || 'Upload failed');
         }
 
@@ -695,12 +699,20 @@ export default function DataImport() {
         setColumnMapping(result.suggestedMappings || {});
 
         // Fetch mapping data
-        const mapRes = await apiRequest('POST', '/api/data-import/map-columns', {
-          fileId: result.fileId,
-          sourceSystem: srcSystem,
-        });
-        const mapData: MapColumnsResult = await mapRes.json();
-        setMappingData(mapData);
+        try {
+          const mapRes = await fetch('/api/data-import/map-columns', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ fileId: result.fileId, sourceSystem: srcSystem }),
+          });
+          if (mapRes.ok) {
+            const mapData: MapColumnsResult = await mapRes.json();
+            setMappingData(mapData);
+          }
+        } catch {
+          // Column mapping fetch failed — user can still manually map
+        }
 
         // Auto-advance to mapping step
         setCurrentStep(1);
@@ -710,11 +722,16 @@ export default function DataImport() {
           description: `${result.rowCount} rows detected from ${file.name}`,
         });
       } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Could not process file';
         toast({
           title: 'Upload failed',
-          description: error instanceof Error ? error.message : 'Could not process file',
+          description: msg,
           variant: 'destructive',
         });
+        // If session expired, redirect to login
+        if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
+          setTimeout(() => { window.location.href = '/api/login'; }, 1500);
+        }
       } finally {
         setIsUploading(false);
       }
