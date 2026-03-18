@@ -5,7 +5,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm install --include=dev && NODE_OPTIONS="--max-old-space-size=512" npm run build
+    buildCommand: rm -rf node_modules && npm install --include=dev && npm run build
     startCommand: node dist/index.js
     healthCheckPath: /api/health
     envVars:
