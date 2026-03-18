@@ -75,6 +75,9 @@ const Locations = lazy(() => import("@/pages/locations"));
 // Data export (admin only)
 const DataExport = lazy(() => import("@/pages/data-export"));
 
+// Data import (admin only)
+const DataImport = lazy(() => import("@/pages/data-import"));
+
 // Error boundary for route-level errors
 class ErrorBoundary extends Component<
   { children: ReactNode },
@@ -216,6 +219,7 @@ function Router() {
               {isAdmin && <Route path="/hipaa-compliance" component={HipaaCompliance} />}
               {isAdmin && <Route path="/sso-settings" component={SsoSettings} />}
               {isAdmin && <Route path="/data-export" component={DataExport} />}
+              {isAdmin && <Route path="/data-import" component={DataImport} />}
               <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/onboarding" component={Onboarding} />
               <Route path="/locations" component={Locations} />

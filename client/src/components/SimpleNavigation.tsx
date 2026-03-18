@@ -46,6 +46,7 @@ import {
   Brain,
   UserCheck,
   Download,
+  Upload,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
@@ -87,6 +88,7 @@ const navigationItems = [
   { nameKey: 'nav.hipaaCompliance', href: '/hipaa-compliance', icon: Shield, adminOnly: true },
   { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
   { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
+  { nameKey: 'nav.dataImport', href: '/data-import', icon: Upload, adminOnly: true },
   { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
 ];
