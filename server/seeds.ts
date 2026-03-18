@@ -125,9 +125,9 @@ export async function seedDatabase() {
     }
 
     // Always ensure sample patients exist for demo/review purposes
-    const existingPatients = await db.execute(sql`SELECT COUNT(*) as count FROM patients`);
+    const existingPatients = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
     const patientCount = parseInt(existingPatients.rows[0]?.count || '0', 10);
-    if (patientCount === 0) {
+    if (patientCount < 3) {
       console.log("Seeding sample patients...");
       const practiceForPatients = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
       if (practiceForPatients.rows && practiceForPatients.rows.length > 0) {
