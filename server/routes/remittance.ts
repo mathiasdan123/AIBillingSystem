@@ -224,7 +224,11 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
       })
     );
 
-    res.json(paginatedResponse(enriched, total, page, limit));
+    if (!req.query.page && !req.query.limit) {
+      res.json(enriched);
+    } else {
+      res.json(paginatedResponse(enriched, total, page, limit));
+    }
   } catch (error) {
     return safeErrorResponse(res, 500, 'Failed to fetch remittance records', error);
   }

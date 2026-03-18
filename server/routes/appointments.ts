@@ -280,7 +280,11 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const total = allAppts.length;
     const { page, limit, offset } = parsePagination(req.query);
     const appts = allAppts.slice(offset, offset + limit);
-    res.json(paginatedResponse(appts, total, page, limit));
+    if (!req.query.page && !req.query.limit) {
+      res.json(appts);
+    } else {
+      res.json(paginatedResponse(appts, total, page, limit));
+    }
   } catch (error) {
     logger.error('Error fetching appointments', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch appointments' });

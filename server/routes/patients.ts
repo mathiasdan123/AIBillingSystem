@@ -191,7 +191,13 @@ router.get('/', isAuthenticated, async (req: any, res) => {
       };
     });
 
-    res.json(paginatedResponse(patientsWithConsent, total, page, limit));
+    // Return plain array for backwards compatibility when no pagination params specified
+    // This prevents breaking pages that expect an array from /api/patients
+    if (!req.query.page && !req.query.limit) {
+      res.json(patientsWithConsent);
+    } else {
+      res.json(paginatedResponse(patientsWithConsent, total, page, limit));
+    }
   } catch (error) {
     logger.error('Error fetching patients', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to fetch patients' });

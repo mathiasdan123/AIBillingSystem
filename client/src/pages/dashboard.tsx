@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import DashboardStats from "@/components/DashboardStats";
 import PatientArAgingSummary from "@/components/PatientArAgingSummary";
-import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles } from "lucide-react";
+import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles, Upload } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
 
@@ -358,6 +358,34 @@ export default function Dashboard() {
       <div className="mt-4 md:mt-6">
         <PatientArAgingSummary />
       </div>
+
+      {/* Data Import CTA - Prominent for new practices */}
+      {recentPatients && Array.isArray(recentPatients) && recentPatients.length < 10 && (
+        <Card className="mt-4 md:mt-6 border-indigo-200 bg-gradient-to-r from-indigo-50 to-purple-50">
+          <CardContent className="py-5 px-4 md:px-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Upload className="w-6 h-6 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-indigo-900">
+                    Switching from another platform?
+                  </h3>
+                  <p className="text-sm text-indigo-700 mt-0.5">
+                    Import your patients from SimplePractice, TherapyNotes, Jane App, or WebPT in minutes.
+                  </p>
+                </div>
+              </div>
+              <Link href="/data-import">
+                <Button className="gap-1 whitespace-nowrap bg-indigo-600 hover:bg-indigo-700">
+                  Import Patients <ArrowRight className="w-3.5 h-3.5" />
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Actions */}
       <Card className="mt-4 md:mt-6">

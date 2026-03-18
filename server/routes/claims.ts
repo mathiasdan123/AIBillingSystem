@@ -162,7 +162,11 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const total = allClaims.length;
     const { page, limit, offset } = parsePagination(req.query);
     const claims = allClaims.slice(offset, offset + limit);
-    res.json(paginatedResponse(claims, total, page, limit));
+    if (!req.query.page && !req.query.limit) {
+      res.json(claims);
+    } else {
+      res.json(paginatedResponse(claims, total, page, limit));
+    }
   } catch (error) {
     logger.error('Error fetching claims', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch claims' });

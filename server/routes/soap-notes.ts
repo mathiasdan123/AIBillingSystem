@@ -88,7 +88,11 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const total = allSoapNotes.length;
     const { page, limit, offset } = parsePagination(req.query);
     const soapNotes = allSoapNotes.slice(offset, offset + limit);
-    res.json(paginatedResponse(soapNotes, total, page, limit));
+    if (!req.query.page && !req.query.limit) {
+      res.json(soapNotes);
+    } else {
+      res.json(paginatedResponse(soapNotes, total, page, limit));
+    }
   } catch (error) {
     logger.error('Error fetching SOAP notes', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to fetch SOAP notes' });
