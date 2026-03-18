@@ -76,7 +76,7 @@ const upload = multer({
     ];
     // Also allow by extension
     const ext = file.originalname.toLowerCase().split('.').pop();
-    if (allowedMimes.includes(file.mimetype) || ['csv', 'json', 'txt'].includes(ext || '')) {
+    if (allowedMimes.includes(file.mimetype) || ['csv', 'json', 'txt', 'tsv'].includes(ext || '')) {
       cb(null, true);
     } else {
       cb(new Error('Only CSV and JSON files are supported'));
@@ -135,11 +135,23 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     return { headers: [], rows: [] };
   }
 
-  const headers = parseCsvLine(lines[0]);
+  // Auto-detect delimiter: tab, comma, pipe, or semicolon
+  const firstLine = lines[0];
+  let delimiter = ',';
+  const tabCount = (firstLine.match(/\t/g) || []).length;
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const pipeCount = (firstLine.match(/\|/g) || []).length;
+  const semiCount = (firstLine.match(/;/g) || []).length;
+  const maxCount = Math.max(tabCount, commaCount, pipeCount, semiCount);
+  if (maxCount === tabCount && tabCount > 0) delimiter = '\t';
+  else if (maxCount === pipeCount && pipeCount > 0) delimiter = '|';
+  else if (maxCount === semiCount && semiCount > 0) delimiter = ';';
+
+  const headers = parseCsvLine(lines[0], delimiter);
   const rows: Record<string, string>[] = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const values = parseCsvLine(lines[i]);
+    const values = parseCsvLine(lines[i], delimiter);
     if (values.length === 0 || (values.length === 1 && values[0] === '')) continue;
     const row: Record<string, string> = {};
     headers.forEach((header, idx) => {
@@ -151,7 +163,7 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-function parseCsvLine(line: string): string[] {
+function parseCsvLine(line: string, delimiter: string = ','): string[] {
   const result: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -165,7 +177,7 @@ function parseCsvLine(line: string): string[] {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       result.push(current.trim());
       current = '';
     } else {
@@ -298,15 +310,15 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
   const matchPatterns: Record<string, string[]> = {
-    firstName: ['firstname', 'first', 'fname', 'givenname'],
-    lastName: ['lastname', 'last', 'lname', 'surname', 'familyname'],
-    dateOfBirth: ['dateofbirth', 'dob', 'birthdate', 'birthday', 'birth'],
-    email: ['email', 'emailaddress', 'mail'],
-    phone: ['phone', 'phonenumber', 'telephone', 'tel', 'mobile', 'cell', 'mobilephone'],
-    address: ['address', 'streetaddress', 'homeaddress', 'mailingaddress', 'street'],
-    insuranceProvider: ['insurance', 'insurancecompany', 'insurancename', 'insuranceprovider', 'insurer', 'payer', 'primaryinsurance'],
-    insuranceId: ['memberid', 'subscriberid', 'insuranceid', 'membernum', 'membernumber'],
-    policyNumber: ['policynumber', 'policynum', 'policy'],
+    firstName: ['firstname', 'first', 'fname', 'givenname', 'patientfirstname', 'clientfirstname', 'patientfirst'],
+    lastName: ['lastname', 'last', 'lname', 'surname', 'familyname', 'patientlastname', 'clientlastname', 'patientlast'],
+    dateOfBirth: ['dateofbirth', 'dob', 'birthdate', 'birthday', 'birth', 'patientdateofbirth', 'patientdob', 'patientbirthdate'],
+    email: ['email', 'emailaddress', 'mail', 'patientemail', 'clientemail'],
+    phone: ['phone', 'phonenumber', 'telephone', 'tel', 'mobile', 'cell', 'mobilephone', 'patientphone', 'clientphone', 'homephone', 'primaryphone'],
+    address: ['address', 'streetaddress', 'homeaddress', 'mailingaddress', 'street', 'patientaddress', 'clientaddress'],
+    insuranceProvider: ['insurance', 'insurancecompany', 'insurancename', 'insuranceprovider', 'insurer', 'payer', 'primaryinsurance', 'payername', 'carriername'],
+    insuranceId: ['memberid', 'subscriberid', 'insuranceid', 'membernum', 'membernumber', 'patientmemberid', 'subscribernumber'],
+    policyNumber: ['policynumber', 'policynum', 'policy', 'policyid'],
     groupNumber: ['groupnumber', 'groupnum', 'group', 'groupid'],
   };
 

@@ -202,7 +202,7 @@ function StepUpload({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,.json,.txt"
+          accept=".csv,.json,.txt,.tsv,.xls,.xlsx"
           onChange={handleFileChange}
           className="hidden"
         />
