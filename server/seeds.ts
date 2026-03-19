@@ -24,12 +24,33 @@ export async function seedDatabase() {
     } catch (e) { /* constraint may not exist */ }
 
     // Clean up test/debug patients by ID (ids 1-12 are all test data from debugging)
+    // Must delete referencing rows first due to FK constraints
+    try {
+      await db.execute(sql`DELETE FROM patient_consents WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM patient_portal_access WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM patient_documents WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM patient_statements WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM patient_payment_methods WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM patient_payments WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM patient_assessments WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM soap_note_goal_progress WHERE soap_note_id IN (SELECT id FROM soap_notes WHERE patient_id <= 12)`);
+      await db.execute(sql`DELETE FROM soap_notes WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM treatment_sessions WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM claims WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM appointments WHERE patient_id <= 12`);
+      await db.execute(sql`DELETE FROM treatment_plan_goals WHERE treatment_plan_id IN (SELECT id FROM treatment_plans WHERE patient_id <= 12)`);
+      await db.execute(sql`DELETE FROM treatment_plans WHERE patient_id <= 12`);
+    } catch (e) {
+      console.log('Some FK cleanup tables may not exist yet:', e instanceof Error ? e.message : '');
+    }
     try {
       const testCleanup = await db.execute(sql`DELETE FROM patients WHERE id <= 12`);
       if (testCleanup.rowCount && testCleanup.rowCount > 0) {
         console.log(`Cleaned up ${testCleanup.rowCount} test patient records`);
       }
-    } catch (e) { /* ignore cleanup errors */ }
+    } catch (e) {
+      console.error('Failed to clean up test patients:', e instanceof Error ? e.message : String(e));
+    }
 
     const columnsToText = [
       'first_name', 'last_name', 'email', 'phone', 'address',
