@@ -98,6 +98,7 @@ const SOURCE_SYSTEMS = [
   { value: 'janeapp', label: 'Jane App' },
   { value: 'webpt', label: 'WebPT' },
   { value: 'fusion', label: 'Fusion / Ensura' },
+  { value: 'prompthealth', label: 'Prompt Health' },
   { value: 'generic', label: 'Other / Generic' },
 ];
 
