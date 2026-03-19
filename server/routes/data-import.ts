@@ -366,6 +366,9 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
   },
   fusion: {
     'Patient': 'lastCommaFirst',
+    'Primary Guarantor': 'fullName',
+    'Patient First Name': '_skip',
+    'Patient Last Name': '_skip',
     'Patient Birthdate': 'dateOfBirth',
     'Primary Contact Email': 'email',
     'Primary Contact Cell #': 'phone',
@@ -380,9 +383,9 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Patient Status': 'patientStatus',
     'Primary Contact Email Reminders': 'emailReminders',
     'Primary Contact Text Reminders': 'textReminders',
-    // "Patient First Name" and "Patient Last Name" are intentionally NOT mapped
-    // because Fusion/Ensura CSV exports have unquoted commas in name fields
-    // that shift all columns. Use the "Patient" column ("Last, First") instead.
+    // "Patient First Name" and "Patient Last Name" are explicitly skipped
+    // because Fusion/Ensura CSV exports have unquoted commas that shift columns.
+    // Names come from "Patient" (Last, First) + "Primary Guarantor" (First Last).
   },
   prompthealth: {
     'First Name': 'firstName',
@@ -455,8 +458,11 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
   if (preset && SOURCE_PRESETS[preset]) {
     const presetMap = SOURCE_PRESETS[preset];
     for (const header of headers) {
-      if (presetMap[header]) {
+      if (presetMap[header] && presetMap[header] !== '_skip') {
         mapping[header] = presetMap[header];
+      } else if (presetMap[header] === '_skip') {
+        // Explicitly mark as skipped so fuzzy matching doesn't override
+        mapping[header] = '';
       }
     }
   }
@@ -489,7 +495,7 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
   };
 
   for (const header of headers) {
-    if (mapping[header]) continue; // already mapped by preset
+    if (header in mapping) continue; // already mapped (or explicitly skipped) by preset
     const normalized = normalizeForMatch(header);
     for (const [field, patterns] of Object.entries(matchPatterns)) {
       if (patterns.includes(normalized)) {
@@ -497,6 +503,11 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
         break;
       }
     }
+  }
+
+  // Remove empty-string skip markers before returning
+  for (const key of Object.keys(mapping)) {
+    if (mapping[key] === '') delete mapping[key];
   }
 
   return mapping;
