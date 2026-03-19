@@ -167,9 +167,15 @@ export async function seedDatabase() {
         console.log("Sample patients seeded: 6 pediatric patients");
       }
     } else {
-      console.log(`${patientCount} patients already exist — cleaning up test records`);
-      // Clean up any test patients from debugging
-      await db.execute(sql`DELETE FROM patients WHERE first_name LIKE 'Test%'`);
+      console.log(`${patientCount} patients already exist`);
+    }
+    // Always clean up test/bad-import patients from debugging sessions
+    const deleted = await db.execute(sql`
+      DELETE FROM patients WHERE first_name LIKE 'Test%'
+      OR last_name IN ('2026 DED MET', 'INS PAYOUT THEN BALANCE BILL', 'NEED PROGRESS REPORT', 'ZELLE 165', 'NEED EVAL REPORT', 'EVAL report needed')
+    `);
+    if (deleted.rowCount && deleted.rowCount > 0) {
+      console.log(`Cleaned up ${deleted.rowCount} test/bad-import patient records`);
     }
 
     // Check if data already exists

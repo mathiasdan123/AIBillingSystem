@@ -310,8 +310,9 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
   const matchPatterns: Record<string, string[]> = {
-    firstName: ['firstname', 'first', 'fname', 'givenname', 'patientfirstname', 'clientfirstname', 'patientfirst'],
-    lastName: ['lastname', 'last', 'lname', 'surname', 'familyname', 'patientlastname', 'clientlastname', 'patientlast'],
+    // Note: 'patient' alone should NOT match — it's often a combined name column
+    firstName: ['firstname', 'first', 'fname', 'givenname', 'patientfirstname', 'clientfirstname', 'patientfirst', 'childfirstname', 'childfirst'],
+    lastName: ['lastname', 'last', 'lname', 'surname', 'familyname', 'patientlastname', 'clientlastname', 'patientlast', 'childlastname', 'childlast'],
     dateOfBirth: ['dateofbirth', 'dob', 'birthdate', 'birthday', 'birth', 'patientdateofbirth', 'patientdob', 'patientbirthdate'],
     email: ['email', 'emailaddress', 'mail', 'patientemail', 'clientemail'],
     phone: ['phone', 'phonenumber', 'telephone', 'tel', 'mobile', 'cell', 'mobilephone', 'patientphone', 'clientphone', 'homephone', 'primaryphone'],
