@@ -29,6 +29,7 @@ import {
   Play,
   History,
   SkipForward,
+  ClipboardPaste,
 } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 
@@ -96,20 +97,26 @@ const SOURCE_SYSTEMS = [
   { value: 'therapynotes', label: 'TherapyNotes' },
   { value: 'janeapp', label: 'Jane App' },
   { value: 'webpt', label: 'WebPT' },
-  { value: 'generic', label: 'Generic CSV' },
+  { value: 'fusion', label: 'Fusion / Ensura' },
+  { value: 'generic', label: 'Other / Generic' },
 ];
 
 // ==================== Step Components ====================
 
 function StepUpload({
   onUpload,
+  onPaste,
   isUploading,
 }: {
   onUpload: (file: File, sourceSystem: string) => void;
+  onPaste: (text: string, sourceSystem: string) => void;
   isUploading: boolean;
 }) {
   const [sourceSystem, setSourceSystem] = useState('generic');
   const [dragActive, setDragActive] = useState(false);
+  const [uploadMode, setUploadMode] = useState<'file' | 'paste'>('file');
+  const [pasteText, setPasteText] = useState('');
+  const [pastePreview, setPastePreview] = useState<{ columns: number; rows: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDrop = useCallback(
@@ -129,6 +136,24 @@ function StepUpload({
     },
     [onUpload, sourceSystem]
   );
+
+  const handlePasteTextChange = useCallback((text: string) => {
+    setPasteText(text);
+    // Quick preview: count lines and tab-separated columns from first line
+    const lines = text.trim().split('\n').filter(l => l.trim().length > 0);
+    if (lines.length >= 2) {
+      const columns = lines[0].split('\t').length;
+      setPastePreview({ columns, rows: lines.length - 1 }); // minus header row
+    } else {
+      setPastePreview(null);
+    }
+  }, []);
+
+  const handleSubmitPaste = useCallback(() => {
+    if (pasteText.trim()) {
+      onPaste(pasteText, sourceSystem);
+    }
+  }, [pasteText, sourceSystem, onPaste]);
 
   const handleDownloadTemplate = async () => {
     try {
@@ -166,47 +191,117 @@ function StepUpload({
         </p>
       </div>
 
-      <div
-        className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
-          dragActive
-            ? 'border-primary bg-primary/5'
-            : 'border-muted-foreground/25 hover:border-primary/50'
-        }`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onDrop={handleDrop}
-      >
-        <FileUp className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        <h3 className="text-lg font-medium mb-2">
-          {isUploading ? 'Uploading...' : 'Drop your file here'}
-        </h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          Supports CSV and JSON files up to 10MB
-        </p>
-        <div className="flex items-center justify-center gap-3">
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-          >
-            {isUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Browse Files
-          </Button>
-          <Button variant="outline" onClick={handleDownloadTemplate}>
-            <Download className="mr-2 h-4 w-4" />
-            Download Template
-          </Button>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv,.json,.txt,.tsv,.xls,.xlsx"
-          onChange={handleFileChange}
-          className="hidden"
-        />
+      {/* Upload mode tabs */}
+      <div className="flex gap-2 border-b">
+        <button
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            uploadMode === 'file'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setUploadMode('file')}
+        >
+          <FileUp className="inline h-4 w-4 mr-2" />
+          Upload File
+        </button>
+        <button
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            uploadMode === 'paste'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setUploadMode('paste')}
+        >
+          <ClipboardPaste className="inline h-4 w-4 mr-2" />
+          Paste from Spreadsheet
+        </button>
       </div>
+
+      {uploadMode === 'file' && (
+        <div
+          className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
+            dragActive
+              ? 'border-primary bg-primary/5'
+              : 'border-muted-foreground/25 hover:border-primary/50'
+          }`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={handleDrop}
+        >
+          <FileUp className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium mb-2">
+            {isUploading ? 'Uploading...' : 'Drop your file here'}
+          </h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Supports CSV and JSON files up to 10MB
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+            >
+              {isUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Browse Files
+            </Button>
+            <Button variant="outline" onClick={handleDownloadTemplate}>
+              <Download className="mr-2 h-4 w-4" />
+              Download Template
+            </Button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.json,.txt,.tsv,.xls,.xlsx"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+        </div>
+      )}
+
+      {uploadMode === 'paste' && (
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm text-muted-foreground mb-3">
+              Open your spreadsheet (Excel, Google Sheets, etc.), select the data including headers,
+              copy it (Ctrl+C / Cmd+C), and paste it below. Spreadsheet clipboard data is
+              tab-separated, which avoids issues with commas in names or addresses.
+            </p>
+            <textarea
+              className="w-full h-48 p-3 border rounded-lg font-mono text-sm resize-y bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder={"First Name\tLast Name\tDate of Birth\tEmail\nJane\tSmith\t1990-05-15\tjane@example.com"}
+              value={pasteText}
+              onChange={(e) => handlePasteTextChange(e.target.value)}
+              disabled={isUploading}
+            />
+          </div>
+
+          {pastePreview && (
+            <div className="bg-muted/50 rounded-lg p-3 text-sm flex items-center gap-4">
+              <Badge variant="secondary">{pastePreview.columns} columns</Badge>
+              <Badge variant="secondary">{pastePreview.rows} data rows</Badge>
+              <span className="text-muted-foreground">detected from pasted text</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={handleSubmitPaste}
+              disabled={isUploading || !pastePreview || pastePreview.rows === 0}
+            >
+              {isUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <ClipboardPaste className="mr-2 h-4 w-4" />
+              Import Pasted Data
+            </Button>
+            <Button variant="outline" onClick={handleDownloadTemplate}>
+              <Download className="mr-2 h-4 w-4" />
+              Download Template
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -731,6 +826,65 @@ export default function DataImport() {
     [toast]
   );
 
+  const handlePaste = useCallback(
+    async (text: string, srcSystem: string) => {
+      setIsUploading(true);
+      setSourceSystem(srcSystem);
+
+      try {
+        const res = await fetch('/api/data-import/paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ text, sourceSystem: srcSystem }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ message: `Server error (${res.status})` }));
+          throw new Error(err.message || err.error?.message || `Paste import failed (${res.status})`);
+        }
+
+        const result: UploadResult = await res.json();
+        setUploadResult(result);
+        setColumnMapping(result.suggestedMappings || {});
+
+        // Fetch mapping data
+        try {
+          const mapRes = await fetch('/api/data-import/map-columns', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ fileId: result.fileId, sourceSystem: srcSystem }),
+          });
+          if (mapRes.ok) {
+            const mapData: MapColumnsResult = await mapRes.json();
+            setMappingData(mapData);
+          }
+        } catch {
+          // Column mapping fetch failed — user can still manually map
+        }
+
+        // Auto-advance to mapping step
+        setCurrentStep(1);
+
+        toast({
+          title: 'Data imported',
+          description: `${result.rowCount} rows detected from pasted data`,
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Could not process pasted data';
+        toast({
+          title: 'Paste import failed',
+          description: msg,
+          variant: 'destructive',
+        });
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [toast]
+  );
+
   const handleMappingChange = useCallback((sourceCol: string, targetField: string) => {
     setColumnMapping((prev) => {
       const updated = { ...prev };
@@ -813,7 +967,9 @@ export default function DataImport() {
         return !!uploadResult;
       case 1: {
         const mappedTargets = Object.values(columnMapping);
-        return mappedTargets.includes('firstName') && mappedTargets.includes('lastName');
+        const hasFirstLast = mappedTargets.includes('firstName') && mappedTargets.includes('lastName');
+        const hasFullName = mappedTargets.includes('fullName');
+        return hasFirstLast || hasFullName;
       }
       case 2:
         return !!validationResult && validationResult.validCount > 0;
@@ -915,7 +1071,7 @@ export default function DataImport() {
         </CardHeader>
         <CardContent>
           {currentStep === 0 && (
-            <StepUpload onUpload={handleUpload} isUploading={isUploading} />
+            <StepUpload onUpload={handleUpload} onPaste={handlePaste} isUploading={isUploading} />
           )}
 
           {currentStep === 1 && uploadResult && (

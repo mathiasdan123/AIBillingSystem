@@ -305,8 +305,23 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Policy Number': 'policyNumber',
     'Group Number': 'groupNumber',
   },
+  fusion: {
+    'Primary Guarantor': 'fullName',
+    'Patient Birthdate': 'dateOfBirth',
+    'Primary Contact Email': 'email',
+    'Primary Contact Cell #': 'phone',
+    'Primary Contact Address': 'address',
+    'Primary Payer': 'insuranceProvider',
+    'Primary Insured ID': 'insuranceId',
+    // "Patient First Name" and "Patient Last Name" are intentionally NOT mapped
+    // because Fusion/Ensura CSV exports have unquoted commas in name fields
+    // (e.g., "Bresler, Keira") that shift all columns. Use Primary Guarantor instead.
+  },
   generic: {},
 };
+
+// Alias: 'ensura' uses the same preset as 'fusion'
+SOURCE_PRESETS['ensura'] = SOURCE_PRESETS['fusion'];
 
 /**
  * Auto-suggest column mappings based on header name similarity.
@@ -482,6 +497,80 @@ router.post('/upload', isAuthenticated, upload.single('file'), async (req: Reque
   } catch (error) {
     logger.error('Data import upload failed', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to process uploaded file' });
+  }
+});
+
+/**
+ * POST /paste — Accept raw text (tab-separated from spreadsheet paste) and parse as TSV
+ */
+router.post('/paste', isAuthenticated, async (req: Request, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { text, sourceSystem: srcSystem } = req.body;
+
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ message: 'No text provided. Paste tab-separated data from your spreadsheet.' });
+    }
+
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      return res.status(400).json({ message: 'Pasted text is empty' });
+    }
+
+    // Parse as TSV — spreadsheet clipboard data is always tab-separated
+    const parsed = parseCSV(trimmed);
+
+    if (parsed.headers.length === 0) {
+      return res.status(400).json({ message: 'Could not detect any columns. Make sure you copied headers and data rows from your spreadsheet.' });
+    }
+
+    if (parsed.rows.length === 0) {
+      return res.status(400).json({ message: 'Headers detected but no data rows found' });
+    }
+
+    const fileId = generateId();
+    const fileData: UploadedFileData = {
+      filename: fileId,
+      originalName: 'pasted-data.tsv',
+      mimeType: 'text/tab-separated-values',
+      size: Buffer.byteLength(trimmed, 'utf-8'),
+      headers: parsed.headers,
+      rows: parsed.rows,
+      uploadedAt: new Date(),
+      practiceId,
+    };
+
+    uploadedFiles.set(fileId, fileData);
+
+    // Auto-clean old uploads after 1 hour
+    setTimeout(() => {
+      uploadedFiles.delete(fileId);
+    }, 60 * 60 * 1000);
+
+    const sourceSystem = (srcSystem || 'generic') as string;
+    const suggestedMappings = autoSuggestMappings(parsed.headers, sourceSystem);
+
+    logger.info('Data import paste received', {
+      fileId,
+      practiceId,
+      rowCount: parsed.rows.length,
+      headerCount: parsed.headers.length,
+      detectedDelimiter: parsed.detectedDelimiter,
+    });
+
+    res.json({
+      fileId,
+      filename: 'pasted-data.tsv',
+      size: Buffer.byteLength(trimmed, 'utf-8'),
+      headers: parsed.headers,
+      rowCount: parsed.rows.length,
+      sampleRows: parsed.rows.slice(0, 5),
+      suggestedMappings,
+      detectedDelimiter: parsed.detectedDelimiter,
+    });
+  } catch (error) {
+    logger.error('Data import paste failed', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to process pasted data' });
   }
 });
 
@@ -884,7 +973,20 @@ router.get('/template', isAuthenticated, (_req: Request, res: Response) => {
     'Group Number',
   ];
 
-  const csvContent = headers.join(',') + '\n';
+  const exampleRow = [
+    'Jane',
+    'Smith',
+    '1990-05-15',
+    'jane.smith@email.com',
+    '(555) 123-4567',
+    '123 Main St, Anytown, ST 12345',
+    'Aetna',
+    'MEM123456789',
+    'POL987654',
+    'GRP001',
+  ];
+
+  const csvContent = headers.join(',') + '\n' + exampleRow.map(v => `"${v}"`).join(',') + '\n';
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="patient-import-template.csv"');
   res.send(csvContent);
