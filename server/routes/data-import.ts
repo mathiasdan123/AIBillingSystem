@@ -158,10 +158,19 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
 
   const headers = parseCsvLine(lines[0], delimiter);
   const rows: Record<string, string>[] = [];
+  const headerCount = headers.length;
 
   for (let i = 1; i < lines.length; i++) {
-    const values = parseCsvLine(lines[i], delimiter);
+    let values = parseCsvLine(lines[i], delimiter);
     if (values.length === 0 || (values.length === 1 && values[0] === '')) continue;
+
+    // Fix column mismatch: if data has more columns than header,
+    // merge extra early columns (handles unquoted commas in fields like "Bresler, Keira")
+    while (values.length > headerCount && values.length > 1) {
+      // Merge the first two values (the split name) back together
+      values = [values[0] + ', ' + values[1], ...values.slice(2)];
+    }
+
     const row: Record<string, string> = {};
     headers.forEach((header, idx) => {
       row[header] = values[idx]?.trim() || '';
