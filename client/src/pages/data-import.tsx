@@ -223,7 +223,7 @@ function StepUpload({
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-2">
           <p className="text-sm text-blue-700 dark:text-blue-400">
             <strong>Recommended for Fusion/Ensura:</strong> Use the <button className="underline font-semibold" onClick={() => setUploadMode('paste')}>Paste from Spreadsheet</button> tab.
-            Open your export in Excel, select all data (Ctrl+A), copy (Ctrl+C), and paste below. This avoids comma issues in the CSV file.
+            Open your export in Excel, Numbers, or Google Sheets, select all data, copy, and paste below. This avoids comma issues in the CSV file.
           </p>
         </div>
       )}
@@ -276,9 +276,9 @@ function StepUpload({
         <div className="space-y-4">
           <div>
             <p className="text-sm text-muted-foreground mb-3">
-              Open your spreadsheet (Excel, Google Sheets, etc.), select the data including headers,
-              copy it (Ctrl+C / Cmd+C), and paste it below. Spreadsheet clipboard data is
-              tab-separated, which avoids issues with commas in names or addresses.
+              Open your file in any spreadsheet app (Excel, Numbers, Google Sheets), select all data
+              including headers (Cmd+A or Ctrl+A), copy (Cmd+C or Ctrl+C), and paste below.
+              This is the most reliable import method — it avoids issues with commas in names or addresses.
             </p>
             <textarea
               className="w-full h-48 p-3 border rounded-lg font-mono text-sm resize-y bg-background focus:outline-none focus:ring-2 focus:ring-ring"
