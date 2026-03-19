@@ -218,6 +218,16 @@ function StepUpload({
         </button>
       </div>
 
+      {/* Recommend paste for Fusion/Ensura due to CSV comma issues */}
+      {(sourceSystem === 'fusion' || sourceSystem === 'ensura') && uploadMode === 'file' && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-2">
+          <p className="text-sm text-blue-700 dark:text-blue-400">
+            <strong>Recommended for Fusion/Ensura:</strong> Use the <button className="underline font-semibold" onClick={() => setUploadMode('paste')}>Paste from Spreadsheet</button> tab.
+            Open your export in Excel, select all data (Ctrl+A), copy (Ctrl+C), and paste below. This avoids comma issues in the CSV file.
+          </p>
+        </div>
+      )}
+
       {uploadMode === 'file' && (
         <div
           className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${

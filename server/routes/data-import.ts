@@ -1166,13 +1166,13 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
             }
           } else if (targetField === 'lastCommaFirst' && value) {
             // "Bresler, Keira" → firstName: Keira, lastName: Bresler
+            // Always overwrite — this is the patient name (more reliable than fullName/guarantor)
             const commaIdx = value.indexOf(',');
             if (commaIdx > 0) {
-              if (!mappedRow.lastName) mappedRow.lastName = value.substring(0, commaIdx).trim();
-              if (!mappedRow.firstName) mappedRow.firstName = value.substring(commaIdx + 1).trim();
+              mappedRow.lastName = value.substring(0, commaIdx).trim();
+              mappedRow.firstName = value.substring(commaIdx + 1).trim();
             } else {
-              // No comma — treat as last name only
-              if (!mappedRow.lastName) mappedRow.lastName = value.trim();
+              mappedRow.lastName = value.trim();
             }
           } else if (extendedFields.has(targetField) && value) {
             // Special parsing for specific fields
@@ -1352,12 +1352,13 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
                 if (!mappedRow.firstName) mappedRow.firstName = parts[0];
               }
             } else if (targetField === 'lastCommaFirst' && value) {
+              // Always overwrite — this is the patient name
               const commaIdx = value.indexOf(',');
               if (commaIdx > 0) {
-                if (!mappedRow.lastName) mappedRow.lastName = value.substring(0, commaIdx).trim();
-                if (!mappedRow.firstName) mappedRow.firstName = value.substring(commaIdx + 1).trim();
+                mappedRow.lastName = value.substring(0, commaIdx).trim();
+                mappedRow.firstName = value.substring(commaIdx + 1).trim();
               } else {
-                if (!mappedRow.lastName) mappedRow.lastName = value.trim();
+                mappedRow.lastName = value.trim();
               }
             } else if (extendedFields.has(targetField) && value) {
               // Special parsing for specific fields
