@@ -23,33 +23,37 @@ export async function seedDatabase() {
       await db.execute(sql`ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_insurance_id_fkey`);
     } catch (e) { /* constraint may not exist */ }
 
-    // Clean up test/debug patients by ID (ids 1-12 are all test data from debugging)
-    // Must delete referencing rows first due to FK constraints
+    // Clean up test/debug patients by ID (ids 1-12 are all test data)
+    // Find all tables with patient_id FK and delete referencing rows
     try {
-      await db.execute(sql`DELETE FROM patient_consents WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM patient_portal_access WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM patient_documents WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM patient_statements WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM patient_payment_methods WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM patient_payments WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM patient_assessments WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM soap_note_goal_progress WHERE soap_note_id IN (SELECT id FROM soap_notes WHERE patient_id <= 12)`);
-      await db.execute(sql`DELETE FROM soap_notes WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM treatment_sessions WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM claims WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM appointments WHERE patient_id <= 12`);
-      await db.execute(sql`DELETE FROM treatment_plan_goals WHERE treatment_plan_id IN (SELECT id FROM treatment_plans WHERE patient_id <= 12)`);
-      await db.execute(sql`DELETE FROM treatment_plans WHERE patient_id <= 12`);
-    } catch (e) {
-      console.log('Some FK cleanup tables may not exist yet:', e instanceof Error ? e.message : '');
-    }
-    try {
-      const testCleanup = await db.execute(sql`DELETE FROM patients WHERE id <= 12`);
-      if (testCleanup.rowCount && testCleanup.rowCount > 0) {
-        console.log(`Cleaned up ${testCleanup.rowCount} test patient records`);
+      const fkTables = await db.execute(sql`
+        SELECT DISTINCT tc.table_name, kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+        JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND ccu.table_name = 'patients'
+        AND ccu.column_name = 'id'
+      `);
+      for (const row of fkTables.rows) {
+        const table = row.table_name as string;
+        const col = row.column_name as string;
+        try {
+          await db.execute(sql.raw(`DELETE FROM "${table}" WHERE "${col}" <= 12`));
+        } catch (e) { /* some tables might have their own FK deps */ }
       }
+      // Second pass for any remaining
+      for (const row of fkTables.rows) {
+        const table = row.table_name as string;
+        const col = row.column_name as string;
+        try {
+          await db.execute(sql.raw(`DELETE FROM "${table}" WHERE "${col}" <= 12`));
+        } catch (e) { /* ignore */ }
+      }
+      const testCleanup = await db.execute(sql`DELETE FROM patients WHERE id <= 12`);
+      console.log(`Cleaned up ${testCleanup.rowCount || 0} test patient records`);
     } catch (e) {
-      console.error('Failed to clean up test patients:', e instanceof Error ? e.message : String(e));
+      console.error('Test patient cleanup failed:', e instanceof Error ? e.message : String(e));
     }
 
     const columnsToText = [
