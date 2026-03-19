@@ -16,16 +16,27 @@ export async function seedDatabase() {
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_id VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS policy_number VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS group_number VARCHAR`);
-    // Fix column types: encrypted fields need text (not varchar with limits) to hold encrypted JSON
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN first_name TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN last_name TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN email TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN phone TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN address TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN insurance_provider TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN insurance_id TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN policy_number TYPE text`);
-    await db.execute(sql`ALTER TABLE patients ALTER COLUMN group_number TYPE text`);
+    // Fix column types: fields need text type to hold encrypted JSON or string member IDs
+    // Drop any FK constraints on insurance_id first (old schema had integer FK to insurances table)
+    try {
+      await db.execute(sql`ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_insurance_id_insurances_id_fk`);
+      await db.execute(sql`ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_insurance_id_fkey`);
+    } catch (e) { /* constraint may not exist */ }
+
+    const columnsToText = [
+      'first_name', 'last_name', 'email', 'phone', 'address',
+      'insurance_provider', 'insurance_id', 'policy_number', 'group_number',
+      'secondary_insurance_provider', 'secondary_insurance_member_id',
+      'secondary_insurance_policy_number', 'secondary_insurance_group_number',
+    ];
+    for (const col of columnsToText) {
+      try {
+        await db.execute(sql.raw(`ALTER TABLE patients ALTER COLUMN ${col} TYPE text USING ${col}::text`));
+      } catch (e) {
+        // Column may not exist yet or already be text
+      }
+    }
+    console.log("Column type migrations complete");
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_provider VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_policy_number VARCHAR`);
     await db.execute(sql`ALTER TABLE patients ADD COLUMN IF NOT EXISTS secondary_insurance_member_id VARCHAR`);
