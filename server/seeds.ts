@@ -23,38 +23,7 @@ export async function seedDatabase() {
       await db.execute(sql`ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_insurance_id_fkey`);
     } catch (e) { /* constraint may not exist */ }
 
-    // Clean up test/debug patients by ID (ids 1-12 are all test data)
-    // Find all tables with patient_id FK and delete referencing rows
-    try {
-      const fkTables = await db.execute(sql`
-        SELECT DISTINCT tc.table_name, kcu.column_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-        JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-        AND ccu.table_name = 'patients'
-        AND ccu.column_name = 'id'
-      `);
-      for (const row of fkTables.rows) {
-        const table = row.table_name as string;
-        const col = row.column_name as string;
-        try {
-          await db.execute(sql.raw(`DELETE FROM "${table}" WHERE "${col}" <= 12`));
-        } catch (e) { /* some tables might have their own FK deps */ }
-      }
-      // Second pass for any remaining
-      for (const row of fkTables.rows) {
-        const table = row.table_name as string;
-        const col = row.column_name as string;
-        try {
-          await db.execute(sql.raw(`DELETE FROM "${table}" WHERE "${col}" <= 12`));
-        } catch (e) { /* ignore */ }
-      }
-      const testCleanup = await db.execute(sql`DELETE FROM patients WHERE id <= 12`);
-      console.log(`Cleaned up ${testCleanup.rowCount || 0} test patient records`);
-    } catch (e) {
-      console.error('Test patient cleanup failed:', e instanceof Error ? e.message : String(e));
-    }
+    // Test patient cleanup completed — ids 1-12 have been removed
 
     const columnsToText = [
       'first_name', 'last_name', 'email', 'phone', 'address',
