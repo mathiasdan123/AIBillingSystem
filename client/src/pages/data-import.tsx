@@ -968,7 +968,7 @@ export default function DataImport() {
       case 1: {
         const mappedTargets = Object.values(columnMapping);
         const hasFirstLast = mappedTargets.includes('firstName') && mappedTargets.includes('lastName');
-        const hasFullName = mappedTargets.includes('fullName');
+        const hasFullName = mappedTargets.includes('fullName') || mappedTargets.includes('lastCommaFirst');
         return hasFirstLast || hasFullName;
       }
       case 2:

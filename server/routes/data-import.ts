@@ -306,7 +306,7 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Group Number': 'groupNumber',
   },
   fusion: {
-    'Primary Guarantor': 'fullName',
+    'Patient': 'lastCommaFirst',
     'Patient Birthdate': 'dateOfBirth',
     'Primary Contact Email': 'email',
     'Primary Contact Cell #': 'phone',
@@ -315,7 +315,7 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Primary Insured ID': 'insuranceId',
     // "Patient First Name" and "Patient Last Name" are intentionally NOT mapped
     // because Fusion/Ensura CSV exports have unquoted commas in name fields
-    // (e.g., "Bresler, Keira") that shift all columns. Use Primary Guarantor instead.
+    // that shift all columns. Use the "Patient" column ("Last, First") instead.
   },
   generic: {},
 };
@@ -631,6 +631,7 @@ router.post('/map-columns', isAuthenticated, async (req: Request, res: Response)
       { field: 'firstName', label: 'First Name', required: true },
       { field: 'lastName', label: 'Last Name', required: true },
       { field: 'fullName', label: 'Full Name (First Last → splits into First + Last)', required: false },
+      { field: 'lastCommaFirst', label: 'Name as "Last, First" (splits on comma)', required: false },
       { field: 'dateOfBirth', label: 'Date of Birth', required: false },
       { field: 'email', label: 'Email', required: false },
       { field: 'phone', label: 'Phone', required: false },
@@ -678,10 +679,10 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
     // Check that names are mapped (either first+last or fullName)
     const mappedFields = Object.values(columnMapping);
     const hasFirstLast = mappedFields.includes('firstName') && mappedFields.includes('lastName');
-    const hasFullName = mappedFields.includes('fullName');
+    const hasFullName = mappedFields.includes('fullName') || mappedFields.includes('lastCommaFirst');
     if (!hasFirstLast && !hasFullName) {
       return res.status(400).json({
-        message: 'Map either First Name + Last Name, or Full Name to proceed',
+        message: 'Map either First Name + Last Name, Full Name, or Name as "Last, First" to proceed',
       });
     }
 
@@ -717,6 +718,16 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
               if (!mappedRow.lastName) mappedRow.lastName = parts[parts.length - 1];
             } else if (parts.length === 1) {
               if (!mappedRow.firstName) mappedRow.firstName = parts[0];
+            }
+          } else if (targetField === 'lastCommaFirst' && value) {
+            // "Bresler, Keira" → firstName: Keira, lastName: Bresler
+            const commaIdx = value.indexOf(',');
+            if (commaIdx > 0) {
+              if (!mappedRow.lastName) mappedRow.lastName = value.substring(0, commaIdx).trim();
+              if (!mappedRow.firstName) mappedRow.firstName = value.substring(commaIdx + 1).trim();
+            } else {
+              // No comma — treat as last name only
+              if (!mappedRow.lastName) mappedRow.lastName = value.trim();
             }
           } else {
             mappedRow[targetField] = value || null;
@@ -836,6 +847,14 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
                 if (!mappedRow.lastName) mappedRow.lastName = parts[parts.length - 1];
               } else if (parts.length === 1) {
                 if (!mappedRow.firstName) mappedRow.firstName = parts[0];
+              }
+            } else if (targetField === 'lastCommaFirst' && value) {
+              const commaIdx = value.indexOf(',');
+              if (commaIdx > 0) {
+                if (!mappedRow.lastName) mappedRow.lastName = value.substring(0, commaIdx).trim();
+                if (!mappedRow.firstName) mappedRow.firstName = value.substring(commaIdx + 1).trim();
+              } else {
+                if (!mappedRow.lastName) mappedRow.lastName = value.trim();
               }
             } else {
               mappedRow[targetField] = value || null;
