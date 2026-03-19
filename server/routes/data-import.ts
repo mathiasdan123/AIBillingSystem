@@ -105,7 +105,7 @@ const getAuthorizedPracticeId = (req: any): number => {
  * Parse CSV text into rows.
  * Handles quoted fields, commas within quotes, and newlines within quotes.
  */
-function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
+function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[]; detectedDelimiter: string } {
   const lines: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -132,7 +132,7 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   }
 
   if (lines.length < 2) {
-    return { headers: [], rows: [] };
+    return { headers: [], rows: [], detectedDelimiter: ',' };
   }
 
   // Auto-detect delimiter: prioritize tab if header contains tabs,
@@ -170,7 +170,7 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     rows.push(row);
   }
 
-  return { headers, rows };
+  return { headers, rows, detectedDelimiter: delimiter === '\t' ? 'tab' : delimiter };
 }
 
 function parseCsvLine(line: string, delimiter: string = ','): string[] {
@@ -202,10 +202,10 @@ function parseCsvLine(line: string, delimiter: string = ','): string[] {
  * Parse JSON data into rows.
  * Expects an array of objects.
  */
-function parseJSON(text: string): { headers: string[]; rows: Record<string, string>[] } {
+function parseJSON(text: string): { headers: string[]; rows: Record<string, string>[]; detectedDelimiter: string } {
   const data = JSON.parse(text);
   if (!Array.isArray(data) || data.length === 0) {
-    return { headers: [], rows: [] };
+    return { headers: [], rows: [], detectedDelimiter: 'json' };
   }
 
   const headers = Object.keys(data[0]);
@@ -217,7 +217,7 @@ function parseJSON(text: string): { headers: string[]; rows: Record<string, stri
     return row;
   });
 
-  return { headers, rows };
+  return { headers, rows, detectedDelimiter: 'json' };
 }
 
 /**
@@ -401,7 +401,7 @@ router.post('/upload', isAuthenticated, upload.single('file'), async (req: Reque
 
     const text = file.buffer.toString('utf-8');
     const ext = file.originalname.toLowerCase().split('.').pop();
-    let parsed: { headers: string[]; rows: Record<string, string>[] };
+    let parsed: { headers: string[]; rows: Record<string, string>[]; detectedDelimiter: string };
 
     if (ext === 'json') {
       try {
@@ -451,6 +451,7 @@ router.post('/upload', isAuthenticated, upload.single('file'), async (req: Reque
       originalName: file.originalname,
       rowCount: parsed.rows.length,
       headerCount: parsed.headers.length,
+      detectedDelimiter: parsed.detectedDelimiter,
     });
 
     res.json({
@@ -461,6 +462,7 @@ router.post('/upload', isAuthenticated, upload.single('file'), async (req: Reque
       rowCount: parsed.rows.length,
       sampleRows: parsed.rows.slice(0, 5),
       suggestedMappings,
+      detectedDelimiter: parsed.detectedDelimiter,
     });
   } catch (error) {
     logger.error('Data import upload failed', { error: error instanceof Error ? error.message : String(error) });
