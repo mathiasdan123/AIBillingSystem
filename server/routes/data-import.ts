@@ -135,24 +135,26 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     return { headers: [], rows: [] };
   }
 
-  // Auto-detect delimiter by trying each and picking the one where
-  // header column count matches the first data row column count
+  // Auto-detect delimiter: prioritize tab if header contains tabs,
+  // since tab-separated headers almost never have false-positive tabs.
+  // Commas in data fields (like "Bresler, Keira") cause false positives
+  // when using comma as delimiter on tab-separated files.
   const headerLine = lines[0];
-  const dataLine = lines.length > 1 ? lines[1] : '';
-  const delimiters = ['\t', ',', '|', ';'];
+  const headerTabCount = (headerLine.match(/\t/g) || []).length;
+  const headerCommaCount = (headerLine.match(/,/g) || []).length;
   let delimiter = ',';
-  let bestScore = -1;
 
-  for (const d of delimiters) {
-    const headerCols = parseCsvLine(headerLine, d).length;
-    const dataCols = dataLine ? parseCsvLine(dataLine, d).length : 0;
-    // Score: prefer delimiter where header and data have same column count
-    // and where there are multiple columns (not just 1)
-    const match = (headerCols > 1 && headerCols === dataCols) ? headerCols * 2 : headerCols;
-    if (match > bestScore) {
-      bestScore = match;
-      delimiter = d;
-    }
+  if (headerTabCount > 0 && headerTabCount >= headerCommaCount) {
+    // Header has tabs — almost certainly tab-delimited
+    delimiter = '\t';
+  } else if (headerCommaCount > 0) {
+    delimiter = ',';
+  } else {
+    // Try pipe and semicolon
+    const headerPipeCount = (headerLine.match(/\|/g) || []).length;
+    const headerSemiCount = (headerLine.match(/;/g) || []).length;
+    if (headerPipeCount > headerSemiCount && headerPipeCount > 0) delimiter = '|';
+    else if (headerSemiCount > 0) delimiter = ';';
   }
 
   const headers = parseCsvLine(lines[0], delimiter);
@@ -322,11 +324,11 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     firstName: ['firstname', 'first', 'fname', 'givenname', 'patientfirstname', 'clientfirstname', 'patientfirst', 'childfirstname', 'childfirst'],
     lastName: ['lastname', 'last', 'lname', 'surname', 'familyname', 'patientlastname', 'clientlastname', 'patientlast', 'childlastname', 'childlast'],
     dateOfBirth: ['dateofbirth', 'dob', 'birthdate', 'birthday', 'birth', 'patientdateofbirth', 'patientdob', 'patientbirthdate'],
-    email: ['email', 'emailaddress', 'mail', 'patientemail', 'clientemail'],
-    phone: ['phone', 'phonenumber', 'telephone', 'tel', 'mobile', 'cell', 'mobilephone', 'patientphone', 'clientphone', 'homephone', 'primaryphone'],
-    address: ['address', 'streetaddress', 'homeaddress', 'mailingaddress', 'street', 'patientaddress', 'clientaddress'],
-    insuranceProvider: ['insurance', 'insurancecompany', 'insurancename', 'insuranceprovider', 'insurer', 'payer', 'primaryinsurance', 'payername', 'carriername'],
-    insuranceId: ['memberid', 'subscriberid', 'insuranceid', 'membernum', 'membernumber', 'patientmemberid', 'subscribernumber'],
+    email: ['email', 'emailaddress', 'mail', 'patientemail', 'clientemail', 'primarycontactemail'],
+    phone: ['phone', 'phonenumber', 'telephone', 'tel', 'mobile', 'cell', 'mobilephone', 'patientphone', 'clientphone', 'homephone', 'primaryphone', 'primarycontactphone', 'primarycontactcell'],
+    address: ['address', 'streetaddress', 'homeaddress', 'mailingaddress', 'street', 'patientaddress', 'clientaddress', 'primarycontactaddress'],
+    insuranceProvider: ['insurance', 'insurancecompany', 'insurancename', 'insuranceprovider', 'insurer', 'payer', 'primaryinsurance', 'payername', 'carriername', 'primarypayer'],
+    insuranceId: ['memberid', 'subscriberid', 'insuranceid', 'membernum', 'membernumber', 'patientmemberid', 'subscribernumber', 'primaryinsuredid', 'insuredid'],
     policyNumber: ['policynumber', 'policynum', 'policy', 'policyid'],
     groupNumber: ['groupnumber', 'groupnum', 'group', 'groupid'],
   };
