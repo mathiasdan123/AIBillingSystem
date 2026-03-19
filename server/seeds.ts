@@ -23,6 +23,17 @@ export async function seedDatabase() {
       await db.execute(sql`ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_insurance_id_fkey`);
     } catch (e) { /* constraint may not exist */ }
 
+    // Clean up test/debug patients by ID range (ids 1-12 are test data)
+    try {
+      const testCleanup = await db.execute(sql`
+        DELETE FROM patients WHERE id <= 12
+        AND first_name NOT IN ('Keira', 'Nava', 'Jude', 'Gianna', 'Abby', 'Lily')
+      `);
+      if (testCleanup.rowCount && testCleanup.rowCount > 0) {
+        console.log(`Cleaned up ${testCleanup.rowCount} test patient records`);
+      }
+    } catch (e) { /* ignore cleanup errors */ }
+
     const columnsToText = [
       'first_name', 'last_name', 'email', 'phone', 'address',
       'insurance_provider', 'insurance_id', 'policy_number', 'group_number',
