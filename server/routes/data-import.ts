@@ -1088,7 +1088,7 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
 
     const fileData = uploadedFiles.get(fileId);
     if (!fileData) {
-      return res.status(404).json({ message: 'File not found. Please re-upload.' });
+      return res.status(404).json({ message: 'File data not found — the server may have restarted. Please go back and re-upload or re-paste your data.' });
     }
 
     const practiceId = getAuthorizedPracticeId(req);
@@ -1106,8 +1106,15 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
       });
     }
 
-    // Get existing patients for duplicate detection
-    const existingPatients = await storage.getPatients(practiceId);
+    // Get existing patients for duplicate detection — use try/catch to handle DB issues
+    let existingPatients: any[] = [];
+    try {
+      existingPatients = await storage.getPatients(practiceId);
+    } catch (e) {
+      logger.warn('Could not fetch existing patients for duplicate detection — skipping', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
     const existingSet = new Set(
       existingPatients.map((p: any) =>
         `${(p.firstName || '').toLowerCase()}|${(p.lastName || '').toLowerCase()}|${p.dateOfBirth || ''}`
