@@ -164,18 +164,69 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     let values = parseCsvLine(lines[i], delimiter);
     if (values.length === 0 || (values.length === 1 && values[0] === '')) continue;
 
-    // Fix column mismatch: if data has more columns than header due to unquoted commas
-    // in data values (e.g., "Bresler, Keira" or "M62.81 (OT), R27.8 (OT)"),
-    // align from the RIGHT since trailing columns (contact, insurance) are always clean.
+    // Fix column mismatch: if data has more columns than header due to unquoted commas.
+    // Strategy: scan left-to-right. At each known comma-prone column, greedily merge
+    // consecutive values that look like they belong to the same field.
     const row: Record<string, string> = {};
     if (values.length > headerCount) {
-      const excess = values.length - headerCount;
-      // Align from the right — map headers[N-1] to values[N-1+excess], etc.
-      for (let h = headerCount - 1; h >= 0; h--) {
-        row[headers[h]] = values[h + excess]?.trim() || '';
+      // Build a map of header name → index for known comma-prone columns
+      const commaColInfo: Record<number, string> = {};
+      for (let h = 0; h < headerCount; h++) {
+        const name = headers[h];
+        if (['Patient', 'Diagnoses', 'Active Services'].includes(name)) {
+          commaColInfo[h] = name;
+        }
       }
-      // The skipped leftmost values (excess) are lost, but they're typically
-      // the combined "Patient" field which is redundant with "Patient First Name" + "Patient Last Name"
+
+      let vIdx = 0;
+      for (let h = 0; h < headerCount; h++) {
+        if (vIdx >= values.length) {
+          row[headers[h]] = '';
+          continue;
+        }
+
+        const colName = commaColInfo[h];
+        if (colName && values.length - vIdx > headerCount - h) {
+          // This column may have absorbed extra commas — merge values
+          if (colName === 'Patient') {
+            // "Last, First" — always exactly 2 parts (1 extra comma)
+            if (values.length - vIdx > headerCount - h) {
+              row[headers[h]] = (values[vIdx] + ', ' + values[vIdx + 1]).trim();
+              vIdx += 2;
+              continue;
+            }
+          } else if (colName === 'Diagnoses') {
+            // "M62.81 (OT), R27.8 (OT), ..." — count values matching ICD pattern
+            let mergeCount = 1;
+            while (
+              vIdx + mergeCount < values.length &&
+              values.length - (vIdx + mergeCount) > headerCount - h - 1 &&
+              /^\s*[A-Z]\d/.test(values[vIdx + mergeCount])
+            ) {
+              mergeCount++;
+            }
+            row[headers[h]] = values.slice(vIdx, vIdx + mergeCount).join(', ').trim();
+            vIdx += mergeCount;
+            continue;
+          } else if (colName === 'Active Services') {
+            // "OT, PT, ST" — merge values that are 2-3 letter therapy codes
+            let mergeCount = 1;
+            while (
+              vIdx + mergeCount < values.length &&
+              values.length - (vIdx + mergeCount) > headerCount - h - 1 &&
+              /^\s*[A-Z]{2,3}\s*$/.test(values[vIdx + mergeCount])
+            ) {
+              mergeCount++;
+            }
+            row[headers[h]] = values.slice(vIdx, vIdx + mergeCount).join(', ').trim();
+            vIdx += mergeCount;
+            continue;
+          }
+        }
+
+        row[headers[h]] = values[vIdx]?.trim() || '';
+        vIdx++;
+      }
     } else {
       headers.forEach((header, idx) => {
         row[header] = values[idx]?.trim() || '';
