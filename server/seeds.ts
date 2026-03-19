@@ -134,12 +134,12 @@ export async function seedDatabase() {
       await db.execute(sql`UPDATE users SET practice_id = ${pId2} WHERE email = 'reviewer2@demo.com' AND practice_id IS NULL`);
     }
 
-    // Always reset to clean demo patients on startup
+    // Seed demo patients only if none exist — never delete existing patients
     // Use raw SQL to bypass encryption — demo data doesn't need PHI encryption
-    await db.execute(sql`DELETE FROM patients`);
-    console.log("Cleared all patients for fresh demo seed");
-    {
-      console.log("Seeding demo patients...");
+    const existingPatientCount = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
+    const activePatients = parseInt(existingPatientCount.rows[0]?.count || '0', 10);
+    if (activePatients === 0) {
+      console.log("No patients found — seeding demo patients...");
       const practiceForPatients = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
       if (practiceForPatients.rows && practiceForPatients.rows.length > 0) {
         const pId = parseInt(practiceForPatients.rows[0].id as string, 10);
@@ -164,6 +164,8 @@ export async function seedDatabase() {
         }
         console.log("Sample patients seeded: 6 pediatric patients");
       }
+    } else {
+      console.log(`${activePatients} patients already exist — skipping seed`);
     }
 
     // Check if data already exists
