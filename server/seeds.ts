@@ -134,14 +134,12 @@ export async function seedDatabase() {
       await db.execute(sql`UPDATE users SET practice_id = ${pId2} WHERE email = 'reviewer2@demo.com' AND practice_id IS NULL`);
     }
 
-    // Always ensure sample patients exist for demo/review purposes
+    // Always reset to clean demo patients on startup
     // Use raw SQL to bypass encryption — demo data doesn't need PHI encryption
-    const existingPatients = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
-    const patientCount = parseInt(existingPatients.rows[0]?.count || '0', 10);
-    if (patientCount < 3) {
-      console.log("Seeding sample patients...");
-      // Clean up any test/broken patients first
-      await db.execute(sql`DELETE FROM patients WHERE first_name LIKE 'Test%'`);
+    await db.execute(sql`DELETE FROM patients`);
+    console.log("Cleared all patients for fresh demo seed");
+    {
+      console.log("Seeding demo patients...");
       const practiceForPatients = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
       if (practiceForPatients.rows && practiceForPatients.rows.length > 0) {
         const pId = parseInt(practiceForPatients.rows[0].id as string, 10);
@@ -166,16 +164,6 @@ export async function seedDatabase() {
         }
         console.log("Sample patients seeded: 6 pediatric patients");
       }
-    } else {
-      console.log(`${patientCount} patients already exist`);
-    }
-    // Always clean up test/bad-import patients from debugging sessions
-    const deleted = await db.execute(sql`
-      DELETE FROM patients WHERE first_name LIKE 'Test%'
-      OR last_name IN ('2026 DED MET', 'INS PAYOUT THEN BALANCE BILL', 'NEED PROGRESS REPORT', 'ZELLE 165', 'NEED EVAL REPORT', 'EVAL report needed')
-    `);
-    if (deleted.rowCount && deleted.rowCount > 0) {
-      console.log(`Cleaned up ${deleted.rowCount} test/bad-import patient records`);
     }
 
     // Check if data already exists
