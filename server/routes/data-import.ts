@@ -164,17 +164,23 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     let values = parseCsvLine(lines[i], delimiter);
     if (values.length === 0 || (values.length === 1 && values[0] === '')) continue;
 
-    // Fix column mismatch: if data has more columns than header,
-    // merge extra early columns (handles unquoted commas in fields like "Bresler, Keira")
-    while (values.length > headerCount && values.length > 1) {
-      // Merge the first two values (the split name) back together
-      values = [values[0] + ', ' + values[1], ...values.slice(2)];
-    }
-
+    // Fix column mismatch: if data has more columns than header due to unquoted commas
+    // in data values (e.g., "Bresler, Keira" or "M62.81 (OT), R27.8 (OT)"),
+    // align from the RIGHT since trailing columns (contact, insurance) are always clean.
     const row: Record<string, string> = {};
-    headers.forEach((header, idx) => {
-      row[header] = values[idx]?.trim() || '';
-    });
+    if (values.length > headerCount) {
+      const excess = values.length - headerCount;
+      // Align from the right — map headers[N-1] to values[N-1+excess], etc.
+      for (let h = headerCount - 1; h >= 0; h--) {
+        row[headers[h]] = values[h + excess]?.trim() || '';
+      }
+      // The skipped leftmost values (excess) are lost, but they're typically
+      // the combined "Patient" field which is redundant with "Patient First Name" + "Patient Last Name"
+    } else {
+      headers.forEach((header, idx) => {
+        row[header] = values[idx]?.trim() || '';
+      });
+    }
     rows.push(row);
   }
 
