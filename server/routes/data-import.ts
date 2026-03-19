@@ -291,6 +291,18 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Client Status': 'patientStatus',
     'Location': 'primaryLocation',
     'Services': 'activeServices',
+    'Sex': 'patientSex',
+    'Gender': 'patientSex',
+    'Middle Name': 'middleName',
+    'Nickname': 'nickname',
+    'Race': 'race',
+    'Marital Status': 'maritalStatus',
+    'Emergency Contact Name': 'contactName',
+    'Emergency Contact Phone': 'contactEmergencyPhone',
+    'Secondary Insurance': 'secondaryPayer',
+    'Secondary Member ID': 'secondaryInsuredId',
+    'Referred By': 'referredBy',
+    'Referral Source': 'referredBy',
   },
   therapynotes: {
     'FirstName': 'firstName',
@@ -317,6 +329,18 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Status': 'patientStatus',
     'Location': 'primaryLocation',
     'ServiceTypes': 'activeServices',
+    'Sex': 'patientSex',
+    'Gender': 'patientSex',
+    'MiddleName': 'middleName',
+    'Nickname': 'nickname',
+    'Race': 'race',
+    'MaritalStatus': 'maritalStatus',
+    'EmergencyContactName': 'contactName',
+    'EmergencyContactPhone': 'contactEmergencyPhone',
+    'SecondaryInsurance': 'secondaryPayer',
+    'SecondaryMemberID': 'secondaryInsuredId',
+    'ReferredBy': 'referredBy',
+    'ReferralSource': 'referredBy',
   },
   janeapp: {
     'First Name': 'firstName',
@@ -340,6 +364,18 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Clinic Location': 'primaryLocation',
     'Services': 'activeServices',
     'Status': 'patientStatus',
+    'Sex': 'patientSex',
+    'Gender': 'patientSex',
+    'Middle Name': 'middleName',
+    'Preferred Name': 'nickname',
+    'Race': 'race',
+    'Marital Status': 'maritalStatus',
+    'Emergency Contact': 'contactName',
+    'Emergency Phone': 'contactEmergencyPhone',
+    'Secondary Insurer': 'secondaryPayer',
+    'Secondary Member Number': 'secondaryInsuredId',
+    'Referred By': 'referredBy',
+    'Referral Source': 'referredBy',
   },
   webpt: {
     'Patient First Name': 'firstName',
@@ -363,6 +399,23 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Facility': 'primaryLocation',
     'Service Type': 'activeServices',
     'Patient Status': 'patientStatus',
+    'Sex': 'patientSex',
+    'Gender': 'patientSex',
+    'Patient Sex': 'patientSex',
+    'Middle Name': 'middleName',
+    'Patient Middle Name': 'middleName',
+    'Race': 'race',
+    'Marital Status': 'maritalStatus',
+    'Emergency Contact': 'contactName',
+    'Emergency Contact Name': 'contactName',
+    'Emergency Phone': 'contactEmergencyPhone',
+    'Emergency Contact Phone': 'contactEmergencyPhone',
+    'Secondary Insurance': 'secondaryPayer',
+    'Secondary Insurance Name': 'secondaryPayer',
+    'Secondary Subscriber ID': 'secondaryInsuredId',
+    'Referred By': 'referredBy',
+    'Referral Source': 'referredBy',
+    'Referring Provider': 'referredBy',
   },
   fusion: {
     'Patient': 'lastCommaFirst',
@@ -383,6 +436,51 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Patient Status': 'patientStatus',
     'Primary Contact Email Reminders': 'emailReminders',
     'Primary Contact Text Reminders': 'textReminders',
+    // Demographics
+    'Patient Sex': 'patientSex',
+    'Patient Age': 'patientAge',
+    'Age Group': 'ageGroup',
+    'Patient Middle Name': 'middleName',
+    'Patient Nickname': 'nickname',
+    'Race': 'race',
+    'Marital Status': 'maritalStatus',
+    // Contact info (parent/guardian)
+    'Primary Contact': 'contactName',
+    'Primary Contact City': 'contactCity',
+    'Primary Contact State': 'contactState',
+    'Primary Contact Zip': 'contactZip',
+    'Primary Contact Phone #': 'contactPhone',
+    'Primary Contact Phone # Note': 'contactPhoneNote',
+    'Primary Contact Cell # Note': 'contactCellNote',
+    'Primary Contact Emergency #': 'contactEmergencyPhone',
+    'Primary Contact Emergency # Note': 'contactEmergencyNote',
+    // Secondary insurance
+    'Secondary Payer': 'secondaryPayer',
+    'Secondary Insured ID': 'secondaryInsuredId',
+    'Secondary Guarantor': 'secondaryGuarantor',
+    // Tertiary insurance
+    'Tertiary Payer': 'tertiaryPayer',
+    'Tertiary Insured ID': 'tertiaryInsuredId',
+    'Tertiary Guarantor': 'tertiaryGuarantor',
+    // Co-payments
+    'Standard Primary Co-Payment': 'primaryCopay',
+    'Standard Secondary Co-Payment': 'secondaryCopay',
+    'Standard Tertiary Co-Payment': 'tertiaryCopay',
+    // Clinical/referral
+    'Referred By': 'referredBy',
+    'Medical Record': 'medicalRecord',
+    'Daily Notes': 'dailyNotes',
+    // Financial/operational history
+    'Appointments': 'totalAppointments',
+    'Checked-In Appointments': 'checkedInAppointments',
+    'Patient Canceled Appointments': 'canceledAppointments',
+    'No-Show Appointments': 'noShowAppointments',
+    'Appointment Hours': 'appointmentHours',
+    'Co-Payments Paid': 'copaymentsPaid',
+    'Claims': 'totalClaims',
+    'Payments': 'totalPayments',
+    'Charges': 'totalCharges',
+    'Estimated Claim Balance': 'estimatedClaimBalance',
     // "Patient First Name" and "Patient Last Name" are explicitly skipped
     // because Fusion/Ensura CSV exports have unquoted commas that shift columns.
     // Names come from "Patient" (Last, First) + "Primary Guarantor" (First Last).
@@ -434,6 +532,25 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Email Reminders': 'emailReminders',
     'Text Reminders': 'textReminders',
     'SMS Reminders': 'textReminders',
+    'Sex': 'patientSex',
+    'Gender': 'patientSex',
+    'Patient Sex': 'patientSex',
+    'Middle Name': 'middleName',
+    'Nickname': 'nickname',
+    'Preferred Name': 'nickname',
+    'Race': 'race',
+    'Marital Status': 'maritalStatus',
+    'Emergency Contact Name': 'contactName',
+    'Emergency Contact': 'contactName',
+    'Emergency Contact Phone': 'contactEmergencyPhone',
+    'Emergency Phone': 'contactEmergencyPhone',
+    'Secondary Insurance': 'secondaryPayer',
+    'Secondary Payer': 'secondaryPayer',
+    'Secondary Insurance Company': 'secondaryPayer',
+    'Secondary Member ID': 'secondaryInsuredId',
+    'Secondary Subscriber ID': 'secondaryInsuredId',
+    'Referred By': 'referredBy',
+    'Referral Source': 'referredBy',
   },
   generic: {},
 };
@@ -450,6 +567,24 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     'insuranceProvider', 'insuranceId', 'policyNumber', 'groupNumber',
     'diagnoses', 'patientAlerts', 'patientNotes', 'primaryLocation',
     'activeServices', 'patientStatus', 'emailReminders', 'textReminders',
+    // Demographics
+    'patientSex', 'patientAge', 'ageGroup', 'middleName', 'nickname', 'race', 'maritalStatus',
+    // Contact info
+    'contactName', 'contactCity', 'contactState', 'contactZip',
+    'contactPhone', 'contactPhoneNote', 'contactCellNote',
+    'contactEmergencyPhone', 'contactEmergencyNote',
+    // Secondary insurance
+    'secondaryPayer', 'secondaryInsuredId', 'secondaryGuarantor',
+    // Tertiary insurance
+    'tertiaryPayer', 'tertiaryInsuredId', 'tertiaryGuarantor',
+    // Co-payments
+    'primaryCopay', 'secondaryCopay', 'tertiaryCopay',
+    // Clinical/referral
+    'referredBy', 'medicalRecord', 'dailyNotes',
+    // Financial/operational
+    'totalAppointments', 'checkedInAppointments', 'canceledAppointments',
+    'noShowAppointments', 'appointmentHours', 'copaymentsPaid',
+    'totalClaims', 'totalPayments', 'totalCharges', 'estimatedClaimBalance',
   ];
 
   const mapping: ColumnMapping = {};
@@ -492,6 +627,51 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     patientStatus: ['patientstatus', 'status', 'clientstatus', 'accountstatus'],
     emailReminders: ['primarycontactemailreminders', 'emailreminders', 'emailreminder', 'emailnotifications'],
     textReminders: ['primarycontacttextreminders', 'textreminders', 'textreminder', 'smsreminders', 'smsreminder'],
+    // Demographics
+    patientSex: ['patientsex', 'sex', 'gender', 'clientsex', 'clientgender'],
+    patientAge: ['patientage', 'age', 'clientage'],
+    ageGroup: ['agegroup', 'agecategory', 'agerange'],
+    middleName: ['middlename', 'patientmiddlename', 'middle', 'mi', 'middleinitial'],
+    nickname: ['nickname', 'patientnickname', 'preferredname', 'goesbyname', 'goesby'],
+    race: ['race', 'ethnicity', 'patientrace'],
+    maritalStatus: ['maritalstatus', 'marital', 'patientmaritalstatus'],
+    // Contact info
+    contactName: ['primarycontact', 'contactname', 'emergencycontactname', 'emergencycontact', 'guardianname', 'parentname', 'parentguardian'],
+    contactCity: ['primarycontactcity', 'contactcity'],
+    contactState: ['primarycontactstate', 'contactstate'],
+    contactZip: ['primarycontactzip', 'contactzip', 'primarycontactzipcode', 'contactzipcode'],
+    contactPhone: ['primarycontactphone', 'contactphone', 'guardianphone', 'parentphone', 'homephone'],
+    contactPhoneNote: ['primarycontactphonenote', 'contactphonenote'],
+    contactCellNote: ['primarycontactcellnote', 'contactcellnote'],
+    contactEmergencyPhone: ['primarycontactemergency', 'emergencyphone', 'emergencycontactphone', 'contactemergencyphone'],
+    contactEmergencyNote: ['primarycontactemergencynote', 'contactemergencynote', 'emergencynote'],
+    // Secondary insurance
+    secondaryPayer: ['secondarypayer', 'secondaryinsurance', 'secondaryinsuranceprovider', 'secondaryinsurancecompany', 'secondaryinsurer', 'secondarycarrier'],
+    secondaryInsuredId: ['secondaryinsuredid', 'secondarymemberid', 'secondarysubscriberid', 'secondarymembernumber'],
+    secondaryGuarantor: ['secondaryguarantor'],
+    // Tertiary insurance
+    tertiaryPayer: ['tertiarypayer', 'tertiaryinsurance', 'tertiaryinsuranceprovider'],
+    tertiaryInsuredId: ['tertiaryinsuredid', 'tertiarymemberid', 'tertiarysubscriberid'],
+    tertiaryGuarantor: ['tertiaryguarantor'],
+    // Co-payments
+    primaryCopay: ['standardprimarycopayment', 'primarycopay', 'primarycopayment', 'copay', 'copayment'],
+    secondaryCopay: ['standardsecondarycopayment', 'secondarycopay', 'secondarycopayment'],
+    tertiaryCopay: ['standardtertiarycopayment', 'tertiarycopay', 'tertiarycopayment'],
+    // Clinical/referral
+    referredBy: ['referredby', 'referralsource', 'referringprovider', 'referringphysician', 'referrer'],
+    medicalRecord: ['medicalrecord', 'medicalrecordnumber', 'mrn', 'chartid', 'chartnumber'],
+    dailyNotes: ['dailynotes', 'dailynote', 'sessionnotes'],
+    // Financial/operational
+    totalAppointments: ['appointments', 'totalappointments', 'appointmentcount'],
+    checkedInAppointments: ['checkedinappointments', 'checkedin', 'checkincount'],
+    canceledAppointments: ['patientcanceledappointments', 'canceledappointments', 'cancellations', 'cancelcount'],
+    noShowAppointments: ['noshowappointments', 'noshows', 'noshowcount'],
+    appointmentHours: ['appointmenthours', 'totalhours', 'hours'],
+    copaymentsPaid: ['copaymentspaid', 'copayspaid', 'totalcopays'],
+    totalClaims: ['totalclaims', 'claimcount'],
+    totalPayments: ['totalpayments', 'payments', 'paymentcount'],
+    totalCharges: ['totalcharges', 'charges', 'chargecount'],
+    estimatedClaimBalance: ['estimatedclaimbalance', 'claimbalance', 'estimatedbalance', 'outstandingbalance'],
   };
 
   for (const header of headers) {
@@ -784,6 +964,51 @@ router.post('/map-columns', isAuthenticated, async (req: Request, res: Response)
       { field: 'patientStatus', label: 'Patient Status (Active/Inactive)', required: false },
       { field: 'emailReminders', label: 'Email Reminders (Yes/No)', required: false },
       { field: 'textReminders', label: 'Text Reminders (Yes/No)', required: false },
+      // Demographics
+      { field: 'patientSex', label: 'Patient Sex (Male/Female)', required: false },
+      { field: 'patientAge', label: 'Patient Age', required: false },
+      { field: 'ageGroup', label: 'Age Group (e.g. Pediatrics, Adult)', required: false },
+      { field: 'middleName', label: 'Middle Name', required: false },
+      { field: 'nickname', label: 'Nickname / Preferred Name', required: false },
+      { field: 'race', label: 'Race', required: false },
+      { field: 'maritalStatus', label: 'Marital Status', required: false },
+      // Contact info (parent/guardian)
+      { field: 'contactName', label: 'Primary Contact / Guardian Name', required: false },
+      { field: 'contactCity', label: 'Contact City', required: false },
+      { field: 'contactState', label: 'Contact State', required: false },
+      { field: 'contactZip', label: 'Contact Zip Code', required: false },
+      { field: 'contactPhone', label: 'Contact Phone (Landline)', required: false },
+      { field: 'contactPhoneNote', label: 'Contact Phone Note', required: false },
+      { field: 'contactCellNote', label: 'Contact Cell Note', required: false },
+      { field: 'contactEmergencyPhone', label: 'Emergency Phone', required: false },
+      { field: 'contactEmergencyNote', label: 'Emergency Phone Note', required: false },
+      // Secondary insurance (maps to patient table columns)
+      { field: 'secondaryPayer', label: 'Secondary Insurance Provider', required: false },
+      { field: 'secondaryInsuredId', label: 'Secondary Member ID', required: false },
+      { field: 'secondaryGuarantor', label: 'Secondary Guarantor', required: false },
+      // Tertiary insurance
+      { field: 'tertiaryPayer', label: 'Tertiary Insurance Provider', required: false },
+      { field: 'tertiaryInsuredId', label: 'Tertiary Member ID', required: false },
+      { field: 'tertiaryGuarantor', label: 'Tertiary Guarantor', required: false },
+      // Co-payments
+      { field: 'primaryCopay', label: 'Primary Co-Payment', required: false },
+      { field: 'secondaryCopay', label: 'Secondary Co-Payment', required: false },
+      { field: 'tertiaryCopay', label: 'Tertiary Co-Payment', required: false },
+      // Clinical/referral
+      { field: 'referredBy', label: 'Referred By / Referral Source', required: false },
+      { field: 'medicalRecord', label: 'Medical Record Number', required: false },
+      { field: 'dailyNotes', label: 'Daily Notes', required: false },
+      // Financial/operational history
+      { field: 'totalAppointments', label: 'Total Appointments', required: false },
+      { field: 'checkedInAppointments', label: 'Checked-In Appointments', required: false },
+      { field: 'canceledAppointments', label: 'Canceled Appointments', required: false },
+      { field: 'noShowAppointments', label: 'No-Show Appointments', required: false },
+      { field: 'appointmentHours', label: 'Appointment Hours', required: false },
+      { field: 'copaymentsPaid', label: 'Co-Payments Paid', required: false },
+      { field: 'totalClaims', label: 'Total Claims', required: false },
+      { field: 'totalPayments', label: 'Total Payments', required: false },
+      { field: 'totalCharges', label: 'Total Charges', required: false },
+      { field: 'estimatedClaimBalance', label: 'Estimated Claim Balance', required: false },
     ];
 
     res.json({
@@ -846,6 +1071,24 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
     const extendedFields = new Set([
       'diagnoses', 'patientAlerts', 'patientNotes', 'primaryLocation',
       'activeServices', 'patientStatus', 'emailReminders', 'textReminders',
+      // Demographics
+      'patientSex', 'patientAge', 'ageGroup', 'middleName', 'nickname', 'race', 'maritalStatus',
+      // Contact info
+      'contactName', 'contactCity', 'contactState', 'contactZip',
+      'contactPhone', 'contactPhoneNote', 'contactCellNote',
+      'contactEmergencyPhone', 'contactEmergencyNote',
+      // Secondary insurance (secondaryGuarantor goes to importedData; payer/id go to table columns)
+      'secondaryPayer', 'secondaryInsuredId', 'secondaryGuarantor',
+      // Tertiary insurance
+      'tertiaryPayer', 'tertiaryInsuredId', 'tertiaryGuarantor',
+      // Co-payments
+      'primaryCopay', 'secondaryCopay', 'tertiaryCopay',
+      // Clinical/referral
+      'referredBy', 'medicalRecord', 'dailyNotes',
+      // Financial/operational
+      'totalAppointments', 'checkedInAppointments', 'canceledAppointments',
+      'noShowAppointments', 'appointmentHours', 'copaymentsPaid',
+      'totalClaims', 'totalPayments', 'totalCharges', 'estimatedClaimBalance',
     ]);
 
     for (let i = 0; i < fileData.rows.length; i++) {
@@ -881,7 +1124,7 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
               if (!mappedRow.lastName) mappedRow.lastName = value.trim();
             }
           } else if (extendedFields.has(targetField) && value) {
-            // Parse and store extended fields for intakeData
+            // Special parsing for specific fields
             if (targetField === 'diagnoses') {
               importedData.diagnoses = parseDiagnoses(value);
             } else if (targetField === 'activeServices') {
@@ -898,6 +1141,15 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
               importedData.location = value.trim();
             } else if (targetField === 'patientStatus') {
               importedData.status = value.trim();
+            } else if (targetField === 'secondaryPayer') {
+              // Map to actual patient table column
+              mappedRow.secondaryInsuranceProvider = value.trim() || null;
+            } else if (targetField === 'secondaryInsuredId') {
+              // Map to actual patient table column
+              mappedRow.secondaryInsuranceMemberId = value.trim() || null;
+            } else {
+              // All other extended fields: store as-is in importedData
+              importedData[targetField] = value.trim();
             }
           } else {
             mappedRow[targetField] = value || null;
@@ -1007,6 +1259,24 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
       const extendedFields = new Set([
         'diagnoses', 'patientAlerts', 'patientNotes', 'primaryLocation',
         'activeServices', 'patientStatus', 'emailReminders', 'textReminders',
+        // Demographics
+        'patientSex', 'patientAge', 'ageGroup', 'middleName', 'nickname', 'race', 'maritalStatus',
+        // Contact info
+        'contactName', 'contactCity', 'contactState', 'contactZip',
+        'contactPhone', 'contactPhoneNote', 'contactCellNote',
+        'contactEmergencyPhone', 'contactEmergencyNote',
+        // Secondary insurance (secondaryGuarantor goes to importedData; payer/id go to table columns)
+        'secondaryPayer', 'secondaryInsuredId', 'secondaryGuarantor',
+        // Tertiary insurance
+        'tertiaryPayer', 'tertiaryInsuredId', 'tertiaryGuarantor',
+        // Co-payments
+        'primaryCopay', 'secondaryCopay', 'tertiaryCopay',
+        // Clinical/referral
+        'referredBy', 'medicalRecord', 'dailyNotes',
+        // Financial/operational
+        'totalAppointments', 'checkedInAppointments', 'canceledAppointments',
+        'noShowAppointments', 'appointmentHours', 'copaymentsPaid',
+        'totalClaims', 'totalPayments', 'totalCharges', 'estimatedClaimBalance',
       ]);
 
       for (let j = 0; j < batch.length; j++) {
@@ -1039,7 +1309,7 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
                 if (!mappedRow.lastName) mappedRow.lastName = value.trim();
               }
             } else if (extendedFields.has(targetField) && value) {
-              // Parse and store extended fields for intakeData
+              // Special parsing for specific fields
               if (targetField === 'diagnoses') {
                 importedData.diagnoses = parseDiagnoses(value);
               } else if (targetField === 'activeServices') {
@@ -1056,6 +1326,15 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
                 importedData.location = value.trim();
               } else if (targetField === 'patientStatus') {
                 importedData.status = value.trim();
+              } else if (targetField === 'secondaryPayer') {
+                // Map to actual patient table column
+                mappedRow.secondaryInsuranceProvider = value.trim() || null;
+              } else if (targetField === 'secondaryInsuredId') {
+                // Map to actual patient table column
+                mappedRow.secondaryInsuranceMemberId = value.trim() || null;
+              } else {
+                // All other extended fields: store as-is in importedData
+                importedData[targetField] = value.trim();
               }
             } else {
               mappedRow[targetField] = value || null;
