@@ -135,27 +135,26 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     return { headers: [], rows: [], detectedDelimiter: ',' };
   }
 
-  // Auto-detect delimiter: prioritize tab if header contains tabs,
-  // since tab-separated headers almost never have false-positive tabs.
-  // Commas in data fields (like "Bresler, Keira") cause false positives
-  // when using comma as delimiter on tab-separated files.
+  // Auto-detect delimiter by trying each on the header line.
+  // Pick whichever gives the most columns from the header.
+  // If tie, prefer tab (most common for practice management exports).
   const headerLine = lines[0];
-  const headerTabCount = (headerLine.match(/\t/g) || []).length;
-  const headerCommaCount = (headerLine.match(/,/g) || []).length;
-  let delimiter = ',';
+  const candidates: Array<{ d: string; cols: number }> = [
+    { d: '\t', cols: parseCsvLine(headerLine, '\t').length },
+    { d: ',', cols: parseCsvLine(headerLine, ',').length },
+    { d: '|', cols: parseCsvLine(headerLine, '|').length },
+    { d: ';', cols: parseCsvLine(headerLine, ';').length },
+  ];
+  // Sort by column count descending, tab first if tied
+  candidates.sort((a, b) => {
+    if (b.cols !== a.cols) return b.cols - a.cols;
+    return a.d === '\t' ? -1 : 1;
+  });
+  let delimiter = candidates[0].d;
 
-  if (headerTabCount > 0 && headerTabCount >= headerCommaCount) {
-    // Header has tabs — almost certainly tab-delimited
-    delimiter = '\t';
-  } else if (headerCommaCount > 0) {
-    delimiter = ',';
-  } else {
-    // Try pipe and semicolon
-    const headerPipeCount = (headerLine.match(/\|/g) || []).length;
-    const headerSemiCount = (headerLine.match(/;/g) || []).length;
-    if (headerPipeCount > headerSemiCount && headerPipeCount > 0) delimiter = '|';
-    else if (headerSemiCount > 0) delimiter = ';';
-  }
+  // Log for diagnostics
+  const debugInfo = candidates.map(c => `${c.d === '\t' ? 'TAB' : c.d}:${c.cols}`).join(', ');
+  console.log(`Delimiter detection: ${debugInfo} → picked ${delimiter === '\t' ? 'TAB' : delimiter}`);
 
   const headers = parseCsvLine(lines[0], delimiter);
   const rows: Record<string, string>[] = [];
