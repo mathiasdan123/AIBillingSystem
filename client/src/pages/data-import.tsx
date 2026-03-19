@@ -481,19 +481,34 @@ function StepValidate({
                   <th className="text-left px-3 py-2 font-medium">DOB</th>
                   <th className="text-left px-3 py-2 font-medium">Email</th>
                   <th className="text-left px-3 py-2 font-medium">Phone</th>
+                  <th className="text-left px-3 py-2 font-medium">Diagnoses</th>
+                  <th className="text-left px-3 py-2 font-medium">Location</th>
+                  <th className="text-left px-3 py-2 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {validRows.slice(0, 10).map((r) => (
-                  <tr key={r.row} className="border-t">
-                    <td className="px-3 py-2 text-muted-foreground">{r.row}</td>
-                    <td className="px-3 py-2">{r.data.firstName}</td>
-                    <td className="px-3 py-2">{r.data.lastName}</td>
-                    <td className="px-3 py-2">{r.data.dateOfBirth || '-'}</td>
-                    <td className="px-3 py-2">{r.data.email || '-'}</td>
-                    <td className="px-3 py-2">{r.data.phone || '-'}</td>
-                  </tr>
-                ))}
+                {validRows.slice(0, 10).map((r) => {
+                  const imported = r.data.intakeData?.importedData;
+                  return (
+                    <tr key={r.row} className="border-t">
+                      <td className="px-3 py-2 text-muted-foreground">{r.row}</td>
+                      <td className="px-3 py-2">{r.data.firstName}</td>
+                      <td className="px-3 py-2">{r.data.lastName}</td>
+                      <td className="px-3 py-2">{r.data.dateOfBirth || '-'}</td>
+                      <td className="px-3 py-2">{r.data.email || '-'}</td>
+                      <td className="px-3 py-2">{r.data.phone || '-'}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {imported?.diagnoses?.length
+                          ? imported.diagnoses.map((d: { code: string; service: string }) =>
+                              d.service ? `${d.code} (${d.service})` : d.code
+                            ).join(', ')
+                          : '-'}
+                      </td>
+                      <td className="px-3 py-2 text-xs">{imported?.location || '-'}</td>
+                      <td className="px-3 py-2 text-xs">{imported?.status || '-'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

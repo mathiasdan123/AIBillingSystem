@@ -235,6 +235,41 @@ function parseJSON(text: string): { headers: string[]; rows: Record<string, stri
 }
 
 /**
+ * Parse a diagnosis string like "M62.81 (OT), R27.8 (OT)" into structured objects.
+ */
+function parseDiagnoses(value: string): Array<{ code: string; service: string }> {
+  if (!value || value.trim() === '') return [];
+  // Split on comma, then parse each "CODE (SERVICE)" or just "CODE"
+  return value.split(',').map(part => {
+    const trimmed = part.trim();
+    const match = trimmed.match(/^([A-Z0-9.]+)\s*\(([^)]+)\)\s*$/i);
+    if (match) {
+      return { code: match[1].trim(), service: match[2].trim() };
+    }
+    // No parenthetical service — just the code
+    if (trimmed.length > 0) {
+      return { code: trimmed, service: '' };
+    }
+    return null;
+  }).filter((d): d is { code: string; service: string } => d !== null && d.code.length > 0);
+}
+
+/**
+ * Parse an active services string like "OT, PT" into an array.
+ */
+function parseActiveServices(value: string): string[] {
+  if (!value || value.trim() === '') return [];
+  return value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+}
+
+/**
+ * Parse a "Yes"/"No" string into a boolean.
+ */
+function parseYesNo(value: string): boolean {
+  return value.trim().toLowerCase() === 'yes';
+}
+
+/**
  * Source software presets — known column name mappings.
  */
 const SOURCE_PRESETS: Record<string, Record<string, string>> = {
@@ -251,6 +286,11 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Member ID': 'insuranceId',
     'Policy Number': 'policyNumber',
     'Group Number': 'groupNumber',
+    'Diagnosis Codes': 'diagnoses',
+    'Notes': 'patientNotes',
+    'Client Status': 'patientStatus',
+    'Location': 'primaryLocation',
+    'Services': 'activeServices',
   },
   therapynotes: {
     'FirstName': 'firstName',
@@ -270,6 +310,13 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'MemberID': 'insuranceId',
     'PolicyNum': 'policyNumber',
     'GroupNum': 'groupNumber',
+    'Diagnoses': 'diagnoses',
+    'Diagnosis': 'diagnoses',
+    'PatientNotes': 'patientNotes',
+    'Alerts': 'patientAlerts',
+    'Status': 'patientStatus',
+    'Location': 'primaryLocation',
+    'ServiceTypes': 'activeServices',
   },
   janeapp: {
     'First Name': 'firstName',
@@ -287,6 +334,12 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Policy Number': 'policyNumber',
     'Member Number': 'insuranceId',
     'Group Number': 'groupNumber',
+    'Diagnoses': 'diagnoses',
+    'Patient Notes': 'patientNotes',
+    'Alerts': 'patientAlerts',
+    'Clinic Location': 'primaryLocation',
+    'Services': 'activeServices',
+    'Status': 'patientStatus',
   },
   webpt: {
     'Patient First Name': 'firstName',
@@ -304,6 +357,12 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Subscriber ID': 'insuranceId',
     'Policy Number': 'policyNumber',
     'Group Number': 'groupNumber',
+    'Diagnosis Codes': 'diagnoses',
+    'Patient Notes': 'patientNotes',
+    'Patient Alerts': 'patientAlerts',
+    'Facility': 'primaryLocation',
+    'Service Type': 'activeServices',
+    'Patient Status': 'patientStatus',
   },
   fusion: {
     'Patient': 'lastCommaFirst',
@@ -313,6 +372,14 @@ const SOURCE_PRESETS: Record<string, Record<string, string>> = {
     'Primary Contact Address': 'address',
     'Primary Payer': 'insuranceProvider',
     'Primary Insured ID': 'insuranceId',
+    'Diagnoses': 'diagnoses',
+    'Patient Alerts': 'patientAlerts',
+    'Patient Notes': 'patientNotes',
+    'Patient Primary Location': 'primaryLocation',
+    'Active Services': 'activeServices',
+    'Patient Status': 'patientStatus',
+    'Primary Contact Email Reminders': 'emailReminders',
+    'Primary Contact Text Reminders': 'textReminders',
     // "Patient First Name" and "Patient Last Name" are intentionally NOT mapped
     // because Fusion/Ensura CSV exports have unquoted commas in name fields
     // that shift all columns. Use the "Patient" column ("Last, First") instead.
@@ -330,6 +397,8 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
   const targetFields = [
     'firstName', 'lastName', 'dateOfBirth', 'email', 'phone', 'address',
     'insuranceProvider', 'insuranceId', 'policyNumber', 'groupNumber',
+    'diagnoses', 'patientAlerts', 'patientNotes', 'primaryLocation',
+    'activeServices', 'patientStatus', 'emailReminders', 'textReminders',
   ];
 
   const mapping: ColumnMapping = {};
@@ -361,6 +430,14 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     fullName: ['primaryguarantor', 'guarantor', 'patientname', 'clientname', 'fullname', 'name'],
     policyNumber: ['policynumber', 'policynum', 'policy', 'policyid'],
     groupNumber: ['groupnumber', 'groupnum', 'group', 'groupid'],
+    diagnoses: ['diagnoses', 'diagnosis', 'diagnosiscodes', 'diagcodes', 'icd10', 'icd10codes', 'dxcodes'],
+    patientAlerts: ['patientalerts', 'alerts', 'billingalerts', 'clinicalalerts', 'patientalert'],
+    patientNotes: ['patientnotes', 'notes', 'clientnotes', 'importnotes', 'patientnote'],
+    primaryLocation: ['patientprimarylocation', 'primarylocation', 'location', 'cliniclocation', 'facility', 'officelocation', 'site'],
+    activeServices: ['activeservices', 'services', 'servicetypes', 'servicetype', 'therapyservices', 'therapytypes'],
+    patientStatus: ['patientstatus', 'status', 'clientstatus', 'accountstatus'],
+    emailReminders: ['primarycontactemailreminders', 'emailreminders', 'emailreminder', 'emailnotifications'],
+    textReminders: ['primarycontacttextreminders', 'textreminders', 'textreminder', 'smsreminders', 'smsreminder'],
   };
 
   for (const header of headers) {
@@ -640,6 +717,14 @@ router.post('/map-columns', isAuthenticated, async (req: Request, res: Response)
       { field: 'insuranceId', label: 'Member ID', required: false },
       { field: 'policyNumber', label: 'Policy Number', required: false },
       { field: 'groupNumber', label: 'Group Number', required: false },
+      { field: 'diagnoses', label: 'Diagnosis Codes (e.g. "M62.81 (OT), R27.8 (OT)")', required: false },
+      { field: 'patientAlerts', label: 'Patient Alerts (billing/clinical)', required: false },
+      { field: 'patientNotes', label: 'Patient Notes', required: false },
+      { field: 'primaryLocation', label: 'Primary Location / Clinic', required: false },
+      { field: 'activeServices', label: 'Active Services (e.g. "OT, PT, ST")', required: false },
+      { field: 'patientStatus', label: 'Patient Status (Active/Inactive)', required: false },
+      { field: 'emailReminders', label: 'Email Reminders (Yes/No)', required: false },
+      { field: 'textReminders', label: 'Text Reminders (Yes/No)', required: false },
     ];
 
     res.json({
@@ -698,9 +783,16 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
     const errorRows: Array<{ row: number; errors: Array<{ field: string; message: string }> }> = [];
     const duplicateRows: Array<{ row: number; data: any }> = [];
 
+    // Fields that go into intakeData.importedData instead of the patient record directly
+    const extendedFields = new Set([
+      'diagnoses', 'patientAlerts', 'patientNotes', 'primaryLocation',
+      'activeServices', 'patientStatus', 'emailReminders', 'textReminders',
+    ]);
+
     for (let i = 0; i < fileData.rows.length; i++) {
       const sourceRow = fileData.rows[i];
       const mappedRow: any = { practiceId };
+      const importedData: Record<string, any> = {};
 
       // Apply column mapping
       for (const [sourceCol, targetField] of Object.entries(columnMapping)) {
@@ -729,10 +821,34 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
               // No comma — treat as last name only
               if (!mappedRow.lastName) mappedRow.lastName = value.trim();
             }
+          } else if (extendedFields.has(targetField) && value) {
+            // Parse and store extended fields for intakeData
+            if (targetField === 'diagnoses') {
+              importedData.diagnoses = parseDiagnoses(value);
+            } else if (targetField === 'activeServices') {
+              importedData.activeServices = parseActiveServices(value);
+            } else if (targetField === 'emailReminders') {
+              importedData.emailReminders = parseYesNo(value);
+            } else if (targetField === 'textReminders') {
+              importedData.textReminders = parseYesNo(value);
+            } else if (targetField === 'patientAlerts') {
+              importedData.alerts = value.trim();
+            } else if (targetField === 'patientNotes') {
+              importedData.notes = value.trim();
+            } else if (targetField === 'primaryLocation') {
+              importedData.location = value.trim();
+            } else if (targetField === 'patientStatus') {
+              importedData.status = value.trim();
+            }
           } else {
             mappedRow[targetField] = value || null;
           }
         }
+      }
+
+      // Attach importedData to intakeData if any extended fields were mapped
+      if (Object.keys(importedData).length > 0) {
+        mappedRow.intakeData = { importedData };
       }
 
       // Validate against schema
@@ -828,10 +944,17 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
     for (let batchStart = 0; batchStart < fileData.rows.length; batchStart += BATCH_SIZE) {
       const batch = fileData.rows.slice(batchStart, batchStart + BATCH_SIZE);
 
+      // Fields that go into intakeData.importedData instead of the patient record directly
+      const extendedFields = new Set([
+        'diagnoses', 'patientAlerts', 'patientNotes', 'primaryLocation',
+        'activeServices', 'patientStatus', 'emailReminders', 'textReminders',
+      ]);
+
       for (let j = 0; j < batch.length; j++) {
         const rowIndex = batchStart + j;
         const sourceRow = batch[j];
         const mappedRow: any = { practiceId };
+        const importedData: Record<string, any> = {};
 
         // Apply column mapping
         for (const [sourceCol, targetField] of Object.entries(columnMapping)) {
@@ -856,10 +979,34 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
               } else {
                 if (!mappedRow.lastName) mappedRow.lastName = value.trim();
               }
+            } else if (extendedFields.has(targetField) && value) {
+              // Parse and store extended fields for intakeData
+              if (targetField === 'diagnoses') {
+                importedData.diagnoses = parseDiagnoses(value);
+              } else if (targetField === 'activeServices') {
+                importedData.activeServices = parseActiveServices(value);
+              } else if (targetField === 'emailReminders') {
+                importedData.emailReminders = parseYesNo(value);
+              } else if (targetField === 'textReminders') {
+                importedData.textReminders = parseYesNo(value);
+              } else if (targetField === 'patientAlerts') {
+                importedData.alerts = value.trim();
+              } else if (targetField === 'patientNotes') {
+                importedData.notes = value.trim();
+              } else if (targetField === 'primaryLocation') {
+                importedData.location = value.trim();
+              } else if (targetField === 'patientStatus') {
+                importedData.status = value.trim();
+              }
             } else {
               mappedRow[targetField] = value || null;
             }
           }
+        }
+
+        // Attach importedData to intakeData if any extended fields were mapped
+        if (Object.keys(importedData).length > 0) {
+          mappedRow.intakeData = { importedData };
         }
 
         // Validate
