@@ -343,6 +343,7 @@ function autoSuggestMappings(headers: string[], preset?: string): ColumnMapping 
     address: ['address', 'streetaddress', 'homeaddress', 'mailingaddress', 'street', 'patientaddress', 'clientaddress', 'primarycontactaddress'],
     insuranceProvider: ['insurance', 'insurancecompany', 'insurancename', 'insuranceprovider', 'insurer', 'payer', 'primaryinsurance', 'payername', 'carriername', 'primarypayer'],
     insuranceId: ['memberid', 'subscriberid', 'insuranceid', 'membernum', 'membernumber', 'patientmemberid', 'subscribernumber', 'primaryinsuredid', 'insuredid'],
+    fullName: ['primaryguarantor', 'guarantor', 'patientname', 'clientname', 'fullname', 'name'],
     policyNumber: ['policynumber', 'policynum', 'policy', 'policyid'],
     groupNumber: ['groupnumber', 'groupnum', 'group', 'groupid'],
   };
@@ -540,6 +541,7 @@ router.post('/map-columns', isAuthenticated, async (req: Request, res: Response)
     const targetFields = [
       { field: 'firstName', label: 'First Name', required: true },
       { field: 'lastName', label: 'Last Name', required: true },
+      { field: 'fullName', label: 'Full Name (First Last → splits into First + Last)', required: false },
       { field: 'dateOfBirth', label: 'Date of Birth', required: false },
       { field: 'email', label: 'Email', required: false },
       { field: 'phone', label: 'Phone', required: false },
@@ -584,11 +586,13 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    // Check that firstName and lastName are mapped
+    // Check that names are mapped (either first+last or fullName)
     const mappedFields = Object.values(columnMapping);
-    if (!mappedFields.includes('firstName') || !mappedFields.includes('lastName')) {
+    const hasFirstLast = mappedFields.includes('firstName') && mappedFields.includes('lastName');
+    const hasFullName = mappedFields.includes('fullName');
+    if (!hasFirstLast && !hasFullName) {
       return res.status(400).json({
-        message: 'firstName and lastName must be mapped to proceed',
+        message: 'Map either First Name + Last Name, or Full Name to proceed',
       });
     }
 
@@ -616,7 +620,18 @@ router.post('/validate', isAuthenticated, async (req: Request, res: Response) =>
           if (targetField === 'dateOfBirth' && value) {
             value = normalizeDateOfBirth(value);
           }
-          mappedRow[targetField] = value || null;
+          // Handle fullName: split "First Last" into firstName + lastName
+          if (targetField === 'fullName' && value) {
+            const parts = value.trim().split(/\s+/);
+            if (parts.length >= 2) {
+              if (!mappedRow.firstName) mappedRow.firstName = parts.slice(0, -1).join(' ');
+              if (!mappedRow.lastName) mappedRow.lastName = parts[parts.length - 1];
+            } else if (parts.length === 1) {
+              if (!mappedRow.firstName) mappedRow.firstName = parts[0];
+            }
+          } else {
+            mappedRow[targetField] = value || null;
+          }
         }
       }
 
@@ -725,7 +740,17 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
             if (targetField === 'dateOfBirth' && value) {
               value = normalizeDateOfBirth(value);
             }
-            mappedRow[targetField] = value || null;
+            if (targetField === 'fullName' && value) {
+              const parts = value.trim().split(/\s+/);
+              if (parts.length >= 2) {
+                if (!mappedRow.firstName) mappedRow.firstName = parts.slice(0, -1).join(' ');
+                if (!mappedRow.lastName) mappedRow.lastName = parts[parts.length - 1];
+              } else if (parts.length === 1) {
+                if (!mappedRow.firstName) mappedRow.firstName = parts[0];
+              }
+            } else {
+              mappedRow[targetField] = value || null;
+            }
           }
         }
 
