@@ -1126,36 +1126,37 @@ export default function DataImport() {
         </CardContent>
       </Card>
 
-      {/* Navigation buttons */}
-      <div className="flex items-center justify-between">
+      {/* Sticky navigation bar */}
+      <div className="sticky bottom-0 z-20 -mx-6 -mb-6 px-6 py-4 bg-background border-t shadow-[0_-4px_12px_rgba(0,0,0,0.08)] flex items-center justify-between">
         <div>
           {currentStep > 0 && !importResult && (
-            <Button variant="outline" onClick={handleBack} disabled={isImporting}>
+            <Button variant="outline" size="lg" onClick={handleBack} disabled={isImporting}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back
             </Button>
           )}
           {importResult && (
-            <Button variant="outline" onClick={handleStartOver}>
+            <Button variant="outline" size="lg" onClick={handleStartOver}>
               Start New Import
             </Button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {uploadResult && currentStep > 0 && currentStep < 3 && (
-            <div className="text-sm text-muted-foreground mr-4">
+            <div className="text-sm text-muted-foreground hidden sm:block">
               <FileText className="inline h-3 w-3 mr-1" />
               {uploadResult.filename} ({uploadResult.rowCount} rows)
             </div>
           )}
           {currentStep < 3 && currentStep > 0 && (
-            <Button onClick={handleNext} disabled={!canProceed()}>
-              {currentStep === 2 ? 'Review Complete' : 'Next'}
+            <Button size="lg" onClick={handleNext} disabled={!canProceed()}>
+              Next
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           )}
           {currentStep === 3 && !importResult && (
             <Button
+              size="lg"
               onClick={handleExecuteImport}
               disabled={isImporting || !validationResult || validationResult.validCount === 0}
             >
