@@ -1185,22 +1185,61 @@ router.get('/template', isAuthenticated, (_req: Request, res: Response) => {
     'Member ID',
     'Policy Number',
     'Group Number',
+    'Diagnosis Codes',
+    'Patient Alerts',
+    'Patient Notes',
+    'Location',
+    'Active Services',
+    'Patient Status',
+    'Email Reminders',
+    'Text Reminders',
   ];
 
-  const exampleRow = [
-    'Jane',
-    'Smith',
-    '1990-05-15',
-    'jane.smith@email.com',
+  const exampleRow1 = [
+    'Keira',
+    'Bresler',
+    '02/18/2024',
+    'parent@email.com',
     '(555) 123-4567',
-    '123 Main St, Anytown, ST 12345',
-    'Aetna',
-    'MEM123456789',
-    'POL987654',
-    'GRP001',
+    '123 Main St, New York, NY 10016',
+    'Horizon BCBS NJ',
+    'XIR991980301',
+    'POL-2024-001',
+    'GRP-100',
+    'M62.81 (OT), R27.8 (OT)',
+    '2026 DED MET',
+    'Referred by Dr. Smith',
+    'Main Street Clinic',
+    'OT',
+    'Active',
+    'Yes',
+    'Yes',
   ];
 
-  const csvContent = headers.join(',') + '\n' + exampleRow.map(v => `"${v}"`).join(',') + '\n';
+  const exampleRow2 = [
+    'Nava',
+    'Eisman',
+    '02/26/2019',
+    'parent2@email.com',
+    '(555) 987-6543',
+    '75 Wilbur Rd, Bergenfield, NJ 07621',
+    'Private Pay',
+    '',
+    '',
+    '',
+    'R62.0 (OT), F84.9 (OT)',
+    'INS PAYOUT THEN BALANCE BILL',
+    '',
+    'North Jersey Office',
+    'OT',
+    'Active',
+    'Yes',
+    'No',
+  ];
+
+  const csvContent = headers.join(',') + '\n'
+    + exampleRow1.map(v => `"${v}"`).join(',') + '\n'
+    + exampleRow2.map(v => `"${v}"`).join(',') + '\n';
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="patient-import-template.csv"');
   res.send(csvContent);
