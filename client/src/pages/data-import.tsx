@@ -331,20 +331,20 @@ function StepMapColumns({
     { field: 'groupNumber', label: 'Group Number', required: false },
   ];
 
-  // Check if required fields are mapped
-  const requiredFields = targetFields.filter((f) => f.required);
+  // Check if required fields are mapped (firstName/lastName can come from fullName or lastCommaFirst)
   const mappedTargets = Object.values(columnMapping);
-  const missingRequired = requiredFields.filter((f) => !mappedTargets.includes(f.field));
+  const hasNameMapping = mappedTargets.includes('firstName') && mappedTargets.includes('lastName');
+  const hasAltNameMapping = mappedTargets.includes('fullName') || mappedTargets.includes('lastCommaFirst');
+  const namesMissing = !hasNameMapping && !hasAltNameMapping;
 
   return (
     <div className="space-y-6">
-      {missingRequired.length > 0 && (
+      {namesMissing && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
           <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-sm">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
             <span>
-              Required fields not mapped:{' '}
-              {missingRequired.map((f) => f.label).join(', ')}
+              Patient name not mapped. Map First Name + Last Name, or Full Name, or Name as &quot;Last, First&quot;.
             </span>
           </div>
         </div>
