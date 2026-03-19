@@ -135,17 +135,25 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
     return { headers: [], rows: [] };
   }
 
-  // Auto-detect delimiter: tab, comma, pipe, or semicolon
-  const firstLine = lines[0];
+  // Auto-detect delimiter by trying each and picking the one where
+  // header column count matches the first data row column count
+  const headerLine = lines[0];
+  const dataLine = lines.length > 1 ? lines[1] : '';
+  const delimiters = ['\t', ',', '|', ';'];
   let delimiter = ',';
-  const tabCount = (firstLine.match(/\t/g) || []).length;
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const pipeCount = (firstLine.match(/\|/g) || []).length;
-  const semiCount = (firstLine.match(/;/g) || []).length;
-  const maxCount = Math.max(tabCount, commaCount, pipeCount, semiCount);
-  if (maxCount === tabCount && tabCount > 0) delimiter = '\t';
-  else if (maxCount === pipeCount && pipeCount > 0) delimiter = '|';
-  else if (maxCount === semiCount && semiCount > 0) delimiter = ';';
+  let bestScore = -1;
+
+  for (const d of delimiters) {
+    const headerCols = parseCsvLine(headerLine, d).length;
+    const dataCols = dataLine ? parseCsvLine(dataLine, d).length : 0;
+    // Score: prefer delimiter where header and data have same column count
+    // and where there are multiple columns (not just 1)
+    const match = (headerCols > 1 && headerCols === dataCols) ? headerCols * 2 : headerCols;
+    if (match > bestScore) {
+      bestScore = match;
+      delimiter = d;
+    }
+  }
 
   const headers = parseCsvLine(lines[0], delimiter);
   const rows: Record<string, string>[] = [];
