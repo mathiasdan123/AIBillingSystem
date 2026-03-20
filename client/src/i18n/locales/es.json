@@ -41,7 +41,8 @@
     "dataImport": "Importar Datos",
     "dataExport": "Exportar Datos",
     "surveys": "Encuestas",
-    "benchmarking": "Benchmarking"
+    "benchmarking": "Benchmarking",
+    "dailyReport": "Reporte Diario"
   },
   "therapistProductivity": {
     "title": "Productividad del Terapeuta",

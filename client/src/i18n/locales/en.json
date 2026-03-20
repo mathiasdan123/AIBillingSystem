@@ -42,7 +42,8 @@
     "dataExport": "Data Export",
     "surveys": "Surveys",
     "schedulingInsights": "Scheduling Insights",
-    "benchmarking": "Benchmarking"
+    "benchmarking": "Benchmarking",
+    "dailyReport": "Daily Report"
   },
   "schedulingInsights": {
     "title": "Scheduling Insights",

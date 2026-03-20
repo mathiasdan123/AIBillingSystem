@@ -24,6 +24,7 @@ import {
   patientStatementsRouter,
   benchmarkingRouter,
   dataImportRouter,
+  dailyReportRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -211,6 +212,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/patient-statements', patientStatementsRouter);
   // Data Import routes: /api/data-import/*
   app.use('/api/data-import', dataImportRouter);
+  // Daily Report routes: /api/daily-report/*
+  app.use('/api/daily-report', dailyReportRouter);
 
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);

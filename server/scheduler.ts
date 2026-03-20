@@ -2,6 +2,8 @@ import cron from 'node-cron';
 import { storage } from './storage';
 import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput, sendBaaExpirationAlert, sendCoverageChangeAlert, sendBreachNotificationAlert, sendAmendmentDeadlineAlert } from './email';
 import logger from './services/logger';
+import { buildDailyReport, generateEmailHtml, generateEmailText, reportSubscribers } from './routes/daily-report';
+import { sendEmail } from './services/emailService';
 
 // Store scheduled tasks for management
 const scheduledTasks: Map<string, ReturnType<typeof cron.schedule>> = new Map();
@@ -183,6 +185,50 @@ export function startScheduler() {
   });
 
   scheduledTasks.set('dailyDeniedClaimsReport', dailyReportTask);
+
+  // Daily billing summary report - 7:00 AM
+  const dailyBillingSummaryTask = cron.schedule('0 7 * * *', async () => {
+    try {
+      logger.info('Running daily billing summary report');
+      const practiceIds = await storage.getAllPracticeIds();
+
+      for (const practiceId of practiceIds) {
+        const subscribers = reportSubscribers.get(practiceId) || new Set();
+        const admins = await storage.getAdminsByPractice(practiceId);
+        const adminEmails = admins.map((a: any) => a.email).filter(Boolean);
+        const recipientSet = new Set<string>(adminEmails);
+        subscribers.forEach((s: string) => recipientSet.add(s));
+        const allRecipients = Array.from(recipientSet);
+
+        if (allRecipients.length === 0) continue;
+
+        // Report for yesterday
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        const report = await buildDailyReport(practiceId, yesterday);
+        const html = generateEmailHtml(report);
+        const text = generateEmailText(report);
+
+        for (const email of allRecipients) {
+          await sendEmail({
+            to: email,
+            subject: `Daily Billing Summary - ${report.practiceName} - ${report.reportDate}`,
+            html,
+            text,
+            fromName: 'TherapyBill AI Reports',
+          });
+        }
+
+        logger.info('Daily billing summary sent', { practiceId, recipientCount: allRecipients.length });
+      }
+    } catch (error: any) {
+      logger.error('Daily billing summary task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('dailyBillingSummary', dailyBillingSummaryTask);
 
   // BAA expiration check - daily at 9:00 AM
   const baaExpirationTask = cron.schedule('0 9 * * *', async () => {
@@ -775,7 +821,7 @@ export function startScheduler() {
   scheduledTasks.set('automatedReviewRequests', automatedReviewRequestTask);
 
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests'],
+    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests'],
   });
 }
 

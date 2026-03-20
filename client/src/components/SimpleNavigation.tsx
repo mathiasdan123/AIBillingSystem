@@ -88,6 +88,7 @@ const navigationItems = [
   { nameKey: 'nav.hipaaCompliance', href: '/hipaa-compliance', icon: Shield, adminOnly: true },
   { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
   { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
+  { nameKey: 'nav.dailyReport', href: '/daily-report', icon: BarChart3, adminOnly: true },
   { nameKey: 'nav.dataImport', href: '/data-import', icon: Upload, adminOnly: true },
   { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },

@@ -60,6 +60,7 @@ const Surveys = lazy(() => import("@/pages/surveys"));
 const SchedulingInsights = lazy(() => import("@/pages/scheduling-insights"));
 const NotificationSettings = lazy(() => import("@/pages/notification-settings"));
 const Benchmarking = lazy(() => import("@/pages/benchmarking"));
+const DailyReport = lazy(() => import("@/pages/daily-report"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -220,6 +221,7 @@ function Router() {
               {isAdmin && <Route path="/sso-settings" component={SsoSettings} />}
               {isAdmin && <Route path="/data-export" component={DataExport} />}
               {isAdmin && <Route path="/data-import" component={DataImport} />}
+              {isAdmin && <Route path="/daily-report" component={DailyReport} />}
               <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/onboarding" component={Onboarding} />
               <Route path="/locations" component={Locations} />

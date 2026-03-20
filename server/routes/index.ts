@@ -69,6 +69,7 @@ export { default as feeSchedulesRouter } from './fee-schedules';
 export { default as treatmentAuthorizationsRouter } from './authorizations';
 export { default as patientStatementsRouter } from './patient-statements';
 export { default as dataImportRouter } from './data-import';
+export { default as dailyReportRouter } from './daily-report';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
