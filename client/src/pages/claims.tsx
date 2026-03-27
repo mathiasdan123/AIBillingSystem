@@ -14,8 +14,11 @@ import {
   Plus, Search, Send, CheckCircle, Clock, XCircle, AlertCircle,
   DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical,
   Copy, RefreshCw, Loader2, Scale, Mail, ShieldAlert, ShieldCheck,
-  TriangleAlert, CircleAlert, Info, Lightbulb
+  TriangleAlert, CircleAlert, Info, Lightbulb, Download, Printer
 } from "lucide-react";
+import { exportToCsv } from "@/lib/exportUtils";
+import PrintLayout from "@/components/PrintLayout";
+import SuperbillPrintView from "@/components/SuperbillPrintView";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -181,12 +184,12 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
               <table className="w-full text-sm">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="text-left p-2 font-medium text-slate-600">CPT</th>
-                    <th className="text-left p-2 font-medium text-slate-600">Description</th>
-                    <th className="text-center p-2 font-medium text-slate-600">Mod</th>
-                    <th className="text-center p-2 font-medium text-slate-600">Units</th>
-                    <th className="text-right p-2 font-medium text-slate-600">Rate</th>
-                    <th className="text-right p-2 font-medium text-slate-600">Amount</th>
+                    <th className="text-left p-2 font-medium text-muted-foreground">CPT</th>
+                    <th className="text-left p-2 font-medium text-muted-foreground">Description</th>
+                    <th className="text-center p-2 font-medium text-muted-foreground">Mod</th>
+                    <th className="text-center p-2 font-medium text-muted-foreground">Units</th>
+                    <th className="text-right p-2 font-medium text-muted-foreground">Rate</th>
+                    <th className="text-right p-2 font-medium text-muted-foreground">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -197,7 +200,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                           {item.cptCode?.code || item.cptCodeId}
                         </span>
                       </td>
-                      <td className="p-2 text-slate-600 text-xs">{item.cptCode?.description || 'N/A'}</td>
+                      <td className="p-2 text-muted-foreground text-xs">{item.cptCode?.description || 'N/A'}</td>
                       <td className="p-2 text-center text-xs">{item.modifier || '—'}</td>
                       <td className="p-2 text-center">{item.units || 1}</td>
                       <td className="p-2 text-right text-xs">{item.rate ? `$${parseFloat(item.rate).toFixed(2)}` : '—'}</td>
@@ -340,7 +343,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
           {paymentPostings.length > 0 ? (
             <div className="space-y-3">
               {paymentPostings.map((posting: any, index: number) => (
-                <div key={posting.id || index} className={`rounded-lg p-3 border ${posting.reversed ? 'bg-red-50 border-red-200' : 'bg-white border-slate-200'}`}>
+                <div key={posting.id || index} className={`rounded-lg p-3 border ${posting.reversed ? 'bg-red-50 border-red-200' : 'bg-card border-slate-200'}`}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       {posting.reversed ? (
@@ -354,7 +357,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                       {posting.paymentDate ? new Date(posting.paymentDate).toLocaleDateString() : '—'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                     {posting.payerName && <div><span className="text-slate-400">Payer:</span> {posting.payerName}</div>}
                     {posting.checkNumber && <div><span className="text-slate-400">Check/EFT:</span> {posting.checkNumber}</div>}
                     {posting.allowedAmount && <div><span className="text-slate-400">Allowed:</span> ${parseFloat(posting.allowedAmount).toFixed(2)}</div>}
@@ -490,7 +493,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                 </Badge>
               </div>
               {claim.denialPrediction.issues?.length > 0 && (
-                <ul className="text-xs text-slate-600 space-y-1 mt-2">
+                <ul className="text-xs text-muted-foreground space-y-1 mt-2">
                   {claim.denialPrediction.issues.map((issue: any, i: number) => (
                     <li key={i} className="flex items-start gap-1">
                       <AlertCircle className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -550,7 +553,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                         }>
                           {appeal.status === 'pending' ? 'Pending' : appeal.status === 'sent' ? 'Sent' : appeal.status === 'completed' ? 'Won' : 'Failed'}
                         </Badge>
-                        <Badge variant="outline" className="bg-white">
+                        <Badge variant="outline" className="bg-card">
                           {appeal.parsedNotes?.successProbability || 0}% Success Rate
                         </Badge>
                       </div>
@@ -558,7 +561,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                     {appeal.parsedNotes?.keyArguments && (
                       <div className="mb-3">
                         <p className="text-sm font-medium text-slate-700 mb-1">Key Arguments:</p>
-                        <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                        <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
                           {appeal.parsedNotes.keyArguments.slice(0, 3).map((arg: string, i: number) => (
                             <li key={i}>{arg}</li>
                           ))}
@@ -572,7 +575,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                       </Button>
                     )}
                     {showAppealLetter && appeal.parsedNotes?.appealLetter && (
-                      <div className="bg-white rounded-lg p-3 border mb-3">
+                      <div className="bg-card rounded-lg p-3 border mb-3">
                         <div className="flex justify-end mb-1">
                           <Button variant="ghost" size="sm" onClick={() => copyAppealLetter(appeal.parsedNotes.appealLetter)}>
                             <Copy className="w-3 h-3 mr-1" /> Copy
@@ -1182,8 +1185,36 @@ export default function Claims() {
 
   if (isLoading || claimsLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
+      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="h-8 w-40 bg-muted animate-pulse rounded" />
+            <div className="h-4 w-64 bg-muted animate-pulse rounded mt-2" />
+          </div>
+          <div className="h-10 w-32 bg-muted animate-pulse rounded" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="border rounded-lg p-4 space-y-2">
+              <div className="h-4 w-20 bg-muted animate-pulse rounded" />
+              <div className="h-7 w-16 bg-muted animate-pulse rounded" />
+            </div>
+          ))}
+        </div>
+        <div className="border rounded-lg">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between p-4 border-b last:border-b-0">
+              <div className="flex items-center space-x-3">
+                <div className="h-4 w-4 bg-muted animate-pulse rounded-full" />
+                <div>
+                  <div className="h-4 w-24 bg-muted animate-pulse rounded mb-1" />
+                  <div className="h-3 w-36 bg-muted animate-pulse rounded" />
+                </div>
+              </div>
+              <div className="h-6 w-16 bg-muted animate-pulse rounded-full" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -1365,10 +1396,40 @@ export default function Claims() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold text-slate-900">Claims Management</h1>
-          <p className="text-sm md:text-base text-slate-600">Create, track, and manage insurance claims</p>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Claims Management</h1>
+          <p className="text-sm md:text-base text-muted-foreground">Create, track, and manage insurance claims</p>
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1 sm:pb-0 -mx-1 px-1">
+          <Button
+            variant="outline"
+            className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0"
+            onClick={() => {
+              if (!filteredClaims || filteredClaims.length === 0) {
+                toast({ title: "No Claims", description: "No claims to export with current filters.", variant: "destructive" });
+                return;
+              }
+              const rows = filteredClaims.map((c) => ({
+                claimNumber: c.claimNumber,
+                patient: getPatientName(c.patientId),
+                insurance: getInsuranceName(c.insuranceId),
+                status: c.status,
+                totalAmount: c.totalAmount,
+                submittedAmount: c.submittedAmount || "",
+                paidAmount: c.paidAmount || "",
+                createdAt: c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "",
+                submittedAt: c.submittedAt ? new Date(c.submittedAt).toLocaleDateString() : "",
+                paidAt: c.paidAt ? new Date(c.paidAt).toLocaleDateString() : "",
+                denialReason: c.denialReason || "",
+                billingOrder: c.billingOrder || "primary",
+              }));
+              exportToCsv(`claims-export-${new Date().toISOString().split("T")[0]}.csv`, rows);
+              toast({ title: "Export Complete", description: `Exported ${rows.length} claims to CSV.` });
+            }}
+          >
+            <Download className="w-4 h-4 mr-1 md:mr-2" />
+            <span className="hidden sm:inline">Export Claims</span>
+            <span className="sm:hidden">Export</span>
+          </Button>
           <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
             <FileText className="w-4 h-4 mr-1 md:mr-2" />
             <span className="hidden sm:inline">Generate from Session</span>
@@ -1491,7 +1552,7 @@ export default function Claims() {
             {sessionsLoading ? (
               <div className="text-center py-8">
                 <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto" />
-                <p className="text-slate-600 mt-2">Loading sessions...</p>
+                <p className="text-muted-foreground mt-2">Loading sessions...</p>
               </div>
             ) : unbilledSessions && unbilledSessions.length > 0 ? (
               <div className="space-y-3 max-h-[400px] overflow-y-auto">
@@ -1508,7 +1569,7 @@ export default function Claims() {
                               {new Date(session.sessionDate).toLocaleDateString()}
                             </Badge>
                           </div>
-                          <div className="text-sm text-slate-600">
+                          <div className="text-sm text-muted-foreground">
                             <span className="font-mono bg-slate-100 px-1 rounded">
                               {session.cptCode?.code}
                             </span>
@@ -1562,7 +1623,7 @@ export default function Claims() {
             ) : (
               <div className="text-center py-8">
                 <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
-                <p className="text-slate-600">All sessions have been billed!</p>
+                <p className="text-muted-foreground">All sessions have been billed!</p>
                 <p className="text-sm text-slate-400 mt-1">
                   Complete a new session to generate a superbill
                 </p>
@@ -1729,11 +1790,11 @@ export default function Claims() {
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs md:text-sm text-slate-600">Total Claims</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Total Claims</p>
                 <p className="text-xl md:text-2xl font-bold">{stats.total}</p>
               </div>
               <div className="p-2 bg-slate-100 rounded-lg">
-                <FileText className="w-5 h-5 text-slate-600" />
+                <FileText className="w-5 h-5 text-muted-foreground" />
               </div>
             </div>
           </CardContent>
@@ -1743,7 +1804,7 @@ export default function Claims() {
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs md:text-sm text-slate-600">Pending</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Pending</p>
                 <p className="text-xl md:text-2xl font-bold text-yellow-600">{stats.submitted}</p>
               </div>
               <div className="p-2 bg-yellow-100 rounded-lg">
@@ -1757,7 +1818,7 @@ export default function Claims() {
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs md:text-sm text-slate-600">Paid Amount</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Paid Amount</p>
                 <p className="text-lg md:text-2xl font-bold text-green-600">${stats.paidAmount.toFixed(2)}</p>
               </div>
               <div className="p-2 bg-green-100 rounded-lg">
@@ -1771,7 +1832,7 @@ export default function Claims() {
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs md:text-sm text-slate-600">Success Rate</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Success Rate</p>
                 <p className="text-xl md:text-2xl font-bold text-blue-600">
                   {stats.total > 0 ? ((stats.paid / stats.total) * 100).toFixed(0) : 0}%
                 </p>
@@ -1872,7 +1933,7 @@ export default function Claims() {
               className="mb-3"
             />
             <div className="flex gap-4 text-sm">
-              <span className="text-slate-600">Total: {batchProgress.total}</span>
+              <span className="text-muted-foreground">Total: {batchProgress.total}</span>
               <span className="text-green-600">Succeeded: {batchProgress.succeeded}</span>
               <span className="text-red-600">Failed: {batchProgress.failed}</span>
             </div>
@@ -1922,7 +1983,7 @@ export default function Claims() {
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-slate-900">{claim.claimNumber}</h3>
+                        <h3 className="font-semibold text-foreground">{claim.claimNumber}</h3>
                         <Badge variant="secondary" className={getStatusBadge(claim.status)}>
                           {claim.status.charAt(0).toUpperCase() + claim.status.slice(1)}
                         </Badge>
@@ -1937,7 +1998,7 @@ export default function Claims() {
                           </Badge>
                         )}
                       </div>
-                      <p className="text-sm text-slate-600 mt-1">
+                      <p className="text-sm text-muted-foreground mt-1">
                         {getPatientName(claim.patientId)} • {getInsuranceName(claim.insuranceId)}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
@@ -1982,7 +2043,7 @@ export default function Claims() {
                         <p className={`font-bold text-lg ${getDenialRiskColor(claim.denialPrediction.riskScore).text}`}>
                           {claim.denialPrediction.riskScore}
                         </p>
-                        <p className="text-xs text-slate-600">Risk</p>
+                        <p className="text-xs text-muted-foreground">Risk</p>
                       </div>
                     )}
 
@@ -2035,6 +2096,26 @@ export default function Claims() {
                           <DropdownMenuItem onClick={() => handleViewClaim(claim)}>
                             <Eye className="w-4 h-4 mr-2" />
                             View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedClaim(claim);
+                              setLoadingLineItems(true);
+                              fetch(`/api/claims/${claim.id}/line-items`, { credentials: "include" })
+                                .then(r => r.ok ? r.json() : [])
+                                .then(items => {
+                                  setClaimLineItems(items);
+                                  setLoadingLineItems(false);
+                                  setTimeout(() => {
+                                    const btn = document.getElementById("superbill-print-trigger");
+                                    if (btn) btn.click();
+                                  }, 100);
+                                })
+                                .catch(() => setLoadingLineItems(false));
+                            }}
+                          >
+                            <Printer className="w-4 h-4 mr-2" />
+                            Print Superbill
                           </DropdownMenuItem>
                           {claim.status === 'submitted' && (
                             <>
@@ -2257,7 +2338,7 @@ export default function Claims() {
           {predictingDenial ? (
             <div className="flex flex-col items-center justify-center py-12">
               <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-4" />
-              <p className="text-sm text-slate-600">Analyzing claim for denial risk...</p>
+              <p className="text-sm text-muted-foreground">Analyzing claim for denial risk...</p>
               <p className="text-xs text-slate-400 mt-1">Checking CPT/ICD codes, documentation, and payer patterns</p>
             </div>
           ) : denialPredictionResult ? (
@@ -2337,7 +2418,7 @@ export default function Claims() {
               {/* Issues List */}
               {denialPredictionResult.issues.length > 0 ? (
                 <div>
-                  <h4 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                  <h4 className="font-semibold text-foreground mb-3 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" />
                     Identified Issues ({denialPredictionResult.issues.length})
                   </h4>
@@ -2350,13 +2431,13 @@ export default function Claims() {
                       .map((issue, index) => (
                         <div
                           key={index}
-                          className="border rounded-lg p-3 bg-white"
+                          className="border rounded-lg p-3 bg-card"
                         >
                           <div className="flex items-start gap-2">
                             {getSeverityIcon(issue.severity)}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-medium text-sm text-slate-900">
+                                <span className="font-medium text-sm text-foreground">
                                   {issue.category}
                                 </span>
                                 <Badge
@@ -2369,7 +2450,7 @@ export default function Claims() {
                               <p className="text-sm text-slate-700 mt-1">{issue.description}</p>
                               <div className="mt-2 flex items-start gap-1.5 bg-slate-50 rounded p-2">
                                 <Lightbulb className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
-                                <p className="text-xs text-slate-600">{issue.suggestion}</p>
+                                <p className="text-xs text-muted-foreground">{issue.suggestion}</p>
                               </div>
                             </div>
                           </div>
@@ -2451,6 +2532,46 @@ export default function Claims() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Hidden Superbill Print Trigger */}
+      <div style={{ display: "none" }}>
+        <PrintLayout
+          trigger={
+            <button id="superbill-print-trigger" type="button">Print Superbill</button>
+          }
+          title="Superbill"
+          practiceName="TherapyBill Practice"
+        >
+          {selectedClaim && (
+            <SuperbillPrintView
+              claimNumber={selectedClaim.claimNumber}
+              serviceDate={selectedClaim.createdAt}
+              providerName="Rendering Provider"
+              patientName={getPatientName(selectedClaim.patientId)}
+              insuranceName={getInsuranceName(selectedClaim.insuranceId)}
+              diagnosisCodes={
+                claimLineItems
+                  .filter((li: any) => li.icd10Code)
+                  .map((li: any) => ({
+                    code: li.icd10Code || "",
+                    description: li.icd10Description || li.icd10Code || "",
+                  }))
+              }
+              lineItems={
+                claimLineItems.map((li: any) => ({
+                  cptCode: li.cptCode || "",
+                  modifier: li.modifier || null,
+                  description: li.description || li.cptCode || "",
+                  units: li.units || 1,
+                  chargeAmount: li.chargeAmount || li.unitCharge || "0",
+                  icd10Pointer: li.icd10Pointer || "A",
+                }))
+              }
+              totalAmount={selectedClaim.totalAmount}
+            />
+          )}
+        </PrintLayout>
+      </div>
     </div>
   );
 }

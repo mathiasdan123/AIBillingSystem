@@ -86,30 +86,30 @@ export default function Dashboard() {
       case 'denied':
         return <XCircle className="w-4 h-4 text-red-500" />;
       default:
-        return <AlertCircle className="w-4 h-4 text-slate-500" />;
+        return <AlertCircle className="w-4 h-4 text-muted-foreground" />;
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'paid':
-        return 'text-healthcare-green-500 bg-healthcare-green-50';
+        return 'text-emerald-700 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-950';
       case 'submitted':
-        return 'text-yellow-600 bg-yellow-50';
+        return 'text-yellow-700 bg-yellow-50 dark:text-yellow-400 dark:bg-yellow-950';
       case 'denied':
-        return 'text-red-600 bg-red-50';
+        return 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950';
       default:
-        return 'text-slate-600 bg-slate-50';
+        return 'text-muted-foreground bg-muted';
     }
   };
 
   return (
     <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
       <div className="mb-6 md:mb-8">
-        <h1 className="text-xl md:text-2xl font-bold text-slate-900 mb-1 md:mb-2">
+        <h1 className="text-xl md:text-2xl font-bold text-foreground mb-1 md:mb-2">
           {t('dashboard.welcomeBack', { name: user?.firstName || 'User' })}
         </h1>
-        <p className="text-sm md:text-base text-slate-600">
+        <p className="text-sm md:text-base text-muted-foreground">
           {t('dashboard.practiceOverview')}
         </p>
       </div>
@@ -171,23 +171,23 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="px-4 md:px-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mb-4">
-              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-red-100">
+              <div className="text-center p-2 md:p-3 bg-card rounded-lg border border-red-100">
                 <p className="text-xl md:text-2xl font-bold text-red-600">{deniedClaimsReport.summary.totalDenied}</p>
-                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.claimsDenied')}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">{t('dashboard.claimsDenied')}</p>
               </div>
-              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-red-100">
+              <div className="text-center p-2 md:p-3 bg-card rounded-lg border border-red-100">
                 <p className="text-xl md:text-2xl font-bold text-red-600">
                   ${deniedClaimsReport.summary.totalAmountAtRisk?.toLocaleString() || '0'}
                 </p>
-                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.amountAtRisk')}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">{t('dashboard.amountAtRisk')}</p>
               </div>
-              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-green-100">
+              <div className="text-center p-2 md:p-3 bg-card rounded-lg border border-green-100">
                 <p className="text-xl md:text-2xl font-bold text-green-600">{deniedClaimsReport.summary.appealsGenerated}</p>
-                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.appealsGenerated')}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">{t('dashboard.appealsGenerated')}</p>
               </div>
-              <div className="text-center p-2 md:p-3 bg-white rounded-lg border border-blue-100">
+              <div className="text-center p-2 md:p-3 bg-card rounded-lg border border-blue-100">
                 <p className="text-xl md:text-2xl font-bold text-blue-600">{deniedClaimsReport.summary.appealsSent}</p>
-                <p className="text-[10px] md:text-xs text-slate-600">{t('dashboard.appealsSent')}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">{t('dashboard.appealsSent')}</p>
               </div>
             </div>
 
@@ -199,18 +199,18 @@ export default function Dashboard() {
                     <div className="flex items-center space-x-2 md:space-x-3 min-w-0">
                       <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                       <div className="min-w-0">
-                        <p className="font-medium text-slate-900 text-xs md:text-sm truncate">{claim.claimNumber}</p>
-                        <p className="text-[10px] md:text-xs text-slate-600 truncate">{claim.patientName}</p>
+                        <p className="font-medium text-foreground text-xs md:text-sm truncate">{claim.claimNumber}</p>
+                        <p className="text-[10px] md:text-xs text-muted-foreground truncate">{claim.patientName}</p>
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0 ml-2">
                       <p className="font-medium text-red-600 text-xs md:text-sm">${claim.amount}</p>
-                      <p className="text-[10px] md:text-xs text-slate-500">{claim.appealStatus === 'none' ? t('dashboard.noAppeal') : t('dashboard.appeal', { status: claim.appealStatus })}</p>
+                      <p className="text-[10px] md:text-xs text-muted-foreground">{claim.appealStatus === 'none' ? t('dashboard.noAppeal') : t('dashboard.appeal', { status: claim.appealStatus })}</p>
                     </div>
                   </div>
                 ))}
                 {deniedClaimsReport.claims.length > 3 && (
-                  <p className="text-xs text-slate-500 text-center pt-1">
+                  <p className="text-xs text-muted-foreground text-center pt-1">
                     {t('dashboard.moreDeniedClaims', { count: deniedClaimsReport.claims.length - 3 })}
                   </p>
                 )}
@@ -238,7 +238,7 @@ export default function Dashboard() {
             {claimsLoading ? (
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50">
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                     <div className="flex items-center space-x-3">
                       <Skeleton className="h-4 w-4 rounded-full" />
                       <div>
@@ -253,12 +253,12 @@ export default function Dashboard() {
             ) : recentClaims?.length ? (
               <div className="space-y-2 md:space-y-3">
                 {recentClaims.slice(0, 5).map((claim: any) => (
-                  <div key={claim.id} className="flex items-center justify-between p-2.5 md:p-3 rounded-lg bg-slate-50">
+                  <div key={claim.id} className="flex items-center justify-between p-2.5 md:p-3 rounded-lg bg-muted/50">
                     <div className="flex items-center space-x-2 md:space-x-3 min-w-0">
                       {getClaimStatusIcon(claim.status)}
                       <div className="min-w-0">
-                        <p className="font-medium text-slate-900 text-sm truncate">{claim.claimNumber}</p>
-                        <p className="text-xs md:text-sm text-slate-600 truncate">
+                        <p className="font-medium text-foreground text-sm truncate">{claim.claimNumber}</p>
+                        <p className="text-xs md:text-sm text-muted-foreground truncate">
                           ${claim.totalAmount} • {new Date(claim.createdAt).toLocaleDateString()}
                         </p>
                       </div>
@@ -304,7 +304,7 @@ export default function Dashboard() {
             {patientsLoading ? (
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50">
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                     <div>
                       <Skeleton className="h-4 w-32 mb-1" />
                       <Skeleton className="h-3 w-48" />
@@ -319,18 +319,18 @@ export default function Dashboard() {
             ) : recentPatients?.length ? (
               <div className="space-y-2 md:space-y-3">
                 {recentPatients.slice(0, 5).map((patient: any) => (
-                  <div key={patient.id} className="flex items-center justify-between p-2.5 md:p-3 rounded-lg bg-slate-50 gap-2">
+                  <div key={patient.id} className="flex items-center justify-between p-2.5 md:p-3 rounded-lg bg-muted/50 gap-2">
                     <div className="min-w-0">
-                      <p className="font-medium text-slate-900 text-sm truncate">
+                      <p className="font-medium text-foreground text-sm truncate">
                         {patient.firstName} {patient.lastName}
                       </p>
-                      <p className="text-xs md:text-sm text-slate-600 truncate">
+                      <p className="text-xs md:text-sm text-muted-foreground truncate">
                         {patient.email} • {new Date(patient.createdAt).toLocaleDateString()}
                       </p>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <p className="text-xs md:text-sm font-medium text-slate-900 truncate max-w-[120px]">{patient.insuranceProvider}</p>
-                      <p className="text-[10px] md:text-xs text-slate-600 truncate max-w-[120px]">{patient.insuranceId}</p>
+                      <p className="text-xs md:text-sm font-medium text-foreground truncate max-w-[120px]">{patient.insuranceProvider}</p>
+                      <p className="text-[10px] md:text-xs text-muted-foreground truncate max-w-[120px]">{patient.insuranceId}</p>
                     </div>
                   </div>
                 ))}

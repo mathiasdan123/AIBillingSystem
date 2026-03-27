@@ -50,9 +50,9 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
   if (!intakeData && !patient.intakeCompletedAt) {
     return (
       <div className="text-center py-8">
-        <ClipboardCheck className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-        <h3 className="text-lg font-semibold text-slate-900 mb-2">No Intake Data Yet</h3>
-        <p className="text-slate-500 text-sm">
+        <ClipboardCheck className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+        <h3 className="text-lg font-semibold text-foreground mb-2">No Intake Data Yet</h3>
+        <p className="text-muted-foreground text-sm">
           This patient has not completed their intake forms through the patient portal.
         </p>
       </div>
@@ -67,8 +67,8 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
     if (!value || value === '') return null;
     return (
       <div>
-        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
-        <p className="text-sm text-slate-700">{String(value)}</p>
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{label}</span>
+        <p className="text-sm text-foreground">{String(value)}</p>
       </div>
     );
   };
@@ -80,7 +80,7 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
     if (visibleFields.length === 0) return null;
     return (
       <div className="border-t pt-4">
-        <h4 className="font-medium text-slate-900 mb-3">{title}</h4>
+        <h4 className="font-medium text-foreground mb-3">{title}</h4>
         <div className="grid grid-cols-2 gap-3">
           {visibleFields.map(f => (
             <Field key={f.key} label={f.label} value={data[f.key]} />
@@ -108,7 +108,7 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
           )}
         </div>
         {completedAt && (
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-muted-foreground">
             Completed {new Date(completedAt).toLocaleDateString()}
           </span>
         )}
@@ -311,14 +311,14 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
       {/* Consents Summary */}
       {intakeData?.questionnaireCompleted && (
         <div className="border-t pt-4">
-          <h4 className="font-medium text-slate-900 mb-2">Consent Status</h4>
+          <h4 className="font-medium text-foreground mb-2">Consent Status</h4>
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-sm text-green-700">
               <CheckCircle className="w-4 h-4" />
               Intake questionnaire submitted
             </div>
             {intakeData?.submittedAt && (
-              <p className="text-xs text-slate-500 ml-6">
+              <p className="text-xs text-muted-foreground ml-6">
                 Submitted: {new Date(intakeData.submittedAt).toLocaleString()}
               </p>
             )}
@@ -721,8 +721,8 @@ export default function Patients() {
     <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
       <div className="flex items-center justify-between mb-6 md:mb-8 gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl md:text-2xl font-bold text-slate-900">Patient Management</h1>
-          <p className="text-sm md:text-base text-slate-600">Manage patient information and insurance details</p>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Patient Management</h1>
+          <p className="text-sm md:text-base text-muted-foreground">Manage patient information and insurance details</p>
         </div>
         <Dialog open={showIntakeDialog} onOpenChange={setShowIntakeDialog}>
           <DialogTrigger asChild>
@@ -751,7 +751,7 @@ export default function Patients() {
       <div className="sticky top-14 md:static z-20 bg-background -mx-4 px-4 py-2 md:mx-0 md:px-0 md:py-0 border-b md:border-b-0 border-border mb-4 md:mb-6">
         <div className="flex items-center gap-2 md:space-x-4">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
             <Input
               placeholder="Search patients..."
               value={searchTerm}
@@ -828,7 +828,7 @@ export default function Patients() {
             }
             onCheckedChange={() => toggleSelectAll(filteredPatients)}
           />
-          <label htmlFor="select-all" className="text-sm text-slate-600 cursor-pointer select-none">
+          <label htmlFor="select-all" className="text-sm text-muted-foreground cursor-pointer select-none">
             Select all insured patients ({filteredPatients.filter((p: any) => p.insuranceProvider).length})
           </label>
         </div>
@@ -890,19 +890,19 @@ export default function Patients() {
               <CardContent>
                 <div className="space-y-2">
                   {patient.email && (
-                    <div className="flex items-center text-sm text-slate-600">
+                    <div className="flex items-center text-sm text-muted-foreground">
                       <Mail className="w-4 h-4 mr-2" />
                       {patient.email}
                     </div>
                   )}
                   {patient.phone && (
-                    <div className="flex items-center text-sm text-slate-600">
+                    <div className="flex items-center text-sm text-muted-foreground">
                       <Phone className="w-4 h-4 mr-2" />
                       {patient.phone}
                     </div>
                   )}
                   {patient.insuranceId && (
-                    <div className="flex items-center text-sm text-slate-600">
+                    <div className="flex items-center text-sm text-muted-foreground">
                       <Shield className="w-4 h-4 mr-2" />
                       ID: {patient.insuranceId}
                     </div>
@@ -1005,10 +1005,10 @@ export default function Patients() {
             <div className="space-y-4 py-4">
               <div className="flex items-center gap-3">
                 <Loader2 className="w-5 h-5 animate-spin text-medical-blue-500" />
-                <span className="text-sm text-slate-600">Processing eligibility checks...</span>
+                <span className="text-sm text-muted-foreground">Processing eligibility checks...</span>
               </div>
               <Progress value={0} className="h-2" />
-              <p className="text-xs text-slate-500 text-center">
+              <p className="text-xs text-muted-foreground text-center">
                 This may take a moment. Please do not close this dialog.
               </p>
             </div>
@@ -1019,8 +1019,8 @@ export default function Patients() {
               {/* Summary Cards */}
               <div className="grid grid-cols-4 gap-3">
                 <div className="text-center p-3 bg-slate-50 rounded-lg">
-                  <p className="text-2xl font-bold text-slate-900">{bulkCheckResults.summary.checked}</p>
-                  <p className="text-xs text-slate-500">Checked</p>
+                  <p className="text-2xl font-bold text-foreground">{bulkCheckResults.summary.checked}</p>
+                  <p className="text-xs text-muted-foreground">Checked</p>
                 </div>
                 <div className="text-center p-3 bg-green-50 rounded-lg">
                   <p className="text-2xl font-bold text-green-700">{bulkCheckResults.summary.eligible}</p>
@@ -1040,7 +1040,7 @@ export default function Patients() {
               <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
                 {bulkCheckResults.results.map((result) => (
                   <div key={result.patientId} className="flex items-center justify-between px-4 py-3">
-                    <span className="text-sm font-medium text-slate-700">{result.patientName}</span>
+                    <span className="text-sm font-medium text-foreground">{result.patientName}</span>
                     <div>
                       {result.status === 'active' && (
                         <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
@@ -1121,18 +1121,18 @@ export default function Patients() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-slate-700">Email</label>
-                  <p className="text-sm text-slate-600">{selectedPatient.email || "Not provided"}</p>
+                  <label className="text-sm font-medium text-foreground">Email</label>
+                  <p className="text-sm text-muted-foreground">{selectedPatient.email || "Not provided"}</p>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-slate-700">Phone</label>
-                  <p className="text-sm text-slate-600">{selectedPatient.phone || "Not provided"}</p>
+                  <label className="text-sm font-medium text-foreground">Phone</label>
+                  <p className="text-sm text-muted-foreground">{selectedPatient.phone || "Not provided"}</p>
                 </div>
               </div>
               
               <div>
-                <label className="text-sm font-medium text-slate-700">Date of Birth</label>
-                <p className="text-sm text-slate-600">
+                <label className="text-sm font-medium text-foreground">Date of Birth</label>
+                <p className="text-sm text-muted-foreground">
                   {selectedPatient.dateOfBirth 
                     ? new Date(selectedPatient.dateOfBirth).toLocaleDateString()
                     : "Not provided"
@@ -1141,30 +1141,30 @@ export default function Patients() {
               </div>
               
               <div>
-                <label className="text-sm font-medium text-slate-700">Address</label>
-                <p className="text-sm text-slate-600">{selectedPatient.address || "Not provided"}</p>
+                <label className="text-sm font-medium text-foreground">Address</label>
+                <p className="text-sm text-muted-foreground">{selectedPatient.address || "Not provided"}</p>
               </div>
               
               <div className="border-t pt-4">
-                <h4 className="font-medium text-slate-900 mb-2">Insurance Information</h4>
+                <h4 className="font-medium text-foreground mb-2">Insurance Information</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium text-slate-700">Provider</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.insuranceProvider || "Not provided"}</p>
+                    <label className="text-sm font-medium text-foreground">Provider</label>
+                    <p className="text-sm text-muted-foreground">{selectedPatient.insuranceProvider || "Not provided"}</p>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-slate-700">Member ID</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.insuranceId || "Not provided"}</p>
+                    <label className="text-sm font-medium text-foreground">Member ID</label>
+                    <p className="text-sm text-muted-foreground">{selectedPatient.insuranceId || "Not provided"}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mt-2">
                   <div>
-                    <label className="text-sm font-medium text-slate-700">Policy Number</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.policyNumber || "Not provided"}</p>
+                    <label className="text-sm font-medium text-foreground">Policy Number</label>
+                    <p className="text-sm text-muted-foreground">{selectedPatient.policyNumber || "Not provided"}</p>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-slate-700">Group Number</label>
-                    <p className="text-sm text-slate-600">{selectedPatient.groupNumber || "Not provided"}</p>
+                    <label className="text-sm font-medium text-foreground">Group Number</label>
+                    <p className="text-sm text-muted-foreground">{selectedPatient.groupNumber || "Not provided"}</p>
                   </div>
                 </div>
               </div>
@@ -1172,40 +1172,40 @@ export default function Patients() {
               {/* Secondary Insurance */}
               {selectedPatient.secondaryInsuranceProvider && (
                 <div className="border-t pt-4">
-                  <h4 className="font-medium text-slate-900 mb-2 flex items-center gap-2">
+                  <h4 className="font-medium text-foreground mb-2 flex items-center gap-2">
                     <Shield className="w-4 h-4 text-purple-600" />
                     Secondary Insurance
                   </h4>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-medium text-slate-700">Provider</label>
-                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceProvider}</p>
+                      <label className="text-sm font-medium text-foreground">Provider</label>
+                      <p className="text-sm text-muted-foreground">{selectedPatient.secondaryInsuranceProvider}</p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-slate-700">Member ID</label>
-                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceMemberId || "Not provided"}</p>
+                      <label className="text-sm font-medium text-foreground">Member ID</label>
+                      <p className="text-sm text-muted-foreground">{selectedPatient.secondaryInsuranceMemberId || "Not provided"}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4 mt-2">
                     <div>
-                      <label className="text-sm font-medium text-slate-700">Policy Number</label>
-                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsurancePolicyNumber || "Not provided"}</p>
+                      <label className="text-sm font-medium text-foreground">Policy Number</label>
+                      <p className="text-sm text-muted-foreground">{selectedPatient.secondaryInsurancePolicyNumber || "Not provided"}</p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-slate-700">Group Number</label>
-                      <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceGroupNumber || "Not provided"}</p>
+                      <label className="text-sm font-medium text-foreground">Group Number</label>
+                      <p className="text-sm text-muted-foreground">{selectedPatient.secondaryInsuranceGroupNumber || "Not provided"}</p>
                     </div>
                   </div>
                   {selectedPatient.secondaryInsuranceRelationship && (
                     <div className="grid grid-cols-2 gap-4 mt-2">
                       <div>
-                        <label className="text-sm font-medium text-slate-700">Relationship</label>
-                        <p className="text-sm text-slate-600 capitalize">{selectedPatient.secondaryInsuranceRelationship}</p>
+                        <label className="text-sm font-medium text-foreground">Relationship</label>
+                        <p className="text-sm text-muted-foreground capitalize">{selectedPatient.secondaryInsuranceRelationship}</p>
                       </div>
                       {selectedPatient.secondaryInsuranceSubscriberName && (
                         <div>
-                          <label className="text-sm font-medium text-slate-700">Subscriber Name</label>
-                          <p className="text-sm text-slate-600">{selectedPatient.secondaryInsuranceSubscriberName}</p>
+                          <label className="text-sm font-medium text-foreground">Subscriber Name</label>
+                          <p className="text-sm text-muted-foreground">{selectedPatient.secondaryInsuranceSubscriberName}</p>
                         </div>
                       )}
                     </div>
@@ -1216,7 +1216,7 @@ export default function Patients() {
               {/* Benefits Summary */}
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-slate-900">Insurance Benefits</h4>
+                  <h4 className="font-medium text-foreground">Insurance Benefits</h4>
                   {selectedPatient.insuranceProvider && (
                     <Button
                       variant="outline"
@@ -1255,7 +1255,7 @@ export default function Patients() {
                 <div className="border-t pt-4">
                   <div className="flex items-center gap-2 mb-3">
                     <FileText className="w-4 h-4 text-blue-600" />
-                    <h4 className="font-medium text-slate-900">Plan Document Analysis</h4>
+                    <h4 className="font-medium text-foreground">Plan Document Analysis</h4>
                     <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
                       Admin Only
                     </Badge>
@@ -1267,7 +1267,7 @@ export default function Patients() {
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
                           <CheckCircle2 className="w-4 h-4 text-green-600" />
-                          <span className="text-sm font-medium text-slate-700">Plan Benefits Extracted</span>
+                          <span className="text-sm font-medium text-foreground">Plan Benefits Extracted</span>
                         </div>
                         {planBenefitsData.benefits.verifiedAt && (
                           <Badge className="bg-green-100 text-green-700">Verified</Badge>
@@ -1275,42 +1275,42 @@ export default function Patients() {
                       </div>
                       <div className="grid grid-cols-2 gap-3 text-sm">
                         <div>
-                          <span className="text-slate-500">OON Deductible:</span>
+                          <span className="text-muted-foreground">OON Deductible:</span>
                           <span className="ml-2 font-medium">${planBenefitsData.benefits.oonDeductibleIndividual || '—'}</span>
                         </div>
                         <div>
-                          <span className="text-slate-500">OON Coinsurance:</span>
+                          <span className="text-muted-foreground">OON Coinsurance:</span>
                           <span className="ml-2 font-medium">{planBenefitsData.benefits.oonCoinsurancePercent || '—'}%</span>
                         </div>
                         <div>
-                          <span className="text-slate-500">OON OOP Max:</span>
+                          <span className="text-muted-foreground">OON OOP Max:</span>
                           <span className="ml-2 font-medium">${planBenefitsData.benefits.oonOutOfPocketMax || '—'}</span>
                         </div>
                         <div>
-                          <span className="text-slate-500">Allowed Amt Method:</span>
+                          <span className="text-muted-foreground">Allowed Amt Method:</span>
                           <span className="ml-2 font-medium capitalize">{planBenefitsData.benefits.allowedAmountMethod?.replace('_', ' ') || '—'}</span>
                         </div>
                         {planBenefitsData.benefits.allowedAmountPercent && (
                           <div>
-                            <span className="text-slate-500">Medicare %:</span>
+                            <span className="text-muted-foreground">Medicare %:</span>
                             <span className="ml-2 font-medium">{planBenefitsData.benefits.allowedAmountPercent}%</span>
                           </div>
                         )}
                         {planBenefitsData.benefits.mentalHealthVisitLimit && (
                           <div>
-                            <span className="text-slate-500">MH Visit Limit:</span>
+                            <span className="text-muted-foreground">MH Visit Limit:</span>
                             <span className="ml-2 font-medium">{planBenefitsData.benefits.mentalHealthVisitLimit}/year</span>
                           </div>
                         )}
                       </div>
-                      <p className="text-xs text-slate-500 mt-2">
+                      <p className="text-xs text-muted-foreground mt-2">
                         Confidence: {Math.round((planBenefitsData.benefits.extractionConfidence || 0.7) * 100)}%
                         {planBenefitsData.benefits.planName && ` | Plan: ${planBenefitsData.benefits.planName}`}
                       </p>
                     </div>
                   ) : (
                     <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 mb-4">
-                      <p className="text-sm text-slate-600 mb-3">
+                      <p className="text-sm text-muted-foreground mb-3">
                         Upload an insurance plan document (SBC, EOB, or plan contract) to extract exact OON benefits.
                       </p>
                     </div>
@@ -1367,7 +1367,7 @@ export default function Patients() {
                 <div className="border-t pt-4">
                   <div className="flex items-center gap-2 mb-3">
                     <DollarSign className="w-4 h-4 text-green-600" />
-                    <h4 className="font-medium text-slate-900">Out-of-Network Reimbursement Estimate</h4>
+                    <h4 className="font-medium text-foreground">Out-of-Network Reimbursement Estimate</h4>
                     <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
                       Admin Only
                     </Badge>
@@ -1378,32 +1378,32 @@ export default function Patients() {
 
                   {loadingOonEstimate ? (
                     <div className="flex items-center justify-center py-4">
-                      <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                      <span className="ml-2 text-sm text-slate-500">Calculating estimate...</span>
+                      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                      <span className="ml-2 text-sm text-muted-foreground">Calculating estimate...</span>
                     </div>
                   ) : oonEstimate?.prediction ? (
                     <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-100">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">Expected Allowed</p>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Expected Allowed</p>
                           <p className="text-xl font-bold text-green-700">
                             ${oonEstimate.prediction.estimatedAllowedAmount?.toFixed(2) || '—'}
                           </p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">Est. Reimbursement</p>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Est. Reimbursement</p>
                           <p className="text-xl font-bold text-emerald-700">
                             ${oonEstimate.prediction.estimatedReimbursement?.toFixed(2) || '—'}
                           </p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">Patient Responsibility</p>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Patient Responsibility</p>
                           <p className="text-lg font-semibold text-amber-700">
                             ${oonEstimate.prediction.estimatedPatientResponsibility?.toFixed(2) || '—'}
                           </p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">Confidence</p>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wide">Confidence</p>
                           <Badge
                             className={
                               oonEstimate.prediction.confidenceLevel === 'high'
@@ -1419,7 +1419,7 @@ export default function Patients() {
                         </div>
                       </div>
                       <div className="mt-3 pt-3 border-t border-green-200">
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-muted-foreground">
                           <strong>CPT:</strong> 90837 (60-min therapy) |
                           <strong> Payer:</strong> {selectedPatient.insuranceProvider} |
                           <strong> Method:</strong> {oonEstimate.prediction.methodology?.replace('_', ' ') || 'Medicare multiplier'}
@@ -1428,7 +1428,7 @@ export default function Patients() {
                     </div>
                   ) : (
                     <div className="bg-slate-50 rounded-lg p-4 text-center">
-                      <p className="text-sm text-slate-500">Unable to calculate OON estimate</p>
+                      <p className="text-sm text-muted-foreground">Unable to calculate OON estimate</p>
                     </div>
                   )}
                 </div>

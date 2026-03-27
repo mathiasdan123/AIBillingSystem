@@ -799,7 +799,7 @@ export default function SoapNotes() {
       <div className="md:ml-64 min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-600" />
-          <p className="text-slate-600">Loading...</p>
+          <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
@@ -831,12 +831,12 @@ export default function SoapNotes() {
         {/* Header */}
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <FileText className="w-6 h-6 text-blue-600" />
               Pediatric OT Documentation
             </h1>
-            <p className="text-slate-600 mt-1">
-              Select activities performed → AI generates notes & optimal billing codes
+            <p className="text-muted-foreground mt-1">
+              Select activities performed &rarr; AI generates notes & optimal billing codes
             </p>
           </div>
           <Button
@@ -883,7 +883,7 @@ export default function SoapNotes() {
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div>
-                    <Label className="text-xs text-slate-500">Patient</Label>
+                    <Label className="text-xs text-muted-foreground">Patient</Label>
                     <Select
                       value={selectedPatient?.toString() || ""}
                       onValueChange={(v) => setSelectedPatient(parseInt(v))}
@@ -901,7 +901,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-xs text-slate-500">Date</Label>
+                    <Label className="text-xs text-muted-foreground">Date</Label>
                     <Input
                       type="date"
                       value={sessionDate}
@@ -910,7 +910,7 @@ export default function SoapNotes() {
                     />
                   </div>
                   <div>
-                    <Label className="text-xs text-slate-500">Duration</Label>
+                    <Label className="text-xs text-muted-foreground">Duration</Label>
                     <Select value={duration.toString()} onValueChange={(v) => setDuration(parseInt(v))}>
                       <SelectTrigger className="mt-1">
                         <SelectValue />
@@ -924,7 +924,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-xs text-slate-500">Location</Label>
+                    <Label className="text-xs text-muted-foreground">Location</Label>
                     <Select value={location} onValueChange={setLocation}>
                       <SelectTrigger className="mt-1">
                         <SelectValue />
@@ -939,7 +939,7 @@ export default function SoapNotes() {
                   </div>
                   {isAdmin && (
                     <div>
-                      <Label className="text-xs text-slate-500">Rate/Unit ($)</Label>
+                      <Label className="text-xs text-muted-foreground">Rate/Unit ($)</Label>
                       <Input
                         type="number"
                         value={ratePerUnit}
@@ -956,7 +956,7 @@ export default function SoapNotes() {
                 {isAdmin && (
                   <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-600">
+                      <span className="text-muted-foreground">
                         {Math.floor(duration / 15)} units × ${ratePerUnit.toFixed(2)}/unit
                       </span>
                       <span className="font-bold text-green-700">
@@ -971,7 +971,7 @@ export default function SoapNotes() {
                     <Badge variant="outline" className="text-xs">
                       {patient.insuranceProvider}
                     </Badge>
-                    <span className="text-xs text-slate-600">
+                    <span className="text-xs text-muted-foreground">
                       Policy: {patient.policyNumber}
                     </span>
                   </div>
@@ -989,7 +989,7 @@ export default function SoapNotes() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>
-                  <Label className="text-xs text-slate-500">Mood/Behavior</Label>
+                  <Label className="text-xs text-muted-foreground">Mood/Behavior</Label>
                   <Select value={mood} onValueChange={setMood}>
                     <SelectTrigger className="mt-1">
                       <SelectValue placeholder="Select mood observed" />
@@ -1004,7 +1004,7 @@ export default function SoapNotes() {
 
                 {/* Additional Comments */}
                 <div>
-                  <Label className="text-xs text-slate-500">Additional Comments</Label>
+                  <Label className="text-xs text-muted-foreground">Additional Comments</Label>
                   <Textarea
                     placeholder="Any additional observations or comments about the session..."
                     value={selectedTherapies.join('\n')}
@@ -1014,7 +1014,7 @@ export default function SoapNotes() {
                 </div>
 
                 <div>
-                  <Label className="text-xs text-slate-500">Caregiver Report (optional)</Label>
+                  <Label className="text-xs text-muted-foreground">Caregiver Report (optional)</Label>
                   <Textarea
                     placeholder="Any specific concerns or updates from caregiver..."
                     value={caregiverReport}
@@ -1062,9 +1062,9 @@ export default function SoapNotes() {
                           })()}
                         </div>
                         {expandedCategories.includes(category.name) ? (
-                          <ChevronUp className="w-4 h-4 text-slate-400" />
+                          <ChevronUp className="w-4 h-4 text-muted-foreground/70" />
                         ) : (
-                          <ChevronDown className="w-4 h-4 text-slate-400" />
+                          <ChevronDown className="w-4 h-4 text-muted-foreground/70" />
                         )}
                       </button>
 
@@ -1110,7 +1110,7 @@ export default function SoapNotes() {
 
                           {/* Add new exercise input */}
                           <div className="mt-3 pt-3 border-t">
-                            <Label className="text-xs text-slate-500 mb-1 block">Add Custom Exercise</Label>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Add Custom Exercise</Label>
                             <div className="flex gap-2">
                               <Input
                                 placeholder="Type exercise name..."
@@ -1142,7 +1142,7 @@ export default function SoapNotes() {
                                 )}
                               </Button>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-1">
+                            <p className="text-[10px] text-muted-foreground/70 mt-1">
                               Added exercises will be saved and available for future sessions
                             </p>
                           </div>
@@ -1238,7 +1238,7 @@ export default function SoapNotes() {
 
                     {/* Individual Exercise Assessments */}
                     <div className="space-y-3">
-                      <Label className="text-sm font-medium text-slate-700">Individual Exercise Assessments</Label>
+                      <Label className="text-sm font-medium text-foreground">Individual Exercise Assessments</Label>
                       {selectedActivities.map((activity) => (
                         <div
                           key={activity.name}
@@ -1260,7 +1260,7 @@ export default function SoapNotes() {
                             <div>
                               <Label className="text-[10px] text-green-600">Performance</Label>
                               <Select value={activity.assessment.performance} onValueChange={(v) => updateActivityAssessment(activity.name, 'performance', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-white">
+                                <SelectTrigger className="h-7 text-xs bg-card">
                                   <SelectValue placeholder="Select" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1273,7 +1273,7 @@ export default function SoapNotes() {
                             <div>
                               <Label className="text-[10px] text-green-600">Assistance</Label>
                               <Select value={activity.assessment.assistance} onValueChange={(v) => updateActivityAssessment(activity.name, 'assistance', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-white">
+                                <SelectTrigger className="h-7 text-xs bg-card">
                                   <SelectValue placeholder="Select" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1286,7 +1286,7 @@ export default function SoapNotes() {
                             <div>
                               <Label className="text-[10px] text-green-600">Strength</Label>
                               <Select value={activity.assessment.strength} onValueChange={(v) => updateActivityAssessment(activity.name, 'strength', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-white">
+                                <SelectTrigger className="h-7 text-xs bg-card">
                                   <SelectValue placeholder="Select" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1299,7 +1299,7 @@ export default function SoapNotes() {
                             <div>
                               <Label className="text-[10px] text-green-600">Motor Planning</Label>
                               <Select value={activity.assessment.motorPlanning} onValueChange={(v) => updateActivityAssessment(activity.name, 'motorPlanning', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-white">
+                                <SelectTrigger className="h-7 text-xs bg-card">
                                   <SelectValue placeholder="Select" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1312,7 +1312,7 @@ export default function SoapNotes() {
                             <div>
                               <Label className="text-[10px] text-green-600">Sensory Reg.</Label>
                               <Select value={activity.assessment.sensoryRegulation} onValueChange={(v) => updateActivityAssessment(activity.name, 'sensoryRegulation', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-white">
+                                <SelectTrigger className="h-7 text-xs bg-card">
                                   <SelectValue placeholder="Select" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1342,7 +1342,7 @@ export default function SoapNotes() {
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   <div>
-                    <Label className="text-xs text-slate-500">Performance</Label>
+                    <Label className="text-xs text-muted-foreground">Performance</Label>
                     <Select value={assessment.performance} onValueChange={(v) => setAssessment({...assessment, performance: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
@@ -1355,7 +1355,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-xs text-slate-500">Assistance</Label>
+                    <Label className="text-xs text-muted-foreground">Assistance</Label>
                     <Select value={assessment.assistance} onValueChange={(v) => setAssessment({...assessment, assistance: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
@@ -1368,7 +1368,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-xs text-slate-500">Strength</Label>
+                    <Label className="text-xs text-muted-foreground">Strength</Label>
                     <Select value={assessment.strength} onValueChange={(v) => setAssessment({...assessment, strength: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
@@ -1381,7 +1381,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-xs text-slate-500">Motor Planning</Label>
+                    <Label className="text-xs text-muted-foreground">Motor Planning</Label>
                     <Select value={assessment.motorPlanning} onValueChange={(v) => setAssessment({...assessment, motorPlanning: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
@@ -1394,7 +1394,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                   <div className="md:col-span-2">
-                    <Label className="text-xs text-slate-500">Sensory Regulation</Label>
+                    <Label className="text-xs text-muted-foreground">Sensory Regulation</Label>
                     <Select value={assessment.sensoryRegulation} onValueChange={(v) => setAssessment({...assessment, sensoryRegulation: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
@@ -1420,7 +1420,7 @@ export default function SoapNotes() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>
-                  <Label className="text-xs text-slate-500">Plan Next Steps</Label>
+                  <Label className="text-xs text-muted-foreground">Plan Next Steps</Label>
                   <Select value={planNextSteps} onValueChange={setPlanNextSteps}>
                     <SelectTrigger className="mt-1">
                       <SelectValue placeholder="Select next steps" />
@@ -1433,7 +1433,7 @@ export default function SoapNotes() {
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs text-slate-500">Next Session Focus <span className="text-red-500">*</span></Label>
+                  <Label className="text-xs text-muted-foreground">Next Session Focus <span className="text-red-500">*</span></Label>
                   <Textarea
                     placeholder="Areas to target next session..."
                     value={nextSessionFocus}
@@ -1443,7 +1443,7 @@ export default function SoapNotes() {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs text-slate-500">Home Program (optional)</Label>
+                  <Label className="text-xs text-muted-foreground">Home Program (optional)</Label>
                   <Textarea
                     placeholder="Recommendations for caregiver/home activities..."
                     value={homeProgram}
@@ -1481,12 +1481,12 @@ export default function SoapNotes() {
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs font-bold text-slate-400">GOAL {goal.goalNumber}</span>
+                              <span className="text-xs font-bold text-muted-foreground/70">GOAL {goal.goalNumber}</span>
                               <Badge variant="outline" className="text-xs">
                                 {goal.status ? goal.status.replace(/_/g, " ") : "not started"}
                               </Badge>
                             </div>
-                            <p className="text-sm text-slate-700 dark:text-slate-300">{goal.description}</p>
+                            <p className="text-sm text-foreground dark:text-muted-foreground">{goal.description}</p>
                           </div>
                           <Button
                             variant={isTracked ? "default" : "outline"}
@@ -1519,7 +1519,7 @@ export default function SoapNotes() {
                         {isTracked && existingEntry && (
                           <div className="mt-2 space-y-2 pt-2 border-t border-indigo-200">
                             <div>
-                              <Label className="text-xs text-slate-500">Progress Note</Label>
+                              <Label className="text-xs text-muted-foreground">Progress Note</Label>
                               <Textarea
                                 placeholder="Describe progress observed this session..."
                                 value={existingEntry.progressNote}
@@ -1536,7 +1536,7 @@ export default function SoapNotes() {
                               />
                             </div>
                             <div>
-                              <Label className="text-xs text-slate-500">
+                              <Label className="text-xs text-muted-foreground">
                                 Progress: {existingEntry.progressPercentage}%
                               </Label>
                               <input
@@ -1556,7 +1556,7 @@ export default function SoapNotes() {
                                 }}
                                 className="w-full mt-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                               />
-                              <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+                              <div className="flex justify-between text-xs text-muted-foreground/70 mt-0.5">
                                 <span>0%</span>
                                 <span>50%</span>
                                 <span>100%</span>
@@ -1608,11 +1608,11 @@ export default function SoapNotes() {
                   </CardHeader>
                   <CardContent className="space-y-2">
                     {(generatedNote.cptCodes || []).map((code, index) => (
-                      <div key={code.code} className={`p-3 rounded-lg border ${index === 0 ? 'bg-green-100 border-green-300' : 'bg-white'}`}>
+                      <div key={code.code} className={`p-3 rounded-lg border ${index === 0 ? 'bg-green-100 border-green-300' : 'bg-card'}`}>
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
                             <Badge className={`font-mono ${index === 0 ? 'bg-green-600' : ''}`}>{code.code}</Badge>
-                            <span className="text-xs text-slate-500">{code.units} unit(s)</span>
+                            <span className="text-xs text-muted-foreground">{code.units} unit(s)</span>
                           </div>
                           {isAdmin && (
                             <span className={`text-sm font-semibold ${index === 0 ? 'text-green-700' : 'text-green-600'}`}>
@@ -1621,7 +1621,7 @@ export default function SoapNotes() {
                           )}
                         </div>
                         <p className="text-xs font-medium">{code.name}</p>
-                        <p className="text-xs text-slate-500 mt-1">{code.rationale}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{code.rationale}</p>
                       </div>
                     ))}
 
@@ -1633,7 +1633,7 @@ export default function SoapNotes() {
                         <span className="text-green-700 text-lg">${totalReimbursement.toFixed(2)}</span>
                       </div>
                     )}
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-muted-foreground">
                       {(generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0)} units × {duration} min session
                     </p>
 
@@ -1646,7 +1646,7 @@ export default function SoapNotes() {
                             <Lightbulb className="w-3 h-3 text-blue-600" />
                             <span className="text-xs font-medium text-blue-700">AI Billing Strategy</span>
                           </div>
-                          <p className="text-xs text-slate-600">{generatedNote.billingRationale}</p>
+                          <p className="text-xs text-muted-foreground">{generatedNote.billingRationale}</p>
                         </div>
                       </>
                     )}
@@ -1658,7 +1658,7 @@ export default function SoapNotes() {
                           <CheckCircle className="w-3 h-3 text-amber-600" />
                           <span className="text-xs font-medium text-amber-700">Audit Support</span>
                         </div>
-                        <ul className="text-xs text-slate-600 space-y-1">
+                        <ul className="text-xs text-muted-foreground space-y-1">
                           {generatedNote.auditNotes.map((note, i) => (
                             <li key={i}>• {note}</li>
                           ))}
@@ -1688,7 +1688,7 @@ export default function SoapNotes() {
                             className="flex items-center gap-3 p-2 bg-slate-50 rounded-lg border"
                           >
                             <div className="w-16 text-center">
-                              <span className="text-xs font-mono text-slate-500">
+                              <span className="text-xs font-mono text-muted-foreground">
                                 {block.startMinute}-{block.endMinute} min
                               </span>
                             </div>
@@ -1719,7 +1719,7 @@ export default function SoapNotes() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            <span className="text-xs text-slate-600 flex-1">{block.codeName}</span>
+                            <span className="text-xs text-muted-foreground flex-1">{block.codeName}</span>
                             {isAdmin && (
                               <span className="text-xs font-semibold text-green-600">${block.rate.toFixed(2)}</span>
                             )}
@@ -1730,7 +1730,7 @@ export default function SoapNotes() {
                         <>
                           <Separator className="my-3" />
                           <div className="flex items-center justify-between text-sm">
-                            <span className="text-slate-600">
+                            <span className="text-muted-foreground">
                               {generatedNote.timeBlocks.length} blocks × ${ratePerUnit.toFixed(2)}
                             </span>
                             <span className="font-bold text-green-700">
@@ -1761,31 +1761,31 @@ export default function SoapNotes() {
                   <CardContent className="space-y-3 text-sm">
                     <div>
                       <Label className="text-xs font-semibold text-blue-600">SUBJECTIVE</Label>
-                      <p className="mt-1 text-slate-700">{generatedNote.subjective}</p>
+                      <p className="mt-1 text-foreground">{generatedNote.subjective}</p>
                     </div>
                     <Separator />
                     <div>
                       <Label className="text-xs font-semibold text-green-600">OBJECTIVE</Label>
-                      <p className="mt-1 text-slate-700 whitespace-pre-line">{generatedNote.objective}</p>
+                      <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.objective}</p>
                     </div>
                     <Separator />
                     <div>
                       <Label className="text-xs font-semibold text-purple-600">ASSESSMENT</Label>
-                      <p className="mt-1 text-slate-700 whitespace-pre-line">{generatedNote.assessment}</p>
+                      <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.assessment}</p>
                     </div>
                     <Separator />
                     <div>
                       <Label className="text-xs font-semibold text-orange-600">PLAN</Label>
-                      <p className="mt-1 text-slate-700">{generatedNote.plan}</p>
+                      <p className="mt-1 text-foreground">{generatedNote.plan}</p>
                     </div>
                     <Separator />
                     <div>
-                      <Label className="text-xs font-semibold text-slate-600">SIGNATURES</Label>
+                      <Label className="text-xs font-semibold text-muted-foreground">SIGNATURES</Label>
                       <div className="mt-3 p-4 border rounded-lg bg-slate-50">
                         <div className="flex items-start gap-6">
                           {/* Signature Image or Placeholder */}
                           <div className="flex-1">
-                            <p className="text-xs text-slate-500 mb-2">Therapist Signature</p>
+                            <p className="text-xs text-muted-foreground mb-2">Therapist Signature</p>
                             {therapistSignature?.signature ? (
                               <div className="border-b-2 border-slate-300 pb-2 mb-2">
                                 <img
@@ -1796,15 +1796,15 @@ export default function SoapNotes() {
                               </div>
                             ) : (
                               <div className="border-b-2 border-slate-300 pb-2 mb-2 h-16 flex items-end">
-                                <p className="text-slate-400 italic text-sm">
+                                <p className="text-muted-foreground/70 italic text-sm">
                                   {user?.firstName} {user?.lastName}
                                 </p>
                               </div>
                             )}
-                            <p className="text-sm font-medium text-slate-700">
+                            <p className="text-sm font-medium text-foreground">
                               {therapistSignature?.name || `${user?.firstName} ${user?.lastName}`}
                               {(therapistSignature?.credentials || (user as any)?.credentials) && (
-                                <span className="text-slate-500 font-normal">
+                                <span className="text-muted-foreground font-normal">
                                   , {therapistSignature?.credentials || (user as any)?.credentials}
                                 </span>
                               )}
@@ -1813,8 +1813,8 @@ export default function SoapNotes() {
 
                           {/* Date */}
                           <div className="text-right">
-                            <p className="text-xs text-slate-500 mb-2">Date</p>
-                            <p className="text-lg font-medium text-slate-700">
+                            <p className="text-xs text-muted-foreground mb-2">Date</p>
+                            <p className="text-lg font-medium text-foreground">
                               {new Date().toLocaleDateString()}
                             </p>
                           </div>
@@ -1853,9 +1853,9 @@ export default function SoapNotes() {
             ) : (
               <Card className="border-dashed">
                 <CardContent className="py-12 text-center">
-                  <Brain className="w-12 h-12 mx-auto text-slate-300 mb-4" />
-                  <h3 className="font-medium text-slate-600 mb-2">AI-Generated Output</h3>
-                  <p className="text-sm text-slate-400">
+                  <Brain className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="font-medium text-muted-foreground mb-2">AI-Generated Output</h3>
+                  <p className="text-sm text-muted-foreground/70">
                     Select activities and click generate to create your SOAP note and billing codes
                   </p>
                 </CardContent>
@@ -1877,7 +1877,7 @@ export default function SoapNotes() {
                       <div key={note.id} className="p-2 bg-slate-50 rounded text-xs">
                         <div className="flex justify-between">
                           <span className="font-medium">Session #{note.sessionId}</span>
-                          <span className="text-slate-400">
+                          <span className="text-muted-foreground/70">
                             {note.createdAt ? new Date(note.createdAt).toLocaleDateString() : ''}
                           </span>
                         </div>
@@ -1885,7 +1885,7 @@ export default function SoapNotes() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-400">No recent notes</p>
+                  <p className="text-xs text-muted-foreground/70">No recent notes</p>
                 )}
               </CardContent>
             </Card>

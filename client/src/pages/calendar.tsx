@@ -387,8 +387,8 @@ export default function CalendarPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-slate-900">Calendar</h1>
-            <p className="text-sm md:text-base text-slate-600">Manage your appointments and availability</p>
+            <h1 className="text-xl md:text-2xl font-bold text-foreground">Calendar</h1>
+            <p className="text-sm md:text-base text-muted-foreground">Manage your appointments and availability</p>
           </div>
           <div className="flex gap-2 items-center">
             {locations.length > 0 && (
@@ -705,8 +705,14 @@ export default function CalendarPage() {
                 const sorted = allApts.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
                 if (sorted.length === 0) {
                   return (
-                    <div className="text-center py-8 text-slate-500">
-                      <p className="text-sm">No appointments {view === "day" ? "today" : "this week"}</p>
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <CalendarX className="h-10 w-10 text-muted-foreground mb-3" />
+                      <h3 className="text-base font-semibold text-foreground mb-1">No appointments {view === "day" ? "today" : "this week"}</h3>
+                      <p className="text-sm text-muted-foreground mb-4">Schedule a session to get started.</p>
+                      <Button size="sm" onClick={() => setShowNewAppointment(true)}>
+                        <Plus className="w-4 h-4 mr-2" />
+                        New Appointment
+                      </Button>
                     </div>
                   );
                 }

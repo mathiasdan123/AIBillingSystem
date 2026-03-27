@@ -47,52 +47,99 @@ import {
   UserCheck,
   Download,
   Upload,
+  ChevronDown,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 
-// Navigation items with i18n keys instead of hardcoded names
-const navigationItems = [
-  { nameKey: 'nav.dashboard', href: '/', icon: Home, adminOnly: false },
-  { nameKey: 'nav.patientIntake', href: '/intake', icon: UserPlus, adminOnly: false },
-  { nameKey: 'nav.patients', href: '/patients', icon: Users, adminOnly: false },
-  { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar, adminOnly: false },
-  { nameKey: 'nav.schedulingInsights', href: '/scheduling-insights', icon: CalendarClock, adminOnly: false },
-  { nameKey: 'nav.waitlist', href: '/waitlist', icon: Clock, adminOnly: false },
-  { nameKey: 'nav.reviews', href: '/reviews', icon: Star, adminOnly: false },
-  { nameKey: 'nav.onlineBooking', href: '/online-booking', icon: CalendarCheck, adminOnly: false },
-  { nameKey: 'nav.telehealth', href: '/telehealth', icon: Video, adminOnly: false },
-  { nameKey: 'nav.messages', href: '/messages', icon: MessageSquare, adminOnly: false },
-  { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
-  { nameKey: 'nav.sessionRecorder', href: '/session-recorder', icon: Mic, adminOnly: false },
-  { nameKey: 'nav.outcomeMeasures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
-  { nameKey: 'nav.surveys', href: '/surveys', icon: ClipboardList, adminOnly: false },
-  { nameKey: 'nav.treatmentPlans', href: '/treatment-plans', icon: Target, adminOnly: false },
-  { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
-  { nameKey: 'nav.insuranceRates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
-  { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
-  { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
-  { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
-  { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
-  { nameKey: 'nav.aiInsights', href: '/ai-insights', icon: Brain, adminOnly: false },
-  { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
-  { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
-  { nameKey: 'nav.benchmarking', href: '/benchmarking', icon: BarChart3, adminOnly: true },
-  { nameKey: 'nav.therapistProductivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false },
-  { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
-  { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
-  { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
-  { nameKey: 'nav.breachIncidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
-  { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
-  { nameKey: 'nav.hipaaCompliance', href: '/hipaa-compliance', icon: Shield, adminOnly: true },
-  { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
-  { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
-  { nameKey: 'nav.dailyReport', href: '/daily-report', icon: BarChart3, adminOnly: true },
-  { nameKey: 'nav.dataImport', href: '/data-import', icon: Upload, adminOnly: true },
-  { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
-  { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
+// Navigation item type
+interface NavItem {
+  nameKey: string;
+  href: string;
+  icon: any;
+  adminOnly: boolean;
+}
+
+// Grouped navigation sections
+interface NavSection {
+  labelKey: string;
+  items: NavItem[];
+}
+
+const navigationSections: NavSection[] = [
+  {
+    labelKey: 'nav.sectionGeneral',
+    items: [
+      { nameKey: 'nav.dashboard', href: '/', icon: Home, adminOnly: false },
+      { nameKey: 'nav.messages', href: '/messages', icon: MessageSquare, adminOnly: false },
+      { nameKey: 'nav.aiInsights', href: '/ai-insights', icon: Brain, adminOnly: false },
+    ],
+  },
+  {
+    labelKey: 'nav.sectionClinical',
+    items: [
+      { nameKey: 'nav.patients', href: '/patients', icon: Users, adminOnly: false },
+      { nameKey: 'nav.patientIntake', href: '/intake', icon: UserPlus, adminOnly: false },
+      { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar, adminOnly: false },
+      { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
+      { nameKey: 'nav.sessionRecorder', href: '/session-recorder', icon: Mic, adminOnly: false },
+      { nameKey: 'nav.treatmentPlans', href: '/treatment-plans', icon: Target, adminOnly: false },
+      { nameKey: 'nav.outcomeMeasures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
+      { nameKey: 'nav.surveys', href: '/surveys', icon: ClipboardList, adminOnly: false },
+      { nameKey: 'nav.telehealth', href: '/telehealth', icon: Video, adminOnly: false },
+    ],
+  },
+  {
+    labelKey: 'nav.sectionScheduling',
+    items: [
+      { nameKey: 'nav.schedulingInsights', href: '/scheduling-insights', icon: CalendarClock, adminOnly: false },
+      { nameKey: 'nav.waitlist', href: '/waitlist', icon: Clock, adminOnly: false },
+      { nameKey: 'nav.onlineBooking', href: '/online-booking', icon: CalendarCheck, adminOnly: false },
+      { nameKey: 'nav.reviews', href: '/reviews', icon: Star, adminOnly: false },
+    ],
+  },
+  {
+    labelKey: 'nav.sectionBilling',
+    items: [
+      { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
+      { nameKey: 'nav.insuranceRates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
+      { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
+      { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
+      { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
+      { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
+      { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
+      { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
+    ],
+  },
+  {
+    labelKey: 'nav.sectionReports',
+    items: [
+      { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
+      { nameKey: 'nav.benchmarking', href: '/benchmarking', icon: BarChart3, adminOnly: true },
+      { nameKey: 'nav.therapistProductivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false },
+      { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
+      { nameKey: 'nav.dailyReport', href: '/daily-report', icon: BarChart3, adminOnly: true },
+    ],
+  },
+  {
+    labelKey: 'nav.sectionAdmin',
+    items: [
+      { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
+      { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
+      { nameKey: 'nav.hipaaCompliance', href: '/hipaa-compliance', icon: Shield, adminOnly: true },
+      { nameKey: 'nav.breachIncidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
+      { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
+      { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
+      { nameKey: 'nav.dataImport', href: '/data-import', icon: Upload, adminOnly: true },
+      { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
+      { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
+    ],
+  },
 ];
+
+// Flat list for mobile "More" sheet and filtering
+const allNavigationItems = navigationSections.flatMap(section => section.items);
 
 // Bottom tab bar items (the 4 primary + More)
 const bottomTabItems = [
@@ -102,12 +149,37 @@ const bottomTabItems = [
   { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar },
 ];
 
+// Section labels for mobile "More" sheet grouping
+const mobileSectionLabels: Record<string, string> = {
+  'nav.sectionGeneral': 'General',
+  'nav.sectionClinical': 'Clinical',
+  'nav.sectionScheduling': 'Scheduling',
+  'nav.sectionBilling': 'Billing',
+  'nav.sectionReports': 'Reports',
+  'nav.sectionAdmin': 'Admin',
+};
+
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
   const { user, isAdmin, currentRole } = useAuth();
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
+
+  // Track which sidebar sections are collapsed (desktop)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+
+  const toggleSection = (labelKey: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(labelKey)) {
+        next.delete(labelKey);
+      } else {
+        next.add(labelKey);
+      }
+      return next;
+    });
+  };
 
   // Location switcher data
   const { data: practiceLocations = [] } = useQuery<Array<{ id: number; name: string; isMainLocation: boolean }>>({
@@ -130,7 +202,6 @@ export default function SimpleNavigation() {
   const themeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
   const themeLabel = theme === 'dark' ? t('theme.dark') : theme === 'light' ? t('theme.light') : t('theme.system');
 
-  // Close mobile menu and more sheet on route change
   // Close more sheet on route change
   useEffect(() => {
     setMoreSheetOpen(false);
@@ -146,12 +217,24 @@ export default function SimpleNavigation() {
     return () => { document.body.style.overflow = ''; };
   }, [moreSheetOpen]);
 
-  // Filter navigation items based on role
-  const filteredNavigation = navigationItems.filter(item => !item.adminOnly || isAdmin);
+  // Filter navigation sections based on role
+  const filteredSections = navigationSections
+    .map(section => ({
+      ...section,
+      items: section.items.filter(item => !item.adminOnly || isAdmin),
+    }))
+    .filter(section => section.items.length > 0);
 
   // Items for the "More" sheet (everything not in bottom tabs)
   const bottomTabHrefs = new Set(bottomTabItems.map(item => item.href));
-  const moreNavItems = filteredNavigation.filter(item => !bottomTabHrefs.has(item.href));
+  const moreNavSections = filteredSections
+    .map(section => ({
+      ...section,
+      items: section.items.filter(item => !bottomTabHrefs.has(item.href)),
+    }))
+    .filter(section => section.items.length > 0);
+
+  const moreNavItems = moreNavSections.flatMap(s => s.items);
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -176,6 +259,14 @@ export default function SimpleNavigation() {
     if (item.href === '/') return location === '/';
     return location.startsWith(item.href);
   });
+
+  // Check if any item in a section is active
+  const isSectionActive = (section: NavSection) => {
+    return section.items.some(item => {
+      if (item.href === '/') return location === '/';
+      return location === item.href;
+    });
+  };
 
   return (
     <>
@@ -217,46 +308,70 @@ export default function SimpleNavigation() {
           </div>
         )}
 
-        <div className="flex-1 px-6 py-6 overflow-y-auto">
-          <ul className="space-y-2" role="list">
-            {filteredNavigation.map((item) => {
-              const Icon = item.icon;
-              const isActive = location === item.href;
-              return (
-                <li key={item.nameKey}>
-                  <a
-                    href={item.href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleNavClick(item.href);
-                    }}
-                    aria-current={isActive ? 'page' : undefined}
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                    }`}
-                  >
-                    <Icon className="w-5 h-5 mr-3" aria-hidden="true" />
-                    {t(item.nameKey)}
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="flex-1 px-3 py-3 overflow-y-auto">
+          {filteredSections.map((section) => {
+            const isCollapsed = collapsedSections.has(section.labelKey);
+            const sectionActive = isSectionActive(section);
+
+            return (
+              <div key={section.labelKey} className="mb-1">
+                <button
+                  onClick={() => toggleSection(section.labelKey)}
+                  className="flex items-center justify-between w-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors rounded-md"
+                  aria-expanded={!isCollapsed}
+                >
+                  <span className={sectionActive && isCollapsed ? 'text-primary' : ''}>
+                    {t(section.labelKey, mobileSectionLabels[section.labelKey] || section.labelKey)}
+                  </span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+                    aria-hidden="true"
+                  />
+                </button>
+                {!isCollapsed && (
+                  <ul className="mt-0.5 space-y-0.5" role="list">
+                    {section.items.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = location === item.href;
+                      return (
+                        <li key={item.nameKey}>
+                          <a
+                            href={item.href}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleNavClick(item.href);
+                            }}
+                            aria-current={isActive ? 'page' : undefined}
+                            className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                              isActive
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                            }`}
+                          >
+                            <Icon className="w-4 h-4 mr-3 flex-shrink-0" aria-hidden="true" />
+                            {t(item.nameKey)}
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
         </div>
 
-        <div className="p-6 border-t border-border space-y-4">
+        <div className="p-4 border-t border-border space-y-3">
           <div className="flex items-center justify-center">
             <LanguageSwitcher compact />
           </div>
           <div className="flex items-center space-x-3">
-            <Avatar>
+            <Avatar className="h-8 w-8">
               <AvatarImage src={(user as any)?.profileImageUrl} />
-              <AvatarFallback>{getUserInitials()}</AvatarFallback>
+              <AvatarFallback className="text-xs">{getUserInitials()}</AvatarFallback>
             </Avatar>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-foreground">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground truncate">
                 {(user as any)?.firstName && (user as any)?.lastName
                   ? `${(user as any).firstName} ${(user as any).lastName}`
                   : (user as any)?.email || 'User'
@@ -397,35 +512,42 @@ export default function SimpleNavigation() {
                 <LogOut className="w-4 h-4" aria-hidden="true" />
               </Button>
             </div>
-            {/* Nav items grid */}
+            {/* Nav items grouped by section */}
             <div className="flex-1 overflow-y-auto px-4 py-3 pb-20">
-              <ul className="grid grid-cols-3 gap-2" role="list">
-                {moreNavItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = location === item.href;
-                  return (
-                    <li key={item.nameKey}>
-                      <a
-                        href={item.href}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleNavClick(item.href);
-                          setMoreSheetOpen(false);
-                        }}
-                        aria-current={isActive ? 'page' : undefined}
-                        className={`flex flex-col items-center justify-center p-3 rounded-xl min-h-[72px] text-center transition-colors ${
-                          isActive
-                            ? 'bg-primary/10 text-primary'
-                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                        }`}
-                      >
-                        <Icon className="w-5 h-5 mb-1.5" aria-hidden="true" />
-                        <span className="text-[11px] font-medium leading-tight">{t(item.nameKey)}</span>
-                      </a>
-                    </li>
-                  );
-                })}
-              </ul>
+              {moreNavSections.map((section) => (
+                <div key={section.labelKey} className="mb-4">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-2">
+                    {t(section.labelKey, mobileSectionLabels[section.labelKey] || section.labelKey)}
+                  </h3>
+                  <ul className="grid grid-cols-3 gap-2" role="list">
+                    {section.items.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = location === item.href;
+                      return (
+                        <li key={item.nameKey}>
+                          <a
+                            href={item.href}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleNavClick(item.href);
+                              setMoreSheetOpen(false);
+                            }}
+                            aria-current={isActive ? 'page' : undefined}
+                            className={`flex flex-col items-center justify-center p-3 rounded-xl min-h-[72px] text-center transition-colors ${
+                              isActive
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                            }`}
+                          >
+                            <Icon className="w-5 h-5 mb-1.5" aria-hidden="true" />
+                            <span className="text-[11px] font-medium leading-tight">{t(item.nameKey)}</span>
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
             </div>
           </div>
         </>
