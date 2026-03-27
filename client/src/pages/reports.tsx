@@ -44,7 +44,9 @@ import {
   TrendingUp,
   LineChart,
   TableIcon,
+  Printer,
 } from "lucide-react";
+import PrintLayout from "@/components/PrintLayout";
 import {
   BarChart,
   Bar,
@@ -693,6 +695,74 @@ export default function Reports() {
                           <Download className="w-4 h-4 mr-2" />
                           {t("reportBuilder.exportCsv")}
                         </Button>
+                        <PrintLayout
+                          trigger={
+                            <Button variant="outline" size="sm">
+                              <Printer className="w-4 h-4 mr-2" />
+                              Export as PDF
+                            </Button>
+                          }
+                          title={`${REPORT_TYPES.find(rt => rt.value === reportType)?.label?.replace("reportBuilder.types.", "") || reportType} Report`}
+                          practiceName="TherapyBill Practice"
+                          dateRange={datePreset === "custom" ? `${customStartDate} to ${customEndDate}` : datePreset.replace(/_/g, " ")}
+                        >
+                          <div>
+                            {/* Summary Section */}
+                            {reportData.summary && (
+                              <div style={{ marginBottom: "16px" }}>
+                                <h3 style={{ fontSize: "11pt", fontWeight: 600, color: "#1e40af", borderBottom: "1px solid #dbeafe", paddingBottom: "4px", marginBottom: "8px" }}>
+                                  Summary
+                                </h3>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "16px" }}>
+                                  {Object.entries(reportData.summary)
+                                    .filter(([key]) => typeof reportData.summary[key] !== "object")
+                                    .map(([key, value]) => (
+                                      <div key={key} style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "4px", padding: "8px 12px", minWidth: "120px" }}>
+                                        <div style={{ fontSize: "12pt", fontWeight: 700 }}>{formatCellValue(value, key)}</div>
+                                        <div style={{ fontSize: "8pt", color: "#6b7280" }}>{formatColumnName(key)}</div>
+                                      </div>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Data Table */}
+                            {reportData.data && reportData.data.length > 0 && (
+                              <div>
+                                <h3 style={{ fontSize: "11pt", fontWeight: 600, color: "#1e40af", borderBottom: "1px solid #dbeafe", paddingBottom: "4px", marginBottom: "8px" }}>
+                                  Data ({reportData.data.length} rows)
+                                </h3>
+                                <table className="print-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "8pt" }}>
+                                  <thead>
+                                    <tr style={{ background: "#f3f4f6" }}>
+                                      {tableColumns.map(col => (
+                                        <th key={col} style={{ border: "1px solid #d1d5db", padding: "4px 6px", textAlign: "left", fontWeight: 600, whiteSpace: "nowrap" }}>
+                                          {formatColumnName(col)}
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {reportData.data.slice(0, 200).map((row: any, idx: number) => (
+                                      <tr key={idx} style={{ background: idx % 2 === 0 ? "#fff" : "#f9fafb" }}>
+                                        {tableColumns.map(col => (
+                                          <td key={col} style={{ border: "1px solid #d1d5db", padding: "3px 6px", whiteSpace: "nowrap" }}>
+                                            {formatCellValue(row[col], col)}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                {reportData.data.length > 200 && (
+                                  <p style={{ fontSize: "8pt", color: "#6b7280", marginTop: "4px" }}>
+                                    Showing first 200 of {reportData.data.length} rows. Use CSV export for full data.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </PrintLayout>
                       </div>
                     </div>
                   </CardHeader>

@@ -19,7 +19,11 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
+  Printer,
+  Download,
 } from "lucide-react";
+import PrintLayout from "@/components/PrintLayout";
+import InvoicePrintView from "@/components/InvoicePrintView";
 
 interface PatientBillingTabProps {
   patientId: number;
@@ -231,6 +235,90 @@ export default function PatientBillingTab({ patientId, patientName }: PatientBil
           <Plus className="w-4 h-4 mr-1" />
           Record Payment
         </Button>
+        {statements && statements.length > 0 && (
+          <PrintLayout
+            trigger={
+              <Button size="sm" variant="outline">
+                <Download className="w-4 h-4 mr-1" />
+                Download Statement
+              </Button>
+            }
+            title="Patient Statement"
+            practiceName="TherapyBill Practice"
+          >
+            <div>
+              <h3 style={{ fontSize: "11pt", fontWeight: 600, marginBottom: "8px" }}>Statement for {patientName}</h3>
+              {/* Summary */}
+              <div style={{ display: "flex", gap: "24px", marginBottom: "16px", fontSize: "10pt" }}>
+                <div>
+                  <span style={{ color: "#6b7280" }}>Total Charges: </span>
+                  <span style={{ fontWeight: 600 }}>${balance?.totalCharges?.toFixed(2) || "0.00"}</span>
+                </div>
+                <div>
+                  <span style={{ color: "#6b7280" }}>Payments: </span>
+                  <span style={{ fontWeight: 600, color: "#16a34a" }}>${balance?.totalPayments?.toFixed(2) || "0.00"}</span>
+                </div>
+                <div>
+                  <span style={{ color: "#6b7280" }}>Adjustments: </span>
+                  <span style={{ fontWeight: 600 }}>${balance?.totalAdjustments?.toFixed(2) || "0.00"}</span>
+                </div>
+                <div>
+                  <span style={{ color: "#6b7280" }}>Balance Due: </span>
+                  <span style={{ fontWeight: 700, color: (balance?.currentBalance || 0) > 0 ? "#dc2626" : "#16a34a" }}>
+                    ${balance?.currentBalance?.toFixed(2) || "0.00"}
+                  </span>
+                </div>
+              </div>
+
+              {/* All statements with line items */}
+              {statements.map((stmt) => (
+                <div key={stmt.id} style={{ marginBottom: "16px", pageBreakInside: "avoid" }}>
+                  <div style={{ fontSize: "9pt", fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
+                    {stmt.statementNumber} — {new Date(stmt.statementDate).toLocaleDateString()}
+                    {stmt.dueDate && <span> (Due: {new Date(stmt.dueDate).toLocaleDateString()})</span>}
+                    <span style={{ marginLeft: "12px", color: "#6b7280" }}>Status: {stmt.status}</span>
+                  </div>
+                  {stmt.lineItems && stmt.lineItems.length > 0 ? (
+                    <table className="print-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "9pt", marginBottom: "4px" }}>
+                      <thead>
+                        <tr style={{ background: "#f3f4f6" }}>
+                          <th style={{ border: "1px solid #d1d5db", padding: "4px 8px", textAlign: "left" }}>Date</th>
+                          <th style={{ border: "1px solid #d1d5db", padding: "4px 8px", textAlign: "left" }}>Description</th>
+                          <th style={{ border: "1px solid #d1d5db", padding: "4px 8px", textAlign: "right" }}>Charge</th>
+                          <th style={{ border: "1px solid #d1d5db", padding: "4px 8px", textAlign: "right" }}>Ins. Paid</th>
+                          <th style={{ border: "1px solid #d1d5db", padding: "4px 8px", textAlign: "right" }}>Patient Owes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stmt.lineItems.map((li: any, idx: number) => (
+                          <tr key={idx}>
+                            <td style={{ border: "1px solid #d1d5db", padding: "3px 8px" }}>{li.serviceDate || "-"}</td>
+                            <td style={{ border: "1px solid #d1d5db", padding: "3px 8px" }}>{li.description}{li.cptCode ? ` (${li.cptCode})` : ""}</td>
+                            <td style={{ border: "1px solid #d1d5db", padding: "3px 8px", textAlign: "right" }}>${parseFloat(li.chargeAmount || "0").toFixed(2)}</td>
+                            <td style={{ border: "1px solid #d1d5db", padding: "3px 8px", textAlign: "right" }}>${parseFloat(li.insurancePaid || "0").toFixed(2)}</td>
+                            <td style={{ border: "1px solid #d1d5db", padding: "3px 8px", textAlign: "right", fontWeight: 600 }}>${parseFloat(li.patientResponsibility || "0").toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p style={{ fontSize: "9pt", color: "#6b7280" }}>No line items</p>
+                  )}
+                  <div style={{ fontSize: "9pt", textAlign: "right" }}>
+                    <span style={{ color: "#6b7280" }}>Statement Total: </span>
+                    <span style={{ fontWeight: 600 }}>${parseFloat(stmt.totalAmount || "0").toFixed(2)}</span>
+                    <span style={{ marginLeft: "16px", color: "#6b7280" }}>Balance: </span>
+                    <span style={{ fontWeight: 700, color: "#dc2626" }}>${parseFloat(stmt.balanceDue || "0").toFixed(2)}</span>
+                  </div>
+                </div>
+              ))}
+
+              <div style={{ background: "#eff6ff", border: "1px solid #dbeafe", borderRadius: "4px", padding: "8px 12px", fontSize: "8pt", color: "#1e40af", marginTop: "12px" }}>
+                Payment due within 30 days of statement date. Please contact our office with any questions regarding your balance.
+              </div>
+            </div>
+          </PrintLayout>
+        )}
       </div>
 
       {/* Statements List */}
@@ -291,6 +379,39 @@ export default function PatientBillingTab({ patientId, patientName }: PatientBil
                           <DollarSign className="w-3 h-3" />
                         </Button>
                       )}
+                      <PrintLayout
+                        trigger={
+                          <Button size="sm" variant="ghost" className="h-7 px-2" title="Generate Invoice PDF">
+                            <Printer className="w-3 h-3" />
+                          </Button>
+                        }
+                        title="Invoice"
+                        practiceName="TherapyBill Practice"
+                      >
+                        <InvoicePrintView
+                          statementNumber={stmt.statementNumber}
+                          statementDate={stmt.statementDate}
+                          dueDate={stmt.dueDate}
+                          patientName={patientName}
+                          lineItems={
+                            stmt.lineItems && Array.isArray(stmt.lineItems)
+                              ? stmt.lineItems.map((li: any) => ({
+                                  serviceDate: li.serviceDate,
+                                  cptCode: li.cptCode,
+                                  description: li.description,
+                                  units: 1,
+                                  chargeAmount: li.chargeAmount || "0",
+                                  insurancePaid: li.insurancePaid || "0",
+                                  adjustments: li.adjustments || "0",
+                                  patientResponsibility: li.patientResponsibility || "0",
+                                }))
+                              : []
+                          }
+                          totalAmount={stmt.totalAmount}
+                          paidAmount={stmt.paidAmount}
+                          balanceDue={stmt.balanceDue}
+                        />
+                      </PrintLayout>
                     </div>
                   </div>
                   <div className="flex gap-4 text-xs text-slate-500 mt-1">

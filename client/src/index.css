@@ -175,3 +175,84 @@
 .animate-in.slide-in-from-bottom {
   animation: slide-in-from-bottom 0.3s ease-out;
 }
+
+/* ==================== Print Styles ==================== */
+@media print {
+  /* Hide everything except the print content */
+  body > *:not(#print-root) {
+    display: none !important;
+  }
+
+  #print-root {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+
+  /* Hide navigation, toolbars, buttons marked as no-print */
+  nav, header, aside, footer,
+  .no-print,
+  [data-no-print],
+  button:not(.print-keep),
+  .mobile-nav,
+  .sidebar {
+    display: none !important;
+  }
+
+  /* Reset print-specific styles */
+  .print-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    font-size: 11pt;
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  .print-content * {
+    color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Page setup */
+  @page {
+    margin: 0.5in;
+    size: letter;
+  }
+
+  /* Force page breaks */
+  .print-page-break {
+    page-break-before: always;
+  }
+
+  .print-avoid-break {
+    page-break-inside: avoid;
+  }
+
+  /* Print table styles */
+  .print-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+  }
+
+  .print-table th,
+  .print-table td {
+    border: 1px solid #d1d5db;
+    padding: 4px 8px;
+    text-align: left;
+  }
+
+  .print-table th {
+    background-color: #f3f4f6 !important;
+    font-weight: 600;
+  }
+
+  .print-table tr:nth-child(even) {
+    background-color: #f9fafb !important;
+  }
+}
