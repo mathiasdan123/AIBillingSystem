@@ -186,7 +186,7 @@ export default function DataExport() {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-8 max-w-5xl">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64 space-y-8 max-w-5xl mx-auto">
       {/* Page Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">{t('dataExport.title')}</h1>
