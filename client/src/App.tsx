@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import SimpleNavigation from "@/components/SimpleNavigation";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
+import AiBillingAssistant from "@/components/AiBillingAssistant";
 
 // Keep frequently used pages in the main bundle
 import Landing from "@/pages/landing";
@@ -244,6 +245,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <AiBillingAssistant />
         </TooltipProvider>
       </QueryClientProvider>
     </ThemeProvider>
