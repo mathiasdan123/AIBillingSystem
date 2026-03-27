@@ -1,0 +1,17 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 773320320189.dkr.ecr.us-east-1.amazonaws.com
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker build -t therapybill-app .
+      - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
+  post_build:
+    commands:
+      - echo Pushing Docker image...
+      - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
+      - echo Build completed
