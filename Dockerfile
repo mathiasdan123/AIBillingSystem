@@ -1,5 +1,5 @@
 # Stage 1: Build the application
-FROM node:20-slim AS builder
+FROM public.ecr.aws/docker/library/node:20-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -22,7 +22,7 @@ RUN NODE_ENV=production npm run build
 RUN ! grep -q "from \"vite\"" dist/index.js || (echo "ERROR: vite import found in production build!" && exit 1)
 
 # Stage 2: Production image
-FROM node:20-slim AS production
+FROM public.ecr.aws/docker/library/node:20-slim AS production
 
 # Set working directory
 WORKDIR /app
