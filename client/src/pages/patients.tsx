@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -451,6 +451,34 @@ export default function Patients() {
   });
 
   // Bulk eligibility check mutation
+  const [sendingPortalLink, setSendingPortalLink] = useState<number | null>(null);
+  const sendPortalLinkMutation = useMutation({
+    mutationFn: async (patientId: number) => {
+      setSendingPortalLink(patientId);
+      const response = await apiRequest("POST", `/api/patients/${patientId}/send-portal-link`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setSendingPortalLink(null);
+      toast({
+        title: "Portal Link Sent",
+        description: data.message || "Patient will receive an email with their portal access link.",
+      });
+    },
+    onError: (error) => {
+      setSendingPortalLink(null);
+      if (isUnauthorizedError(error)) {
+        toast({ title: "Unauthorized", description: "Please log in again.", variant: "destructive" });
+        return;
+      }
+      toast({
+        title: "Failed to Send",
+        description: error instanceof Error ? error.message : "Could not send portal link. Make sure the patient has an email address.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const bulkEligibilityMutation = useMutation({
     mutationFn: async (patientIds: number[]) => {
       setBulkCheckInProgress(true);
@@ -1092,6 +1120,31 @@ export default function Patients() {
               <DialogDescription>
                 Patient details, insurance, and billing
               </DialogDescription>
+              <div className="flex gap-2 mt-2">
+                {selectedPatient.email && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => sendPortalLinkMutation.mutate(selectedPatient.id)}
+                    disabled={sendingPortalLink === selectedPatient.id}
+                  >
+                    {sendingPortalLink === selectedPatient.id ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4 mr-1" />
+                    )}
+                    Send Portal Link
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(`/patient-portal?demo=true`, '_blank')}
+                >
+                  <ExternalLink className="w-4 h-4 mr-1" />
+                  Preview Portal
+                </Button>
+              </div>
             </DialogHeader>
             <Tabs defaultValue="details" className="w-full">
               <TabsList className="grid w-full grid-cols-4">
