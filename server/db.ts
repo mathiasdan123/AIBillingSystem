@@ -12,10 +12,11 @@ let connectionString = process.env.DATABASE_URL;
 // Remove channel_binding parameter (Neon-specific, not supported by node-postgres)
 connectionString = connectionString.replace(/[&?]channel_binding=[^&]*/g, '');
 
-// Use regular pg driver (Render, local dev) or neon-serverless (Replit)
-const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
-const isRender = !!process.env.RENDER;
-const useRegularPg = isLocalDev || isRender;
+// Use Neon serverless driver ONLY when the DATABASE_URL points to a Neon endpoint.
+// For AWS RDS (and all standard PostgreSQL), use the regular pg driver.
+// The Neon driver uses WebSockets which RDS does not support.
+const isNeonDatabase = connectionString.includes('.neon.tech') || !!process.env.REPLIT_DOMAINS;
+const useRegularPg = !isNeonDatabase;
 
 let pool: any;
 let db: any;
@@ -24,14 +25,14 @@ let dbReady: Promise<void>;
 // Initialize database connection
 dbReady = (async () => {
   if (useRegularPg) {
-    // Use regular pg driver for Render and local development
+    // Use regular pg driver for AWS RDS and local development
     const pg = await import('pg');
     const { drizzle: drizzlePg } = await import('drizzle-orm/node-postgres');
     pool = new pg.default.Pool({ connectionString });
     db = drizzlePg({ client: pool, schema });
-    console.log('Using regular PostgreSQL driver');
+    console.log('Using regular PostgreSQL driver (pg)');
   } else {
-    // Use neon-serverless for production (Replit/Neon)
+    // Use neon-serverless only when connecting to a Neon database (WebSocket-based)
     const { Pool, neonConfig } = await import('@neondatabase/serverless');
     const { drizzle: drizzleNeon } = await import('drizzle-orm/neon-serverless');
     const ws = await import('ws');
