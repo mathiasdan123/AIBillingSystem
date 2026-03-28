@@ -10,7 +10,7 @@ Medical billing and practice management platform for behavioral health / therapy
 ## Tech Stack
 - **Frontend:** React 18, TypeScript, TailwindCSS, Radix UI, Wouter (routing), React Query, React Hook Form + Zod
 - **Backend:** Express.js 4, Node.js 20+, TypeScript
-- **Database:** PostgreSQL via Drizzle ORM (Neon serverless in production, pg driver locally)
+- **Database:** PostgreSQL via Drizzle ORM (AWS RDS in production, pg driver locally)
 - **Auth:** Passport.js local strategy, Argon2 hashing, express-session, MFA via TOTP
 - **Build:** Vite (client), esbuild (server), tsx (dev)
 
@@ -73,7 +73,8 @@ migrations/          # Drizzle SQL migrations (18 files)
 |---------|---------|---------|--------|
 | Stedi | `STEDI_API_KEY` | Eligibility, claims submission, claim status | Test key configured, sandbox verified |
 | Stripe | `STRIPE_SECRET_KEY` | Patient/practice billing | Configured |
-| OpenAI | `OPENAI_API_KEY` | SOAP notes, claim accuracy review, appeals | Configured |
+| Anthropic | `ANTHROPIC_API_KEY` | AI billing assistant (Claude), claim accuracy review, appeals | Configured |
+| OpenAI | `OPENAI_API_KEY` | SOAP notes generation | Optional |
 | Twilio | `TWILIO_ACCOUNT_SID` | SMS reminders | Optional |
 | ElevenLabs | `ELEVENLABS_API_KEY` | Text-to-speech | Optional |
 | SMTP | `SMTP_HOST` | Email notifications | Optional |
@@ -92,18 +93,27 @@ migrations/          # Drizzle SQL migrations (18 files)
 - Audit trail with tamper detection
 
 ## Deployment
-- **Render:** `render.yaml` (free tier, Oregon) — app hosting
-- **Neon:** Production PostgreSQL database
+- **AWS ECS Fargate:** Production app hosting (us-east-1, 0.25 vCPU, 512MB)
+- **AWS RDS PostgreSQL:** Production database (db.t4g.micro, encrypted, private subnet)
+- **AWS ALB:** Load balancer with SSL (app.therapybillai.com)
+- **AWS ECR:** Docker image registry (773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app)
+- **AWS CodeBuild:** Builds Docker images from S3 source zip
+- **HIPAA BAA:** Signed with AWS
 - **Docker:** Multi-stage build, non-root user, health check at `/api/health`
 - Production build outputs: `dist/index.js` (server) + `dist/public/` (client)
-- Schema changes must be applied manually to Neon (db:push hangs in CI)
+- **Domain:** app.therapybillai.com (SSL via ACM, DNS via Squarespace)
+- **Deploy process:** zip source → upload to S3 → CodeBuild → ECR → ECS force-new-deployment
 
 ## Environment Variables (Required)
 ```
-DATABASE_URL=        # PostgreSQL connection string
+DATABASE_URL=        # PostgreSQL connection string (RDS in production)
 SESSION_SECRET=      # Min 32 chars
 PHI_ENCRYPTION_KEY=  # 64-char hex (32 bytes)
 NODE_ENV=            # development or production
+ANTHROPIC_API_KEY=   # Claude API key for AI billing assistant
+STEDI_API_KEY=       # Stedi clearinghouse API key
+STRIPE_SECRET_KEY=   # Stripe payment processing
+STRIPE_PUBLISHABLE_KEY= # Stripe client-side key
 ```
 
 ## Testing
@@ -121,6 +131,16 @@ NODE_ENV=            # development or production
 - Use structured logger (`server/services/logger.ts`), not console.log in production code
 
 ## Current Status / Notes
-- Stedi integration: sandbox connectivity verified (test key `test_*`), needs production key + payer enrollment to go live
+- **Live at:** https://app.therapybillai.com (AWS ECS, HIPAA BAA signed)
+- **Stedi:** Test key configured. Eligibility + claims work without enrollment for Aetna, UHC, Horizon BCBS, Anthem BCBS. ERA enrollment pending.
+- **Stripe:** Test keys configured. Swap to live keys for real payments.
+- **AI Assistant:** Claude-powered (Anthropic), available on every page
+- **Patient Portal:** Fully integrated, access via Send Portal Link button in patient details
+- **Data Import:** Supports SimplePractice, TherapyNotes, Jane App, WebPT, Fusion/Ensura, Prompt Health
 - Legacy `routes.ts` is large (~439KB) and being refactored into modular files under `routes/`
 - Legacy `storage.ts` is large (~221KB) - the data access layer
+
+## Compliance
+- All billing-related language must use "accuracy" framing, not "optimization" or "maximization"
+- AI suggests codes — therapist must always make final coding decision
+- Disclaimer required on customer-facing pages: "TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider."
