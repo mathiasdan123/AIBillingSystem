@@ -17,6 +17,7 @@ import {
   TriangleAlert, CircleAlert, Info, Lightbulb, Download, Printer
 } from "lucide-react";
 import { exportToCsv } from "@/lib/exportUtils";
+import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import PrintLayout from "@/components/PrintLayout";
 import SuperbillPrintView from "@/components/SuperbillPrintView";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1783,6 +1784,8 @@ export default function Claims() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AiDisclaimerBanner />
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">

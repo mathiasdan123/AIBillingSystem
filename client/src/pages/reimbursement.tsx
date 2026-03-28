@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -128,6 +129,8 @@ export default function ReimbursementPage() {
           </p>
         </div>
       </div>
+
+      <AiDisclaimerBanner />
 
       <Tabs defaultValue="rates" className="space-y-4">
         <TabsList>

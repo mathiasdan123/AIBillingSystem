@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useTranslation } from "react-i18next";
+import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import {
   Brain,
   TrendingDown,
@@ -267,6 +268,8 @@ export default function AiInsightsPage() {
           {t("aiInsights.generateInsights")}
         </Button>
       </div>
+
+      <AiDisclaimerBanner />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

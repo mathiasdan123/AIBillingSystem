@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -849,6 +850,8 @@ export default function SoapNotes() {
             Voice & Upload
           </Button>
         </div>
+
+        <AiDisclaimerBanner />
 
         {/* Voice Input Section */}
         {showVoiceInput && (
