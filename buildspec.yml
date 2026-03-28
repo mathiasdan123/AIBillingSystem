@@ -8,7 +8,7 @@ phases:
   build:
     commands:
       - echo Building Docker image...
-      - docker build -t therapybill-app .
+      - docker build --no-cache -t therapybill-app .
       - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
   post_build:
     commands:
