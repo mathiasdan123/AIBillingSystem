@@ -678,8 +678,8 @@ export default function SoapNotes() {
       toast({
         title: "AI Generated Note & Codes",
         description: isAdmin
-          ? `Generated SOAP note with ${(aiResponse.cptCodes || []).length} optimized CPT codes. Est. reimbursement: $${(aiResponse.totalReimbursement || 0).toFixed(2)}`
-          : `Generated SOAP note with ${(aiResponse.cptCodes || []).length} optimized CPT codes.`,
+          ? `Generated SOAP note with ${(aiResponse.cptCodes || []).length} suggested CPT codes. Est. reimbursement: $${(aiResponse.totalReimbursement || 0).toFixed(2)}`
+          : `Generated SOAP note with ${(aiResponse.cptCodes || []).length} suggested CPT codes.`,
       });
 
     } catch (error) {

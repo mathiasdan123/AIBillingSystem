@@ -128,7 +128,7 @@ export class AiClaimOptimizer {
   };
 
   /**
-   * Analyze SOAP notes and optimize CPT codes for maximum reimbursement
+   * Analyze SOAP notes and review CPT codes for coding accuracy
    */
   async optimizeClaim(
     soapNote: SoapNote, 
@@ -313,9 +313,9 @@ export class AiClaimOptimizer {
 
   private generateAiReviewNotes(score: number, optimizations: CptOptimization[]): string {
     if (score >= 90) {
-      return `Excellent documentation quality. ${optimizations.length} CPT code(s) optimized for maximum reimbursement. Ready for submission.`;
+      return `Excellent documentation quality. ${optimizations.length} CPT code(s) reviewed for coding accuracy. Ready for submission.`;
     } else if (score >= 75) {
-      return `Good documentation with minor optimization opportunities. ${optimizations.length} CPT code(s) adjusted for better reimbursement.`;
+      return `Good documentation with minor adjustment opportunities. ${optimizations.length} CPT code(s) adjusted for coding accuracy.`;
     } else if (score >= 60) {
       return `Adequate documentation. Consider adding more functional outcomes. ${optimizations.length} CPT code(s) optimized.`;
     } else {

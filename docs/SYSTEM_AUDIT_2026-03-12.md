@@ -129,7 +129,7 @@ TherapyBill AI is a **feature-rich, architecturally sound** therapy billing plat
 ## Competitive Positioning
 
 ### What You Beat Competitors On
-- **AI claim optimization + appeal generation** — 12-month lead over SimplePractice/TherapyNotes/Jane
+- **AI claim accuracy review + appeal generation** — 12-month lead over SimplePractice/TherapyNotes/Jane
 - **Modern tech stack** — clean React/TypeScript vs legacy competitors
 - **Appeals workflow** — Kanban board UX is genuinely best-in-class
 
@@ -142,7 +142,7 @@ TherapyBill AI is a **feature-rich, architecturally sound** therapy billing plat
 | Batch claims | Yes | Yes | Yes | **No** |
 | Secondary insurance | Yes | Yes | Yes | **No** |
 | Appointment reminders | Yes | Yes | Yes | **No** |
-| AI claim optimization | No | No | No | **Yes** |
+| AI claim accuracy review | No | No | No | **Yes** |
 | AI appeal generation | No | No | Basic | **Yes** |
 | WCAG accessibility | Partial | Partial | Yes | **No** |
 
@@ -162,11 +162,11 @@ TherapyBill AI is a **feature-rich, architecturally sound** therapy billing plat
 - Enterprise healthcare systems
 
 **Suggested positioning:**
-> *"AI-powered billing that gets you paid faster — 23% more reimbursement, 85% less admin time"*
+> *"AI-powered billing that gets you paid accurately — fewer undercoded claims, 85% less admin time"*
 
 **Path to PMF:**
 1. Land 20 single-provider OT clinics
-2. Prove AI claim optimization ROI empirically
+2. Prove AI claim accuracy review ROI empirically
 3. Build case studies with clear financial metrics
 4. Expand to multi-provider once recurring appointments + billing complete
 

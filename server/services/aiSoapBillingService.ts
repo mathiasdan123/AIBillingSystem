@@ -98,7 +98,7 @@ export interface AiSoapBillingResponse {
 
 /**
  * AI-powered SOAP note and billing code generation
- * Uses OpenAI to analyze activities and optimize billing based on:
+ * Uses OpenAI to analyze activities and ensure billing accuracy based on:
  * - Activities performed
  * - Patient's insurance contract (when available)
  * - Medical necessity requirements
@@ -193,7 +193,7 @@ function buildSystemPrompt(insuranceData: any): string {
   let prompt = `You are an expert pediatric occupational therapy clinical documentation specialist. Your role is to:
 
 1. Generate HIGHLY DETAILED, PROFESSIONAL SOAP notes that meet medical documentation standards
-2. Determine optimal CPT code assignments to MAXIMIZE reimbursement while remaining audit defensible
+2. Determine appropriate CPT code assignments to ensure accurate reimbursement while remaining audit defensible
 
 SOAP NOTE REQUIREMENTS:
 
@@ -616,7 +616,7 @@ function fallbackGeneration(
     cptCodes,
     timeBlocks,
     totalReimbursement,
-    billingRationale: "Billing optimized using rule-based assignment. AI unavailable.",
+    billingRationale: "Billing codes assigned using rule-based accuracy checks. AI unavailable.",
     auditNotes: ["Documentation supports assigned CPT codes", "Activities match code descriptions"]
   };
 }

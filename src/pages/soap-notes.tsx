@@ -191,7 +191,7 @@ export default function SoapNotes() {
     onSuccess: () => {
       toast({
         title: "SOAP Note Created",
-        description: "Session documented successfully with AI-optimized billing codes",
+        description: "Session documented successfully with AI-suggested billing codes",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
@@ -294,7 +294,7 @@ export default function SoapNotes() {
 
       const optimization: AiOptimization = {
         suggestedCodes: suggestedCodes.slice(0, 3), // Top 3 recommendations
-        optimizationReason: `Based on documented interventions and ${patient?.insuranceProvider || 'insurance'} preferences, using ${suggestedCodes[0]?.code} provides optimal reimbursement while maintaining clinical accuracy.`,
+        optimizationReason: `Based on documented interventions and ${patient?.insuranceProvider || 'insurance'} preferences, using ${suggestedCodes[0]?.code} provides accurate reimbursement while maintaining clinical accuracy.`,
         estimatedIncrease: suggestedCodes[0] ? Math.round((suggestedCodes[0].reimbursementRate - 45) * 100) / 100 : 0
       };
 
@@ -302,7 +302,7 @@ export default function SoapNotes() {
       
       toast({
         title: "AI Analysis Complete",
-        description: `Found ${suggestedCodes.length} optimized billing codes based on your documentation`,
+        description: `Found ${suggestedCodes.length} recommended billing codes based on your documentation`,
       });
 
     } catch (error) {
@@ -320,7 +320,7 @@ export default function SoapNotes() {
     if (!aiOptimization) {
       toast({
         title: "Missing AI Analysis",
-        description: "Please run AI analysis first to optimize billing codes",
+        description: "Please run AI analysis first to review billing codes",
         variant: "destructive",
       });
       return;
@@ -358,7 +358,7 @@ export default function SoapNotes() {
             <div className="mb-8">
               <h1 className="text-3xl font-bold text-slate-900 mb-2">SOAP Notes</h1>
               <p className="text-slate-600">
-                Document therapy sessions with AI-powered CPT code optimization for maximum reimbursement
+                Document therapy sessions with AI-powered CPT code review for accurate reimbursement
               </p>
             </div>
             <Card className="max-w-md mx-auto">
@@ -390,7 +390,7 @@ export default function SoapNotes() {
           <FileText className="w-8 h-8 text-blue-600" />
           <div>
             <h1 className="text-3xl font-bold">SOAP Notes</h1>
-            <p className="text-muted-foreground">Document therapy sessions with AI-powered billing optimization</p>
+            <p className="text-muted-foreground">Document therapy sessions with AI-powered billing accuracy</p>
           </div>
         </div>
 
@@ -684,7 +684,7 @@ export default function SoapNotes() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Brain className="w-5 h-5 text-purple-600" />
-                  AI Billing Optimization
+                  AI Billing Accuracy
                 </CardTitle>
                 <CardDescription>
                   Recommended CPT codes based on your documentation

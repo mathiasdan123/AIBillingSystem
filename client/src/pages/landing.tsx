@@ -77,7 +77,7 @@ export default function Landing() {
             <br />Therapy Practices
           </h1>
           <p className="text-xl text-slate-600 mb-8 max-w-3xl mx-auto">
-            From patient intake to insurance reimbursement. Schedule, document, bill, and get paid—all powered by AI that maximizes your revenue while minimizing your work.
+            From patient intake to insurance reimbursement. Schedule, document, bill, and get paid—all powered by AI that ensures billing accuracy while minimizing your work.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
             <Button size="lg" onClick={handleLogin} className="px-8 py-6 text-lg bg-blue-600 hover:bg-blue-700">
@@ -172,9 +172,9 @@ export default function Landing() {
               <div className="w-14 h-14 bg-white/20 rounded-xl flex items-center justify-center mb-6">
                 <Brain className="w-7 h-7 text-white" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-3">Smart Billing Optimization</h3>
+              <h3 className="text-xl font-bold text-white mb-3">Smart Billing Accuracy</h3>
               <p className="text-white/80 mb-4">
-                AI selects optimal CPT codes for each insurance. Learns payer rules to maximize reimbursement.
+                AI suggests appropriate CPT codes for each insurance. Learns payer rules to reduce undercoding and claim errors.
               </p>
               <ul className="space-y-2 text-white/70 text-sm">
                 <li className="flex items-center"><CheckCircle className="w-4 h-4 mr-2" /> Insurance-specific code selection</li>
@@ -323,7 +323,7 @@ export default function Landing() {
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <div className="text-4xl font-bold">23%</div>
-                  <div className="text-white/80">Higher reimbursements</div>
+                  <div className="text-white/80">Fewer undercoded claims</div>
                 </div>
                 <div>
                   <div className="text-4xl font-bold">85%</div>
@@ -494,7 +494,7 @@ export default function Landing() {
             Ready to Transform Your Practice?
           </h2>
           <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-            Join hundreds of therapy practices saving time and earning more with AI-powered billing.
+            Join hundreds of therapy practices saving time and getting paid accurately with AI-assisted billing.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button
@@ -571,6 +571,11 @@ export default function Landing() {
               <span className="text-sm">HIPAA Compliant</span>
               <span className="text-sm">SOC 2 Certified</span>
             </div>
+          </div>
+          <div className="border-t border-slate-800 mt-8 pt-6">
+            <p className="text-xs text-slate-500 text-center max-w-3xl mx-auto">
+              TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
+            </p>
           </div>
         </div>
       </footer>

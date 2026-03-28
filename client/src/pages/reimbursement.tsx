@@ -124,7 +124,7 @@ export default function ReimbursementPage() {
             Reimbursement Optimization
           </h1>
           <p className="text-slate-600 mt-1">
-            Maximize reimbursement by selecting optimal CPT codes for each payer
+            Ensure accurate reimbursement by selecting appropriate CPT codes for each payer
           </p>
         </div>
       </div>

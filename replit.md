@@ -123,9 +123,9 @@ The application follows a monorepo structure with clear separation between front
 - **User Preference**: Established policy of using only authentic data sources and avoiding misleading claims
 - **Pricing Update**: Updated pricing to competitive tiered structure: 5% (Starter), 4.5% (Professional), 4.25% (Enterprise) - significantly lower than current OT industry standards while offering reduced administrative work
 - **Automated Data Capture**: Added features for minimal client input including voice dictation, document upload, EHR sync, and calendar integration
-- **Reimbursement Optimization**: Added AI-powered system to find higher reimbursement rates with 50% revenue sharing on improvements
+- **Reimbursement Accuracy**: Added AI-powered system to identify undercoded claims with 50% revenue sharing on recovered amounts
 - **Messaging Refinement**: Evolved from "zero admin work" to honest "minimal work" claims after user feedback
-- **Dual Value Proposition**: Updated hero section to emphasize both "Minimal Work, Maximum Revenue" 
+- **Dual Value Proposition**: Updated hero section to emphasize both "Minimal Work, Accurate Billing" 
 - **Landing Page Polish**: Tightened spacing throughout, removed unsubstantiated time statistics (12+ hours weekly), combined work reduction with payment optimization messaging
 - **Spacing Issue Resolved**: Fixed persistent white space gap on landing page by removing `pb-8` class from hero section container - identified using browser developer tools inspection
 - **Content Enhancement**: Added comprehensive billing description "Our AI handles billing from intake to following up on denials to help ensure your payments are optimized" to green section for better messaging and space filling

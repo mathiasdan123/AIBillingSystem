@@ -52,10 +52,10 @@ export default function Landing() {
       <div style={{padding: '32px 16px 16px', maxWidth: '1280px', margin: '0 auto'}}>
         <div style={{textAlign: 'center'}}>
           <h1 style={{fontSize: 'clamp(2rem, 5vw, 4rem)', fontWeight: 'bold', color: 'rgb(15, 23, 42)', lineHeight: '1.1', marginBottom: '24px'}}>
-            <span style={{color: 'hsl(142, 71%, 45%)'}}>Minimal Work</span>, <span style={{color: 'hsl(207, 90%, 54%)'}}>Maximum Revenue</span> Billing for OT Practices
+            <span style={{color: 'hsl(142, 71%, 45%)'}}>Minimal Work</span>, <span style={{color: 'hsl(207, 90%, 54%)'}}>Accurate Billing</span> for OT Practices
           </h1>
           <p style={{fontSize: '20px', color: 'rgb(71, 85, 105)', marginBottom: '24px', maxWidth: '768px', margin: '0 auto 24px'}}>
-            Simply dictate your session notes or upload documents. Our AI handles billing tasks AND optimizes your payments. Spend your time on patient care while earning more.
+            Simply dictate your session notes or upload documents. Our AI handles billing tasks AND ensures accurate payments. Spend your time on patient care while getting paid accurately for services rendered.
           </p>
           <div style={{display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center', marginBottom: '24px'}}>
             <a 
@@ -114,7 +114,7 @@ export default function Landing() {
               Treat. Bill. Repeat. And we've got the billing.
             </h2>
             <p style={{fontSize: '24px', color: 'white', maxWidth: '1000px', margin: '0 auto 80px', lineHeight: '1.5', fontWeight: '500'}}>
-              We eliminate most of your billing administrative work. <strong style={{color: 'white', background: 'rgba(34, 197, 94, 0.3)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.2)'}}>Our AI handles billing from intake to following up on denials to help ensure your payments are optimized.</strong> Minimal forms, automated claims, automated follow-ups. Spend your time on what you do best - helping patients.
+              We eliminate most of your billing administrative work. <strong style={{color: 'white', background: 'rgba(34, 197, 94, 0.3)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.2)'}}>Our AI handles billing from intake to following up on denials to help ensure your payments are accurate.</strong> Minimal forms, automated claims, automated follow-ups. Spend your time on what you do best - helping patients.
             </p>
           </div>
           
@@ -143,9 +143,9 @@ export default function Landing() {
               <div style={{width: '64px', height: '64px', background: 'rgba(255, 255, 255, 0.2)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px'}}>
                 <DollarSign style={{width: '32px', height: '32px', color: 'white'}} />
               </div>
-              <h3 style={{fontSize: '20px', fontWeight: 'bold', color: 'white', marginBottom: '16px'}}>Step 3: Get Paid More</h3>
+              <h3 style={{fontSize: '20px', fontWeight: 'bold', color: 'white', marginBottom: '16px'}}>Step 3: Get Paid Accurately</h3>
               <p style={{color: 'rgba(255, 255, 255, 0.8)'}}>
-                We optimize reimbursements and share 50% of any improvements. You earn more while doing less work.
+                We ensure accurate reimbursements and share 50% of any recovered underpayments. You get paid accurately while doing less work.
               </p>
             </div>
           </div>
@@ -160,7 +160,7 @@ export default function Landing() {
               Everything You Need for OT Billing Success
             </h2>
             <p className="text-lg text-slate-600 max-w-3xl mx-auto">
-              <strong>Stop spending hours on billing.</strong> Our AI-powered platform requires minimal work from OTs while optimizing your payments - just dictate notes and we handle the complex billing tasks AND maximize your reimbursements.
+              <strong>Stop spending hours on billing.</strong> Our AI-powered platform requires minimal work from OTs while ensuring accurate payments - just dictate notes and we handle the complex billing tasks AND reduce undercoding.
             </p>
           </div>
 
@@ -172,7 +172,7 @@ export default function Landing() {
                 </div>
                 <CardTitle className="text-healthcare-green-700">Minimal Work + Higher Payments</CardTitle>
                 <CardDescription>
-                  Dramatically reduced paperwork AND AI-optimized reimbursements. Voice dictation handles billing while AI maximizes your revenue.
+                  Dramatically reduced paperwork AND AI-assisted billing accuracy. Voice dictation handles billing while AI reduces claim errors and undercoding.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -183,11 +183,11 @@ export default function Landing() {
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-4 h-4 text-healthcare-green-500 mr-2" />
-                    <strong>AI-optimized billing & claims</strong>
+                    <strong>AI-assisted billing & claims</strong>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-4 h-4 text-healthcare-green-500 mr-2" />
-                    <strong>Higher reimbursement rates</strong>
+                    <strong>Fewer undercoded claims</strong>
                   </li>
                 </ul>
               </CardContent>
@@ -340,7 +340,7 @@ export default function Landing() {
                 </div>
                 <CardTitle>Reimbursement Optimization</CardTitle>
                 <CardDescription>
-                  We find higher reimbursement rates and share 50% of any improvements we secure for your practice.
+                  We identify undercoded claims and share 50% of any recovered amounts we secure for your practice.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -427,7 +427,7 @@ export default function Landing() {
                     <CheckCircle className="w-4 h-4 text-healthcare-green-500" />
                   </div>
                   <div>
-                    <strong className="text-slate-900">AI-optimized claims</strong>
+                    <strong className="text-slate-900">AI-assisted claims</strong>
                     <p className="text-slate-600">Higher approval rates, fewer denials</p>
                   </div>
                 </li>
@@ -437,7 +437,7 @@ export default function Landing() {
                   </div>
                   <div>
                     <strong className="text-slate-900">Guaranteed payments</strong>
-                    <p className="text-slate-600">We optimize and track until paid</p>
+                    <p className="text-slate-600">We review for accuracy and track until paid</p>
                   </div>
                 </li>
               </ul>
@@ -465,7 +465,7 @@ export default function Landing() {
               Pay Less, Work Less, Earn More
             </h2>
             <p className="text-lg text-slate-600 max-w-3xl mx-auto">
-              <strong>Minimal administrative work</strong> for OTs + <strong>AI-optimized payments</strong> + competitive rates from 5% down to 4.25%. Lower fees than current billing services while dramatically reducing admin tasks AND increasing your revenue.
+              <strong>Minimal administrative work</strong> for OTs + <strong>AI-assisted billing accuracy</strong> + competitive rates from 5% down to 4.25%. Lower fees than current billing services while dramatically reducing admin tasks AND reducing revenue leakage.
             </p>
           </div>
 

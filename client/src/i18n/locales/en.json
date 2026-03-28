@@ -547,7 +547,7 @@
   },
   "aiInsights": {
     "title": "AI Insights",
-    "subtitle": "Continuous learning from claim outcomes to improve predictions and optimize billing",
+    "subtitle": "Continuous learning from claim outcomes to improve predictions and billing accuracy",
     "generateInsights": "Generate New Insights",
     "totalInsights": "Total Insights",
     "denialPatterns": "Denial Patterns",

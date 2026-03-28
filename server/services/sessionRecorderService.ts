@@ -174,7 +174,7 @@ IMPORTANT DOCUMENTATION GUIDELINES:
       );
       billingRecommendation = billingResult;
     } catch (billingError) {
-      console.error("Billing optimization error:", billingError);
+      console.error("Billing accuracy review error:", billingError);
     }
 
     return {

@@ -6,7 +6,7 @@ A comprehensive AI-powered medical billing and practice management platform desi
 
 ### Core Billing
 - **Claims Management** - Create, submit, and track insurance claims with real-time status updates
-- **AI Claim Optimization** - Automatic CPT code suggestions and billing optimization
+- **AI Claim Review** - Automatic CPT code suggestions and billing accuracy checks
 - **Appeal Generation** - AI-powered appeal letter generation for denied claims
 - **Reimbursement Prediction** - ML-based out-of-network reimbursement forecasting
 

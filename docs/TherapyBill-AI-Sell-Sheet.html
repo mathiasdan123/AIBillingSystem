@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TherapyBill AI - Sell Sheet</title>
+<style>
+  @page { size: letter; margin: 0.5in; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1a1a2e; line-height: 1.4; font-size: 10.5pt; }
+
+  .page { max-width: 7.5in; margin: 0 auto; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 16px; }
+  .header h1 { font-size: 24pt; color: #2563eb; font-weight: 800; letter-spacing: -0.5px; }
+  .header h1 span { color: #1a1a2e; }
+  .header .tagline { font-size: 9pt; color: #64748b; text-align: right; max-width: 220px; line-height: 1.3; }
+
+  /* Hero */
+  .hero { background: linear-gradient(135deg, #eff6ff, #e0e7ff); border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }
+  .hero h2 { font-size: 14pt; color: #1e40af; margin-bottom: 4px; }
+  .hero p { font-size: 10pt; color: #334155; }
+  .hero .stat { font-weight: 800; color: #dc2626; }
+
+  /* Two column layout */
+  .columns { display: flex; gap: 18px; margin-bottom: 14px; }
+  .col { flex: 1; }
+
+  /* Section headers */
+  h3 { font-size: 11pt; color: #2563eb; border-bottom: 1.5px solid #bfdbfe; padding-bottom: 3px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Feature lists */
+  .features { list-style: none; margin-bottom: 14px; }
+  .features li { padding: 3px 0; padding-left: 16px; position: relative; font-size: 9.5pt; }
+  .features li::before { content: "\2713"; position: absolute; left: 0; color: #16a34a; font-weight: 700; }
+
+  /* Time savings table */
+  .savings-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9pt; }
+  .savings-table th { background: #1e40af; color: white; padding: 5px 8px; text-align: left; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.3px; }
+  .savings-table td { padding: 4px 8px; border-bottom: 1px solid #e2e8f0; }
+  .savings-table tr:nth-child(even) { background: #f8fafc; }
+  .savings-table .before { color: #991b1b; }
+  .savings-table .after { color: #166534; font-weight: 600; }
+
+  /* AI highlight box */
+  .ai-box { background: linear-gradient(135deg, #1e40af, #7c3aed); color: white; border-radius: 8px; padding: 14px 18px; margin-bottom: 14px; }
+  .ai-box h3 { color: white; border-bottom-color: rgba(255,255,255,0.3); }
+  .ai-box .stat-row { display: flex; gap: 12px; margin-top: 8px; }
+  .ai-box .stat-item { flex: 1; text-align: center; background: rgba(255,255,255,0.15); border-radius: 6px; padding: 8px; }
+  .ai-box .stat-item .num { font-size: 18pt; font-weight: 800; }
+  .ai-box .stat-item .label { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.9; }
+
+  /* Platform section */
+  .platform-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .platform-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; }
+  .platform-card h4 { font-size: 9pt; color: #1e40af; margin-bottom: 4px; font-weight: 700; }
+  .platform-card p { font-size: 8pt; color: #475569; line-height: 1.35; }
+
+  /* Migration */
+  .migration { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; }
+  .migration h3 { color: #166534; border-bottom-color: #86efac; }
+  .migration .logos { font-size: 8.5pt; color: #475569; margin-top: 4px; }
+
+  /* CTA */
+  .cta { background: #1e40af; color: white; border-radius: 8px; padding: 16px; text-align: center; }
+  .cta h3 { color: white; border: none; margin-bottom: 6px; font-size: 13pt; }
+  .cta p { font-size: 10pt; margin-bottom: 2px; }
+  .cta .url { font-size: 13pt; font-weight: 800; letter-spacing: 0.5px; }
+  .cta .small { font-size: 8pt; opacity: 0.8; margin-top: 6px; }
+
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>Therapy<span>Bill</span> AI</h1>
+    <div class="tagline">All-in-One AI-Powered Billing &amp; Practice Management for Therapy Practices</div>
+  </div>
+
+  <!-- Hero -->
+  <div class="hero">
+    <h2>Stop Losing Money. Stop Wasting Time. Start Getting Paid.</h2>
+    <p>Industry data shows therapy practices lose <span class="stat">5-15% of revenue</span> to denied claims and undercoding (MGMA, 2025). TherapyBill AI is the only platform that combines AI-powered billing accuracy with complete practice management &mdash; in one place.</p>
+  </div>
+
+  <!-- Time Savings -->
+  <h3>Dramatically Reduce Admin Time</h3>
+  <table class="savings-table">
+    <tr><th style="width:50%">Before TherapyBill AI</th><th>After TherapyBill AI</th></tr>
+    <tr><td class="before">Manually checking eligibility per patient</td><td class="after">One-click real-time eligibility verification</td></tr>
+    <tr><td class="before">Typing SOAP notes from scratch after every session</td><td class="after">AI-generated SOAP notes from session recordings</td></tr>
+    <tr><td class="before">Hours on claim entry and submission</td><td class="after">Automated claims from session data &mdash; submit in seconds</td></tr>
+    <tr><td class="before">Chasing denied claims with no strategy</td><td class="after">AI predicts denials BEFORE submission</td></tr>
+    <tr><td class="before">Writing appeal letters from scratch</td><td class="after">AI-generated appeals with success probability scoring</td></tr>
+    <tr><td class="before">Juggling 4-5 different systems</td><td class="after">Everything in one platform</td></tr>
+  </table>
+
+  <!-- AI Box -->
+  <div class="ai-box">
+    <h3>Your AI Billing Expert &mdash; Built Into Every Screen</h3>
+    <p style="font-size: 9.5pt; margin-bottom: 10px; opacity: 0.95;">TherapyBill AI includes a built-in AI assistant (powered by Claude) available on every page of the platform. Ask it anything &mdash; coding questions, payer rules, billing strategy &mdash; and get instant, expert-level answers grounded in your actual practice data.</p>
+    <div class="stat-row">
+      <div class="stat-item">
+        <div class="num" style="font-size: 11pt;">Coding Help</div>
+        <div class="label">"Which CPT code for a<br>45-min OT eval?"</div>
+      </div>
+      <div class="stat-item">
+        <div class="num" style="font-size: 11pt;">Denial Prevention</div>
+        <div class="label">"Why was this claim denied?<br>How do I fix it?"</div>
+      </div>
+      <div class="stat-item">
+        <div class="num" style="font-size: 11pt;">Practice Insights</div>
+        <div class="label">"What's my collection rate<br>with Aetna this month?"</div>
+      </div>
+      <div class="stat-item">
+        <div class="num" style="font-size: 11pt;">Payer Rules</div>
+        <div class="label">"Does UHC require auth<br>for 97530?"</div>
+      </div>
+    </div>
+    <p style="font-size: 8pt; margin-top: 10px; opacity: 0.8; text-align: center;">The AI reviews claims before submission, generates appeal letters for denials, writes SOAP notes from session recordings, and answers billing questions in real time &mdash; like having a billing expert on staff 24/7.</p>
+  </div>
+
+  <!-- Platform Features -->
+  <h3>One Platform. Everything You Need.</h3>
+  <div class="platform-grid">
+    <div class="platform-card">
+      <h4>Clinical</h4>
+      <p>AI SOAP notes, treatment plans with goal tracking, outcome measures (PDMS-2, BOT-2/3), session recording, progress notes</p>
+    </div>
+    <div class="platform-card">
+      <h4>Scheduling</h4>
+      <p>Calendar, recurring appointments, patient self-scheduling, automated reminders, waitlist, online booking, no-show tracking</p>
+    </div>
+    <div class="platform-card">
+      <h4>Billing &amp; Claims</h4>
+      <p>Claim submission, eligibility (270/271), ERA posting (835), patient statements, payment plans, superbills, secondary insurance</p>
+    </div>
+    <div class="platform-card">
+      <h4>Patient Portal</h4>
+      <p>Digital intake with e-signature, appointment viewing, billing statements, document signing, English/Spanish support</p>
+    </div>
+    <div class="platform-card">
+      <h4>AI Intelligence</h4>
+      <p>Billing assistant, denial prediction, claim accuracy review, appeal generation, revenue forecasting, payer pattern learning</p>
+    </div>
+    <div class="platform-card">
+      <h4>Compliance &amp; Reporting</h4>
+      <p>HIPAA dashboard, daily billing reports, custom report builder, benchmarking, audit logs, breach management, MFA</p>
+    </div>
+  </div>
+
+  <div class="columns">
+    <div class="col">
+      <!-- Migration -->
+      <div class="migration">
+        <h3>Switch in Minutes, Not Months</h3>
+        <p style="font-size: 9.5pt;">Import your entire patient roster &mdash; demographics, insurance, diagnoses, notes, and financial history &mdash; from any system.</p>
+        <p class="logos"><strong>Supported:</strong> SimplePractice &bull; TherapyNotes &bull; Jane App &bull; WebPT &bull; Fusion/Ensura &bull; Prompt Health &bull; Any CSV</p>
+      </div>
+    </div>
+    <div class="col">
+      <!-- CTA -->
+      <div class="cta">
+        <h3>Ready to Get Paid Accurately?</h3>
+        <p class="url">app.therapybillai.com</p>
+        <p>daniel@therapybillai.com</p>
+        <p class="small">HIPAA-Compliant &bull; AWS-Hosted &bull; BAA Available &bull; No Setup Fees</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 14px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 7.5pt; color: #64748b; line-height: 1.4;">
+    <strong>Disclaimer:</strong> TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
+  </div>
+
+</div>
+</body>
+</html>

@@ -4,7 +4,7 @@ info:
   description: |
     API for the AIBillingSystem - a comprehensive medical billing and practice management system
     designed for therapy practices. Features include patient management, claims processing,
-    appointment scheduling, analytics, and AI-powered billing optimization.
+    appointment scheduling, analytics, and AI-powered billing accuracy.
 
     ## Authentication
     Most endpoints require authentication via session-based auth (Replit Auth).

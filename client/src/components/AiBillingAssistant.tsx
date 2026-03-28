@@ -315,7 +315,7 @@ export default function AiBillingAssistant() {
                   How can I help?
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-                  Ask me about billing codes, claim optimization, or your practice data.
+                  Ask me about billing codes, billing accuracy, or your practice data.
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {[
@@ -427,7 +427,7 @@ export default function AiBillingAssistant() {
               </button>
             </div>
             <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5 text-center">
-              AI responses may be inaccurate. Verify coding and billing decisions.
+              TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
             </p>
           </div>
         </div>

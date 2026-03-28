@@ -99,7 +99,7 @@ router.get('/', isAuthenticated, async (req: any, res) => {
   }
 });
 
-// Create SOAP note with AI-optimized billing
+// Create SOAP note with AI-assisted billing
 router.post('/', isAuthenticated, async (req: any, res) => {
   try {
     // HIPAA: Verify patient consent before creating PHI record
@@ -115,7 +115,7 @@ router.post('/', isAuthenticated, async (req: any, res) => {
 
     const soapNote = await storage.createSoapNote(req.body);
 
-    // Auto-generate AI-optimized superbill from the session
+    // Auto-generate AI-assisted superbill from the session
     let generatedClaim = null;
     let billingOptimization = null;
     if (soapNote.sessionId) {
@@ -141,7 +141,7 @@ router.post('/', isAuthenticated, async (req: any, res) => {
 
             const { rules, preferences } = await getInsuranceBillingRules(storage, null);
 
-            logger.info(`AI optimizing billing for session ${session.id}, insurance: ${insuranceName}`);
+            logger.info(`AI reviewing billing accuracy for session ${session.id}, insurance: ${insuranceName}`);
 
             const optimization = await optimizeBillingCodes(
               {
@@ -177,7 +177,7 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               claimNumber,
               totalAmount: optimization.estimatedAmount.toFixed(2),
               status: 'draft',
-              aiReviewNotes: `AI Billing Optimization (${optimization.complianceScore}% compliance): ${optimization.optimizationNotes}`,
+              aiReviewNotes: `AI Billing Accuracy Review (${optimization.complianceScore}% compliance): ${optimization.optimizationNotes}`,
             });
 
             const createdLineItems = [];
@@ -217,11 +217,11 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               },
             };
 
-            logger.info(`AI-optimized superbill ${claim.claimNumber} for session ${session.id}: ${optimization.lineItems.length} codes, $${optimization.estimatedAmount.toFixed(2)}, ${optimization.complianceScore}% compliance`);
+            logger.info(`AI-assisted superbill ${claim.claimNumber} for session ${session.id}: ${optimization.lineItems.length} codes, $${optimization.estimatedAmount.toFixed(2)}, ${optimization.complianceScore}% compliance`);
           }
         }
       } catch (claimError) {
-        logger.error('Error auto-generating AI-optimized superbill', { error: claimError instanceof Error ? claimError.message : String(claimError) });
+        logger.error('Error auto-generating AI-assisted superbill', { error: claimError instanceof Error ? claimError.message : String(claimError) });
       }
     }
 

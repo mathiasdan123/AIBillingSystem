@@ -73,7 +73,7 @@ migrations/          # Drizzle SQL migrations (18 files)
 |---------|---------|---------|--------|
 | Stedi | `STEDI_API_KEY` | Eligibility, claims submission, claim status | Test key configured, sandbox verified |
 | Stripe | `STRIPE_SECRET_KEY` | Patient/practice billing | Configured |
-| OpenAI | `OPENAI_API_KEY` | SOAP notes, claim optimization, appeals | Configured |
+| OpenAI | `OPENAI_API_KEY` | SOAP notes, claim accuracy review, appeals | Configured |
 | Twilio | `TWILIO_ACCOUNT_SID` | SMS reminders | Optional |
 | ElevenLabs | `ELEVENLABS_API_KEY` | Text-to-speech | Optional |
 | SMTP | `SMTP_HOST` | Email notifications | Optional |

@@ -11,7 +11,7 @@ let openai: OpenAI | null = null;
 
 function getOpenAI(): OpenAI | null {
   if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set - AI billing optimization disabled');
+    console.warn('OPENAI_API_KEY not set - AI billing accuracy review disabled');
     return null;
   }
   if (!openai) {
@@ -118,7 +118,7 @@ OPTIMIZATION TIP: When clinically appropriate, favor higher-reimbursing codes.`;
   // Build the prompt
   const prompt = `You are a medical billing expert specializing in occupational/physical therapy billing. Your job is to recommend the optimal CPT code combination for a therapy session that:
 1. Accurately reflects the services provided (medical necessity is PRIMARY)
-2. Maximizes appropriate reimbursement within compliance rules
+2. Ensures accurate reimbursement within compliance rules
 3. Follows insurance-specific billing guidelines
 
 SESSION DETAILS:
@@ -236,7 +236,7 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
     };
 
   } catch (error) {
-    console.error("AI billing optimization error:", error);
+    console.error("AI billing accuracy review error:", error);
 
     // Fallback: return simple single-code billing
     const defaultCode = availableCptCodes.find(c => c.code === '97530') || availableCptCodes[0];

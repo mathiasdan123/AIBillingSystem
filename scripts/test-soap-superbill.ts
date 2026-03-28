@@ -37,7 +37,7 @@ async function createTestSession() {
     status: 'completed',
   }).returning();
 
-  console.log('=== TEST: AI BILLING OPTIMIZATION ===');
+  console.log('=== TEST: AI BILLING ACCURACY ===');
   console.log('');
   console.log('Session created:', session.id);
   console.log('Patient:', patient.firstName, patient.lastName);
@@ -67,7 +67,7 @@ async function createTestSession() {
 
   if (result.generatedClaim) {
     console.log('========================================');
-    console.log('   AI-OPTIMIZED SUPERBILL GENERATED');
+    console.log('   AI-ASSISTED SUPERBILL GENERATED');
     console.log('========================================');
     console.log('');
     console.log('Claim #:', result.generatedClaim.claimNumber);
