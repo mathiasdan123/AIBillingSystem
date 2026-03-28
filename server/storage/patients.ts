@@ -334,6 +334,7 @@ export async function hasActiveConsent(patientId: number, consentType: string): 
 }
 
 export async function hasRequiredTreatmentConsents(patientId: number): Promise<{
+  hasConsent: boolean;
   hasAllConsents: boolean;
   missingConsents: string[];
   consentStatus: Record<string, boolean>;
@@ -350,8 +351,10 @@ export async function hasRequiredTreatmentConsents(patientId: number): Promise<{
     }
   }
 
+  const allPresent = missingConsents.length === 0;
   return {
-    hasAllConsents: missingConsents.length === 0,
+    hasConsent: allPresent,
+    hasAllConsents: allPresent,
     missingConsents,
     consentStatus,
   };
