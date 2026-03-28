@@ -8,6 +8,8 @@
  * - /api/setup/make-admin - Initial admin setup
  * - /api/invites/* - User invitations (admin only)
  * - /api/therapists/* - Therapist management
+ * - /api/demo-login - Demo account login (creates user if needed)
+ * - /api/dev-user - Dev user stub (development + ENABLE_DEV_USER=true only)
  */
 
 import { Router, type Response, type NextFunction } from 'express';
@@ -581,5 +583,86 @@ router.post('/therapists', isAuthenticated, isAdmin, async (req: any, res) => {
     res.status(500).json({ message: "Failed to create therapist" });
   }
 });
+
+// ==================== DEMO / DEV ACCOUNTS ====================
+
+// Demo accounts that can be auto-created and logged into
+const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastName: string; role: string }> = {
+  'demo@therapybill.com': { password: 'demo1234', firstName: 'Demo', lastName: 'Admin', role: 'admin' },
+  'reviewer1@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Demo', role: 'admin' },
+  'reviewer2@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Two', role: 'admin' },
+};
+
+// Demo login endpoint - creates demo user if needed and logs in (no rate limit for easy reviewer access)
+router.post('/demo-login', async (req: any, res) => {
+  try {
+    const { hashPassword } = await import('../services/passwordService');
+    const requestedEmail = (req.body?.email || 'demo@therapybill.com').toLowerCase().trim();
+    const demoAccount = DEMO_ACCOUNTS[requestedEmail];
+    if (!demoAccount) {
+      return res.status(400).json({ message: 'Invalid demo account' });
+    }
+
+    let user = await storage.getUserByEmail(requestedEmail);
+    // Ensure role matches expected demo role
+    if (user && user.role !== demoAccount.role) {
+      await storage.updateUserRole(user.id, demoAccount.role);
+      user = await storage.getUserByEmail(requestedEmail);
+    }
+    if (!user) {
+      // Find a practice to assign
+      let practiceId: number | undefined;
+      try {
+        const practiceIds = await storage.getAllPracticeIds();
+        if (practiceIds.length > 0) practiceId = practiceIds[0];
+      } catch (e) {
+        logger.warn('Could not fetch practice IDs for demo user', { error: e instanceof Error ? e.message : String(e) });
+      }
+
+      user = await storage.createUserWithPassword({
+        email: requestedEmail,
+        passwordHash: await hashPassword(demoAccount.password),
+        firstName: demoAccount.firstName,
+        lastName: demoAccount.lastName,
+        practiceId,
+        role: demoAccount.role,
+      });
+      logger.info('Demo user created', { email: requestedEmail, practiceId });
+    }
+    // Log in the demo user directly via session
+    const userObj = { claims: { sub: user.id } };
+    req.login(userObj, (err: any) => {
+      if (err) {
+        logger.error('Demo req.login error', { error: err instanceof Error ? err.message : String(err) });
+        return res.status(500).json({ message: 'Demo login failed', detail: 'session' });
+      }
+      if (req.session) {
+        (req.session as any).mfaVerifiedAt = Date.now();
+        (req.session as any).mfaUserId = user!.id;
+      }
+      res.json({
+        message: 'Demo login successful',
+        user: { id: user!.id, email: user!.email, firstName: user!.firstName, lastName: user!.lastName, role: user!.role },
+      });
+    });
+  } catch (error) {
+    logger.error('Demo login error', { error: error instanceof Error ? error.stack : String(error) });
+    res.status(500).json({ message: 'Demo login failed', detail: error instanceof Error ? error.message : 'unknown' });
+  }
+});
+
+// Development user endpoint - DISABLED IN PRODUCTION
+if (process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_USER === 'true') {
+  router.get('/dev-user', authLimiter, async (_req, res) => {
+    res.json({
+      id: 'dev-user-123',
+      email: 'dev@example.com',
+      firstName: 'Dev',
+      lastName: 'User',
+      profileImageUrl: null,
+      role: 'admin'
+    });
+  });
+}
 
 export default router;
