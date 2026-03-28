@@ -4,7 +4,7 @@ import { db } from '../db';
 import { auditLog, patients } from '@shared/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { logAuditEvent } from '../middleware/auditMiddleware';
-import { isAuthenticated } from '../supabaseAuth';
+import { isAuthenticated } from '../replitAuth';
 
 async function isAdmin(req: Request, res: Response, next: NextFunction) {
   try {

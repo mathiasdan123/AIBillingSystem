@@ -86,7 +86,8 @@ migrations/          # Drizzle SQL migrations (18 files)
 - Key tables: users, practices, patients, insurances, claims, appointments, soapNotes, auditLogs
 
 ## Authentication & Security
-- Session-based auth with 30-min timeout (production)
+- Session-based auth with 30-min rolling idle timeout in production, 1-week in development (`express-session` `maxAge` in `server/replitAuth.ts`)
+- MFA re-verification timeout: 15 min for PHI/admin routes (`MFA_SESSION_TIMEOUT` in `server/middleware/mfa-required.ts`)
 - MFA required for PHI access routes (HIPAA 45 CFR 164.312(d))
 - PHI encrypted at rest with AES-256-GCM (`PHI_ENCRYPTION_KEY`)
 - Rate limiting: 1000 general / 20 auth / 100 API requests per window

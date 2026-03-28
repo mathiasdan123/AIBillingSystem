@@ -626,7 +626,8 @@ router.post('/:id/payments', isAuthenticated, requirePatientConsent, async (req:
     // If linked to a statement, update the statement's paid amount and balance
     if (statementId) {
       await storage.markStatementPaid(statementId, {
-        amount: parseFloat(amount).toFixed(2),
+        paidAmount: parseFloat(amount).toFixed(2),
+        paidAt: new Date(),
       });
     }
 
