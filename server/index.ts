@@ -1,8 +1,23 @@
-// Sentry is initialized via --import ./dist/instrument.js (see server/instrument.ts).
-// Importing here gives us access to setupExpressErrorHandler and other Sentry APIs.
 import * as Sentry from "@sentry/node";
 
+// Initialize Sentry as early as possible.
+// Note: ESM hoisting means @sentry/node loads alongside other imports, so Express
+// auto-instrumentation is unavailable. Errors are still fully captured via
+// setupExpressErrorHandler() registered after routes below.
 if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+    // Do not send PHI or sensitive session data to Sentry
+    beforeSend(event: Sentry.ErrorEvent) {
+      if (event.request) {
+        delete event.request.cookies;
+        delete event.request.data;
+      }
+      return event;
+    },
+  });
   console.log("✓ Sentry error tracking initialized");
 }
 
