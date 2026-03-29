@@ -11,6 +11,10 @@ if (process.env.SENTRY_DSN) {
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV || "development",
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+    // Disable OpenTelemetry auto-instrumentation (import-in-the-middle) to avoid
+    // ESM named-export wrapping failures with packages like drizzle-orm.
+    // Express error capture still works via setupExpressErrorHandler in index.ts.
+    skipOpenTelemetrySetup: true,
     // Do not send PHI or sensitive session data to Sentry
     beforeSend(event: Sentry.ErrorEvent) {
       if (event.request) {
