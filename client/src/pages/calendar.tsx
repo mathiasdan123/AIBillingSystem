@@ -70,6 +70,8 @@ export default function CalendarPage() {
     numberOfOccurrences: "12",
     recurrenceEndDate: "",
   });
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
   const [showSeriesActionDialog, setShowSeriesActionDialog] = useState(false);
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
@@ -139,6 +141,8 @@ export default function CalendarPage() {
         : "Appointment created successfully.";
       toast({ title: "Appointment Scheduled", description: desc });
       setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+      setIsNewPatient(false);
+      setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -202,11 +206,36 @@ export default function CalendarPage() {
     },
   });
 
-  const handleCreateAppointment = () => {
-    if (!newAppointment.patientId) {
-      toast({ title: "Error", description: "Please select a patient", variant: "destructive" });
+  const handleCreateAppointment = async () => {
+    let patientId = newAppointment.patientId;
+
+    // If creating a new patient, do that first
+    if (isNewPatient) {
+      if (!newPatientData.firstName.trim() || !newPatientData.lastName.trim()) {
+        toast({ title: "Error", description: "Please enter the patient's first and last name", variant: "destructive" });
+        return;
+      }
+      try {
+        const res = await apiRequest("POST", "/api/patients", {
+          firstName: newPatientData.firstName.trim(),
+          lastName: newPatientData.lastName.trim(),
+          phone: newPatientData.phone.trim() || null,
+          email: newPatientData.email.trim() || null,
+          dateOfBirth: "2000-01-01",
+          practiceId: 1,
+        });
+        const created = await res.json();
+        patientId = String(created.id);
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      } catch (err: any) {
+        toast({ title: "Error creating patient", description: err.message, variant: "destructive" });
+        return;
+      }
+    } else if (!patientId) {
+      toast({ title: "Error", description: "Please select a patient or add a new one", variant: "destructive" });
       return;
     }
+
     const sh = parseInt(newAppointment.startTime.split(":")[0]);
     const endTime = String(sh + 1).padStart(2, "0") + ":00";
 
@@ -215,7 +244,7 @@ export default function CalendarPage() {
 
     const payload: any = {
       practiceId: 1,
-      patientId: parseInt(newAppointment.patientId),
+      patientId: parseInt(patientId),
       therapistId: newAppointment.therapistId || null,
       locationId: newAppointment.locationId ? parseInt(newAppointment.locationId) : null,
       title: newAppointment.type,
@@ -421,17 +450,76 @@ export default function CalendarPage() {
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <Label>Patient</Label>
-                    <Select value={newAppointment.patientId} onValueChange={(v) => setNewAppointment({ ...newAppointment, patientId: v })}>
-                      <SelectTrigger><SelectValue placeholder="Select a patient" /></SelectTrigger>
-                      <SelectContent>
-                        {patients.map((p: any) => (
-                          <SelectItem key={p.id} value={String(p.id)}>
-                            {p.firstName} {p.lastName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center justify-between">
+                      <Label>Patient</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-7 px-2"
+                        onClick={() => {
+                          setIsNewPatient(!isNewPatient);
+                          if (!isNewPatient) {
+                            setNewAppointment({ ...newAppointment, patientId: "" });
+                          } else {
+                            setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+                          }
+                        }}
+                      >
+                        {isNewPatient ? "Select Existing Patient" : "+ New Patient"}
+                      </Button>
+                    </div>
+                    {isNewPatient ? (
+                      <div className="space-y-2 p-3 border rounded-md bg-muted/30">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">First Name *</Label>
+                            <Input
+                              placeholder="First name"
+                              value={newPatientData.firstName}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Last Name *</Label>
+                            <Input
+                              placeholder="Last name"
+                              value={newPatientData.lastName}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">Phone</Label>
+                            <Input
+                              placeholder="Phone number"
+                              value={newPatientData.phone}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, phone: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Email</Label>
+                            <Input
+                              placeholder="Email address"
+                              value={newPatientData.email}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, email: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <Select value={newAppointment.patientId} onValueChange={(v) => setNewAppointment({ ...newAppointment, patientId: v })}>
+                        <SelectTrigger><SelectValue placeholder="Select a patient" /></SelectTrigger>
+                        <SelectContent>
+                          {patients.map((p: any) => (
+                            <SelectItem key={p.id} value={String(p.id)}>
+                              {p.firstName} {p.lastName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Therapist</Label>
