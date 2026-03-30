@@ -443,7 +443,7 @@ export default function CalendarPage() {
               <DialogTrigger asChild>
                 <Button className="min-h-[44px] text-xs md:text-sm"><Plus className="w-4 h-4 mr-1 md:mr-2" /><span className="hidden sm:inline">New Appointment</span><span className="sm:hidden">New</span></Button>
               </DialogTrigger>
-              <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+              <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Schedule New Appointment</DialogTitle>
                   <DialogDescription>Create a new 1-hour therapy session.</DialogDescription>
@@ -899,7 +899,7 @@ export default function CalendarPage() {
 
         {/* Cancel Appointment Dialog */}
         <Dialog open={showCancelDialog} onOpenChange={(open) => { setShowCancelDialog(open); if (!open) { delete (window as any).__cancelSeriesId; } }}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Cancel Appointment</DialogTitle>
               <DialogDescription>
@@ -951,7 +951,7 @@ export default function CalendarPage() {
 
         {/* Series Action Dialog — "This appointment only" vs "All future" */}
         <Dialog open={showSeriesActionDialog} onOpenChange={setShowSeriesActionDialog}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Recurring Appointment</DialogTitle>
               <DialogDescription>
@@ -999,7 +999,7 @@ export default function CalendarPage() {
 
         {/* Availability Dialog */}
         <Dialog open={showAvailability} onOpenChange={setShowAvailability}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-2xl max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Manage Availability</DialogTitle>
               <DialogDescription>Set your regular working hours for each day of the week.</DialogDescription>

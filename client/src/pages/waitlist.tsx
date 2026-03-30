@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -939,6 +940,10 @@ function AddWaitlistForm({
   onSubmit: (data: Partial<WaitlistEntry>) => void;
   isLoading: boolean;
 }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
   const [formData, setFormData] = useState({
     patientId: "",
     therapistId: "",
@@ -961,10 +966,38 @@ function AddWaitlistForm({
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let patientId = formData.patientId;
+
+    if (isNewPatient) {
+      if (!newPatientData.firstName.trim() || !newPatientData.lastName.trim()) {
+        toast({ title: "Error", description: "Please enter the patient's first and last name", variant: "destructive" });
+        return;
+      }
+      try {
+        const res = await apiRequest("POST", "/api/patients", {
+          firstName: newPatientData.firstName.trim(),
+          lastName: newPatientData.lastName.trim(),
+          phone: newPatientData.phone.trim() || null,
+          email: newPatientData.email.trim() || null,
+          dateOfBirth: "2000-01-01",
+          practiceId: 1,
+        });
+        const created = await res.json();
+        patientId = String(created.id);
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      } catch (err: any) {
+        toast({ title: "Error creating patient", description: err.message, variant: "destructive" });
+        return;
+      }
+    } else if (!patientId) {
+      toast({ title: "Error", description: "Please select a patient or add a new one", variant: "destructive" });
+      return;
+    }
+
     onSubmit({
-      patientId: parseInt(formData.patientId),
+      patientId: parseInt(patientId),
       therapistId: formData.therapistId || undefined,
       priority: parseInt(formData.priority),
       preferredDays: formData.preferredDays.length > 0 ? formData.preferredDays : undefined,
@@ -980,22 +1013,81 @@ function AddWaitlistForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
       <div className="space-y-2">
-        <Label>Patient *</Label>
-        <Select
-          value={formData.patientId}
-          onValueChange={(value) => setFormData((prev) => ({ ...prev, patientId: value }))}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select a patient" />
-          </SelectTrigger>
-          <SelectContent>
-            {patients.map((patient) => (
-              <SelectItem key={patient.id} value={String(patient.id)}>
-                {patient.firstName} {patient.lastName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center justify-between">
+          <Label>Patient *</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-xs h-7 px-2"
+            onClick={() => {
+              setIsNewPatient(!isNewPatient);
+              if (!isNewPatient) {
+                setFormData((prev) => ({ ...prev, patientId: "" }));
+              } else {
+                setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+              }
+            }}
+          >
+            {isNewPatient ? "Select Existing Patient" : "+ New Patient"}
+          </Button>
+        </div>
+        {isNewPatient ? (
+          <div className="space-y-2 p-3 border rounded-md bg-muted/30">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">First Name *</Label>
+                <Input
+                  placeholder="First name"
+                  value={newPatientData.firstName}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Last Name *</Label>
+                <Input
+                  placeholder="Last name"
+                  value={newPatientData.lastName}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Phone</Label>
+                <Input
+                  placeholder="Phone number"
+                  value={newPatientData.phone}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, phone: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Email</Label>
+                <Input
+                  placeholder="Email address"
+                  value={newPatientData.email}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, email: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Select
+            value={formData.patientId}
+            onValueChange={(value) => setFormData((prev) => ({ ...prev, patientId: value }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select a patient" />
+            </SelectTrigger>
+            <SelectContent>
+              {patients.map((patient) => (
+                <SelectItem key={patient.id} value={String(patient.id)}>
+                  {patient.firstName} {patient.lastName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <div className="space-y-2">
