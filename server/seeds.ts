@@ -1,5 +1,5 @@
 import { getDb } from "./db";
-import { practices, cptCodes, icd10Codes, insurances, patients, users } from "@shared/schema";
+import { practices, cptCodes, icd10Codes, insurances, users } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
 
@@ -84,28 +84,44 @@ export async function seedDatabase() {
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS requires_cosign BOOLEAN DEFAULT FALSE`);
     console.log("Schema migrations complete");
 
+    // Ensure a practice exists FIRST — everything else depends on having a practice ID
+    let practiceId: number;
+    const existingPractice = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
+    if (existingPractice.rows && existingPractice.rows.length > 0) {
+      practiceId = parseInt(existingPractice.rows[0].id as string, 10);
+      console.log(`Using existing practice (id: ${practiceId})`);
+    } else {
+      const [practice] = await db.insert(practices).values({
+        name: "Healing Hands Occupational Therapy",
+        npi: "1234567890",
+        taxId: "12-3456789",
+        address: "123 Therapy Lane, Wellness City, WC 12345",
+        phone: "(555) 123-4567",
+        email: "admin@healinghands.com",
+      }).returning();
+      practiceId = practice.id;
+      console.log(`Created sample practice (id: ${practiceId})`);
+    }
+
     // Always ensure demo user exists
     const existingDemo = await db.execute(sql`SELECT id FROM users WHERE email = 'demo@therapybill.com'`);
     if (!existingDemo.rows || existingDemo.rows.length === 0) {
       console.log("Creating demo user...");
-      const practiceResult = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
-      if (practiceResult.rows && practiceResult.rows.length > 0) {
-        const demoHash = await hashPassword("demo1234");
-        await db.insert(users).values({
-          id: "demo-user-001",
-          email: "demo@therapybill.com",
-          firstName: "Demo",
-          lastName: "Admin",
-          practiceId: parseInt(practiceResult.rows[0].id as string, 10),
-          role: "admin",
-          passwordHash: demoHash,
-          emailVerified: true,
-        }).onConflictDoNothing();
-        console.log("Demo user created: demo@therapybill.com / demo1234");
-      }
+      const demoHash = await hashPassword("demo1234");
+      await db.insert(users).values({
+        id: "demo-user-001",
+        email: "demo@therapybill.com",
+        firstName: "Demo",
+        lastName: "Admin",
+        practiceId: practiceId,
+        role: "admin",
+        passwordHash: demoHash,
+        emailVerified: true,
+      }).onConflictDoNothing();
+      console.log("Demo user created: demo@therapybill.com / demo1234");
     } else {
-      // Ensure demo user has admin role
-      await db.execute(sql`UPDATE users SET role = 'admin' WHERE email = 'demo@therapybill.com' AND role != 'admin'`);
+      // Ensure demo user has admin role and valid practice
+      await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'demo@therapybill.com' AND (role != 'admin' OR practice_id IS NULL)`);
       console.log("Demo user already exists");
     }
 
@@ -113,91 +129,60 @@ export async function seedDatabase() {
     const existingReviewer = await db.execute(sql`SELECT id FROM users WHERE email = 'reviewer1@demo.com'`);
     if (!existingReviewer.rows || existingReviewer.rows.length === 0) {
       console.log("Creating reviewer user...");
-      const practiceResult2 = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
-      if (practiceResult2.rows && practiceResult2.rows.length > 0) {
-        const reviewerHash = await hashPassword("TherapyDemo2024#");
-        await db.insert(users).values({
-          id: "reviewer-user-001",
-          email: "reviewer1@demo.com",
-          firstName: "Reviewer",
-          lastName: "Demo",
-          practiceId: parseInt(practiceResult2.rows[0].id as string, 10),
-          role: "admin",
-          passwordHash: reviewerHash,
-          emailVerified: true,
-        }).onConflictDoNothing();
-        console.log("Reviewer user created: reviewer1@demo.com / TherapyDemo2024#");
-      }
+      const reviewerHash = await hashPassword("TherapyDemo2024#");
+      await db.insert(users).values({
+        id: "reviewer-user-001",
+        email: "reviewer1@demo.com",
+        firstName: "Reviewer",
+        lastName: "Demo",
+        practiceId: practiceId,
+        role: "admin",
+        passwordHash: reviewerHash,
+        emailVerified: true,
+      }).onConflictDoNothing();
+      console.log("Reviewer user created: reviewer1@demo.com / TherapyDemo2024#");
     } else {
-      // Ensure reviewer has admin role and correct practice
-      await db.execute(sql`UPDATE users SET role = 'admin' WHERE email = 'reviewer1@demo.com' AND role != 'admin'`);
-      const practiceForReviewer = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
-      if (practiceForReviewer.rows && practiceForReviewer.rows.length > 0) {
-        const pId = parseInt(practiceForReviewer.rows[0].id as string, 10);
-        await db.execute(sql`UPDATE users SET practice_id = ${pId} WHERE email = 'reviewer1@demo.com' AND practice_id IS NULL`);
-      }
+      await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'reviewer1@demo.com' AND (role != 'admin' OR practice_id IS NULL)`);
       console.log("Reviewer user already exists - ensured admin role");
     }
 
-    // Ensure reviewer2 has admin role
-    await db.execute(sql`UPDATE users SET role = 'admin' WHERE email = 'reviewer2@demo.com' AND role != 'admin'`);
-    const practiceForR2 = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
-    if (practiceForR2.rows && practiceForR2.rows.length > 0) {
-      const pId2 = parseInt(practiceForR2.rows[0].id as string, 10);
-      await db.execute(sql`UPDATE users SET practice_id = ${pId2} WHERE email = 'reviewer2@demo.com' AND practice_id IS NULL`);
-    }
+    // Ensure reviewer2 has admin role and valid practice
+    await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'reviewer2@demo.com' AND (role != 'admin' OR practice_id IS NULL)`);
 
-    // Seed demo patients only if none exist — never delete existing patients
-    // Use raw SQL to bypass encryption — demo data doesn't need PHI encryption
+    // Seed demo patients only if none exist
     const existingPatientCount = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
     const activePatients = parseInt(existingPatientCount.rows[0]?.count || '0', 10);
     if (activePatients === 0) {
       console.log("No patients found — seeding demo patients...");
-      const practiceForPatients = await db.execute(sql`SELECT id FROM practices LIMIT 1`);
-      if (practiceForPatients.rows && practiceForPatients.rows.length > 0) {
-        const pId = parseInt(practiceForPatients.rows[0].id as string, 10);
-        // Insert via raw SQL to avoid encryption/ORM column type issues
-        const demoPatients = [
-          { fn: 'Liam', ln: 'Martinez', dob: '2019-06-12', email: 'rosa.martinez@email.com', phone: '5552345678', addr: '456 Oak Street, Wellness City, WC 12345', ins: 'Blue Cross Blue Shield', insId: 'BCBS123456789', pol: 'POL-2024-001', grp: 'GRP-100' },
-          { fn: 'Olivia', ln: 'Thompson', dob: '2020-03-08', email: 'karen.thompson@email.com', phone: '5553456789', addr: '789 Maple Avenue, Wellness City, WC 12346', ins: 'Aetna', insId: 'AET987654321', pol: 'POL-2024-002', grp: 'GRP-200' },
-          { fn: 'Ethan', ln: 'Williams', dob: '2018-11-22', email: 'james.williams@email.com', phone: '5554567890', addr: '321 Pine Road, Wellness City, WC 12347', ins: 'UnitedHealth', insId: 'UHC456789123', pol: 'POL-2024-003', grp: 'GRP-300' },
-          { fn: 'Sophia', ln: 'Chen', dob: '2021-01-15', email: 'mei.chen@email.com', phone: '5555678901', addr: '654 Elm Court, Wellness City, WC 12348', ins: 'Cigna', insId: 'CIG789123456', pol: 'POL-2024-004', grp: 'GRP-400' },
-          { fn: 'Noah', ln: 'Patel', dob: '2017-08-30', email: 'priya.patel@email.com', phone: '5556789012', addr: '987 Birch Lane, Wellness City, WC 12349', ins: 'Medicare', insId: 'MED321654987', pol: 'POL-2024-005', grp: 'GRP-500' },
-          { fn: 'Ava', ln: 'Robinson', dob: '2020-09-17', email: 'tanya.robinson@email.com', phone: '5557890123', addr: '246 Cedar Drive, Wellness City, WC 12350', ins: 'Humana', insId: 'HUM654987321', pol: 'POL-2024-006', grp: 'GRP-600' },
-        ];
-        for (const p of demoPatients) {
-          try {
-            await db.execute(sql`
-              INSERT INTO patients (practice_id, first_name, last_name, date_of_birth, email, phone, address, insurance_provider, insurance_id, policy_number, group_number, created_at, updated_at)
-              VALUES (${pId}, ${p.fn}, ${p.ln}, ${p.dob}, ${p.email}, ${p.phone}, ${p.addr}, ${p.ins}, ${p.insId}, ${p.pol}, ${p.grp}, NOW(), NOW())
-            `);
-          } catch (e) {
-            console.error(`Failed to seed patient ${p.fn} ${p.ln}:`, e instanceof Error ? e.message : e);
-          }
+      const demoPatients = [
+        { fn: 'Liam', ln: 'Martinez', dob: '2019-06-12', email: 'rosa.martinez@email.com', phone: '5552345678', addr: '456 Oak Street, Wellness City, WC 12345', ins: 'Blue Cross Blue Shield', insId: 'BCBS123456789', pol: 'POL-2024-001', grp: 'GRP-100' },
+        { fn: 'Olivia', ln: 'Thompson', dob: '2020-03-08', email: 'karen.thompson@email.com', phone: '5553456789', addr: '789 Maple Avenue, Wellness City, WC 12346', ins: 'Aetna', insId: 'AET987654321', pol: 'POL-2024-002', grp: 'GRP-200' },
+        { fn: 'Ethan', ln: 'Williams', dob: '2018-11-22', email: 'james.williams@email.com', phone: '5554567890', addr: '321 Pine Road, Wellness City, WC 12347', ins: 'UnitedHealth', insId: 'UHC456789123', pol: 'POL-2024-003', grp: 'GRP-300' },
+        { fn: 'Sophia', ln: 'Chen', dob: '2021-01-15', email: 'mei.chen@email.com', phone: '5555678901', addr: '654 Elm Court, Wellness City, WC 12348', ins: 'Cigna', insId: 'CIG789123456', pol: 'POL-2024-004', grp: 'GRP-400' },
+        { fn: 'Noah', ln: 'Patel', dob: '2017-08-30', email: 'priya.patel@email.com', phone: '5556789012', addr: '987 Birch Lane, Wellness City, WC 12349', ins: 'Medicare', insId: 'MED321654987', pol: 'POL-2024-005', grp: 'GRP-500' },
+        { fn: 'Ava', ln: 'Robinson', dob: '2020-09-17', email: 'tanya.robinson@email.com', phone: '5557890123', addr: '246 Cedar Drive, Wellness City, WC 12350', ins: 'Humana', insId: 'HUM654987321', pol: 'POL-2024-006', grp: 'GRP-600' },
+      ];
+      for (const p of demoPatients) {
+        try {
+          await db.execute(sql`
+            INSERT INTO patients (practice_id, first_name, last_name, date_of_birth, email, phone, address, insurance_provider, insurance_id, policy_number, group_number, created_at, updated_at)
+            VALUES (${practiceId}, ${p.fn}, ${p.ln}, ${p.dob}, ${p.email}, ${p.phone}, ${p.addr}, ${p.ins}, ${p.insId}, ${p.pol}, ${p.grp}, NOW(), NOW())
+          `);
+        } catch (e) {
+          console.error(`Failed to seed patient ${p.fn} ${p.ln}:`, e instanceof Error ? e.message : e);
         }
-        console.log("Sample patients seeded: 6 pediatric patients");
       }
+      console.log("Sample patients seeded: 6 pediatric patients");
     } else {
       console.log(`${activePatients} patients already exist — skipping seed`);
     }
 
-    // Check if data already exists
-    const result = await db.execute(sql`SELECT COUNT(*) as count FROM practices`);
-    const count = parseInt(result.rows[0]?.count || '0', 10);
-    if (count > 0) {
-      console.log("Database already seeded");
+    // Check if reference data already exists (CPT codes, ICD-10, insurances)
+    const cptCount = await db.execute(sql`SELECT COUNT(*) as count FROM cpt_codes`);
+    if (parseInt(cptCount.rows[0]?.count || '0', 10) > 0) {
+      console.log("Database already seeded with reference data");
       return;
     }
-
-    // Create sample practice
-    const [practice] = await db.insert(practices).values({
-      name: "Healing Hands Occupational Therapy",
-      npi: "1234567890",
-      taxId: "12-3456789",
-      address: "123 Therapy Lane, Wellness City, WC 12345",
-      phone: "(555) 123-4567",
-      email: "admin@healinghands.com",
-    }).returning();
 
     // Seed Common OT CPT Codes - Standard rate $289 per session
     await db.insert(cptCodes).values([
@@ -402,101 +387,7 @@ export async function seedDatabase() {
       },
     ]);
 
-    // Seed Sample Patients
-    await db.insert(patients).values([
-      {
-        practiceId: practice.id,
-        firstName: "John",
-        lastName: "Smith",
-        dateOfBirth: "1978-03-15",
-        email: "john.smith@email.com",
-        phone: "(555) 234-5678",
-        address: "456 Oak Street, Wellness City, WC 12345",
-        insuranceProvider: "Blue Cross Blue Shield",
-        insuranceId: "BCBS123456789",
-        policyNumber: "POL-2024-001",
-        groupNumber: "GRP-100",
-        smsConsentGiven: true,
-      },
-      {
-        practiceId: practice.id,
-        firstName: "Sarah",
-        lastName: "Johnson",
-        dateOfBirth: "1985-07-22",
-        email: "sarah.johnson@email.com",
-        phone: "(555) 345-6789",
-        address: "789 Maple Avenue, Wellness City, WC 12346",
-        insuranceProvider: "Aetna",
-        insuranceId: "AET987654321",
-        policyNumber: "POL-2024-002",
-        groupNumber: "GRP-200",
-        smsConsentGiven: true,
-      },
-      {
-        practiceId: practice.id,
-        firstName: "Michael",
-        lastName: "Brown",
-        dateOfBirth: "1992-11-08",
-        email: "michael.brown@email.com",
-        phone: "(555) 456-7890",
-        address: "321 Pine Road, Wellness City, WC 12347",
-        insuranceProvider: "UnitedHealth",
-        insuranceId: "UHC456789123",
-        policyNumber: "POL-2024-003",
-        groupNumber: "GRP-300",
-        smsConsentGiven: false,
-      },
-      {
-        practiceId: practice.id,
-        firstName: "Emily",
-        lastName: "Davis",
-        dateOfBirth: "1990-05-30",
-        email: "emily.davis@email.com",
-        phone: "(555) 567-8901",
-        address: "654 Elm Court, Wellness City, WC 12348",
-        insuranceProvider: "Cigna",
-        insuranceId: "CIG789123456",
-        policyNumber: "POL-2024-004",
-        groupNumber: "GRP-400",
-        smsConsentGiven: true,
-      },
-    ]);
-
-    // Seed Demo User
-    const demoPasswordHash = await hashPassword("demo1234");
-    await db.insert(users).values({
-      id: "demo-user-001",
-      email: "demo@therapybill.com",
-      firstName: "Demo",
-      lastName: "Admin",
-      practiceId: practice.id,
-      role: "admin",
-      passwordHash: demoPasswordHash,
-      emailVerified: true,
-    }).onConflictDoNothing();
-
-    // Seed Reviewer User
-    const reviewerPasswordHash = await hashPassword("TherapyDemo2024#");
-    await db.insert(users).values({
-      id: "reviewer-user-001",
-      email: "reviewer1@demo.com",
-      firstName: "Reviewer",
-      lastName: "Demo",
-      practiceId: practice.id,
-      role: "admin",
-      passwordHash: reviewerPasswordHash,
-      emailVerified: true,
-    }).onConflictDoNothing();
-
-    console.log("Database seeded successfully with:", {
-      practices: 1,
-      cptCodes: 10,
-      icd10Codes: 13,
-      insurances: 7,
-      patients: 4,
-      demoUser: "demo@therapybill.com / demo1234",
-      reviewerUser: "reviewer1@demo.com / TherapyDemo2024#",
-    });
+    console.log("Reference data seeded successfully (CPT codes, ICD-10 codes, insurances)");
   } catch (error) {
     console.error("Error seeding database:", error);
   }
