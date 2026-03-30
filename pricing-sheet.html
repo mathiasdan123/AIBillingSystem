@@ -19,110 +19,110 @@
     .no-break { page-break-inside: avoid; }
   }
 
-  /* Header */
-  .header { text-align: center; margin-bottom: 40px; }
+  .header { text-align: center; margin-bottom: 36px; }
   .header h1 { font-size: 32px; font-weight: 800; color: #1e3a8a; }
-  .header p { font-size: 16px; color: #475569; margin-top: 6px; }
+  .header p { font-size: 15px; color: #475569; margin-top: 6px; }
+
+  /* Section dividers */
+  .section-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .section-label.blue { color: #3b82f6; }
+  .section-label.teal { color: #0d9488; }
+  .section-title { font-size: 22px; font-weight: 800; color: #1e3a8a; margin-bottom: 4px; }
+  .section-desc { font-size: 14px; color: #475569; margin-bottom: 20px; line-height: 1.5; }
 
   /* Plans grid */
-  .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px; }
+  .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 36px; }
   .plan {
-    border: 2px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 28px 24px;
-    position: relative;
+    border: 2px solid #e2e8f0; border-radius: 12px;
+    padding: 24px 22px; position: relative;
   }
-  .plan.featured {
-    border-color: #1e40af;
-    box-shadow: 0 4px 24px rgba(30,64,175,0.12);
-  }
+  .plan.featured { border-color: #1e40af; box-shadow: 0 4px 24px rgba(30,64,175,0.12); }
   .badge {
-    position: absolute;
-    top: -12px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #1e40af;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 4px 14px;
-    border-radius: 12px;
-    letter-spacing: 0.5px;
+    position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+    background: #1e40af; color: #fff; font-size: 11px; font-weight: 700;
+    padding: 4px 14px; border-radius: 12px; letter-spacing: 0.5px;
   }
   .plan-name { font-size: 18px; font-weight: 700; color: #1e3a8a; margin-bottom: 2px; }
-  .plan-audience { font-size: 12.5px; color: #64748b; margin-bottom: 14px; }
-  .plan-price { font-size: 36px; font-weight: 800; color: #1e293b; line-height: 1; }
+  .plan-audience { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+  .plan-price { font-size: 34px; font-weight: 800; color: #1e293b; line-height: 1; }
   .plan-price span { font-size: 15px; font-weight: 500; color: #64748b; }
-  .plan-annual { font-size: 12px; color: #0d9488; font-weight: 600; margin-top: 4px; margin-bottom: 16px; }
-  .plan-divider { border: none; border-top: 1px solid #e2e8f0; margin: 0 0 14px; }
+  .plan-annual { font-size: 11.5px; color: #0d9488; font-weight: 600; margin-top: 4px; margin-bottom: 14px; }
+  .plan-divider { border: none; border-top: 1px solid #e2e8f0; margin: 0 0 12px; }
   .plan ul { list-style: none; }
   .plan li {
-    font-size: 13px;
-    color: #334155;
-    padding: 4px 0 4px 20px;
-    position: relative;
-    line-height: 1.4;
+    font-size: 12.5px; color: #334155; padding: 3.5px 0 3.5px 18px;
+    position: relative; line-height: 1.4;
   }
   .plan li::before {
-    content: "\2713";
-    position: absolute;
-    left: 0;
-    color: #0d9488;
-    font-weight: 700;
-    font-size: 13px;
-  }
-  .plan li.muted { color: #94a3b8; }
-  .plan li.muted::before { content: "\2014"; color: #cbd5e1; }
-
-  /* What's included */
-  .included { margin-bottom: 36px; }
-  .included h2 { font-size: 18px; font-weight: 700; color: #1e3a8a; margin-bottom: 14px; }
-  .included-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 32px; }
-  .included-grid li {
-    font-size: 13px;
-    color: #334155;
-    padding: 3px 0 3px 20px;
-    position: relative;
-    list-style: none;
-    line-height: 1.4;
-  }
-  .included-grid li::before {
-    content: "\2713";
-    position: absolute;
-    left: 0;
-    color: #0d9488;
-    font-weight: 700;
+    content: "\2713"; position: absolute; left: 0;
+    color: #0d9488; font-weight: 700; font-size: 12px;
   }
 
-  /* No hidden fees */
-  .no-fees {
+  /* Billing section */
+  .billing-box {
+    border: 2px solid #0d9488; border-radius: 12px;
+    padding: 28px 28px; margin-bottom: 36px;
     background: #f0fdfa;
-    border: 1px solid #ccfbf1;
-    border-radius: 10px;
-    padding: 20px 24px;
-    margin-bottom: 36px;
   }
-  .no-fees h3 { font-size: 15px; font-weight: 700; color: #0d9488; margin-bottom: 8px; }
-  .no-fees-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 32px; }
-  .no-fees-grid li {
-    font-size: 13px;
-    color: #334155;
-    list-style: none;
-    padding: 2px 0;
+  .billing-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 6px; }
+  .billing-price { font-size: 42px; font-weight: 800; color: #1e293b; line-height: 1; }
+  .billing-price span { font-size: 16px; font-weight: 500; color: #475569; }
+  .billing-note { font-size: 13px; color: #475569; margin-bottom: 16px; line-height: 1.5; }
+  .billing-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 28px;
+  }
+  .billing-grid li {
+    font-size: 12.5px; color: #334155; padding: 3px 0 3px 18px;
+    position: relative; list-style: none; line-height: 1.4;
+  }
+  .billing-grid li::before {
+    content: "\2713"; position: absolute; left: 0;
+    color: #0d9488; font-weight: 700;
+  }
+
+  /* Comparison callout */
+  .compare {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 20px 24px; margin-bottom: 36px;
+  }
+  .compare h3 { font-size: 15px; font-weight: 700; color: #1e3a8a; margin-bottom: 10px; }
+  .compare table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare th {
+    text-align: left; font-weight: 700; color: #475569;
+    padding: 6px 0; border-bottom: 1px solid #e2e8f0; font-size: 12px;
+  }
+  .compare td { padding: 6px 0; color: #334155; border-bottom: 1px solid #f1f5f9; }
+  .compare td:nth-child(2), .compare th:nth-child(2) { text-align: center; color: #0d9488; font-weight: 600; }
+  .compare td:nth-child(3), .compare th:nth-child(3) { text-align: center; color: #94a3b8; }
+
+  /* Practice management features */
+  .pm-features { margin-bottom: 36px; }
+  .pm-features h3 { font-size: 15px; font-weight: 700; color: #1e3a8a; margin-bottom: 10px; }
+  .pm-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 28px;
+  }
+  .pm-grid li {
+    font-size: 12.5px; color: #334155; padding: 3px 0 3px 18px;
+    position: relative; list-style: none; line-height: 1.4;
+  }
+  .pm-grid li::before {
+    content: "\2713"; position: absolute; left: 0;
+    color: #3b82f6; font-weight: 700;
   }
 
   /* FAQ */
+  .faq { margin-bottom: 36px; }
   .faq h2 { font-size: 18px; font-weight: 700; color: #1e3a8a; margin-bottom: 14px; }
-  .faq-item { margin-bottom: 12px; }
+  .faq-item { margin-bottom: 10px; }
   .faq-item dt { font-size: 13px; font-weight: 700; color: #334155; }
   .faq-item dd { font-size: 13px; color: #64748b; margin-top: 2px; }
 
   /* Footer */
   .footer {
-    margin-top: 36px;
-    text-align: center;
-    padding-top: 20px;
-    border-top: 1px solid #e2e8f0;
+    text-align: center; padding-top: 20px; border-top: 1px solid #e2e8f0;
   }
   .footer p { font-size: 13px; color: #64748b; }
   .footer a { color: #1e40af; font-weight: 700; text-decoration: none; }
@@ -133,33 +133,33 @@
 
 <div class="header">
   <h1>TherapyBill AI Pricing</h1>
-  <p>AI-powered billing &amp; practice management for OT practices. No contracts. Cancel anytime.</p>
+  <p>Practice management + AI-powered billing for OT practices. No contracts. Cancel anytime.</p>
 </div>
 
-<!-- ── PLANS ── -->
-<div class="plans no-break">
+<!-- ════════════════════════════════════════════ -->
+<!-- PART 1: PRACTICE MANAGEMENT                -->
+<!-- ════════════════════════════════════════════ -->
 
+<div class="section-label blue">Part 1</div>
+<div class="section-title">Practice Management</div>
+<div class="section-desc">Scheduling, clinical documentation, patient portal, analytics, and practice operations. Flat monthly fee.</div>
+
+<div class="plans no-break">
   <div class="plan">
     <div class="plan-name">Starter</div>
     <div class="plan-audience">Solo OT practitioners</div>
-    <div class="plan-price">$79<span>/mo</span></div>
-    <div class="plan-annual">$659/yr with annual billing (save $289)</div>
+    <div class="plan-price">$49<span>/mo</span></div>
+    <div class="plan-annual">$409/yr with annual billing (save $179)</div>
     <hr class="plan-divider">
     <ul>
       <li>1 OT provider</li>
       <li>1 non-clinical staff</li>
       <li>AI SOAP notes</li>
-      <li>AI billing assistant</li>
-      <li>AI claim review</li>
-      <li>50 electronic claims/mo</li>
-      <li>50 eligibility checks/mo</li>
-      <li>Patient portal</li>
+      <li>Scheduling &amp; online booking</li>
+      <li>Patient &amp; caregiver portal</li>
+      <li>Treatment plans &amp; goal tracking</li>
       <li>Basic analytics</li>
       <li>Email support</li>
-      <li class="muted">AI denial prediction</li>
-      <li class="muted">AI appeal letters</li>
-      <li class="muted">Telehealth</li>
-      <li class="muted">ERA/835 auto-posting</li>
     </ul>
   </div>
 
@@ -167,22 +167,17 @@
     <div class="badge">MOST POPULAR</div>
     <div class="plan-name">Professional</div>
     <div class="plan-audience">Growing OT practices</div>
-    <div class="plan-price">$149<span>/mo</span></div>
-    <div class="plan-annual">$1,245/yr with annual billing (save $543)</div>
+    <div class="plan-price">$99<span>/mo</span></div>
+    <div class="plan-annual">$825/yr with annual billing (save $363)</div>
     <hr class="plan-divider">
     <ul>
-      <li>Up to 5 OTs ($49/mo each add'l)</li>
+      <li>Up to 5 OTs ($39/mo each add'l)</li>
       <li>3 non-clinical staff</li>
       <li>AI SOAP notes</li>
-      <li>AI billing assistant</li>
-      <li>AI claim review</li>
-      <li>AI denial prediction</li>
-      <li>AI appeal letters</li>
-      <li>Unlimited claims</li>
-      <li>Unlimited eligibility checks</li>
-      <li>ERA/835 auto-posting</li>
+      <li>Scheduling &amp; online booking</li>
+      <li>Patient &amp; caregiver portal</li>
+      <li>Treatment plans &amp; goal tracking</li>
       <li>Telehealth</li>
-      <li>Patient portal</li>
       <li>Full analytics &amp; reporting</li>
       <li>Email + chat support</li>
     </ul>
@@ -191,91 +186,122 @@
   <div class="plan">
     <div class="plan-name">Practice</div>
     <div class="plan-audience">Multi-therapist OT clinics</div>
-    <div class="plan-price">$249<span>/mo</span></div>
-    <div class="plan-annual">$2,075/yr with annual billing (save $913)</div>
+    <div class="plan-price">$179<span>/mo</span></div>
+    <div class="plan-annual">$1,495/yr with annual billing (save $653)</div>
     <hr class="plan-divider">
     <ul>
-      <li>Up to 15 OTs ($39/mo each add'l)</li>
+      <li>Up to 15 OTs ($29/mo each add'l)</li>
       <li>Unlimited non-clinical staff</li>
       <li>Everything in Professional, plus:</li>
       <li>AOTA industry benchmarking</li>
       <li>White-label branding</li>
+      <li>Custom report builder</li>
       <li>Priority support + onboarding call</li>
       <li>Priority data migration</li>
-      <li>Custom report builder</li>
     </ul>
   </div>
-
 </div>
 
-<!-- ── INCLUDED IN ALL PLANS ── -->
-<div class="included no-break">
-  <h2>Billing &amp; Claims &mdash; Included in Every Plan</h2>
-  <ul class="included-grid">
-    <li>Electronic claim submission (837P)</li>
-    <li>Real-time claim status checking (276/277)</li>
-    <li>Real-time eligibility verification (270/271)</li>
-    <li>Secondary insurance claims</li>
-    <li>AI claim review before submission</li>
-    <li>Batch claim submission</li>
-    <li>AI billing assistant on every page</li>
-    <li>Automated follow-ups for aging claims</li>
-    <li>OT CPT code knowledge built in</li>
-    <li>Superbill generation for self-pay</li>
-    <li>Payer underpayment detection</li>
-    <li>Credit card &amp; ACH patient payments (Stripe)</li>
-  </ul>
-</div>
-
-<!-- ── ALSO INCLUDED ── -->
-<div class="included no-break">
-  <h2>Also Included in Every Plan</h2>
-  <ul class="included-grid">
-    <li>Scheduling with online booking &amp; waitlist</li>
-    <li>Patient &amp; caregiver portal</li>
-    <li>AI-powered OT SOAP notes</li>
-    <li>Treatment plans &amp; goal tracking</li>
+<div class="pm-features no-break">
+  <h3>Included in All Practice Management Plans</h3>
+  <ul class="pm-grid">
+    <li>AI-powered OT SOAP note generation</li>
     <li>Digital signature &amp; supervisor co-sign</li>
-    <li>SMS &amp; email appointment reminders</li>
-    <li>Data import (SimplePractice, TherapyNotes, Jane App, WebPT, Fusion, Prompt Health)</li>
-    <li>Onboarding checklist</li>
-    <li>HIPAA-compliant (AES-256 encryption, MFA, audit logs, AWS BAA)</li>
+    <li>Scheduling with waitlist &amp; reminders</li>
+    <li>Patient &amp; caregiver portal (magic-link login)</li>
+    <li>Outcome measures with auto-scoring</li>
+    <li>Exercise &amp; intervention banks</li>
+    <li>Session time tracking</li>
     <li>Authorization tracking (units used vs. authorized)</li>
+    <li>SMS &amp; email appointment reminders</li>
+    <li>Data import (SimplePractice, TherapyNotes, Jane, WebPT, Fusion, Prompt)</li>
+    <li>HIPAA-compliant (AES-256 encryption, MFA, audit logs, AWS BAA)</li>
+    <li>Onboarding checklist</li>
   </ul>
 </div>
 
-<!-- ── NO HIDDEN FEES ── -->
-<div class="no-fees no-break">
-  <h3>No Hidden Fees</h3>
-  <ul class="no-fees-grid">
-    <li>No per-claim fees (Professional+)</li>
-    <li>No setup fee</li>
-    <li>No contract</li>
-    <li>No charge for AI features</li>
-    <li>No extra fee for eligibility checks</li>
-    <li>No charge for data import</li>
+<!-- ════════════════════════════════════════════ -->
+<!-- PART 2: AI BILLING ENGINE                  -->
+<!-- ════════════════════════════════════════════ -->
+
+<div class="section-label teal">Part 2</div>
+<div class="section-title">AI Billing Engine</div>
+<div class="section-desc">Claims submission, eligibility verification, AI claim review, denial prediction, appeals, and payment posting. Priced as a percentage of insurance collections &mdash; you only pay when you get paid.</div>
+
+<div class="billing-box no-break">
+  <div class="billing-header">
+    <div class="billing-price">6%<span> of insurance collections</span></div>
+  </div>
+  <div class="billing-note">Applied to insurance payments posted through the platform. No minimums. No setup fee. Traditional billing companies charge 7&ndash;9% and you still need separate software &mdash; with TherapyBill AI, the software is included.</div>
+  <ul class="billing-grid">
+    <li>Electronic claim submission (837P)</li>
+    <li>AI claim review before submission</li>
+    <li>Real-time eligibility verification (270/271)</li>
+    <li>AI denial prediction</li>
+    <li>Real-time claim status checking (276/277)</li>
+    <li>AI-generated appeal letters</li>
+    <li>Batch claim submission</li>
+    <li>Automated follow-ups for aging claims</li>
+    <li>Secondary insurance claims</li>
+    <li>Payer underpayment detection</li>
+    <li>ERA/835 auto-posting &amp; matching</li>
+    <li>OT CPT code knowledge built in</li>
+    <li>AI billing assistant on every page</li>
+    <li>Superbill generation for self-pay</li>
+    <li>Credit card &amp; ACH patient payments (Stripe)</li>
+    <li>Fee schedule management &amp; rate comparison</li>
   </ul>
 </div>
 
-<!-- ── FAQ ── -->
+<!-- ════════════════════════════════════════════ -->
+<!-- COMPARISON                                 -->
+<!-- ════════════════════════════════════════════ -->
+
+<div class="compare no-break">
+  <h3>How TherapyBill AI Compares</h3>
+  <table>
+    <thead>
+      <tr><th></th><th>TherapyBill AI</th><th>Traditional Biller + Separate EHR</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Billing fee</td><td>6%</td><td>7&ndash;9%</td></tr>
+      <tr><td>Practice management software</td><td>Included ($49&ndash;179/mo)</td><td>Separate ($79&ndash;189/mo extra)</td></tr>
+      <tr><td>AI claim review &amp; denial prediction</td><td>Included</td><td>Not available</td></tr>
+      <tr><td>AI SOAP notes</td><td>Included</td><td>$35/mo add-on (if available)</td></tr>
+      <tr><td>Eligibility verification</td><td>Included</td><td>$20/mo add-on or per-check fee</td></tr>
+      <tr><td>Telehealth</td><td>Included (Professional+)</td><td>$15/mo add-on</td></tr>
+      <tr><td>Per-claim fees</td><td>None</td><td>$0.14&ndash;$0.35 per claim</td></tr>
+      <tr><td>You control your billing</td><td>Yes &mdash; AI-assisted, you submit</td><td>No &mdash; outsourced, less visibility</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- FAQ                                        -->
+<!-- ════════════════════════════════════════════ -->
+
 <div class="faq no-break">
   <h2>Common Questions</h2>
   <dl>
     <div class="faq-item">
       <dt>Is there a free trial?</dt>
-      <dd>Yes. 30 days, full access, no credit card required.</dd>
+      <dd>Yes. 30 days, full access to practice management and billing, no credit card required.</dd>
+    </div>
+    <div class="faq-item">
+      <dt>When does the 6% billing fee apply?</dt>
+      <dd>Only when insurance payments are posted through the platform. You pay when you get paid. No minimums, no monthly billing fee for the billing engine.</dd>
+    </div>
+    <div class="faq-item">
+      <dt>Can I use practice management without the billing engine?</dt>
+      <dd>Yes. You can subscribe to practice management only and handle billing elsewhere. Add the billing engine anytime.</dd>
     </div>
     <div class="faq-item">
       <dt>Do I need a billing company?</dt>
-      <dd>No. The AI reviews claims, predicts denials, and generates appeal letters so you can handle billing yourself. Platform support is available if you run into issues.</dd>
+      <dd>No. The AI reviews claims, predicts denials, and generates appeals. You handle billing yourself with AI doing the heavy lifting. Platform support is available if you run into issues.</dd>
     </div>
     <div class="faq-item">
-      <dt>Can I switch plans?</dt>
-      <dd>Yes. Upgrade or downgrade anytime. Changes take effect on your next billing cycle.</dd>
-    </div>
-    <div class="faq-item">
-      <dt>What does payment processing cost?</dt>
-      <dd>Standard Stripe rates for patient payments (2.9% + 30&cent; for cards, 0.8% for ACH). No markup from us.</dd>
+      <dt>What does patient payment processing cost?</dt>
+      <dd>Standard Stripe rates (2.9% + 30&cent; for cards, 0.8% for ACH). The 6% billing fee applies to insurance collections only, not patient payments.</dd>
     </div>
     <div class="faq-item">
       <dt>Is it HIPAA compliant?</dt>
@@ -284,7 +310,10 @@
   </dl>
 </div>
 
-<!-- ── FOOTER ── -->
+<!-- ════════════════════════════════════════════ -->
+<!-- FOOTER                                     -->
+<!-- ════════════════════════════════════════════ -->
+
 <div class="footer">
   <p><a href="https://app.therapybillai.com">app.therapybillai.com</a> &mdash; Start your 30-day free trial</p>
   <p class="disclaimer">TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider.</p>
