@@ -1,14 +1,16 @@
-// Sentry must be initialized before all other imports
 import * as Sentry from "@sentry/node";
 
+// Initialize Sentry as early as possible.
+// Note: ESM hoisting means @sentry/node loads alongside other imports, so Express
+// auto-instrumentation is unavailable. Errors are still fully captured via
+// setupExpressErrorHandler() registered after routes below.
 if (process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV || "development",
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
     // Do not send PHI or sensitive session data to Sentry
-    beforeSend(event: any) {
-      // Strip any cookies or session info from the event
+    beforeSend(event: Sentry.ErrorEvent) {
       if (event.request) {
         delete event.request.cookies;
         delete event.request.data;
@@ -226,25 +228,28 @@ const RATE_LIMIT_MAX_AUTH = parseInt(process.env.RATE_LIMIT_MAX_AUTH || '20');
 const RATE_LIMIT_MAX_API = parseInt(process.env.RATE_LIMIT_MAX_API || '100');
 const API_RATE_LIMIT_WINDOW_MS = parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || '60000'); // 1 minute default
 
-// Initialize Redis-backed rate limit store if REDIS_URL is configured.
+// Initialize Redis-backed rate limit stores if REDIS_URL is configured.
+// Each limiter needs its own RedisStore instance (express-rate-limit requirement).
 // Falls back to the default in-memory store when Redis is unavailable.
-let rateLimitStore: Store | undefined;
-
 const redisClient = initRedisClient();
-if (redisClient) {
+let useRedis = false;
+
+function makeRedisStore(prefix: string): Store | undefined {
+  if (!redisClient) return undefined;
   try {
-    rateLimitStore = new RedisStore({
-      // Use sendCommand to stay compatible with ioredis
+    return new RedisStore({
       sendCommand: (...args: string[]) =>
         redisClient.call(args[0], ...args.slice(1)) as any,
-      prefix: 'rl:', // key prefix to avoid collisions with other Redis data
+      prefix,
     });
-    console.log('✓ Redis-backed rate limiting enabled (distributed)');
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`⚠️  Could not initialize Redis rate limit store: ${message}`);
-    console.warn('   Falling back to in-memory rate limiting');
+  } catch {
+    return undefined;
   }
+}
+
+if (redisClient) {
+  useRedis = true;
+  console.log('✓ Redis-backed rate limiting enabled (distributed)');
 } else {
   console.log('ℹ  Using in-memory rate limiting (set REDIS_URL for distributed rate limiting)');
 }
@@ -255,7 +260,7 @@ const generalLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  ...(rateLimitStore ? { store: rateLimitStore } : {}),
+  ...(useRedis ? { store: makeRedisStore('rl:gen:') } : {}),
 });
 
 const authLimiter = rateLimit({
@@ -264,7 +269,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many authentication attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  ...(rateLimitStore ? { store: rateLimitStore } : {}),
+  ...(useRedis ? { store: makeRedisStore('rl:auth:') } : {}),
 });
 
 const apiLimiter = rateLimit({
@@ -273,7 +278,7 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many API requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  ...(rateLimitStore ? { store: rateLimitStore } : {}),
+  ...(useRedis ? { store: makeRedisStore('rl:api:') } : {}),
 });
 
 // Apply rate limiters

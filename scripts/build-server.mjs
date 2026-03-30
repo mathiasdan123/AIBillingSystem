@@ -7,7 +7,7 @@
 import * as esbuild from 'esbuild';
 
 const result = await esbuild.build({
-  entryPoints: ['server/index.ts'],
+  entryPoints: ['server/index.ts', 'server/instrument.ts'],
   bundle: true,
   platform: 'node',
   format: 'esm',
