@@ -6,6 +6,8 @@
  * - POST /api/admin/payer-credentials - Save payer credentials
  * - POST /api/admin/payer-integrations/:name/health-check - Payer health check
  * - POST /api/admin/hard-delete-expired - Hard delete expired patients
+ * - POST /api/admin/cache/clear - Clear application cache
+ * - GET /api/admin/cache/stats - Cache statistics
  *
  * Mounted at /api so all paths include their full prefix.
  */
@@ -15,6 +17,7 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { StediAdapter } from '../payer-integrations/adapters/payers/StediAdapter';
 import { triggerHardDeletionNow } from '../scheduler';
+import { cache } from '../services/cacheService';
 import logger from '../services/logger';
 
 const router = Router();
@@ -150,6 +153,30 @@ router.post('/admin/hard-delete-expired', isAuthenticated, isAdmin, async (req: 
   } catch (error: any) {
     logger.error('Manual hard deletion failed', { error: error.message });
     res.status(500).json({ message: 'Hard deletion failed' });
+  }
+});
+
+// ==================== CACHE MANAGEMENT ====================
+
+router.post('/admin/cache/clear', isAuthenticated, isAdmin, async (req: any, res) => {
+  try {
+    await cache.clear();
+    const stats = cache.getStats();
+    logger.info('Cache cleared by admin', { userId: req.user?.claims?.sub });
+    res.json({ message: 'Cache cleared successfully', stats });
+  } catch (error) {
+    logger.error('Error clearing cache', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to clear cache' });
+  }
+});
+
+router.get('/admin/cache/stats', isAuthenticated, isAdmin, async (_req, res) => {
+  try {
+    const stats = cache.getStats();
+    res.json(stats);
+  } catch (error) {
+    logger.error('Error fetching cache stats', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch cache stats' });
   }
 });
 

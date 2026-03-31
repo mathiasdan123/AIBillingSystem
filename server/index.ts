@@ -60,6 +60,8 @@ if (isProduction && !isDemoMode) {
     'DATABASE_URL',
     'SESSION_SECRET',
     'PHI_ENCRYPTION_KEY',
+    'ALLOWED_ORIGINS',
+    'SENTRY_DSN',
   ];
 
   const missingVars = requiredEnvVars.filter(v => !process.env[v]);
@@ -81,6 +83,13 @@ if (isProduction && !isDemoMode) {
   if (process.env.SESSION_SECRET!.length < 32) {
     console.error('FATAL: SESSION_SECRET must be at least 32 characters');
     process.exit(1);
+  }
+
+  // Warn if Redis is not configured — rate limiting will be per-instance only
+  if (!process.env.REDIS_URL) {
+    console.warn('⚠️  REDIS_URL not set: rate limiting is per-instance (not distributed across ECS tasks)');
+    console.warn('   Each ECS task will have independent rate limit counters.');
+    console.warn('   Set REDIS_URL to enable distributed rate limiting.');
   }
 
   console.log('✓ Production security checks passed');
@@ -386,5 +395,3 @@ app.use((req, res, next) => {
   });
 })();
 
-// Wed Mar 11 12:29:39 EDT 2026
-// Redeploy Fri Mar 13 17:11:56 EDT 2026

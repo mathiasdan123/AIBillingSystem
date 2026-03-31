@@ -2,7 +2,7 @@ import type { Express, Response, NextFunction } from 'express';
 import { db } from '../db';
 import { baaRecords } from '@shared/schema';
 import { eq, and } from 'drizzle-orm';
-import { isAuthenticated } from '../supabaseAuth';
+import { isAuthenticated } from '../replitAuth';
 import { storage } from '../storage';
 
 // Helper to get practice ID from authenticated user

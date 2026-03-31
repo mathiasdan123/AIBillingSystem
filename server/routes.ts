@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth } from "./replitAuth";
 import { storage } from "./storage";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
@@ -12,7 +12,6 @@ import {
   messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter,
-  // New extractions
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
   documentsRouter, followUpsRouter, eligibilityRouter,
@@ -41,23 +40,6 @@ import { registerBaaRoutes } from "./routes/baaRoutes";
 import { registerBreachNotificationRoutes } from "./routes/breachNotificationRoutes";
 import { registerComplianceRoutes } from "./routes/compliance";
 import { registerBreachManagementRoutes } from "./routes/breach-management";
-
-// Middleware to check if user has admin role
-const isAdmin = async (req: any, res: any, next: any) => {
-  try {
-    if (!req.user?.claims?.sub) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    const user = await storage.getUser(req.user.claims.sub);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ message: "Access denied. Admin role required." });
-    }
-    next();
-  } catch (error) {
-    logger.error("Error checking user role", { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: "Failed to verify permissions" });
-  }
-};
 
 /**
  * Register all API routes for the application.
@@ -230,109 +212,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
   app.use('/api', insuranceDataRoutes);
-
-  // Demo accounts that can be auto-created and logged into
-  const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastName: string; role: string }> = {
-    'demo@therapybill.com': { password: 'demo1234', firstName: 'Demo', lastName: 'Admin', role: 'admin' },
-    'reviewer1@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Demo', role: 'admin' },
-    'reviewer2@demo.com': { password: 'TherapyDemo2024#', firstName: 'Reviewer', lastName: 'Two', role: 'admin' },
-  };
-
-  // Demo login endpoint - creates demo user if needed and logs in (no rate limit for easy reviewer access)
-  app.post('/api/demo-login', async (req: any, res) => {
-    try {
-      const { hashPassword } = await import('./services/passwordService');
-      const requestedEmail = (req.body?.email || 'demo@therapybill.com').toLowerCase().trim();
-      const demoAccount = DEMO_ACCOUNTS[requestedEmail];
-      if (!demoAccount) {
-        return res.status(400).json({ message: 'Invalid demo account' });
-      }
-
-      let user = await storage.getUserByEmail(requestedEmail);
-      // Ensure role matches expected demo role
-      if (user && user.role !== demoAccount.role) {
-        await storage.updateUserRole(user.id, demoAccount.role);
-        user = await storage.getUserByEmail(requestedEmail);
-      }
-      if (!user) {
-        // Find a practice to assign
-        let practiceId: number | undefined;
-        try {
-          const practiceIds = await storage.getAllPracticeIds();
-          if (practiceIds.length > 0) practiceId = practiceIds[0];
-        } catch (e) {
-          logger.warn('Could not fetch practice IDs for demo user', { error: e instanceof Error ? e.message : String(e) });
-        }
-
-        user = await storage.createUserWithPassword({
-          email: requestedEmail,
-          passwordHash: await hashPassword(demoAccount.password),
-          firstName: demoAccount.firstName,
-          lastName: demoAccount.lastName,
-          practiceId,
-          role: demoAccount.role,
-        });
-        logger.info('Demo user created', { email: requestedEmail, practiceId });
-      }
-      // Log in the demo user directly via session
-      const userObj = { claims: { sub: user.id } };
-      req.login(userObj, (err: any) => {
-        if (err) {
-          logger.error('Demo req.login error', { error: err instanceof Error ? err.message : String(err) });
-          return res.status(500).json({ message: 'Demo login failed', detail: 'session' });
-        }
-        if (req.session) {
-          (req.session as any).mfaVerifiedAt = Date.now();
-          (req.session as any).mfaUserId = user!.id;
-        }
-        res.json({
-          message: 'Demo login successful',
-          user: { id: user!.id, email: user!.email, firstName: user!.firstName, lastName: user!.lastName, role: user!.role },
-        });
-      });
-    } catch (error) {
-      logger.error('Demo login error', { error: error instanceof Error ? error.stack : String(error) });
-      res.status(500).json({ message: 'Demo login failed', detail: error instanceof Error ? error.message : 'unknown' });
-    }
-  });
-
-  // Development user endpoint - DISABLED IN PRODUCTION
-  if (process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_USER === 'true') {
-    app.get('/api/dev-user', authLimiter, async (req, res) => {
-      res.json({
-        id: 'dev-user-123',
-        email: 'dev@example.com',
-        firstName: 'Dev',
-        lastName: 'User',
-        profileImageUrl: null,
-        role: 'admin'
-      });
-    });
-  }
-
-  // ==================== ADMIN CACHE MANAGEMENT ====================
-
-  app.post('/api/admin/cache/clear', isAuthenticated, isAdmin, async (req: any, res) => {
-    try {
-      await cache.clear();
-      const stats = cache.getStats();
-      logger.info('Cache cleared by admin', { userId: req.user?.claims?.sub });
-      res.json({ message: 'Cache cleared successfully', stats });
-    } catch (error) {
-      logger.error('Error clearing cache', { error: error instanceof Error ? error.message : String(error) });
-      res.status(500).json({ message: 'Failed to clear cache' });
-    }
-  });
-
-  app.get('/api/admin/cache/stats', isAuthenticated, isAdmin, async (req: any, res) => {
-    try {
-      const stats = cache.getStats();
-      res.json(stats);
-    } catch (error) {
-      logger.error('Error fetching cache stats', { error: error instanceof Error ? error.message : String(error) });
-      res.status(500).json({ message: 'Failed to fetch cache stats' });
-    }
-  });
 
   const httpServer = createServer(app);
   return httpServer;

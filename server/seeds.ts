@@ -4,6 +4,8 @@ import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
 
 export async function seedDatabase() {
+  const isProduction = process.env.NODE_ENV === 'production';
+
   try {
     // Wait for database to be ready
     const db = await getDb();
@@ -103,56 +105,59 @@ export async function seedDatabase() {
       console.log(`Created sample practice (id: ${practiceId})`);
     }
 
-    // Always ensure demo user exists
-    const existingDemo = await db.execute(sql`SELECT id FROM users WHERE email = 'demo@therapybill.com'`);
-    if (!existingDemo.rows || existingDemo.rows.length === 0) {
-      console.log("Creating demo user...");
-      const demoHash = await hashPassword("demo1234");
-      await db.insert(users).values({
-        id: "demo-user-001",
-        email: "demo@therapybill.com",
-        firstName: "Demo",
-        lastName: "Admin",
-        practiceId: practiceId,
-        role: "admin",
-        passwordHash: demoHash,
-        emailVerified: true,
-      }).onConflictDoNothing();
-      console.log("Demo user created: demo@therapybill.com / demo1234");
-    } else {
-      // Ensure demo user has admin role and valid practice
-      await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'demo@therapybill.com' AND (role != 'admin' OR practice_id IS NULL)`);
-      console.log("Demo user already exists");
-    }
+    if (!isProduction) {
+      const demoAdminPassword = process.env.DEMO_ADMIN_PASSWORD || 'demo1234';
+      const demoReviewerPassword = process.env.DEMO_REVIEWER_PASSWORD || 'TherapyDemo2024#';
 
-    // Always ensure reviewer user exists
-    const existingReviewer = await db.execute(sql`SELECT id FROM users WHERE email = 'reviewer1@demo.com'`);
-    if (!existingReviewer.rows || existingReviewer.rows.length === 0) {
-      console.log("Creating reviewer user...");
-      const reviewerHash = await hashPassword("TherapyDemo2024#");
-      await db.insert(users).values({
-        id: "reviewer-user-001",
-        email: "reviewer1@demo.com",
-        firstName: "Reviewer",
-        lastName: "Demo",
-        practiceId: practiceId,
-        role: "admin",
-        passwordHash: reviewerHash,
-        emailVerified: true,
-      }).onConflictDoNothing();
-      console.log("Reviewer user created: reviewer1@demo.com / TherapyDemo2024#");
-    } else {
-      await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'reviewer1@demo.com' AND (role != 'admin' OR practice_id IS NULL)`);
-      console.log("Reviewer user already exists - ensured admin role");
-    }
+      const existingDemo = await db.execute(sql`SELECT id FROM users WHERE email = 'demo@therapybill.com'`);
+      if (!existingDemo.rows || existingDemo.rows.length === 0) {
+        console.log("Creating demo user...");
+        const demoHash = await hashPassword(demoAdminPassword);
+        await db.insert(users).values({
+          id: "demo-user-001",
+          email: "demo@therapybill.com",
+          firstName: "Demo",
+          lastName: "Admin",
+          practiceId: practiceId,
+          role: "admin",
+          passwordHash: demoHash,
+          emailVerified: true,
+        }).onConflictDoNothing();
+        console.log("Demo user created: demo@therapybill.com");
+      } else {
+        await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'demo@therapybill.com' AND (role != 'admin' OR practice_id IS NULL)`);
+        console.log("Demo user already exists");
+      }
 
-    // Ensure reviewer2 has admin role and valid practice
-    await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'reviewer2@demo.com' AND (role != 'admin' OR practice_id IS NULL)`);
+      const existingReviewer = await db.execute(sql`SELECT id FROM users WHERE email = 'reviewer1@demo.com'`);
+      if (!existingReviewer.rows || existingReviewer.rows.length === 0) {
+        console.log("Creating reviewer user...");
+        const reviewerHash = await hashPassword(demoReviewerPassword);
+        await db.insert(users).values({
+          id: "reviewer-user-001",
+          email: "reviewer1@demo.com",
+          firstName: "Reviewer",
+          lastName: "Demo",
+          practiceId: practiceId,
+          role: "admin",
+          passwordHash: reviewerHash,
+          emailVerified: true,
+        }).onConflictDoNothing();
+        console.log("Reviewer user created: reviewer1@demo.com");
+      } else {
+        await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'reviewer1@demo.com' AND (role != 'admin' OR practice_id IS NULL)`);
+        console.log("Reviewer user already exists - ensured admin role");
+      }
+
+      await db.execute(sql`UPDATE users SET role = 'admin', practice_id = ${practiceId} WHERE email = 'reviewer2@demo.com' AND (role != 'admin' OR practice_id IS NULL)`);
+    } else {
+      console.log("Production environment — skipping demo user seeding");
+    }
 
     // Seed demo patients only if none exist
     const existingPatientCount = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
     const activePatients = parseInt(existingPatientCount.rows[0]?.count || '0', 10);
-    if (activePatients === 0) {
+    if (!isProduction && activePatients === 0) {
       console.log("No patients found — seeding demo patients...");
       const demoPatients = [
         { fn: 'Liam', ln: 'Martinez', dob: '2019-06-12', email: 'rosa.martinez@email.com', phone: '5552345678', addr: '456 Oak Street, Wellness City, WC 12345', ins: 'Blue Cross Blue Shield', insId: 'BCBS123456789', pol: 'POL-2024-001', grp: 'GRP-100' },
@@ -173,7 +178,7 @@ export async function seedDatabase() {
         }
       }
       console.log("Sample patients seeded: 6 pediatric patients");
-    } else {
+    } else if (!isProduction) {
       console.log(`${activePatients} patients already exist — skipping seed`);
     }
 
