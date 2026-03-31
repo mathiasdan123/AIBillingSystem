@@ -7,11 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
@@ -70,6 +72,9 @@ export default function CalendarPage() {
     numberOfOccurrences: "12",
     recurrenceEndDate: "",
   });
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
   const [showSeriesActionDialog, setShowSeriesActionDialog] = useState(false);
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
@@ -139,6 +144,8 @@ export default function CalendarPage() {
         : "Appointment created successfully.";
       toast({ title: "Appointment Scheduled", description: desc });
       setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+      setIsNewPatient(false);
+      setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -202,11 +209,36 @@ export default function CalendarPage() {
     },
   });
 
-  const handleCreateAppointment = () => {
-    if (!newAppointment.patientId) {
-      toast({ title: "Error", description: "Please select a patient", variant: "destructive" });
+  const handleCreateAppointment = async () => {
+    let patientId = newAppointment.patientId;
+
+    // If creating a new patient, do that first
+    if (isNewPatient) {
+      if (!newPatientData.firstName.trim() || !newPatientData.lastName.trim()) {
+        toast({ title: "Error", description: "Please enter the patient's first and last name", variant: "destructive" });
+        return;
+      }
+      try {
+        const res = await apiRequest("POST", "/api/patients", {
+          firstName: newPatientData.firstName.trim(),
+          lastName: newPatientData.lastName.trim(),
+          phone: newPatientData.phone.trim() || null,
+          email: newPatientData.email.trim() || null,
+          dateOfBirth: "2000-01-01",
+          practiceId: 1,
+        });
+        const created = await res.json();
+        patientId = String(created.id);
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      } catch (err: any) {
+        toast({ title: "Error creating patient", description: err.message, variant: "destructive" });
+        return;
+      }
+    } else if (!patientId) {
+      toast({ title: "Error", description: "Please select a patient or add a new one", variant: "destructive" });
       return;
     }
+
     const sh = parseInt(newAppointment.startTime.split(":")[0]);
     const endTime = String(sh + 1).padStart(2, "0") + ":00";
 
@@ -215,7 +247,7 @@ export default function CalendarPage() {
 
     const payload: any = {
       practiceId: 1,
-      patientId: parseInt(newAppointment.patientId),
+      patientId: parseInt(patientId),
       therapistId: newAppointment.therapistId || null,
       locationId: newAppointment.locationId ? parseInt(newAppointment.locationId) : null,
       title: newAppointment.type,
@@ -414,24 +446,135 @@ export default function CalendarPage() {
               <DialogTrigger asChild>
                 <Button className="min-h-[44px] text-xs md:text-sm"><Plus className="w-4 h-4 mr-1 md:mr-2" /><span className="hidden sm:inline">New Appointment</span><span className="sm:hidden">New</span></Button>
               </DialogTrigger>
-              <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+              <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Schedule New Appointment</DialogTitle>
                   <DialogDescription>Create a new 1-hour therapy session.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <Label>Patient</Label>
-                    <Select value={newAppointment.patientId} onValueChange={(v) => setNewAppointment({ ...newAppointment, patientId: v })}>
-                      <SelectTrigger><SelectValue placeholder="Select a patient" /></SelectTrigger>
-                      <SelectContent>
-                        {patients.map((p: any) => (
-                          <SelectItem key={p.id} value={String(p.id)}>
-                            {p.firstName} {p.lastName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center justify-between">
+                      <Label>Patient</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-7 px-2"
+                        onClick={() => {
+                          setIsNewPatient(!isNewPatient);
+                          if (!isNewPatient) {
+                            setNewAppointment({ ...newAppointment, patientId: "" });
+                          } else {
+                            setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+                          }
+                        }}
+                      >
+                        {isNewPatient ? "Select Existing Patient" : "+ New Patient"}
+                      </Button>
+                    </div>
+                    {isNewPatient ? (
+                      <div className="space-y-2 p-3 border rounded-md bg-muted/30">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">First Name *</Label>
+                            <Input
+                              placeholder="First name"
+                              value={newPatientData.firstName}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Last Name *</Label>
+                            <Input
+                              placeholder="Last name"
+                              value={newPatientData.lastName}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">Phone</Label>
+                            <Input
+                              placeholder="Phone number"
+                              value={newPatientData.phone}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, phone: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Email</Label>
+                            <Input
+                              placeholder="Email address"
+                              value={newPatientData.email}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, email: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={patientSearchOpen}
+                            className="w-full justify-between font-normal"
+                          >
+                            {newAppointment.patientId
+                              ? (() => {
+                                  const p = patients.find((p: any) => String(p.id) === newAppointment.patientId);
+                                  return p ? `${(p as any).firstName} ${(p as any).lastName}` : "Select a patient";
+                                })()
+                              : "Search or type patient name..."}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Type a name to search..." />
+                            <CommandList>
+                              <CommandEmpty>
+                                <div className="text-center py-2">
+                                  <p className="text-sm text-muted-foreground mb-2">No patient found</p>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      setIsNewPatient(true);
+                                      setPatientSearchOpen(false);
+                                      setNewAppointment({ ...newAppointment, patientId: "" });
+                                    }}
+                                  >
+                                    <Plus className="mr-1 h-3 w-3" />
+                                    Add New Patient
+                                  </Button>
+                                </div>
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {patients.map((p: any) => (
+                                  <CommandItem
+                                    key={p.id}
+                                    value={`${p.firstName} ${p.lastName}`}
+                                    onSelect={() => {
+                                      setNewAppointment({ ...newAppointment, patientId: String(p.id) });
+                                      setPatientSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={`mr-2 h-4 w-4 ${
+                                        newAppointment.patientId === String(p.id) ? "opacity-100" : "opacity-0"
+                                      }`}
+                                    />
+                                    {p.firstName} {p.lastName}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Therapist</Label>
@@ -811,7 +954,7 @@ export default function CalendarPage() {
 
         {/* Cancel Appointment Dialog */}
         <Dialog open={showCancelDialog} onOpenChange={(open) => { setShowCancelDialog(open); if (!open) { delete (window as any).__cancelSeriesId; } }}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Cancel Appointment</DialogTitle>
               <DialogDescription>
@@ -863,7 +1006,7 @@ export default function CalendarPage() {
 
         {/* Series Action Dialog — "This appointment only" vs "All future" */}
         <Dialog open={showSeriesActionDialog} onOpenChange={setShowSeriesActionDialog}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-lg max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Recurring Appointment</DialogTitle>
               <DialogDescription>
@@ -911,7 +1054,7 @@ export default function CalendarPage() {
 
         {/* Availability Dialog */}
         <Dialog open={showAvailability} onOpenChange={setShowAvailability}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-2xl max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Manage Availability</DialogTitle>
               <DialogDescription>Set your regular working hours for each day of the week.</DialogDescription>

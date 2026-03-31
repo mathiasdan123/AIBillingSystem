@@ -357,6 +357,8 @@ export const claims = pgTable("claims", {
   cobData: jsonb("cob_data"), // Coordination of Benefits data
   // AI denial prediction
   denialPrediction: jsonb("denial_prediction"), // { riskScore, riskLevel, issues, overallRecommendation }
+  // Automated status checking
+  lastStatusCheckAt: timestamp("last_status_check_at"), // Last time Stedi 276/277 was polled
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -3619,6 +3621,106 @@ export const insertFeeScheduleSchema = createInsertSchema(feeSchedules).omit({
 });
 export type FeeSchedule = typeof feeSchedules.$inferSelect;
 export type InsertFeeSchedule = z.infer<typeof insertFeeScheduleSchema>;
+
+// ==================== Automated Claim Status Checks ====================
+
+// Tracks every automated status check from Stedi 276/277 polling
+export const claimStatusChecks = pgTable("claim_status_checks", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  previousStatus: varchar("previous_status"),
+  newStatus: varchar("new_status"),
+  stediResponse: jsonb("stedi_response"),
+  statusCode: varchar("status_code"),
+  denialReason: text("denial_reason"),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
+  paidDate: timestamp("paid_date"),
+  autoDetected: boolean("auto_detected").default(true),
+  processedAt: timestamp("processed_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_claim_status_checks_claim").on(table.claimId),
+  index("idx_claim_status_checks_practice").on(table.practiceId),
+]);
+
+export const claimStatusChecksRelations = relations(claimStatusChecks, ({ one }) => ({
+  claim: one(claims, {
+    fields: [claimStatusChecks.claimId],
+    references: [claims.id],
+  }),
+  practice: one(practices, {
+    fields: [claimStatusChecks.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertClaimStatusCheckSchema = createInsertSchema(claimStatusChecks).omit({
+  id: true,
+  processedAt: true,
+  createdAt: true,
+});
+export type ClaimStatusCheck = typeof claimStatusChecks.$inferSelect;
+export type InsertClaimStatusCheck = z.infer<typeof insertClaimStatusCheckSchema>;
+
+// ==================== Appeal Outcome Learning ====================
+
+export const appealOutcomes = pgTable("appeal_outcomes", {
+  id: serial("id").primaryKey(),
+  appealId: integer("appeal_id").references(() => appeals.id).notNull(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerName: varchar("payer_name"),
+  denialCategory: varchar("denial_category"),
+  appealLevel: varchar("appeal_level"),
+  outcome: varchar("outcome").notNull(), // won, lost, partial
+  appealedAmount: decimal("appealed_amount", { precision: 10, scale: 2 }),
+  recoveredAmount: decimal("recovered_amount", { precision: 10, scale: 2 }),
+  daysToResolution: integer("days_to_resolution"),
+  wasAiGenerated: boolean("was_ai_generated").default(false),
+  aiModelUsed: varchar("ai_model_used"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_appeal_outcomes_payer_category").on(table.payerName, table.denialCategory),
+  index("idx_appeal_outcomes_practice").on(table.practiceId),
+]);
+
+export const insertAppealOutcomeSchema = createInsertSchema(appealOutcomes).omit({
+  id: true,
+  createdAt: true,
+});
+export type AppealOutcome = typeof appealOutcomes.$inferSelect;
+export type InsertAppealOutcome = z.infer<typeof insertAppealOutcomeSchema>;
+
+// ==================== Claim Corrections (Auto-Fix) ====================
+
+export const claimCorrections = pgTable("claim_corrections", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  correctionType: varchar("correction_type").notNull(), // modifier_fix, code_correction, info_update
+  originalValue: varchar("original_value"),
+  suggestedValue: varchar("suggested_value"),
+  reason: text("reason"),
+  confidence: decimal("confidence", { precision: 3, scale: 2 }),
+  status: varchar("status").default("pending").notNull(), // pending, approved, rejected, applied
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_claim_corrections_claim").on(table.claimId),
+  index("idx_claim_corrections_status").on(table.status),
+]);
+
+export const insertClaimCorrectionSchema = createInsertSchema(claimCorrections).omit({
+  id: true,
+  approvedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type ClaimCorrection = typeof claimCorrections.$inferSelect;
+export type InsertClaimCorrection = z.infer<typeof insertClaimCorrectionSchema>;
 
 // Note: patientStatements table is defined earlier in this file (line ~1864)
 // patientStatementsRelations kept here for organizational purposes

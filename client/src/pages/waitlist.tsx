@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Sheet,
   SheetContent,
@@ -51,6 +54,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   Timer,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 
 interface WaitlistEntry {
@@ -939,6 +944,11 @@ function AddWaitlistForm({
   onSubmit: (data: Partial<WaitlistEntry>) => void;
   isLoading: boolean;
 }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
   const [formData, setFormData] = useState({
     patientId: "",
     therapistId: "",
@@ -961,10 +971,38 @@ function AddWaitlistForm({
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let patientId = formData.patientId;
+
+    if (isNewPatient) {
+      if (!newPatientData.firstName.trim() || !newPatientData.lastName.trim()) {
+        toast({ title: "Error", description: "Please enter the patient's first and last name", variant: "destructive" });
+        return;
+      }
+      try {
+        const res = await apiRequest("POST", "/api/patients", {
+          firstName: newPatientData.firstName.trim(),
+          lastName: newPatientData.lastName.trim(),
+          phone: newPatientData.phone.trim() || null,
+          email: newPatientData.email.trim() || null,
+          dateOfBirth: "2000-01-01",
+          practiceId: 1,
+        });
+        const created = await res.json();
+        patientId = String(created.id);
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      } catch (err: any) {
+        toast({ title: "Error creating patient", description: err.message, variant: "destructive" });
+        return;
+      }
+    } else if (!patientId) {
+      toast({ title: "Error", description: "Please select a patient or add a new one", variant: "destructive" });
+      return;
+    }
+
     onSubmit({
-      patientId: parseInt(formData.patientId),
+      patientId: parseInt(patientId),
       therapistId: formData.therapistId || undefined,
       priority: parseInt(formData.priority),
       preferredDays: formData.preferredDays.length > 0 ? formData.preferredDays : undefined,
@@ -980,22 +1018,128 @@ function AddWaitlistForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
       <div className="space-y-2">
-        <Label>Patient *</Label>
-        <Select
-          value={formData.patientId}
-          onValueChange={(value) => setFormData((prev) => ({ ...prev, patientId: value }))}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select a patient" />
-          </SelectTrigger>
-          <SelectContent>
-            {patients.map((patient) => (
-              <SelectItem key={patient.id} value={String(patient.id)}>
-                {patient.firstName} {patient.lastName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center justify-between">
+          <Label>Patient *</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-xs h-7 px-2"
+            onClick={() => {
+              setIsNewPatient(!isNewPatient);
+              if (!isNewPatient) {
+                setFormData((prev) => ({ ...prev, patientId: "" }));
+              } else {
+                setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+              }
+            }}
+          >
+            {isNewPatient ? "Select Existing Patient" : "+ New Patient"}
+          </Button>
+        </div>
+        {isNewPatient ? (
+          <div className="space-y-2 p-3 border rounded-md bg-muted/30">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">First Name *</Label>
+                <Input
+                  placeholder="First name"
+                  value={newPatientData.firstName}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Last Name *</Label>
+                <Input
+                  placeholder="Last name"
+                  value={newPatientData.lastName}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Phone</Label>
+                <Input
+                  placeholder="Phone number"
+                  value={newPatientData.phone}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, phone: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Email</Label>
+                <Input
+                  placeholder="Email address"
+                  value={newPatientData.email}
+                  onChange={(e) => setNewPatientData({ ...newPatientData, email: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={patientSearchOpen}
+                className="w-full justify-between font-normal"
+              >
+                {formData.patientId
+                  ? (() => {
+                      const p = patients.find((p) => String(p.id) === formData.patientId);
+                      return p ? `${p.firstName} ${p.lastName}` : "Select a patient";
+                    })()
+                  : "Search or type patient name..."}
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Type a name to search..." />
+                <CommandList>
+                  <CommandEmpty>
+                    <div className="text-center py-2">
+                      <p className="text-sm text-muted-foreground mb-2">No patient found</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setIsNewPatient(true);
+                          setPatientSearchOpen(false);
+                          setFormData((prev) => ({ ...prev, patientId: "" }));
+                        }}
+                      >
+                        <Plus className="mr-1 h-3 w-3" />
+                        Add New Patient
+                      </Button>
+                    </div>
+                  </CommandEmpty>
+                  <CommandGroup>
+                    {patients.map((patient) => (
+                      <CommandItem
+                        key={patient.id}
+                        value={`${patient.firstName} ${patient.lastName}`}
+                        onSelect={() => {
+                          setFormData((prev) => ({ ...prev, patientId: String(patient.id) }));
+                          setPatientSearchOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={`mr-2 h-4 w-4 ${
+                            formData.patientId === String(patient.id) ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                        {patient.firstName} {patient.lastName}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -1115,7 +1259,7 @@ function AddWaitlistForm({
       </div>
 
       <DialogFooter>
-        <Button type="submit" disabled={!formData.patientId || isLoading}>
+        <Button type="submit" disabled={(!isNewPatient && !formData.patientId) || isLoading}>
           {isLoading ? "Adding..." : "Add to Waitlist"}
         </Button>
       </DialogFooter>

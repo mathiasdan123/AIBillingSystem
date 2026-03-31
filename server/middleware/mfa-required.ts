@@ -72,14 +72,6 @@ const ADMIN_ROUTE_PATTERNS = [
  * Check if a route path requires MFA enforcement
  */
 export function requiresMfaEnforcement(path: string, userRole?: string, userEmail?: string): boolean {
-  // Skip MFA enforcement for demo/reviewer accounts so reviewers can see the app
-  if (userEmail && (
-    userEmail === 'demo@therapybill.com' ||
-    userEmail.endsWith('@demo.com')
-  )) {
-    return false;
-  }
-
   // Admin users always require MFA for sensitive operations
   if (userRole === 'admin') {
     // Check if it's a sensitive route for admins

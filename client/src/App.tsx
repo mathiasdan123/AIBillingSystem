@@ -60,6 +60,7 @@ const Onboarding = lazy(() => import("@/pages/onboarding"));
 const Surveys = lazy(() => import("@/pages/surveys"));
 const SchedulingInsights = lazy(() => import("@/pages/scheduling-insights"));
 const NotificationSettings = lazy(() => import("@/pages/notification-settings"));
+const BillingTasks = lazy(() => import("@/pages/billing-tasks"));
 const Benchmarking = lazy(() => import("@/pages/benchmarking"));
 const DailyReport = lazy(() => import("@/pages/daily-report"));
 
@@ -185,6 +186,7 @@ function Router() {
               <Route path="/" component={Dashboard} />
               <Route path="/claims" component={Claims} />
               <Route path="/appeals" component={Appeals} />
+              <Route path="/billing-tasks" component={BillingTasks} />
               <Route path="/waitlist" component={Waitlist} />
               <Route path="/reviews" component={Reviews} />
               <Route path="/online-booking" component={BookingSettings} />

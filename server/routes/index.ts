@@ -71,6 +71,9 @@ export { default as treatmentAuthorizationsRouter } from './authorizations';
 export { default as patientStatementsRouter } from './patient-statements';
 export { default as dataImportRouter } from './data-import';
 export { default as dailyReportRouter } from './daily-report';
+export { default as billingTasksRouter } from './billing-tasks';
+export { default as billingDocumentsRouter } from './billing-documents';
+export { default as claimCorrectionsRouter } from './claim-corrections';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

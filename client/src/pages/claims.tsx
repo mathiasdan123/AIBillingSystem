@@ -1447,7 +1447,7 @@ export default function Claims() {
                 New Claim
               </Button>
             </DialogTrigger>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-[425px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Claim</DialogTitle>
               <DialogDescription>
@@ -1542,7 +1542,7 @@ export default function Claims() {
 
       {/* Generate from Session Dialog */}
       <Dialog open={showSessionsDialog} onOpenChange={setShowSessionsDialog}>
-        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[600px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Generate Superbill from Session</DialogTitle>
             <DialogDescription>
@@ -1636,7 +1636,7 @@ export default function Claims() {
 
       {/* Create Superbill Dialog */}
       <Dialog open={showSuperbillDialog} onOpenChange={setShowSuperbillDialog}>
-        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[700px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Superbill</DialogTitle>
             <DialogDescription>
@@ -2218,7 +2218,7 @@ export default function Claims() {
 
       {/* Claim Detail Dialog - full-screen on mobile */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[800px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               Claim {selectedClaim?.claimNumber}

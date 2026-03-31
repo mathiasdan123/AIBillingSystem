@@ -760,7 +760,7 @@ export default function Patients() {
               <span className="sm:hidden">Add</span>
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto w-full h-full sm:h-auto sm:w-auto fixed inset-0 sm:inset-auto sm:relative rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Patient Intake Form</DialogTitle>
               <DialogDescription>
@@ -770,6 +770,7 @@ export default function Patients() {
             <PatientIntakeForm
               practiceId={practiceId}
               onSuccess={handlePatientCreated}
+              startStep={2}
             />
           </DialogContent>
         </Dialog>
@@ -1015,7 +1016,7 @@ export default function Patients() {
 
       {/* Bulk Eligibility Progress/Results Dialog */}
       <Dialog open={showBulkResultsDialog} onOpenChange={(open) => { if (!bulkCheckInProgress) setShowBulkResultsDialog(open); }}>
-        <DialogContent className="w-full h-full sm:h-auto sm:max-w-[550px] max-h-screen sm:max-h-[80vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+        <DialogContent className="sm:max-w-[550px] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {bulkCheckInProgress ? "Checking Eligibility..." : "Bulk Eligibility Results"}
@@ -1112,7 +1113,7 @@ export default function Patients() {
       {/* Patient Details Modal - full-screen on mobile */}
       {selectedPatient && (
         <Dialog open={!!selectedPatient} onOpenChange={() => setSelectedPatient(null)}>
-          <DialogContent className="w-full h-full sm:h-auto sm:max-w-[700px] max-h-screen sm:max-h-[90vh] overflow-y-auto fixed inset-0 sm:inset-auto rounded-none sm:rounded-lg">
+          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {selectedPatient.firstName} {selectedPatient.lastName}
