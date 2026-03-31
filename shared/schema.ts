@@ -357,6 +357,8 @@ export const claims = pgTable("claims", {
   cobData: jsonb("cob_data"), // Coordination of Benefits data
   // AI denial prediction
   denialPrediction: jsonb("denial_prediction"), // { riskScore, riskLevel, issues, overallRecommendation }
+  // Automated status checking
+  lastStatusCheckAt: timestamp("last_status_check_at"), // Last time Stedi 276/277 was polled
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -3619,6 +3621,47 @@ export const insertFeeScheduleSchema = createInsertSchema(feeSchedules).omit({
 });
 export type FeeSchedule = typeof feeSchedules.$inferSelect;
 export type InsertFeeSchedule = z.infer<typeof insertFeeScheduleSchema>;
+
+// ==================== Automated Claim Status Checks ====================
+
+// Tracks every automated status check from Stedi 276/277 polling
+export const claimStatusChecks = pgTable("claim_status_checks", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  previousStatus: varchar("previous_status"),
+  newStatus: varchar("new_status"),
+  stediResponse: jsonb("stedi_response"),
+  statusCode: varchar("status_code"),
+  denialReason: text("denial_reason"),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
+  paidDate: timestamp("paid_date"),
+  autoDetected: boolean("auto_detected").default(true),
+  processedAt: timestamp("processed_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_claim_status_checks_claim").on(table.claimId),
+  index("idx_claim_status_checks_practice").on(table.practiceId),
+]);
+
+export const claimStatusChecksRelations = relations(claimStatusChecks, ({ one }) => ({
+  claim: one(claims, {
+    fields: [claimStatusChecks.claimId],
+    references: [claims.id],
+  }),
+  practice: one(practices, {
+    fields: [claimStatusChecks.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+export const insertClaimStatusCheckSchema = createInsertSchema(claimStatusChecks).omit({
+  id: true,
+  processedAt: true,
+  createdAt: true,
+});
+export type ClaimStatusCheck = typeof claimStatusChecks.$inferSelect;
+export type InsertClaimStatusCheck = z.infer<typeof insertClaimStatusCheckSchema>;
 
 // Note: patientStatements table is defined earlier in this file (line ~1864)
 // patientStatementsRelations kept here for organizational purposes

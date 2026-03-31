@@ -820,8 +820,29 @@ export function startScheduler() {
   });
   scheduledTasks.set('automatedReviewRequests', automatedReviewRequestTask);
 
+  // Automated claim status polling - every 4 hours
+  const automatedClaimStatusTask = cron.schedule('0 */4 * * *', async () => {
+    try {
+      logger.info('Starting automated claim status polling');
+      const { pollClaimStatuses } = await import('./services/automatedClaimStatusService');
+      const result = await pollClaimStatuses();
+      logger.info('Automated claim status polling completed', {
+        checked: result.checked,
+        statusChanges: result.statusChanges,
+        newDenials: result.newDenials,
+        newPayments: result.newPayments,
+        errors: result.errors.length,
+      });
+    } catch (error: any) {
+      logger.error('Automated claim status polling failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('automatedClaimStatusCheck', automatedClaimStatusTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests'],
+    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck'],
   });
 }
 

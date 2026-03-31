@@ -1318,7 +1318,7 @@ router.post('/:id/deny', isAuthenticated, isAdminOrBilling, async (req: any, res
       }));
 
       if (patient && practice) {
-        appealResult = await appealGenerator.generateAppeal(
+        appealResult = await appealGenerator.generateAppealWithClaude(
           { ...updatedClaim, denialReason: denialReason || 'No reason provided' },
           enrichedLineItems,
           patient,

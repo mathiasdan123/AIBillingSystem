@@ -181,7 +181,38 @@ const DENIAL_PATTERNS: Record<string, {
 
 export class AiAppealGenerator {
   /**
-   * Analyze denial reason and generate appeal
+   * Generate appeal using Claude first, falling back to templates
+   */
+  async generateAppealWithClaude(
+    claim: ClaimData,
+    lineItems: LineItemData[],
+    patient: PatientData,
+    practice: PracticeData,
+    soapNote?: string | null,
+    appealLevel?: string
+  ): Promise<AppealResult> {
+    try {
+      const { generateClaudeAppeal, isClaudeAppealAvailable } = await import('./services/claudeAppealService');
+      if (isClaudeAppealAvailable()) {
+        return await generateClaudeAppeal({
+          claim,
+          lineItems,
+          patient,
+          practice,
+          soapNote,
+          denialReason: claim.denialReason || 'No reason provided',
+          appealLevel,
+        });
+      }
+    } catch (error: any) {
+      console.warn('Claude appeal generation failed, falling back to template:', error.message);
+    }
+
+    return this.generateAppeal(claim, lineItems, patient, practice);
+  }
+
+  /**
+   * Analyze denial reason and generate appeal (template-based fallback)
    */
   async generateAppeal(
     claim: ClaimData,
