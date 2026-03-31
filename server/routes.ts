@@ -29,6 +29,7 @@ import {
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
+import { mfaSetupRequired } from "./middleware/mfa-setup-required";
 import { authLimiter } from "./middleware/rate-limiter";
 import logger from "./services/logger";
 import { cache } from "./services/cacheService";
@@ -90,7 +91,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // HIPAA audit middleware
   app.use('/api', auditMiddleware);
 
-  // HIPAA MFA enforcement
+  // HIPAA MFA enforcement: setup check (production only) -> existing setup check -> session verification
+  app.use('/api', mfaSetupRequired);
   app.use('/api', conditionalRequireMfaSetup);
   app.use('/api', conditionalMfaRequired);
 
