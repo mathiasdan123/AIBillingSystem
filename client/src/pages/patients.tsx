@@ -760,7 +760,7 @@ export default function Patients() {
               <span className="sm:hidden">Add</span>
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Patient Intake Form</DialogTitle>
               <DialogDescription>
@@ -770,6 +770,7 @@ export default function Patients() {
             <PatientIntakeForm
               practiceId={practiceId}
               onSuccess={handlePatientCreated}
+              startStep={2}
             />
           </DialogContent>
         </Dialog>

@@ -7,11 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
@@ -72,6 +74,7 @@ export default function CalendarPage() {
   });
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
   const [showSeriesActionDialog, setShowSeriesActionDialog] = useState(false);
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
@@ -509,16 +512,68 @@ export default function CalendarPage() {
                         </div>
                       </div>
                     ) : (
-                      <Select value={newAppointment.patientId} onValueChange={(v) => setNewAppointment({ ...newAppointment, patientId: v })}>
-                        <SelectTrigger><SelectValue placeholder="Select a patient" /></SelectTrigger>
-                        <SelectContent>
-                          {patients.map((p: any) => (
-                            <SelectItem key={p.id} value={String(p.id)}>
-                              {p.firstName} {p.lastName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={patientSearchOpen}
+                            className="w-full justify-between font-normal"
+                          >
+                            {newAppointment.patientId
+                              ? (() => {
+                                  const p = patients.find((p: any) => String(p.id) === newAppointment.patientId);
+                                  return p ? `${(p as any).firstName} ${(p as any).lastName}` : "Select a patient";
+                                })()
+                              : "Search or type patient name..."}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Type a name to search..." />
+                            <CommandList>
+                              <CommandEmpty>
+                                <div className="text-center py-2">
+                                  <p className="text-sm text-muted-foreground mb-2">No patient found</p>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      setIsNewPatient(true);
+                                      setPatientSearchOpen(false);
+                                      setNewAppointment({ ...newAppointment, patientId: "" });
+                                    }}
+                                  >
+                                    <Plus className="mr-1 h-3 w-3" />
+                                    Add New Patient
+                                  </Button>
+                                </div>
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {patients.map((p: any) => (
+                                  <CommandItem
+                                    key={p.id}
+                                    value={`${p.firstName} ${p.lastName}`}
+                                    onSelect={() => {
+                                      setNewAppointment({ ...newAppointment, patientId: String(p.id) });
+                                      setPatientSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={`mr-2 h-4 w-4 ${
+                                        newAppointment.patientId === String(p.id) ? "opacity-100" : "opacity-0"
+                                      }`}
+                                    />
+                                    {p.firstName} {p.lastName}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     )}
                   </div>
                   <div className="space-y-2">

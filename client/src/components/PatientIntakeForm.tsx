@@ -199,11 +199,12 @@ type PatientFormData = z.infer<typeof patientSchema>;
 interface PatientIntakeFormProps {
   practiceId: number;
   onSuccess: () => void;
+  startStep?: number;
 }
 
-export default function PatientIntakeForm({ practiceId, onSuccess }: PatientIntakeFormProps) {
+export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: PatientIntakeFormProps) {
   const { toast } = useToast();
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(startStep || 1);
   const [planDocument, setPlanDocument] = useState<File | null>(null);
   const [documentType, setDocumentType] = useState<string>("sbc");
   const [showSecondaryInsurance, setShowSecondaryInsurance] = useState(false);
@@ -542,7 +543,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        {/* Progress Indicator */}
+        {/* Progress Indicator with clickable section navigation */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-slate-700">
@@ -566,11 +567,43 @@ export default function PatientIntakeForm({ practiceId, onSuccess }: PatientInta
               {step === 15 && "Insurance Documents"}
             </span>
           </div>
-          <div className="w-full bg-slate-200 rounded-full h-2">
+          <div className="w-full bg-slate-200 rounded-full h-2 mb-3">
             <div
               className="bg-medical-blue-500 h-2 rounded-full transition-all duration-300"
               style={{ width: `${(step / totalSteps) * 100}%` }}
             />
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {[
+              { s: 1, label: "HIPAA" },
+              { s: 2, label: "Patient" },
+              { s: 3, label: "Parent 1" },
+              { s: 4, label: "Parent 2" },
+              { s: 5, label: "Reason" },
+              { s: 6, label: "Birth" },
+              { s: 7, label: "Medical" },
+              { s: 8, label: "Nutrition" },
+              { s: 9, label: "Social" },
+              { s: 10, label: "Milestones" },
+              { s: 11, label: "Sensory 1" },
+              { s: 12, label: "Sensory 2" },
+              { s: 13, label: "Waiver" },
+              { s: 14, label: "Financial" },
+              { s: 15, label: "Documents" },
+            ].map(({ s, label }) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStep(s)}
+                className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                  step === s
+                    ? "bg-medical-blue-500 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
 
