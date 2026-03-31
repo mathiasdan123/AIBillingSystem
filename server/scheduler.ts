@@ -841,8 +841,38 @@ export function startScheduler() {
   });
   scheduledTasks.set('automatedClaimStatusCheck', automatedClaimStatusTask);
 
+  // Appeal insights refresh - weekly on Sunday at 2 AM
+  const appealInsightsTask = cron.schedule('0 2 * * 0', async () => {
+    try {
+      logger.info('Starting weekly appeal insights refresh');
+      const { getAppealSuccessRates } = await import('./services/appealOutcomeLearningService');
+      const rates = await getAppealSuccessRates(1);
+      logger.info('Appeal insights refresh completed', { categoriesTracked: rates.length });
+    } catch (error: any) {
+      logger.error('Appeal insights refresh failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('appealInsightsRefresh', appealInsightsTask);
+
+  // Auto-fix analysis for denied claims - daily at 10 AM
+  const autoFixAnalysisTask = cron.schedule('0 10 * * *', async () => {
+    try {
+      logger.info('Starting daily auto-fix analysis');
+      const { analyzeRecentDenialsForFixes } = await import('./services/claimAutoFixService');
+      const result = await analyzeRecentDenialsForFixes(1);
+      logger.info('Auto-fix analysis completed', result);
+    } catch (error: any) {
+      logger.error('Auto-fix analysis failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('autoFixAnalysis', autoFixAnalysisTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck'],
+    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis'],
   });
 }
 

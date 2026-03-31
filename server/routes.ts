@@ -26,6 +26,9 @@ import {
   benchmarkingRouter,
   dataImportRouter,
   dailyReportRouter,
+  billingTasksRouter,
+  billingDocumentsRouter,
+  claimCorrectionsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -219,6 +222,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/data-import', dataImportRouter);
   // Daily Report routes: /api/daily-report/*
   app.use('/api/daily-report', dailyReportRouter);
+  // Billing Tasks (Option C): /api/billing-tasks/*, /api/billing-documents/*, /api/claim-corrections/*
+  app.use('/api', billingTasksRouter);
+  app.use('/api', billingDocumentsRouter);
+  app.use('/api', claimCorrectionsRouter);
 
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);
