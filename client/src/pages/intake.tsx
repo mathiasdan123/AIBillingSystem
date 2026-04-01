@@ -17,7 +17,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertPatientSchema } from "@shared/schema";
-import { getAuthHeaders } from "@/hooks/useAuth";
+import { useAuth, getAuthHeaders } from "@/hooks/useAuth";
 import {
   User,
   FileText,
@@ -117,6 +117,8 @@ export default function PatientIntake() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const userPracticeId = user?.practiceId ?? 1;
 
   // Fetch practice info for consent forms
   const { data: practiceInfo } = useQuery<{
@@ -130,7 +132,7 @@ export default function PatientIntake() {
     brandPrimaryColor: string;
     brandPrivacyPolicyUrl: string;
   }>({
-    queryKey: ['/api/practices/1/public-info'],
+    queryKey: [`/api/practices/${userPracticeId}/public-info`],
   });
 
   // Load saved form data from localStorage
@@ -151,7 +153,7 @@ export default function PatientIntake() {
   const form = useForm<PatientIntakeForm>({
     resolver: zodResolver(patientIntakeSchema),
     defaultValues: savedData || {
-      practiceId: 1, // TODO: Get from user's practice
+      practiceId: userPracticeId,
       firstName: "",
       lastName: "",
       dateOfBirth: "",
@@ -251,7 +253,7 @@ export default function PatientIntake() {
       const patient = await response.json();
 
       // Create HIPAA-compliant consent records
-      const practiceId = data.practiceId || 1;
+      const practiceId = data.practiceId || userPracticeId;
       const signerName = data.consentSignerRelationship === 'self'
         ? `${data.firstName} ${data.lastName}`
         : data.consentSignerName || `${data.firstName} ${data.lastName}`;

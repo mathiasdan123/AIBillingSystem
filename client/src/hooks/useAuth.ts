@@ -7,6 +7,7 @@ interface User {
   lastName?: string;
   profileImageUrl?: string | null;
   role?: 'admin' | 'therapist';
+  practiceId?: number;
 }
 
 export function useAuth() {

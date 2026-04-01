@@ -37,6 +37,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { storage } from '../storage';
 import logger from '../services/logger';
+import { sendEmail } from '../services/emailService';
 
 const router = Router();
 
@@ -196,7 +197,32 @@ router.post('/public/book/:slug', async (req: any, res) => {
     const practice = await storage.getPractice(settings.practiceId);
     const appointmentType = await storage.getAppointmentType(parseInt(appointmentTypeId));
 
-    // TODO: Send booking confirmation email
+    // Send booking confirmation email (non-blocking)
+    const patientEmail = existingPatient?.email || email;
+    const patientName = existingPatient
+      ? `${existingPatient.firstName} ${existingPatient.lastName}`
+      : `${firstName} ${lastName}`;
+    if (patientEmail) {
+      sendEmail({
+        to: patientEmail,
+        subject: `Booking Confirmation - ${practice?.name || 'Your Practice'}`,
+        fromName: practice?.name,
+        html: `
+          <h2>Your appointment request has been received</h2>
+          <p>Hi ${patientName},</p>
+          <p>We've received your booking request. Here are the details:</p>
+          <ul>
+            <li><strong>Date:</strong> ${new Date(date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</li>
+            <li><strong>Time:</strong> ${time}</li>
+            <li><strong>Type:</strong> ${appointmentType?.name || 'Appointment'}</li>
+            <li><strong>Confirmation Code:</strong> ${booking.confirmationCode}</li>
+          </ul>
+          <p>Your appointment is pending confirmation. We'll reach out if any additional information is needed.</p>
+          <p>Thank you,<br/>${practice?.name || 'Your Practice'}</p>
+        `,
+        text: `Booking Confirmation\n\nHi ${patientName},\n\nYour appointment request has been received.\nDate: ${date}\nTime: ${time}\nType: ${appointmentType?.name || 'Appointment'}\nConfirmation Code: ${booking.confirmationCode}\n\nYour appointment is pending confirmation.\n\nThank you,\n${practice?.name || 'Your Practice'}`,
+      }).catch(err => logger.error('Failed to send booking confirmation email', { error: err instanceof Error ? err.message : String(err) }));
+    }
 
     res.status(201).json({
       success: true,
