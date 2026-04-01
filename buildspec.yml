@@ -8,7 +8,7 @@ phases:
   build:
     commands:
       - echo Building Docker image...
-      - docker build -t therapybill-app .
+      - docker build --target production -t therapybill-app .
       - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
       - echo Building migrate image...
       - docker build --target migrate -t therapybill-app:migrate .
