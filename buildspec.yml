@@ -10,8 +10,12 @@ phases:
       - echo Building Docker image...
       - docker build -t therapybill-app .
       - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
+      - echo Building migrate image...
+      - docker build --target migrate -t therapybill-app:migrate .
+      - docker tag therapybill-app:migrate 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:migrate
   post_build:
     commands:
-      - echo Pushing Docker image...
+      - echo Pushing Docker images...
       - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
+      - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:migrate
       - echo Build completed

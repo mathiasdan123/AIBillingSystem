@@ -63,3 +63,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Start the application
 CMD ["node", "dist/index.js"]
+
+# Stage 3: Migration image (includes drizzle-kit for schema push)
+FROM public.ecr.aws/docker/library/node:20-slim AS migrate
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --include=dev && npm cache clean --force
+
+COPY drizzle.config.ts ./
+COPY shared ./shared
+
+CMD ["npx", "drizzle-kit", "push"]

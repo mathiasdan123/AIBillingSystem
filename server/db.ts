@@ -28,7 +28,13 @@ dbReady = (async () => {
     // Use regular pg driver for AWS RDS and local development
     const pg = await import('pg');
     const { drizzle: drizzlePg } = await import('drizzle-orm/node-postgres');
-    pool = new pg.default.Pool({ connectionString });
+    pool = new pg.default.Pool({
+      connectionString,
+      max: 10,
+      connectionTimeoutMillis: 5000,   // fail fast if no connection available in 5s
+      idleTimeoutMillis: 30000,        // close idle connections after 30s
+      statement_timeout: 30000,        // kill queries that run longer than 30s
+    });
     db = drizzlePg({ client: pool, schema });
     console.log('Using regular PostgreSQL driver (pg)');
   } else {
