@@ -19,6 +19,14 @@ if (process.env.SENTRY_DSN) {
   console.log("✓ Sentry error tracking initialized");
 }
 
+// Prevent unhandled promise rejections from crashing the process
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(reason);
+  }
+});
+
 import express, { type Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import cors from "cors";

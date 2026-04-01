@@ -73,6 +73,16 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+// Retry server errors (500+) with backoff, but not client errors (4xx)
+function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (failureCount >= 3) return false;
+  if (error instanceof Error) {
+    const status = parseInt(error.message, 10);
+    if (status >= 400 && status < 500) return false;
+  }
+  return true;
+}
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -80,10 +90,12 @@ export const queryClient = new QueryClient({
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: Infinity,
-      retry: 1,
+      retry: shouldRetry,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     },
     mutations: {
-      retry: false,
+      retry: shouldRetry,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     },
   },
 });
