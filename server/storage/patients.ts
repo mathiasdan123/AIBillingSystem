@@ -116,13 +116,25 @@ export async function softDeletePatient(id: number): Promise<void> {
     .where(eq(patients.id, id));
 }
 
-export async function getAllPatients(): Promise<Patient[]> {
-  const rows = await db
+export async function getAllPatients(opts?: { limit?: number; offset?: number }): Promise<Patient[]> {
+  let query = db
     .select()
     .from(patients)
     .where(isNull(patients.deletedAt))
-    .orderBy(desc(patients.createdAt));
+    .orderBy(desc(patients.createdAt))
+    .$dynamic();
+  if (opts?.limit) query = query.limit(opts.limit);
+  if (opts?.offset) query = query.offset(opts.offset);
+  const rows = await query;
   return rows.map((r: any) => decryptPatientRecord(r) as Patient);
+}
+
+export async function countAllPatients(): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(patients)
+    .where(isNull(patients.deletedAt));
+  return result?.total ?? 0;
 }
 
 export async function getPatientsByIds(ids: number[]): Promise<Map<number, Patient>> {

@@ -92,6 +92,7 @@ export const storage = {
   updatePatient: patientFns.updatePatient,
   softDeletePatient: patientFns.softDeletePatient,
   getAllPatients: patientFns.getAllPatients,
+  countAllPatients: patientFns.countAllPatients,
   getPatientsByIds: patientFns.getPatientsByIds,
   hardDeletePatient: patientFns.hardDeletePatient,
   getExpiredSoftDeletedPatients: patientFns.getExpiredSoftDeletedPatients,
@@ -142,6 +143,7 @@ export const storage = {
   // ==================== CLAIMS ====================
   createClaim: claimFns.createClaim,
   getClaims: claimFns.getClaims,
+  countClaims: claimFns.countClaims,
   getClaim: claimFns.getClaim,
   getClaimsByIds: claimFns.getClaimsByIds,
   updateClaim: claimFns.updateClaim,
@@ -242,6 +244,7 @@ export const storage = {
   updateSoapNoteCosignStatus: clinicalFns.updateSoapNoteCosignStatus,
   getPendingCosignNotes: clinicalFns.getPendingCosignNotes,
   getAllSoapNotes: clinicalFns.getAllSoapNotes,
+  countAllSoapNotes: clinicalFns.countAllSoapNotes,
   createTreatmentPlan: clinicalFns.createTreatmentPlan,
   getTreatmentPlans: clinicalFns.getTreatmentPlans,
   getTreatmentPlan: clinicalFns.getTreatmentPlan,
@@ -318,7 +321,9 @@ export const storage = {
   // ==================== APPOINTMENTS ====================
   createAppointment: appointmentFns.createAppointment,
   getAppointments: appointmentFns.getAppointments,
+  countAppointments: appointmentFns.countAppointments,
   getAppointmentsByDateRange: appointmentFns.getAppointmentsByDateRange,
+  countAppointmentsByDateRange: appointmentFns.countAppointmentsByDateRange,
   getAppointment: appointmentFns.getAppointment,
   updateAppointment: appointmentFns.updateAppointment,
   cancelAppointment: appointmentFns.cancelAppointment,

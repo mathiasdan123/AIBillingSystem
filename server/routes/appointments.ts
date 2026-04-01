@@ -273,14 +273,21 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const start = req.query.start ? new Date(req.query.start as string) : undefined;
     const end = req.query.end ? new Date(req.query.end as string) : undefined;
 
-    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
-    const allAppts = (start && end)
-      ? await storage.getAppointmentsByDateRange(practiceId, start, end)
-      : await storage.getAppointments(practiceId);
-    const total = allAppts.length;
     const { page, limit, offset } = parsePagination(req.query);
-    const appts = allAppts.slice(offset, offset + limit);
-    if (!req.query.page && !req.query.limit) {
+    const usePagination = !!(req.query.page || req.query.limit);
+    const paginationOpts = usePagination ? { limit, offset } : undefined;
+
+    const [appts, total] = (start && end)
+      ? await Promise.all([
+          storage.getAppointmentsByDateRange(practiceId, start, end, paginationOpts),
+          usePagination ? storage.countAppointmentsByDateRange(practiceId, start, end) : Promise.resolve(0),
+        ])
+      : await Promise.all([
+          storage.getAppointments(practiceId, paginationOpts),
+          usePagination ? storage.countAppointments(practiceId) : Promise.resolve(0),
+        ]);
+
+    if (!usePagination) {
       res.json(appts);
     } else {
       res.json(paginatedResponse(appts, total, page, limit));

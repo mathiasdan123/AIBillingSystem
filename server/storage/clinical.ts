@@ -182,9 +182,19 @@ export async function getPendingCosignNotes(supervisorId: string): Promise<SoapN
   return rows.map((r: any) => decryptSoapNoteRecord(r) as SoapNote);
 }
 
-export async function getAllSoapNotes(): Promise<SoapNote[]> {
-  const rows = await db.select().from(soapNotes).orderBy(desc(soapNotes.createdAt));
+export async function getAllSoapNotes(opts?: { limit?: number; offset?: number }): Promise<SoapNote[]> {
+  let query = db.select().from(soapNotes).orderBy(desc(soapNotes.createdAt)).$dynamic();
+  if (opts?.limit) query = query.limit(opts.limit);
+  if (opts?.offset) query = query.offset(opts.offset);
+  const rows = await query;
   return rows.map((r: any) => decryptSoapNoteRecord(r) as SoapNote);
+}
+
+export async function countAllSoapNotes(): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(soapNotes);
+  return result?.total ?? 0;
 }
 
 // ==================== TREATMENT PLANS ====================

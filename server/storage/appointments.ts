@@ -44,7 +44,7 @@ import {
   type InsertAppointmentRequest,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, gte, lte, ne, lt, isNull, count } from "drizzle-orm";
+import { eq, desc, and, gte, lte, ne, lt, isNull, count, sql } from "drizzle-orm";
 import {
   encryptTelehealthSessionRecord,
   decryptTelehealthSessionRecord,
@@ -62,16 +62,28 @@ export async function createAppointment(data: InsertAppointment): Promise<Appoin
   return created;
 }
 
-export async function getAppointments(practiceId: number): Promise<Appointment[]> {
-  return await db
+export async function getAppointments(practiceId: number, opts?: { limit?: number; offset?: number }): Promise<Appointment[]> {
+  let query = db
     .select()
     .from(appointments)
     .where(eq(appointments.practiceId, practiceId))
-    .orderBy(desc(appointments.startTime));
+    .orderBy(desc(appointments.startTime))
+    .$dynamic();
+  if (opts?.limit) query = query.limit(opts.limit);
+  if (opts?.offset) query = query.offset(opts.offset);
+  return await query;
 }
 
-export async function getAppointmentsByDateRange(practiceId: number, start: Date, end: Date): Promise<Appointment[]> {
-  return await db
+export async function countAppointments(practiceId: number): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(appointments)
+    .where(eq(appointments.practiceId, practiceId));
+  return result?.total ?? 0;
+}
+
+export async function getAppointmentsByDateRange(practiceId: number, start: Date, end: Date, opts?: { limit?: number; offset?: number }): Promise<Appointment[]> {
+  let query = db
     .select()
     .from(appointments)
     .where(and(
@@ -79,7 +91,23 @@ export async function getAppointmentsByDateRange(practiceId: number, start: Date
       gte(appointments.startTime, start),
       lte(appointments.startTime, end)
     ))
-    .orderBy(appointments.startTime);
+    .orderBy(appointments.startTime)
+    .$dynamic();
+  if (opts?.limit) query = query.limit(opts.limit);
+  if (opts?.offset) query = query.offset(opts.offset);
+  return await query;
+}
+
+export async function countAppointmentsByDateRange(practiceId: number, start: Date, end: Date): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(appointments)
+    .where(and(
+      eq(appointments.practiceId, practiceId),
+      gte(appointments.startTime, start),
+      lte(appointments.startTime, end)
+    ));
+  return result?.total ?? 0;
 }
 
 export async function getAppointment(id: number): Promise<Appointment | undefined> {

@@ -168,11 +168,13 @@ const verifyPatientAccess = async (req: any, patientId: number): Promise<{
  */
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
-    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
-    const allPatients = await storage.getAllPatients();
-    const total = allPatients.length;
     const { page, limit, offset } = parsePagination(req.query);
-    const patients = allPatients.slice(offset, offset + limit);
+    const usePagination = !!(req.query.page || req.query.limit);
+
+    const [patients, total] = await Promise.all([
+      storage.getAllPatients(usePagination ? { limit, offset } : undefined),
+      usePagination ? storage.countAllPatients() : Promise.resolve(0),
+    ]);
 
     // HIPAA: Include consent status for each patient (batch query, not N+1)
     const patientIds = patients.map((p: any) => p.id);
@@ -192,8 +194,7 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     });
 
     // Return plain array for backwards compatibility when no pagination params specified
-    // This prevents breaking pages that expect an array from /api/patients
-    if (!req.query.page && !req.query.limit) {
+    if (!usePagination) {
       res.json(patientsWithConsent);
     } else {
       res.json(paginatedResponse(patientsWithConsent, total, page, limit));

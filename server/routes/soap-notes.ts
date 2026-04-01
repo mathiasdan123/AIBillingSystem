@@ -83,12 +83,15 @@ const isAdminOrBilling = async (req: any, res: Response, next: NextFunction) => 
 // Get all SOAP notes
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
-    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
-    const allSoapNotes = await storage.getAllSoapNotes();
-    const total = allSoapNotes.length;
     const { page, limit, offset } = parsePagination(req.query);
-    const soapNotes = allSoapNotes.slice(offset, offset + limit);
-    if (!req.query.page && !req.query.limit) {
+    const usePagination = !!(req.query.page || req.query.limit);
+
+    const [soapNotes, total] = await Promise.all([
+      storage.getAllSoapNotes(usePagination ? { limit, offset } : undefined),
+      usePagination ? storage.countAllSoapNotes() : Promise.resolve(0),
+    ]);
+
+    if (!usePagination) {
       res.json(soapNotes);
     } else {
       res.json(paginatedResponse(soapNotes, total, page, limit));

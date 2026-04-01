@@ -54,12 +54,24 @@ export async function createClaim(claim: InsertClaim): Promise<Claim> {
   return newClaim;
 }
 
-export async function getClaims(practiceId: number): Promise<Claim[]> {
-  return await db
+export async function getClaims(practiceId: number, opts?: { limit?: number; offset?: number }): Promise<Claim[]> {
+  let query = db
     .select()
     .from(claims)
     .where(eq(claims.practiceId, practiceId))
-    .orderBy(desc(claims.createdAt));
+    .orderBy(desc(claims.createdAt))
+    .$dynamic();
+  if (opts?.limit) query = query.limit(opts.limit);
+  if (opts?.offset) query = query.offset(opts.offset);
+  return await query;
+}
+
+export async function countClaims(practiceId: number): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(claims)
+    .where(eq(claims.practiceId, practiceId));
+  return result?.total ?? 0;
 }
 
 export async function getClaim(id: number): Promise<Claim | undefined> {

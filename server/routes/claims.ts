@@ -157,12 +157,15 @@ const generateSecureClaimNumber = (prefix: string): string => {
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    // TODO: Move pagination to DB layer (pass limit/offset to storage) to avoid loading all rows into memory
-    const allClaims = await storage.getClaims(practiceId);
-    const total = allClaims.length;
     const { page, limit, offset } = parsePagination(req.query);
-    const claims = allClaims.slice(offset, offset + limit);
-    if (!req.query.page && !req.query.limit) {
+    const usePagination = !!(req.query.page || req.query.limit);
+
+    const [claims, total] = await Promise.all([
+      storage.getClaims(practiceId, usePagination ? { limit, offset } : undefined),
+      usePagination ? storage.countClaims(practiceId) : Promise.resolve(0),
+    ]);
+
+    if (!usePagination) {
       res.json(claims);
     } else {
       res.json(paginatedResponse(claims, total, page, limit));
