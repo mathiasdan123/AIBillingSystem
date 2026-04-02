@@ -38,8 +38,8 @@ import { requestSanitizer } from "./middleware/sanitize";
 import { globalErrorHandler } from "./middleware/errorHandler";
 import { apiVersionMiddleware, apiVersionRewrite } from "./middleware/apiVersion";
 import { seedDatabase } from "./seeds";
-import { startScheduler } from "./scheduler";
-import { initRedisClient } from "./services/redisClient";
+import { startScheduler, stopScheduler } from "./scheduler";
+import { initRedisClient, shutdownRedis } from "./services/redisClient";
 import { RedisStore } from "rate-limit-redis";
 import { swaggerSpec } from "./swagger";
 
@@ -350,10 +350,11 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Initialize database with seed data
-  await seedDatabase();
-  
-  const server = await registerRoutes(app);
+  try {
+    // Initialize database with seed data
+    await seedDatabase();
+
+    const server = await registerRoutes(app);
 
   // Swagger UI — only in non-production to avoid exposing API surface
   if (process.env.NODE_ENV !== 'production') {
@@ -406,5 +407,29 @@ app.use((req, res, next) => {
     // Start the scheduler for daily reports
     startScheduler();
   });
+
+  // Graceful shutdown handlers
+  const shutdown = async (signal: string) => {
+    log(`${signal} received, starting graceful shutdown...`);
+    server.close(() => {
+      log('HTTP server closed');
+    });
+    stopScheduler();
+    await shutdownRedis();
+    setTimeout(() => {
+      log('Forcing shutdown after timeout');
+      process.exit(1);
+    }, 10000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  } catch (err) {
+    console.error('Fatal startup error:', err);
+    if (process.env.SENTRY_DSN) {
+      Sentry.captureException(err);
+      await Sentry.flush(5000);
+    }
+    process.exit(1);
+  }
 })();
 

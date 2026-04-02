@@ -13,7 +13,7 @@ let dailyReportRecipients: string[] = [];
 
 export function setDailyReportRecipients(emails: string[]) {
   dailyReportRecipients = emails;
-  console.log('Daily report recipients updated:', emails);
+  logger.info('Daily report recipients updated', { emails });
 }
 
 export function getDailyReportRecipients(): string[] {
@@ -21,15 +21,15 @@ export function getDailyReportRecipients(): string[] {
 }
 
 async function generateAndSendDailyDeniedClaimsReport(practiceId: number = 1) {
-  console.log('Running daily denied claims report for practice:', practiceId);
+  logger.info('Running daily denied claims report for practice', { practiceId });
 
   if (!isEmailConfigured()) {
-    console.log('Email not configured, skipping daily report');
+    logger.info('Email not configured, skipping daily report');
     return;
   }
 
   if (dailyReportRecipients.length === 0) {
-    console.log('No recipients configured for daily report');
+    logger.info('No recipients configured for daily report');
     return;
   }
 
@@ -91,25 +91,25 @@ async function generateAndSendDailyDeniedClaimsReport(practiceId: number = 1) {
     const result = await sendDeniedClaimsReport(dailyReportRecipients, reportData);
 
     if (result.success) {
-      console.log('Daily denied claims report sent successfully');
+      logger.info('Daily denied claims report sent successfully');
     } else {
-      console.error('Failed to send daily denied claims report:', result.error);
+      logger.error('Failed to send daily denied claims report', { error: result.error });
     }
   } catch (error) {
-    console.error('Error generating daily denied claims report:', error);
+    logger.error('Error generating daily denied claims report', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
 async function generateAndSendWeeklyCancellationReport(practiceId: number = 1) {
-  console.log('Running weekly cancellation report for practice:', practiceId);
+  logger.info('Running weekly cancellation report for practice', { practiceId });
 
   if (!isEmailConfigured()) {
-    console.log('Email not configured, skipping weekly cancellation report');
+    logger.info('Email not configured, skipping weekly cancellation report');
     return;
   }
 
   if (dailyReportRecipients.length === 0) {
-    console.log('No recipients configured for weekly cancellation report');
+    logger.info('No recipients configured for weekly cancellation report');
     return;
   }
 
@@ -166,12 +166,12 @@ async function generateAndSendWeeklyCancellationReport(practiceId: number = 1) {
 
     const result = await sendWeeklyCancellationReport(dailyReportRecipients, reportData);
     if (result.success) {
-      console.log('Weekly cancellation report sent successfully');
+      logger.info('Weekly cancellation report sent successfully');
     } else {
-      console.error('Failed to send weekly cancellation report:', result.error);
+      logger.error('Failed to send weekly cancellation report', { error: result.error });
     }
   } catch (error) {
-    console.error('Error generating weekly cancellation report:', error);
+    logger.error('Error generating weekly cancellation report', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -879,14 +879,14 @@ export function startScheduler() {
 export function stopScheduler() {
   scheduledTasks.forEach((task, name) => {
     task.stop();
-    console.log(`Stopped scheduled task: ${name}`);
+    logger.info('Stopped scheduled task', { name });
   });
   scheduledTasks.clear();
 }
 
 // Manual trigger for testing
 export async function triggerDailyReportNow(practiceId: number = 1) {
-  console.log('Manually triggering daily denied claims report');
+  logger.info('Manually triggering daily denied claims report', { practiceId });
   await generateAndSendDailyDeniedClaimsReport(practiceId);
 }
 

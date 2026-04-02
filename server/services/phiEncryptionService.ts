@@ -14,14 +14,12 @@ interface EncryptedField {
 function getEncryptionKey(): Buffer {
   const key = process.env.PHI_ENCRYPTION_KEY;
   if (!key) {
-    throw new Error('PHI_ENCRYPTION_KEY environment variable is required for PHI encryption');
+    throw new Error('PHI_ENCRYPTION_KEY environment variable is required');
   }
-  // If the key is hex-encoded (64 chars for 32 bytes)
-  if (key.length === 64) {
-    return Buffer.from(key, 'hex');
+  if (key.length !== 64 || !/^[0-9a-fA-F]+$/.test(key)) {
+    throw new Error('PHI_ENCRYPTION_KEY must be a 64-character hex string (32 bytes). Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   }
-  // Otherwise derive a key from the string
-  return crypto.scryptSync(key, 'therapybill-phi-salt', KEY_LENGTH);
+  return Buffer.from(key, 'hex');
 }
 
 export function encryptField(plaintext: string | null | undefined): EncryptedField | null {

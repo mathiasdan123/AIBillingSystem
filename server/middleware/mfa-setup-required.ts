@@ -4,8 +4,8 @@
  * Enforces that users must have MFA enabled before accessing PHI routes.
  * This is a HIPAA requirement: all users accessing ePHI must have MFA configured.
  *
- * In development mode (NODE_ENV !== 'production'), this check is skipped
- * to allow local development without MFA setup.
+ * To skip MFA enforcement (e.g., for local development), set the explicit
+ * environment variable SKIP_MFA_ENFORCEMENT=true.
  *
  * Apply this middleware BEFORE the mfaRequired middleware in the chain:
  *   isAuthenticated -> mfaSetupRequired -> mfaRequired -> handler
@@ -16,8 +16,8 @@ import { storage } from '../storage';
 import logger from '../services/logger';
 
 export const mfaSetupRequired = async (req: Request, res: Response, next: NextFunction) => {
-  // Skip MFA setup enforcement in development
-  if (process.env.NODE_ENV !== 'production') {
+  // Skip MFA setup enforcement only with explicit opt-out (not just NODE_ENV)
+  if (process.env.SKIP_MFA_ENFORCEMENT === 'true') {
     return next();
   }
 

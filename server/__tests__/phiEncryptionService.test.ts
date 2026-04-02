@@ -76,14 +76,11 @@ describe('PHI Encryption Service', () => {
     expect(() => encryptField('test')).toThrow('PHI_ENCRYPTION_KEY');
   });
 
-  it('should derive a key from a non-hex string key', async () => {
-    // A key that is not 64 hex chars triggers scryptSync derivation
+  it('should throw when PHI_ENCRYPTION_KEY is not a valid 64-char hex string', async () => {
+    // Non-hex keys should now throw an error (scrypt derivation removed for security)
     process.env.PHI_ENCRYPTION_KEY = 'my-short-passphrase';
-    const { encryptField, decryptField } = await loadModule();
-    const encrypted = encryptField('test data');
-    expect(encrypted).not.toBeNull();
-    const decrypted = decryptField(encrypted);
-    expect(decrypted).toBe('test data');
+    const { encryptField } = await loadModule();
+    expect(() => encryptField('test data')).toThrow('PHI_ENCRYPTION_KEY must be a 64-character hex string');
   });
 
   // ---- Legacy / plaintext passthrough ----
