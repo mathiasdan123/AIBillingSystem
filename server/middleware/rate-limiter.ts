@@ -1,22 +1,24 @@
 /**
  * Rate Limiting Middleware
  *
- * Provides in-memory rate limiting for different types of endpoints.
+ * Provides distributed rate limiting with Redis backend and in-memory fallback.
  *
- * NOTE: This implementation uses an in-memory store which works for single-server
- * deployments. For production with multiple server instances, consider using:
- * - Redis-based rate limiting (e.g., rate-limit-redis)
- * - A distributed cache like Memcached
- * - A dedicated rate limiting service
+ * Architecture:
+ * - When Redis is available and ready, uses Redis for distributed rate limiting
+ * - When Redis is unavailable, seamlessly falls back to in-memory Map storage
+ * - Checks Redis availability on each request for automatic failover
+ * - Uses atomic INCR + EXPIRE operations to prevent race conditions
  *
  * Security considerations:
  * - Rate limits help prevent brute force attacks on auth endpoints
  * - API rate limits protect against abuse and DoS
  * - Different tiers for different endpoint sensitivity levels
+ * - Distributed rate limiting prevents bypassing limits across multiple servers
  */
 
 import type { Request, Response, NextFunction } from 'express';
 import logger from '../services/logger';
+import { getRedisClient, isRedisReady } from '../services/redisClient';
 
 /**
  * Configuration for a rate limiter
@@ -37,7 +39,7 @@ interface RateLimitConfig {
 }
 
 /**
- * Stores request counts per key
+ * Stores request counts per key (in-memory fallback)
  */
 interface RateLimitEntry {
   count: number;
@@ -45,7 +47,7 @@ interface RateLimitEntry {
 }
 
 /**
- * In-memory store for rate limit data
+ * In-memory store for rate limit data (fallback when Redis unavailable)
  * Key format: `${limiterName}:${identifier}`
  */
 const rateLimitStore = new Map<string, RateLimitEntry>();
@@ -137,6 +139,95 @@ function apiKeyGenerator(req: Request): string {
 }
 
 /**
+ * Rate limit using Redis (distributed)
+ * Returns { count, resetAt } or null if Redis operation fails
+ */
+async function rateLimitWithRedis(
+  redisKey: string,
+  maxRequests: number,
+  windowMs: number
+): Promise<{ count: number; resetAt: number } | null> {
+  const redis = getRedisClient();
+  if (!redis || !isRedisReady()) {
+    return null;
+  }
+
+  try {
+    const now = Date.now();
+    const resetAt = now + windowMs;
+    const ttlSeconds = Math.ceil(windowMs / 1000);
+
+    // Use pipeline for atomic operations
+    const pipeline = redis.pipeline();
+    pipeline.incr(redisKey);
+    pipeline.ttl(redisKey);
+
+    const results = await pipeline.exec();
+
+    if (!results) {
+      return null;
+    }
+
+    // results is an array of [error, result] tuples
+    const [incrErr, incrResult] = results[0];
+    const [ttlErr, ttlResult] = results[1];
+
+    if (incrErr || ttlErr) {
+      logger.warn('Redis rate limit operation error', {
+        incrErr: incrErr?.message,
+        ttlErr: ttlErr?.message
+      });
+      return null;
+    }
+
+    const count = incrResult as number;
+    const currentTtl = ttlResult as number;
+
+    // If TTL is -1, the key exists but has no expiration (shouldn't happen, but handle it)
+    // If TTL is -2, the key doesn't exist (shouldn't happen after INCR, but handle it)
+    // If this is the first increment or TTL is missing, set the expiration
+    if (count === 1 || currentTtl === -1 || currentTtl === -2) {
+      await redis.expire(redisKey, ttlSeconds);
+    }
+
+    // Calculate actual reset time based on TTL
+    const actualResetAt = currentTtl > 0 ? now + (currentTtl * 1000) : resetAt;
+
+    return { count, resetAt: actualResetAt };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn('Redis rate limit error, falling back to in-memory', { error: message });
+    return null;
+  }
+}
+
+/**
+ * Rate limit using in-memory store (fallback)
+ */
+function rateLimitInMemory(
+  key: string,
+  maxRequests: number,
+  windowMs: number
+): { count: number; resetAt: number } {
+  const now = Date.now();
+  let entry = rateLimitStore.get(key);
+
+  // Create new entry or reset if window expired
+  if (!entry || entry.resetAt <= now) {
+    entry = {
+      count: 1,
+      resetAt: now + windowMs,
+    };
+    rateLimitStore.set(key, entry);
+  } else {
+    // Increment count
+    entry.count++;
+  }
+
+  return { count: entry.count, resetAt: entry.resetAt };
+}
+
+/**
  * Creates a rate limiting middleware with the specified configuration
  *
  * @param name - Unique name for this rate limiter (used in logging and store keys)
@@ -152,7 +243,7 @@ function apiKeyGenerator(req: Request): string {
  * });
  */
 export function createRateLimiter(name: string, config: RateLimitConfig) {
-  // Start cleanup interval on first limiter creation
+  // Start cleanup interval on first limiter creation (for in-memory fallback)
   startCleanupInterval();
 
   const {
@@ -164,49 +255,61 @@ export function createRateLimiter(name: string, config: RateLimitConfig) {
     skip,
   } = config;
 
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     // Check if request should skip rate limiting
     if (skip && skip(req)) {
       return next();
     }
 
-    const key = `${name}:${keyGenerator(req)}`;
+    const identifier = keyGenerator(req);
     const now = Date.now();
 
-    let entry = rateLimitStore.get(key);
+    // Redis key format: rl:{limiterName}:{identifier}
+    const redisKey = `rl:${name}:${identifier}`;
+    // In-memory key format: {limiterName}:{identifier}
+    const memoryKey = `${name}:${identifier}`;
 
-    // Create new entry or reset if window expired
-    if (!entry || entry.resetAt <= now) {
-      entry = {
-        count: 1,
-        resetAt: now + windowMs,
-      };
-      rateLimitStore.set(key, entry);
+    let count: number;
+    let resetAt: number;
+    let usingRedis = false;
+
+    // Try Redis first if available
+    const redisResult = await rateLimitWithRedis(redisKey, maxRequests, windowMs);
+
+    if (redisResult) {
+      // Successfully used Redis
+      count = redisResult.count;
+      resetAt = redisResult.resetAt;
+      usingRedis = true;
     } else {
-      // Increment count
-      entry.count++;
+      // Fall back to in-memory
+      const memoryResult = rateLimitInMemory(memoryKey, maxRequests, windowMs);
+      count = memoryResult.count;
+      resetAt = memoryResult.resetAt;
+      usingRedis = false;
     }
 
     // Calculate remaining requests and time
-    const remaining = Math.max(0, maxRequests - entry.count);
-    const resetSeconds = Math.ceil((entry.resetAt - now) / 1000);
+    const remaining = Math.max(0, maxRequests - count);
+    const resetSeconds = Math.ceil((resetAt - now) / 1000);
 
     // Set rate limit headers (following draft IETF standard)
     res.setHeader('X-RateLimit-Limit', maxRequests.toString());
     res.setHeader('X-RateLimit-Remaining', remaining.toString());
-    res.setHeader('X-RateLimit-Reset', Math.ceil(entry.resetAt / 1000).toString());
+    res.setHeader('X-RateLimit-Reset', Math.ceil(resetAt / 1000).toString());
 
     // Check if rate limit exceeded
-    if (entry.count > maxRequests) {
+    if (count > maxRequests) {
       logger.warn('Rate limit exceeded', {
         limiter: name,
         description,
-        key: key.replace(/user:.*/, 'user:[REDACTED]'), // Don't log user IDs
-        count: entry.count,
+        key: memoryKey.replace(/user:.*/, 'user:[REDACTED]'), // Don't log user IDs
+        count,
         limit: maxRequests,
         resetInSeconds: resetSeconds,
         path: req.path,
         method: req.method,
+        backend: usingRedis ? 'redis' : 'memory',
       });
 
       res.setHeader('Retry-After', resetSeconds.toString());

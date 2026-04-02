@@ -35,6 +35,7 @@ import { mfaSetupRequired } from "./middleware/mfa-setup-required";
 import { authLimiter } from "./middleware/rate-limiter";
 import logger from "./services/logger";
 import { cache } from "./services/cacheService";
+import { getRedisClient, isRedisReady } from "./services/redisClient";
 import { registerPatientRightsRoutes } from "./routes/patientRightsRoutes";
 import { registerBaaRoutes } from "./routes/baaRoutes";
 import { registerBreachNotificationRoutes } from "./routes/breachNotificationRoutes";
@@ -58,8 +59,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       checks.database = { status: 'unhealthy' };
     }
 
+    // Check Redis connectivity
+    const redisClient = getRedisClient();
+    if (redisClient === null) {
+      // Redis not configured - this is acceptable (falls back to in-memory)
+      checks.redis = { status: 'not_configured' };
+      checks.rateLimiting = { status: 'per_instance' };
+    } else if (isRedisReady()) {
+      // Redis is connected and ready - measure latency with PING
+      try {
+        const redisStart = Date.now();
+        await redisClient.ping();
+        checks.redis = { status: 'healthy', latency: Date.now() - redisStart };
+        checks.rateLimiting = { status: 'distributed' };
+      } catch (error) {
+        // PING failed even though isRedisReady was true
+        checks.redis = { status: 'unhealthy' };
+        checks.rateLimiting = { status: 'per_instance' };
+      }
+    } else {
+      // Redis is configured but not ready (connection failed or lost)
+      checks.redis = { status: 'unhealthy' };
+      checks.rateLimiting = { status: 'per_instance' };
+    }
+
     checks.server = { status: 'healthy' };
-    const allHealthy = Object.values(checks).every(c => c.status === 'healthy');
+
+    // Health check is degraded if any critical service (database, redis when configured) is unhealthy
+    const allHealthy = Object.values(checks).every(c =>
+      c.status === 'healthy' || c.status === 'not_configured' || c.status === 'distributed' || c.status === 'per_instance'
+    );
 
     res.status(allHealthy ? 200 : 503).json({
       status: allHealthy ? 'healthy' : 'degraded',

@@ -31,7 +31,7 @@ npm run check        # TypeScript type checking
 ```
 server/
   index.ts           # Entry point, security setup, middleware
-  routes.ts          # Legacy main routes (large, being refactored)
+  routes.ts          # Route registry and middleware orchestrator (218 lines)
   storage.ts         # Data access layer (large)
   db.ts              # Database connection (Neon or pg)
   routes/            # Modular route files
@@ -138,8 +138,10 @@ STRIPE_PUBLISHABLE_KEY= # Stripe client-side key
 - **AI Assistant:** Claude-powered (Anthropic), available on every page
 - **Patient Portal:** Fully integrated, access via Send Portal Link button in patient details
 - **Data Import:** Supports SimplePractice, TherapyNotes, Jane App, WebPT, Fusion/Ensura, Prompt Health
-- Legacy `routes.ts` is large (~439KB) and being refactored into modular files under `routes/`
-- Legacy `storage.ts` is large (~221KB) - the data access layer
+- Routes fully refactored: `routes.ts` is now a 218-line router registry; 63 modular route files in `routes/`
+- Storage layer: `storage.ts` delegates to modular files under `storage/`
+- **Rate Limiting:** Redis-backed distributed rate limiting supported (set `REDIS_URL`); falls back to per-instance in-memory
+- **PCI Compliance:** Payment card handling uses Stripe Elements + SetupIntent tokenization (PCI DSS compliant)
 
 ## Compliance
 - All billing-related language must use "accuracy" framing, not "optimization" or "maximization"
