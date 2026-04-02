@@ -22,6 +22,14 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+function verifyPracticeAccess(user: any, patient: any, res: Response): boolean {
+  if (!user?.practiceId || user.practiceId !== patient.practiceId) {
+    res.status(403).json({ message: 'Access denied: patient belongs to a different practice' });
+    return false;
+  }
+  return true;
+}
+
 export function registerPatientRightsRoutes(app: Express) {
   // GET /api/patients/:id/export - Full data export (decrypted)
   app.get('/api/patients/:id/export', isAuthenticated, async (req: Request, res: Response) => {
@@ -35,6 +43,8 @@ export function registerPatientRightsRoutes(app: Express) {
       if (!patient) {
         return res.status(404).json({ error: 'Patient not found' });
       }
+
+      if (!verifyPracticeAccess((req as any).user, patient, res)) return;
 
       // Gather all related data
       const eligibility = await storage.getEligibilityHistory(patientId);
@@ -74,6 +84,8 @@ export function registerPatientRightsRoutes(app: Express) {
         return res.status(404).json({ error: 'Patient not found' });
       }
 
+      if (!verifyPracticeAccess((req as any).user, patient, res)) return;
+
       await storage.softDeletePatient(patientId);
 
       await logAuditEvent({
@@ -108,6 +120,8 @@ export function registerPatientRightsRoutes(app: Express) {
       if (!patient) {
         return res.status(404).json({ error: 'Patient not found' });
       }
+
+      if (!verifyPracticeAccess((req as any).user, patient, res)) return;
 
       const disclosures = await db
         .select()
@@ -151,6 +165,8 @@ export function registerPatientRightsRoutes(app: Express) {
       const patient = await storage.getPatient(patientId);
       if (!patient) return res.status(404).json({ error: 'Patient not found' });
 
+      if (!verifyPracticeAccess((req as any).user, patient, res)) return;
+
       const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
       const now = new Date();
       const deadline = new Date(now);
@@ -190,6 +206,11 @@ export function registerPatientRightsRoutes(app: Express) {
     try {
       const patientId = parseInt(req.params.id, 10);
       if (isNaN(patientId)) return res.status(400).json({ error: 'Invalid patient ID' });
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+      if (!verifyPracticeAccess((req as any).user, patient, res)) return;
 
       const amendments = await storage.getAmendmentRequestsByPatient(patientId);
       return res.json(amendments);

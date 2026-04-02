@@ -158,7 +158,19 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
       details: auditDetails,
       success,
     }).catch((err: any) => {
-      logger.error('Failed to write audit log', { error: err.message, path, method });
+      logger.error('CRITICAL: PHI audit log write failed', {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        resourceId,
+        path,
+        method,
+        eventCategory: classification.eventCategory,
+        eventType,
+        resourceType: classification.resourceType,
+        isPHIAccess,
+        timestamp: new Date().toISOString(),
+      });
     });
 
     // HIPAA: Log PHI access to application logs as well for redundancy
