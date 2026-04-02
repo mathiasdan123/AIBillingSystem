@@ -808,6 +808,7 @@ export default function Appeals() {
                         size="sm"
                         onClick={() => regenerateLetterMutation.mutate(selectedAppeal.id)}
                         disabled={regenerateLetterMutation.isPending}
+                        aria-label="Regenerate appeal letter"
                       >
                         {regenerateLetterMutation.isPending ? (
                           <Loader2 className="w-4 h-4 animate-spin" />

@@ -429,6 +429,7 @@ export default function MessagesPage() {
                     size="sm"
                     className="md:hidden"
                     onClick={() => setSelectedConversation(null)}
+                    aria-label="Back to conversations"
                   >
                     <ArrowLeft className="h-5 w-5" />
                   </Button>
@@ -453,12 +454,12 @@ export default function MessagesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => refetchMessages()}>
+                  <Button variant="ghost" size="sm" onClick={() => refetchMessages()} aria-label="Refresh messages">
                     <RefreshCw className="h-4 w-4" />
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm">
+                      <Button variant="ghost" size="sm" aria-label="More options">
                         <MoreVertical className="h-5 w-5" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -557,6 +558,7 @@ export default function MessagesPage() {
                   <Button
                     onClick={handleSendMessage}
                     disabled={!newMessage.trim() || sendMessage.isPending}
+                    aria-label="Send message"
                   >
                     <Send className="h-5 w-5" />
                   </Button>

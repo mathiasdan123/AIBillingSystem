@@ -33,40 +33,34 @@ export default function Dashboard() {
     }
   }, [isAuthenticated, isLoading, toast, t]);
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery({
     queryKey: ['/api/analytics/dashboard'],
     enabled: isAuthenticated,
-    retry: false,
   }) as any;
 
-  const { data: recentClaims, isLoading: claimsLoading } = useQuery({
+  const { data: recentClaims, isLoading: claimsLoading, isError: claimsError, refetch: refetchClaims } = useQuery({
     queryKey: ['/api/claims'],
     enabled: isAuthenticated,
-    retry: false,
   }) as any;
 
-  const { data: recentPatients, isLoading: patientsLoading } = useQuery({
+  const { data: recentPatients, isLoading: patientsLoading, isError: patientsError, refetch: refetchPatients } = useQuery({
     queryKey: ['/api/patients'],
     enabled: isAuthenticated,
-    retry: false,
   }) as any;
 
-  const { data: deniedClaimsReport, isLoading: deniedLoading } = useQuery({
+  const { data: deniedClaimsReport, isLoading: deniedLoading, isError: deniedError, refetch: refetchDenied } = useQuery({
     queryKey: ['/api/reports/denied-claims', { period: 'today' }],
     enabled: isAuthenticated,
-    retry: false,
   }) as any;
 
   const { data: onboardingStatus } = useQuery<{ step: number; completed: boolean }>({
     queryKey: ['/api/onboarding/status'],
     enabled: isAuthenticated,
-    retry: false,
   });
 
   const { data: onboardingChecklist } = useQuery<{ progress: number; completedRequired: number; totalRequired: number }>({
     queryKey: ['/api/onboarding/checklist'],
     enabled: isAuthenticated && onboardingStatus?.completed === false,
-    retry: false,
   });
 
   if (isLoading) {
@@ -151,7 +145,16 @@ export default function Dashboard() {
       )}
 
       {/* Stats Overview */}
-      {stats && <DashboardStats stats={stats} />}
+      {statsError ? (
+        <div className="text-center py-8">
+          <p className="text-sm text-muted-foreground mb-2">Failed to load dashboard stats</p>
+          <Button variant="outline" size="sm" onClick={() => refetchStats()}>
+            Retry
+          </Button>
+        </div>
+      ) : stats ? (
+        <DashboardStats stats={stats} />
+      ) : null}
 
       {/* Denied Claims Alert */}
       {deniedClaimsReport && deniedClaimsReport.summary?.totalDenied > 0 && (
@@ -235,7 +238,14 @@ export default function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="px-4 md:px-6">
-            {claimsLoading ? (
+            {claimsError ? (
+              <div className="text-center py-8">
+                <p className="text-sm text-muted-foreground mb-2">Failed to load claims</p>
+                <Button variant="outline" size="sm" onClick={() => refetchClaims()}>
+                  Retry
+                </Button>
+              </div>
+            ) : claimsLoading ? (
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
@@ -301,7 +311,14 @@ export default function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="px-4 md:px-6">
-            {patientsLoading ? (
+            {patientsError ? (
+              <div className="text-center py-8">
+                <p className="text-sm text-muted-foreground mb-2">Failed to load patients</p>
+                <Button variant="outline" size="sm" onClick={() => refetchPatients()}>
+                  Retry
+                </Button>
+              </div>
+            ) : patientsLoading ? (
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">

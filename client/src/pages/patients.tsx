@@ -1279,6 +1279,7 @@ export default function Patients() {
                         checkEligibilityMutation.mutate({ patientId: selectedPatient.id });
                       }}
                       disabled={checkingEligibility === selectedPatient.id}
+                      aria-label="Verify insurance eligibility"
                     >
                       {checkingEligibility === selectedPatient.id ? (
                         <>
