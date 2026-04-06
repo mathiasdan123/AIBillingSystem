@@ -2,8 +2,7 @@ version: 0.2
 
 env:
   variables:
-    SENTRY_ORG: "therapybill"
-    SENTRY_PROJECT: "therapybill"
+    SENTRY_ORG: "therapybillai"
 
 phases:
   pre_build:
@@ -26,24 +25,28 @@ phases:
       - echo Pushing Docker images...
       - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
       - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:migrate
-      # Upload source maps to Sentry (optional — requires SENTRY_AUTH_TOKEN in Secrets Manager)
+      # Upload source maps to Sentry (requires SENTRY_AUTH_TOKEN in Secrets Manager)
       - |
         SENTRY_AUTH_TOKEN=$(aws secretsmanager get-secret-value --secret-id therapybill/sentry-auth-token --region us-east-1 --query SecretString --output text 2>/dev/null || echo "")
         if [ -n "$SENTRY_AUTH_TOKEN" ]; then
           echo "Uploading source maps to Sentry (release: $SENTRY_RELEASE)..."
-          # Extract source maps from the builder stage
+          # Extract source maps from the Docker image
           docker create --name sourcemap-extract therapybill-app:latest true 2>/dev/null || true
           mkdir -p /tmp/sourcemaps/server /tmp/sourcemaps/client
           docker cp sourcemap-extract:/app/dist/index.js.map /tmp/sourcemaps/server/ 2>/dev/null || true
           docker cp sourcemap-extract:/app/dist/public/ /tmp/sourcemaps/client/ 2>/dev/null || true
           docker rm sourcemap-extract 2>/dev/null || true
-          # Use Sentry CLI to create release and upload source maps
+          # Install Sentry CLI and upload to both projects
           npm install -g @sentry/cli 2>/dev/null
           export SENTRY_AUTH_TOKEN
-          sentry-cli releases new "$SENTRY_RELEASE" --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" 2>/dev/null || true
-          sentry-cli releases files "$SENTRY_RELEASE" upload-sourcemaps /tmp/sourcemaps/ --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" 2>/dev/null || true
-          sentry-cli releases finalize "$SENTRY_RELEASE" --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" 2>/dev/null || true
-          echo "Source maps uploaded successfully"
+          # Create release in both projects
+          sentry-cli releases new "$SENTRY_RELEASE" --org "$SENTRY_ORG" --project node-express --project javascript-react 2>/dev/null || true
+          # Upload server source maps to node-express project
+          sentry-cli releases files "$SENTRY_RELEASE" upload-sourcemaps /tmp/sourcemaps/server/ --org "$SENTRY_ORG" --project node-express 2>/dev/null || true
+          # Upload client source maps to javascript-react project
+          sentry-cli releases files "$SENTRY_RELEASE" upload-sourcemaps /tmp/sourcemaps/client/ --org "$SENTRY_ORG" --project javascript-react 2>/dev/null || true
+          sentry-cli releases finalize "$SENTRY_RELEASE" --org "$SENTRY_ORG" --project node-express --project javascript-react 2>/dev/null || true
+          echo "Source maps uploaded to both projects"
         else
           echo "SENTRY_AUTH_TOKEN not found — skipping source map upload (errors will still be tracked)"
         fi
