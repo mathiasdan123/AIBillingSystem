@@ -108,8 +108,9 @@ export const practices = pgTable("practices", {
   // Stripe billing fields
   stripeCustomerId: varchar("stripe_customer_id"),
   stripePaymentMethodId: varchar("stripe_payment_method_id"),
-  billingPlan: varchar("billing_plan").default("growing"), // solo, growing, enterprise
-  billingPercentage: decimal("billing_percentage", { precision: 5, scale: 2 }).default("4.5"),
+  billingPlan: varchar("billing_plan").default("starter"), // starter, professional, practice
+  billingPercentage: decimal("billing_percentage", { precision: 5, scale: 2 }).default("6"), // billing engine: 6% of insurance collections
+  billingInterval: varchar("billing_interval").default("monthly"), // monthly, annual
   trialEndsAt: timestamp("trial_ends_at"),
   // Stedi clearinghouse fields
   stediApiKey: varchar("stedi_api_key"),

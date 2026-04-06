@@ -57,7 +57,7 @@ export default function Landing() {
             </div>
             <div className="flex items-center gap-4">
               <a href="#features" className="text-slate-600 hover:text-slate-900 hidden sm:block">Features</a>
-              <a href="#pricing" className="text-slate-600 hover:text-slate-900 hidden sm:block">Pricing</a>
+              <a href="/pricing" className="text-slate-600 hover:text-slate-900 hidden sm:block">Pricing</a>
               <Button onClick={handleLogin} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold">
                 Sign In
               </Button>
@@ -351,33 +351,33 @@ export default function Landing() {
               Simple, Transparent Pricing
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              No setup fees. No hidden costs. Pay only when you get paid.
+              Flat monthly fee for practice management. 6% of collections for AI billing. No contracts. Cancel anytime.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
             <Card className="hover:shadow-lg transition-shadow">
               <CardHeader className="text-center">
-                <CardTitle>Solo Practice</CardTitle>
-                <CardDescription>For individual practitioners</CardDescription>
+                <CardTitle>Starter</CardTitle>
+                <CardDescription>Solo OT practitioners</CardDescription>
                 <div className="text-4xl font-bold text-slate-900 mt-4">
-                  5%
-                  <span className="text-base font-normal text-slate-600 block">of collections</span>
+                  $99
+                  <span className="text-base font-normal text-slate-600">/mo</span>
                 </div>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3 mb-6">
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Up to 100 patients</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>1 OT provider</span>
                   </li>
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>All core features</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>AI SOAP notes & scheduling</span>
                   </li>
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Email support</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Patient portal</span>
                   </li>
                 </ul>
                 <Button className="w-full" variant="outline" onClick={handleLogin}>
@@ -391,30 +391,26 @@ export default function Landing() {
                 Most Popular
               </Badge>
               <CardHeader className="text-center">
-                <CardTitle>Growing Practice</CardTitle>
-                <CardDescription>For small to medium practices</CardDescription>
+                <CardTitle>Professional</CardTitle>
+                <CardDescription>Growing OT practices</CardDescription>
                 <div className="text-4xl font-bold text-slate-900 mt-4">
-                  4.5%
-                  <span className="text-base font-normal text-slate-600 block">of collections</span>
+                  $199
+                  <span className="text-base font-normal text-slate-600">/mo</span>
                 </div>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3 mb-6">
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Unlimited patients</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Up to 5 OTs</span>
                   </li>
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Multiple providers</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Telehealth + full analytics</span>
                   </li>
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Priority support</span>
-                  </li>
-                  <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Advanced analytics</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Email + chat support</span>
                   </li>
                 </ul>
                 <Button className="w-full" onClick={handleLogin}>
@@ -425,37 +421,42 @@ export default function Landing() {
 
             <Card className="hover:shadow-lg transition-shadow">
               <CardHeader className="text-center">
-                <CardTitle>Enterprise</CardTitle>
-                <CardDescription>For large clinics & groups</CardDescription>
+                <CardTitle>Practice</CardTitle>
+                <CardDescription>Multi-therapist OT clinics</CardDescription>
                 <div className="text-4xl font-bold text-slate-900 mt-4">
-                  Custom
-                  <span className="text-base font-normal text-slate-600 block">volume pricing</span>
+                  $399
+                  <span className="text-base font-normal text-slate-600">/mo</span>
                 </div>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3 mb-6">
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Multi-location support</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Up to 15 OTs</span>
                   </li>
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Custom integrations</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Benchmarking + custom reports</span>
                   </li>
                   <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>Dedicated success manager</span>
-                  </li>
-                  <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-500 mr-3" />
-                    <span>SLA guarantee</span>
+                    <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
+                    <span>Priority support + onboarding</span>
                   </li>
                 </ul>
                 <Button className="w-full" variant="outline" onClick={handleLogin}>
-                  Contact Sales
+                  Start Free Trial
                 </Button>
               </CardContent>
             </Card>
+          </div>
+
+          <div className="text-center mt-8">
+            <p className="text-slate-600 mb-2">
+              AI Billing Engine: <span className="font-semibold text-slate-900">6% of insurance collections</span> — you only pay when you get paid
+            </p>
+            <a href="/pricing" className="text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1">
+              See full pricing details <ArrowRight className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </section>

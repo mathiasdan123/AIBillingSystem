@@ -884,8 +884,8 @@ export default function Settings() {
                     <div className="p-4 bg-slate-50 rounded-lg">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="font-medium text-slate-900">Professional Plan</p>
-                          <p className="text-sm text-slate-600">2.25% per transaction + $0.35 per claim</p>
+                          <p className="font-medium text-slate-900">Practice Management Plan</p>
+                          <p className="text-sm text-slate-600">Flat monthly fee + 6% billing engine</p>
                         </div>
                         <div className="text-right">
                           <p className="font-medium text-slate-900">Active</p>

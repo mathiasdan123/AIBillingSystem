@@ -26,7 +26,9 @@ const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '');
 interface BillingInfo {
   plan: string;
   planName: string;
-  percentage: number;
+  monthlyPrice: number;
+  annualPrice: number;
+  billingEnginePercentage: number;
   features: string[];
   hasPaymentMethod: boolean;
   trialEndsAt: string | null;
@@ -218,24 +220,24 @@ export default function Billing() {
 
   const plans = [
     {
-      id: 'solo',
-      name: 'Solo Practice',
-      percentage: 5,
-      features: ['Up to 100 patients', 'All core features', 'Email support'],
+      id: 'starter',
+      name: 'Starter',
+      price: '$99/mo',
+      features: ['1 OT provider', 'AI SOAP notes', 'Scheduling & booking', 'Patient portal', 'Email support'],
       recommended: false,
     },
     {
-      id: 'growing',
-      name: 'Growing Practice',
-      percentage: 4.5,
-      features: ['Unlimited patients', 'Multiple providers', 'Priority support', 'Advanced analytics'],
+      id: 'professional',
+      name: 'Professional',
+      price: '$199/mo',
+      features: ['Up to 5 OTs', 'Telehealth', 'Full analytics & reporting', 'Email + chat support'],
       recommended: true,
     },
     {
-      id: 'enterprise',
-      name: 'Enterprise',
-      percentage: null,
-      features: ['Multi-location support', 'Custom integrations', 'Dedicated success manager', 'SLA guarantee'],
+      id: 'practice',
+      name: 'Practice',
+      price: '$399/mo',
+      features: ['Up to 15 OTs', 'Benchmarking', 'Custom reports', 'Priority support + onboarding'],
       recommended: false,
     },
   ];
@@ -276,16 +278,14 @@ export default function Billing() {
         <CardContent>
           <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg mb-4">
             <div>
-              <h3 className="text-xl font-bold text-slate-900">{billingInfo?.planName || 'Growing Practice'}</h3>
-              <p className="text-slate-600">
-                {billingInfo?.percentage}% of collections
-              </p>
+              <h3 className="text-xl font-bold text-slate-900">{billingInfo?.planName || 'Starter'}</h3>
+              <p className="text-slate-600">Practice Management</p>
             </div>
             <div className="text-right">
               <div className="text-2xl font-bold text-blue-600">
-                {billingInfo?.percentage || 4.5}%
+                ${billingInfo?.monthlyPrice || 99}/mo
               </div>
-              <p className="text-sm text-slate-500">per collection</p>
+              <p className="text-sm text-slate-500">+ 6% billing engine (optional)</p>
             </div>
           </div>
 
@@ -453,9 +453,8 @@ export default function Billing() {
                 )}
                 <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
                 <p className="text-2xl font-bold text-slate-900 my-2">
-                  {plan.percentage ? `${plan.percentage}%` : 'Custom'}
+                  {plan.price}
                 </p>
-                <p className="text-sm text-slate-500 mb-4">of collections</p>
                 <ul className="space-y-2 text-sm">
                   {plan.features.map((feature, i) => (
                     <li key={i} className="flex items-center text-slate-600">
@@ -470,7 +469,7 @@ export default function Billing() {
                   </Button>
                 ) : (
                   <Button className="w-full mt-4" variant={plan.recommended ? 'default' : 'outline'}>
-                    {plan.percentage ? 'Switch Plan' : 'Contact Sales'}
+                    Switch Plan
                   </Button>
                 )}
               </div>

@@ -81,6 +81,9 @@ const DataExport = lazy(() => import("@/pages/data-export"));
 // Data import (admin only)
 const DataImport = lazy(() => import("@/pages/data-import"));
 
+// Public pricing page
+const Pricing = lazy(() => import("@/pages/pricing"));
+
 // Error boundary for route-level errors
 class ErrorBoundary extends Component<
   { children: ReactNode },
@@ -153,6 +156,7 @@ function Router() {
           <Suspense fallback={<PageLoader />}>
             <Switch>
               <Route path="/" component={Landing} />
+              <Route path="/pricing" component={Pricing} />
               <Route path="/intake" component={PatientIntake} />
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />

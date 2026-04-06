@@ -20,27 +20,124 @@ export function isStripeConfigured(): boolean {
   return !!process.env.STRIPE_SECRET_KEY;
 }
 
-// Pricing plans
+// ─── Pricing Plans ──────────────────────────────────────────────────────────
+
 export const PRICING_PLANS = {
-  solo: {
-    name: 'Solo Practice',
-    percentageFee: 5.0,
-    maxPatients: 100,
-    features: ['All core features', 'Email support', 'Up to 100 patients'],
+  starter: {
+    name: 'Starter',
+    tagline: 'Solo OT practitioners',
+    monthlyPriceCents: 9900, // $99
+    annualPriceCents: 82500, // $825/yr
+    maxProviders: 1,
+    maxStaff: 1,
+    additionalProviderCents: null as number | null,
+    features: [
+      '1 OT provider',
+      '1 non-clinical staff',
+      'AI SOAP notes',
+      'Scheduling & online booking',
+      'Patient & caregiver portal',
+      'Treatment plans & goal tracking',
+      'Basic analytics',
+      'Email support',
+    ],
   },
-  growing: {
-    name: 'Growing Practice',
-    percentageFee: 4.5,
-    maxPatients: null, // unlimited
-    features: ['Unlimited patients', 'Multiple providers', 'Priority support', 'Advanced analytics'],
+  professional: {
+    name: 'Professional',
+    tagline: 'Growing OT practices',
+    monthlyPriceCents: 19900, // $199
+    annualPriceCents: 165900, // $1,659/yr
+    maxProviders: 5,
+    maxStaff: 3,
+    additionalProviderCents: 5900, // $59/mo each
+    features: [
+      'Up to 5 OTs ($59/mo each add\'l)',
+      '3 non-clinical staff',
+      'AI SOAP notes',
+      'Scheduling & online booking',
+      'Patient & caregiver portal',
+      'Treatment plans & goal tracking',
+      'Telehealth',
+      'Full analytics & reporting',
+      'Email + chat support',
+    ],
   },
-  enterprise: {
-    name: 'Enterprise',
-    percentageFee: null, // custom
-    maxPatients: null,
-    features: ['Multi-location', 'Custom integrations', 'Dedicated success manager', 'SLA guarantee'],
+  practice: {
+    name: 'Practice',
+    tagline: 'Multi-therapist OT clinics',
+    monthlyPriceCents: 39900, // $399
+    annualPriceCents: 332500, // $3,325/yr
+    maxProviders: 15,
+    maxStaff: null as number | null, // unlimited
+    additionalProviderCents: 4900, // $49/mo each
+    features: [
+      'Up to 15 OTs ($49/mo each add\'l)',
+      'Unlimited non-clinical staff',
+      'Everything in Professional, plus:',
+      'AOTA industry benchmarking',
+      'Custom report builder',
+      'Priority support + onboarding call',
+      'Priority data migration',
+    ],
   },
 };
+
+/** AI Billing Engine: 6% of insurance collections */
+export const BILLING_ENGINE_PERCENTAGE = 6;
+
+/**
+ * Create Stripe Products and Prices for the pricing catalog.
+ * One-time setup — creates products and recurring prices.
+ */
+export async function createStripePricingCatalog(): Promise<{
+  products: Record<string, string>;
+  prices: Record<string, string>;
+}> {
+  const s = getStripe();
+  const products: Record<string, string> = {};
+  const prices: Record<string, string> = {};
+
+  for (const [key, plan] of Object.entries(PRICING_PLANS)) {
+    const product = await s.products.create({
+      name: `TherapyBill AI \u2014 ${plan.name}`,
+      description: plan.tagline,
+      metadata: { planKey: key },
+    });
+    products[key] = product.id;
+
+    // Monthly price
+    const monthly = await s.prices.create({
+      product: product.id,
+      unit_amount: plan.monthlyPriceCents,
+      currency: 'usd',
+      recurring: { interval: 'month' },
+      lookup_key: `therapybill-${key}-monthly`,
+      metadata: { planKey: key, interval: 'monthly' },
+    });
+    prices[`${key}-monthly`] = monthly.id;
+
+    // Annual price
+    const annual = await s.prices.create({
+      product: product.id,
+      unit_amount: plan.annualPriceCents,
+      currency: 'usd',
+      recurring: { interval: 'year' },
+      lookup_key: `therapybill-${key}-annual`,
+      metadata: { planKey: key, interval: 'annual' },
+    });
+    prices[`${key}-annual`] = annual.id;
+  }
+
+  // Billing engine product (usage tracked manually, charged via PaymentIntent)
+  const billingProduct = await s.products.create({
+    name: 'TherapyBill AI \u2014 Billing Engine',
+    description: '6% of insurance collections',
+    metadata: { planKey: 'billing-engine' },
+  });
+  products['billing-engine'] = billingProduct.id;
+
+  return { products, prices };
+}
 
 /**
  * Create a Stripe customer for a practice

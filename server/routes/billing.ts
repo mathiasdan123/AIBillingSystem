@@ -164,12 +164,14 @@ router.get('/billing/info', isAuthenticated, async (req: any, res) => {
     }
 
     const plan = stripeService.PRICING_PLANS[practice.billingPlan as keyof typeof stripeService.PRICING_PLANS]
-      || stripeService.PRICING_PLANS.growing;
+      || stripeService.PRICING_PLANS.starter;
 
     res.json({
-      plan: practice.billingPlan || 'growing',
+      plan: practice.billingPlan || 'starter',
       planName: plan.name,
-      percentage: practice.billingPercentage || 4.5,
+      monthlyPrice: plan.monthlyPriceCents / 100,
+      annualPrice: plan.annualPriceCents / 100,
+      billingEnginePercentage: stripeService.BILLING_ENGINE_PERCENTAGE,
       features: plan.features,
       hasPaymentMethod: !!practice.stripePaymentMethodId,
       trialEndsAt: practice.trialEndsAt,
@@ -391,6 +393,29 @@ router.post('/webhooks/stripe', async (req: any, res) => {
       type: error.type,
     });
     res.status(400).json({ message: 'Webhook signature verification failed' });
+  }
+});
+
+// ─── Admin: Create Stripe Products (one-time setup) ─────────────────────────
+
+router.post('/admin/stripe/create-products', isAuthenticated, async (req: any, res) => {
+  try {
+    if (req.userRole !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    if (!stripeService.isStripeConfigured()) {
+      return res.status(400).json({ message: 'Stripe is not configured' });
+    }
+
+    const result = await stripeService.createStripePricingCatalog();
+    logger.info('Stripe pricing catalog created', { products: result.products, prices: result.prices });
+    res.json(result);
+  } catch (error) {
+    logger.error('Error creating Stripe pricing catalog', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to create Stripe products' });
   }
 });
 
