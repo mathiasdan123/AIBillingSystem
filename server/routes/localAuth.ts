@@ -20,6 +20,7 @@ import {
   authLimiter,
   passwordResetLimiter,
   registrationLimiter,
+  incrementGlobalFailedAuth,
 } from '../middleware/rate-limiter';
 import {
   sendPasswordResetEmail as sendPasswordResetEmailLegacy,
@@ -62,6 +63,7 @@ passport.use(
 
         if (!user) {
           // Don't reveal whether user exists
+          incrementGlobalFailedAuth().catch(() => {});
           return done(null, false, { message: 'Invalid email or password' });
         }
 
@@ -85,6 +87,8 @@ passport.use(
 
         // Check if account is locked
         if (isAccountLocked(user.lockoutUntil)) {
+          // Probing a locked account is suspicious — count toward brute force detection
+          incrementGlobalFailedAuth().catch(() => {});
           const remainingMinutes = getRemainingLockoutMinutes(user.lockoutUntil);
           return done(null, false, {
             message: `Account locked. Try again in ${remainingMinutes} minutes.`,
@@ -100,7 +104,9 @@ passport.use(
         const isValid = await verifyPassword(password, user.passwordHash);
 
         if (!isValid) {
-          // Increment failed attempts
+          // Increment global brute force counter (distributed detection)
+          incrementGlobalFailedAuth().catch(() => {});
+          // Increment per-user failed attempts
           const failedAttempts = await storage.incrementFailedLoginAttempts(user.id);
 
           // Check if we should lock the account

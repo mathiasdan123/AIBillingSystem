@@ -429,6 +429,190 @@ export const registrationLimiter = createRateLimiter('registration', {
 });
 
 // =============================================================================
+// Distributed Brute Force Protection (Global Circuit Breaker)
+// =============================================================================
+
+/**
+ * Tracks total failed authentication attempts across ALL IPs.
+ * When failures exceed a threshold in a time window, "siege mode" activates:
+ * - Auth rate limits tighten (5 → 2 per IP)
+ * - A 2-second delay is added to all login responses
+ * - Auto-expires when the Redis counter TTL lapses
+ *
+ * This catches distributed brute force attacks where each IP stays
+ * under the per-IP rate limit individually.
+ */
+
+const BRUTE_FORCE_REDIS_KEY = 'brute-force:global-failures';
+const BRUTE_FORCE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const BRUTE_FORCE_THRESHOLD = parseInt(process.env.BRUTE_FORCE_THRESHOLD || '50', 10);
+const SIEGE_MODE_DELAY_MS = 2000; // 2-second delay in siege mode
+const SIEGE_MODE_AUTH_MAX = 2; // tighter per-IP limit during siege
+
+/** In-memory fallback counter for when Redis is unavailable */
+let inMemoryGlobalFailures = { count: 0, resetAt: 0 };
+
+/**
+ * Increment the global failed auth counter.
+ * Call this from the login route on every failed attempt.
+ */
+export async function incrementGlobalFailedAuth(): Promise<number> {
+  const redis = getRedisClient();
+  if (redis && isRedisReady()) {
+    try {
+      const pipeline = redis.pipeline();
+      pipeline.incr(BRUTE_FORCE_REDIS_KEY);
+      pipeline.ttl(BRUTE_FORCE_REDIS_KEY);
+      const results = await pipeline.exec();
+
+      if (results) {
+        const count = results[0][1] as number;
+        const ttl = results[1][1] as number;
+
+        // Set expiration on first increment or if missing
+        if (count === 1 || ttl === -1 || ttl === -2) {
+          await redis.expire(BRUTE_FORCE_REDIS_KEY, Math.ceil(BRUTE_FORCE_WINDOW_MS / 1000));
+        }
+
+        if (count >= BRUTE_FORCE_THRESHOLD) {
+          logger.warn('Brute force siege mode activated', {
+            globalFailures: count,
+            threshold: BRUTE_FORCE_THRESHOLD,
+            windowMs: BRUTE_FORCE_WINDOW_MS,
+          });
+        }
+
+        return count;
+      }
+    } catch (err) {
+      logger.warn('Redis brute force counter error, using in-memory fallback', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // In-memory fallback
+  const now = Date.now();
+  if (inMemoryGlobalFailures.resetAt <= now) {
+    inMemoryGlobalFailures = { count: 1, resetAt: now + BRUTE_FORCE_WINDOW_MS };
+  } else {
+    inMemoryGlobalFailures.count++;
+  }
+
+  if (inMemoryGlobalFailures.count >= BRUTE_FORCE_THRESHOLD) {
+    logger.warn('Brute force siege mode activated (in-memory)', {
+      globalFailures: inMemoryGlobalFailures.count,
+      threshold: BRUTE_FORCE_THRESHOLD,
+    });
+  }
+
+  return inMemoryGlobalFailures.count;
+}
+
+/**
+ * Check if siege mode is currently active (global failures above threshold).
+ */
+export async function isSiegeMode(): Promise<boolean> {
+  const redis = getRedisClient();
+  if (redis && isRedisReady()) {
+    try {
+      const count = await redis.get(BRUTE_FORCE_REDIS_KEY);
+      return count !== null && parseInt(count, 10) >= BRUTE_FORCE_THRESHOLD;
+    } catch {
+      // Fall through to in-memory
+    }
+  }
+
+  // In-memory fallback
+  const now = Date.now();
+  if (inMemoryGlobalFailures.resetAt <= now) {
+    return false;
+  }
+  return inMemoryGlobalFailures.count >= BRUTE_FORCE_THRESHOLD;
+}
+
+/**
+ * Middleware that applies brute force protection to auth routes.
+ *
+ * When siege mode is active:
+ * - Adds a 2-second delay to slow attackers
+ * - Marks the request so authLimiter uses a tighter limit
+ */
+export const bruteForceProtection = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const siegeActive = await isSiegeMode();
+
+  if (siegeActive) {
+    // Mark request for tighter rate limiting
+    (req as any).siegeMode = true;
+
+    // Add delay to waste attacker time (barely noticeable for legitimate users)
+    await new Promise(resolve => setTimeout(resolve, SIEGE_MODE_DELAY_MS));
+  }
+
+  next();
+};
+
+/**
+ * Auth rate limiter with dynamic limits — tighter during siege mode.
+ *
+ * Normal:  5 attempts / 15 min / IP
+ * Siege:   2 attempts / 15 min / IP
+ */
+export const dynamicAuthLimiter = createRateLimiter('auth-dynamic', {
+  maxRequests: 5, // base max — overridden dynamically below
+  windowMs: 15 * 60 * 1000,
+  description: 'Dynamic authentication rate limiter',
+  keyGenerator: authKeyGenerator,
+  message: 'Too many authentication attempts. Please try again in 15 minutes.',
+});
+
+// Wrap the static limiter to make it siege-aware
+export const siegeAwareAuthLimiter = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const siegeActive = (req as any).siegeMode === true;
+
+  if (siegeActive) {
+    // Use a separate, tighter limiter key during siege mode
+    const identifier = getClientIp(req);
+    const redisKey = `rl:auth-siege:${identifier}`;
+    const memoryKey = `auth-siege:${identifier}`;
+    const windowMs = 15 * 60 * 1000;
+
+    let count: number;
+    const redisResult = await rateLimitWithRedis(redisKey, SIEGE_MODE_AUTH_MAX, windowMs);
+
+    if (redisResult) {
+      count = redisResult.count;
+    } else {
+      const memResult = rateLimitInMemory(memoryKey, SIEGE_MODE_AUTH_MAX, windowMs);
+      count = memResult.count;
+    }
+
+    if (count > SIEGE_MODE_AUTH_MAX) {
+      logger.warn('Siege mode rate limit exceeded', {
+        ip: identifier,
+        count,
+        siegeLimit: SIEGE_MODE_AUTH_MAX,
+      });
+      res.status(429).json({
+        message: 'Too many authentication attempts. Please try again later.',
+        error: 'RATE_LIMIT_EXCEEDED',
+      });
+      return;
+    }
+  }
+
+  // Continue to the normal auth limiter (layered protection)
+  authLimiter(req, res, next);
+};
+
+/**
+ * Reset the in-memory brute force counter (for testing)
+ */
+export function resetBruteForceCounter(): void {
+  inMemoryGlobalFailures = { count: 0, resetAt: 0 };
+}
+
+// =============================================================================
 // Type Exports
 // =============================================================================
 

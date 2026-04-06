@@ -58,6 +58,7 @@ import { seedDatabase } from "./seeds";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { initRedisClient, shutdownRedis } from "./services/redisClient";
 import { RedisStore } from "rate-limit-redis";
+import { bruteForceProtection } from "./middleware/rate-limiter";
 import { swaggerSpec } from "./swagger";
 
 // =============================================================================
@@ -310,9 +311,10 @@ const apiLimiter = rateLimit({
 });
 
 // Apply rate limiters
-app.use('/api/login', authLimiter);
-app.use('/api/mfa', authLimiter);
-app.use('/api/patient-portal/request-login', authLimiter);
+// Brute force protection runs first: detects distributed attacks, adds delay in siege mode
+app.use('/api/login', bruteForceProtection, authLimiter);
+app.use('/api/mfa', bruteForceProtection, authLimiter);
+app.use('/api/patient-portal/request-login', bruteForceProtection, authLimiter);
 app.use('/api/oon-predict', apiLimiter);
 app.use('/api/ai', apiLimiter);
 app.use('/api/public/book', apiLimiter);
