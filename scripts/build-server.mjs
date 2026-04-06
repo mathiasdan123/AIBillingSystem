@@ -13,6 +13,7 @@ const result = await esbuild.build({
   format: 'esm',
   outdir: 'dist',
   packages: 'external',
+  sourcemap: true,
   // This is the key: define process.env.NODE_ENV as "production" string
   // This enables dead code elimination for development-only code
   define: {

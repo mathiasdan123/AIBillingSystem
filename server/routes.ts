@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth } from "./replitAuth";
@@ -101,6 +102,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Auth middleware
   await setupAuth(app);
+
+  // Set Sentry user context after authentication (ID only — no PHI)
+  app.use((req, _res, next) => {
+    const user = (req as any).user;
+    if (user?.id) {
+      Sentry.setUser({ id: String(user.id) });
+    }
+    next();
+  });
 
   // HIPAA audit middleware
   app.use('/api', auditMiddleware);

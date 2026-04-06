@@ -1,6 +1,11 @@
 # Stage 1: Build the application
 FROM public.ecr.aws/docker/library/node:20-slim AS builder
 
+# Release ID for Sentry error tracking (set at build time)
+ARG SENTRY_RELEASE=development
+ENV VITE_SENTRY_RELEASE=${SENTRY_RELEASE}
+ENV SENTRY_RELEASE=${SENTRY_RELEASE}
+
 # Set working directory
 WORKDIR /app
 
@@ -29,6 +34,10 @@ WORKDIR /app
 
 # Set environment to production
 ENV NODE_ENV=production
+
+# Sentry release ID (baked in at build time)
+ARG SENTRY_RELEASE=development
+ENV SENTRY_RELEASE=${SENTRY_RELEASE}
 
 # Create non-root user for security
 RUN groupadd -g 1001 nodejs && \

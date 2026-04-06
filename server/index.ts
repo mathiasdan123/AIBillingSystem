@@ -1,22 +1,39 @@
 // Sentry must be initialized before all other imports
 import * as Sentry from "@sentry/node";
 
+const SENTRY_RELEASE = process.env.SENTRY_RELEASE || "development";
+
 if (process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV || "development",
+    release: SENTRY_RELEASE,
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
-    // Do not send PHI or sensitive session data to Sentry
+    // HIPAA: Strip all PHI and sensitive data before sending to Sentry
     beforeSend(event: any) {
-      // Strip any cookies or session info from the event
+      // Strip request body, cookies, and query strings
       if (event.request) {
         delete event.request.cookies;
         delete event.request.data;
+        delete event.request.query_string;
+        if (event.request.headers) {
+          delete event.request.headers.cookie;
+          delete event.request.headers.authorization;
+        }
+      }
+      // Scrub breadcrumb data (may contain PHI from fetch/XHR)
+      if (event.breadcrumbs) {
+        event.breadcrumbs = event.breadcrumbs.map((b: any) => ({
+          ...b,
+          data: undefined,
+        }));
       }
       return event;
     },
+    // Do not send default PII (IP addresses, user agent strings, etc.)
+    sendDefaultPii: false,
   });
-  console.log("✓ Sentry error tracking initialized");
+  console.log(`✓ Sentry error tracking initialized (release: ${SENTRY_RELEASE})`);
 }
 
 // Prevent unhandled promise rejections from crashing the process

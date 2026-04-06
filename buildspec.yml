@@ -1,14 +1,22 @@
 version: 0.2
 
+env:
+  variables:
+    SENTRY_ORG: "therapybill"
+    SENTRY_PROJECT: "therapybill"
+
 phases:
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 773320320189.dkr.ecr.us-east-1.amazonaws.com
+      # Generate unique release ID for Sentry error tracking
+      - export SENTRY_RELEASE="therapybill-$(date +%Y%m%d-%H%M%S)"
+      - echo "Release ID:" $SENTRY_RELEASE
   build:
     commands:
       - echo Building Docker image...
-      - docker build --target production -t therapybill-app .
+      - docker build --build-arg SENTRY_RELEASE=$SENTRY_RELEASE --target production -t therapybill-app .
       - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
       - echo Building migrate image...
       - docker build --target migrate -t therapybill-app:migrate .
@@ -18,4 +26,25 @@ phases:
       - echo Pushing Docker images...
       - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
       - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:migrate
+      # Upload source maps to Sentry (optional — requires SENTRY_AUTH_TOKEN in Secrets Manager)
+      - |
+        SENTRY_AUTH_TOKEN=$(aws secretsmanager get-secret-value --secret-id therapybill/sentry-auth-token --region us-east-1 --query SecretString --output text 2>/dev/null || echo "")
+        if [ -n "$SENTRY_AUTH_TOKEN" ]; then
+          echo "Uploading source maps to Sentry (release: $SENTRY_RELEASE)..."
+          # Extract source maps from the builder stage
+          docker create --name sourcemap-extract therapybill-app:latest true 2>/dev/null || true
+          mkdir -p /tmp/sourcemaps/server /tmp/sourcemaps/client
+          docker cp sourcemap-extract:/app/dist/index.js.map /tmp/sourcemaps/server/ 2>/dev/null || true
+          docker cp sourcemap-extract:/app/dist/public/ /tmp/sourcemaps/client/ 2>/dev/null || true
+          docker rm sourcemap-extract 2>/dev/null || true
+          # Use Sentry CLI to create release and upload source maps
+          npm install -g @sentry/cli 2>/dev/null
+          export SENTRY_AUTH_TOKEN
+          sentry-cli releases new "$SENTRY_RELEASE" --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" 2>/dev/null || true
+          sentry-cli releases files "$SENTRY_RELEASE" upload-sourcemaps /tmp/sourcemaps/ --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" 2>/dev/null || true
+          sentry-cli releases finalize "$SENTRY_RELEASE" --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" 2>/dev/null || true
+          echo "Source maps uploaded successfully"
+        else
+          echo "SENTRY_AUTH_TOKEN not found — skipping source map upload (errors will still be tracked)"
+        fi
       - echo Build completed

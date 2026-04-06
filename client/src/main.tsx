@@ -9,9 +9,42 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.MODE,
+    release: import.meta.env.VITE_SENTRY_RELEASE || "development",
     tracesSampleRate: import.meta.env.PROD ? 0.2 : 1.0,
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: import.meta.env.PROD ? 1.0 : 0,
+    // HIPAA: Strip PHI from breadcrumbs and events before sending
+    beforeSend(event) {
+      // Strip query strings (may contain patient IDs, search terms)
+      if (event.request) {
+        delete event.request.cookies;
+        delete event.request.query_string;
+        if (event.request.headers) {
+          delete event.request.headers.cookie;
+          delete event.request.headers.authorization;
+        }
+      }
+      // Scrub breadcrumb data (may contain PHI from fetch/XHR bodies)
+      if (event.breadcrumbs) {
+        event.breadcrumbs = event.breadcrumbs.map((b) => ({
+          ...b,
+          data: undefined,
+        }));
+      }
+      return event;
+    },
+    beforeBreadcrumb(breadcrumb) {
+      // Strip XHR/fetch request/response bodies from breadcrumbs
+      if (breadcrumb.category === "xhr" || breadcrumb.category === "fetch") {
+        if (breadcrumb.data) {
+          delete breadcrumb.data.request_body;
+          delete breadcrumb.data.response_body;
+        }
+      }
+      return breadcrumb;
+    },
+    // Do not send default PII
+    sendDefaultPii: false,
   });
 }
 
