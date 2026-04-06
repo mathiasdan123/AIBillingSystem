@@ -450,10 +450,26 @@ export default function Landing() {
             </Card>
           </div>
 
-          <div className="text-center mt-8">
-            <p className="text-slate-600 mb-2">
-              AI Billing Engine: <span className="font-semibold text-slate-900">6% of insurance collections</span> — you only pay when you get paid
-            </p>
+          {/* AI Billing Engine — prominent callout */}
+          <div className="mt-12 max-w-3xl mx-auto">
+            <div className="relative rounded-xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-8 text-center">
+              <Badge className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-4 py-1">
+                AI Billing Engine
+              </Badge>
+              <div className="mt-2">
+                <span className="text-5xl font-bold text-slate-900">6%</span>
+                <span className="text-lg text-slate-600 ml-2">of insurance collections</span>
+              </div>
+              <p className="text-slate-600 mt-3 max-w-lg mx-auto">
+                AI claim review, denial prediction, electronic submission, ERA auto-posting, and appeals — you only pay when you get paid. No minimums. No setup fee.
+              </p>
+              <p className="text-sm text-slate-500 mt-2">
+                Traditional billing companies charge 7–9% and you still need separate software.
+              </p>
+            </div>
+          </div>
+
+          <div className="text-center mt-6">
             <a href="/pricing" className="text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1">
               See full pricing details <ArrowRight className="w-4 h-4" />
             </a>
