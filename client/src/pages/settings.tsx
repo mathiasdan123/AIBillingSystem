@@ -82,6 +82,267 @@ interface UserData {
   createdAt: string;
 }
 
+// ─── MCP Integration Tab Component ─────────────────────────────────────────
+interface McpApiKeyData {
+  id: number;
+  name: string;
+  keyPrefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+function McpIntegrationTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [keyName, setKeyName] = useState("");
+  const [newKey, setNewKey] = useState<{ key: string; name: string } | null>(null);
+
+  const { data: mcpKeys, isLoading } = useQuery<McpApiKeyData[]>({
+    queryKey: ["/api/mcp-api-keys"],
+  });
+
+  const createKeyMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/mcp-api-keys", { name });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setNewKey({ key: data.key, name: data.name });
+      setKeyName("");
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-api-keys"] });
+      toast({ title: "API key created", description: "Copy your key now - it won't be shown again." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create API key", variant: "destructive" });
+    },
+  });
+
+  const revokeKeyMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/mcp-api-keys/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-api-keys"] });
+      toast({ title: "Key revoked", description: "The API key has been revoked and can no longer be used." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to revoke API key", variant: "destructive" });
+    },
+  });
+
+  const configSnippet = (key: string) => JSON.stringify({
+    mcpServers: {
+      therapybill: {
+        url: `${window.location.origin}/mcp`,
+        headers: {
+          Authorization: `Bearer ${key}`,
+        },
+      },
+    },
+  }, null, 2);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied!", description: `${label} copied to clipboard` });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* New Key Created Dialog */}
+      {newKey && (
+        <Card className="border-green-200 bg-green-50">
+          <CardHeader>
+            <CardTitle className="flex items-center text-green-800">
+              <CheckCircle className="w-5 h-5 mr-2" />
+              API Key Created: {newKey.name}
+            </CardTitle>
+            <CardDescription className="text-green-700">
+              Copy your API key now. It will only be shown once.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label className="text-green-800">Your API Key</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input value={newKey.key} readOnly className="font-mono text-sm bg-white" />
+                <Button variant="outline" size="sm" onClick={() => copyToClipboard(newKey.key, "API key")}>
+                  <Copy className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+            <div>
+              <Label className="text-green-800">Claude Desktop Config</Label>
+              <div className="relative mt-1">
+                <pre className="p-3 bg-white rounded-lg border text-xs font-mono overflow-x-auto whitespace-pre">
+                  {configSnippet(newKey.key)}
+                </pre>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="absolute top-2 right-2"
+                  onClick={() => copyToClipboard(configSnippet(newKey.key), "Config snippet")}
+                >
+                  <Copy className="w-4 h-4 mr-1" />
+                  Copy
+                </Button>
+              </div>
+            </div>
+            <Button variant="outline" onClick={() => setNewKey(null)} className="w-full">
+              Done
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Create New Key */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Key className="w-5 h-5 mr-2" />
+            Generate API Key
+          </CardTitle>
+          <CardDescription>
+            Create an API key to connect Claude Desktop to your TherapyBill practice.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <Input
+                placeholder="Key name (e.g. My Claude Desktop)"
+                value={keyName}
+                onChange={(e) => setKeyName(e.target.value)}
+                maxLength={100}
+              />
+            </div>
+            <Button
+              onClick={() => createKeyMutation.mutate(keyName)}
+              disabled={!keyName.trim() || createKeyMutation.isPending}
+            >
+              {createKeyMutation.isPending ? "Generating..." : "Generate Key"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Active Keys */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Shield className="w-5 h-5 mr-2" />
+            Active API Keys
+          </CardTitle>
+          <CardDescription>
+            Manage your MCP API keys. Revoking a key immediately disconnects any Claude Desktop sessions using it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+            </div>
+          ) : mcpKeys && mcpKeys.length > 0 ? (
+            <div className="space-y-3">
+              {mcpKeys.map((k) => (
+                <div key={k.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                  <div>
+                    <p className="font-medium text-slate-900">{k.name}</p>
+                    <p className="text-sm text-slate-500 font-mono">{k.keyPrefix}...</p>
+                    <p className="text-xs text-slate-400">
+                      Created {new Date(k.createdAt).toLocaleDateString()}
+                      {k.lastUsedAt && ` \u00b7 Last used ${new Date(k.lastUsedAt).toLocaleDateString()}`}
+                    </p>
+                  </div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Revoke
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Revoke API Key</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will immediately disconnect any Claude Desktop sessions using the key "{k.name}" ({k.keyPrefix}...). This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => revokeKeyMutation.mutate(k.id)}
+                          className="bg-red-600 hover:bg-red-700"
+                        >
+                          Revoke Key
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 text-center py-4">No API keys yet. Generate one above to get started.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Setup Instructions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <ExternalLink className="w-5 h-5 mr-2" />
+            Setup Instructions
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">1</div>
+              <div>
+                <p className="font-medium text-slate-900">Generate an API key</p>
+                <p className="text-sm text-slate-600">Create a key above and copy the config snippet.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">2</div>
+              <div>
+                <p className="font-medium text-slate-900">Open Claude Desktop settings</p>
+                <p className="text-sm text-slate-600">Go to Settings &gt; Developer &gt; Edit Config in Claude Desktop.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">3</div>
+              <div>
+                <p className="font-medium text-slate-900">Paste and save</p>
+                <p className="text-sm text-slate-600">Paste the config snippet, save, and restart Claude Desktop. You can then ask Claude about your patients, claims, eligibility, and more.</p>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div>
+              <Label className="text-slate-700">Example config template</Label>
+              <pre className="mt-2 p-3 bg-slate-50 rounded-lg border text-xs font-mono overflow-x-auto whitespace-pre">
+{JSON.stringify({
+  mcpServers: {
+    therapybill: {
+      url: `${window.location.origin}/mcp`,
+      headers: {
+        Authorization: "Bearer <your-api-key>",
+      },
+    },
+  },
+}, null, 2)}
+              </pre>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
@@ -436,6 +697,7 @@ export default function Settings() {
     ...(isAdmin ? [
       { id: "users", label: "User Management", icon: Users },
       { id: "baa", label: "BAA Tracking", icon: FileText },
+      { id: "mcp", label: "MCP Integration", icon: Key },
     ] : []),
   ];
 
@@ -1459,6 +1721,10 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
+          )}
+
+          {activeTab === "mcp" && isAdmin && (
+            <McpIntegrationTab />
           )}
 
           {activeTab === "users" && isAdmin && (

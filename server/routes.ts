@@ -29,6 +29,8 @@ import {
   billingTasksRouter,
   billingDocumentsRouter,
   claimCorrectionsRouter,
+  mcpApiKeysRouter,
+  mcpTransportRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -247,6 +249,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', billingTasksRouter);
   app.use('/api', billingDocumentsRouter);
   app.use('/api', claimCorrectionsRouter);
+
+  // MCP API key management routes (admin only)
+  app.use('/api/mcp-api-keys', mcpApiKeysRouter);
+
+  // MCP streamable HTTP transport (no /api prefix — MCP clients connect directly)
+  // Note: mounted BEFORE auth middleware section, uses its own Bearer token auth
+  app.use('/mcp', mcpTransportRouter);
 
   // Insurance Authorization and Data routes
   app.use('/api/insurance-authorizations', insuranceAuthorizationRoutes);

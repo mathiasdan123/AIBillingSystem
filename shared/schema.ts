@@ -3723,6 +3723,32 @@ export const insertClaimCorrectionSchema = createInsertSchema(claimCorrections).
 export type ClaimCorrection = typeof claimCorrections.$inferSelect;
 export type InsertClaimCorrection = z.infer<typeof insertClaimCorrectionSchema>;
 
+// MCP API Keys — for Claude Desktop integration
+export const mcpApiKeys = pgTable("mcp_api_keys", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(), // admin who created it
+  name: varchar("name").notNull(), // user-supplied label, e.g. "Daniel's Claude Desktop"
+  keyPrefix: varchar("key_prefix", { length: 12 }).notNull(), // e.g. "tbai_a3f8b2c1" for display
+  keyHash: varchar("key_hash").notNull(), // SHA-256 hash for O(1) lookup
+  encryptedKey: jsonb("encrypted_key").notNull(), // AES-256-GCM via encryptField()
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"), // soft-delete; null means active
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_mcp_api_keys_hash").on(table.keyHash),
+  index("idx_mcp_api_keys_practice").on(table.practiceId),
+]);
+
+export const insertMcpApiKeySchema = createInsertSchema(mcpApiKeys).omit({
+  id: true,
+  lastUsedAt: true,
+  revokedAt: true,
+  createdAt: true,
+});
+export type McpApiKey = typeof mcpApiKeys.$inferSelect;
+export type InsertMcpApiKey = z.infer<typeof insertMcpApiKeySchema>;
+
 // Note: patientStatements table is defined earlier in this file (line ~1864)
 // patientStatementsRelations kept here for organizational purposes
 export const patientStatementsRelations = relations(patientStatements, ({ one }) => ({

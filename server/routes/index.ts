@@ -74,6 +74,8 @@ export { default as dailyReportRouter } from './daily-report';
 export { default as billingTasksRouter } from './billing-tasks';
 export { default as billingDocumentsRouter } from './billing-documents';
 export { default as claimCorrectionsRouter } from './claim-corrections';
+export { default as mcpApiKeysRouter } from './mcp-api-keys';
+export { default as mcpTransportRouter } from './mcp-transport';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
