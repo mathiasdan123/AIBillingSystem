@@ -75,13 +75,13 @@ export const logger = {
   debug(message: string, data?: Record<string, any>) {
     if (process.env.LOG_LEVEL === 'debug') {
       const entry = createLogEntry('debug', message, data);
-      console.log(formatLog(entry));
+      console.error(formatLog(entry));
     }
   },
 
   info(message: string, data?: Record<string, any>) {
     const entry = createLogEntry('info', message, data);
-    console.log(formatLog(entry));
+    console.error(formatLog(entry));
   },
 
   warn(message: string, data?: Record<string, any>) {
@@ -101,7 +101,7 @@ export const logger = {
       action,
       ...data,
     });
-    console.log(formatLog(entry));
+    console.error(formatLog(entry));
   },
 };
 

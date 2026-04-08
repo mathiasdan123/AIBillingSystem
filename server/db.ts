@@ -36,7 +36,7 @@ dbReady = (async () => {
       statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000', 10),        // kill queries that run longer than 30s
     });
     db = drizzlePg({ client: pool, schema });
-    console.log('Using regular PostgreSQL driver (pg)');
+    console.error('Using regular PostgreSQL driver (pg)');
   } else {
     // Use neon-serverless only when connecting to a Neon database (WebSocket-based)
     const { Pool, neonConfig } = await import('@neondatabase/serverless');
@@ -45,7 +45,7 @@ dbReady = (async () => {
     neonConfig.webSocketConstructor = ws.default;
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
     db = drizzleNeon({ client: pool, schema });
-    console.log('Using Neon serverless driver');
+    console.error('Using Neon serverless driver');
   }
 
   // Enable slow query logging and pool monitoring
