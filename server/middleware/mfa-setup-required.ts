@@ -15,9 +15,24 @@ import type { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
 import logger from '../services/logger';
 
+// Routes exempt from MFA setup enforcement (needed to actually set up MFA)
+const MFA_SETUP_EXEMPT_PATHS = [
+  '/mfa/setup',
+  '/mfa/verify',
+  '/mfa/backup-codes',
+  '/auth/user',
+  '/auth/logout',
+  '/auth/login',
+];
+
 export const mfaSetupRequired = async (req: Request, res: Response, next: NextFunction) => {
   // Skip MFA setup enforcement only with explicit opt-out (not just NODE_ENV)
   if (process.env.SKIP_MFA_ENFORCEMENT === 'true') {
+    return next();
+  }
+
+  // Allow MFA setup routes through (otherwise users can never enable MFA)
+  if (MFA_SETUP_EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + '/'))) {
     return next();
   }
 
