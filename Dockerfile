@@ -84,4 +84,4 @@ RUN npm install --include=dev && npm cache clean --force
 COPY drizzle.config.ts ./
 COPY shared ./shared
 
-CMD ["npx", "drizzle-kit", "push"]
+CMD ["npx", "drizzle-kit", "push", "--force"]
