@@ -107,8 +107,11 @@ router.post("/generate", isAuthenticated, async (req: any, res) => {
     const result = await generateInsights(practiceId);
 
     res.json({
-      message: `Generated ${result.generated} new insights`,
+      message: result.openAiAvailable
+        ? `Generated ${result.generated} new insights`
+        : `Generated ${result.generated} data-driven insights. Configure OPENAI_API_KEY for AI-powered insights.`,
       generated: result.generated,
+      openAiAvailable: result.openAiAvailable,
     });
   } catch (error) {
     logger.error("Error generating AI insights", {

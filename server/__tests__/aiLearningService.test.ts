@@ -250,15 +250,16 @@ describe('aiLearningService', () => {
       mockDb.select.mockReturnValue(emptyChain);
 
       const result = await generateInsights(1);
-      expect(result).toEqual({ generated: 0 });
+      expect(result).toEqual({ generated: 0, openAiAvailable: false });
     });
 
-    it('should throw on database errors', async () => {
+    it('should return gracefully on database errors', async () => {
       mockDb.select.mockImplementation(() => {
         throw new Error('DB error');
       });
 
-      await expect(generateInsights(1)).rejects.toThrow('DB error');
+      const result = await generateInsights(1);
+      expect(result).toEqual({ generated: 0, openAiAvailable: false });
     });
 
     it('should handle generating insights without OpenAI key', async () => {

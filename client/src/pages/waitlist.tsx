@@ -149,12 +149,12 @@ export default function WaitlistPage() {
   const { data: waitlistEntries = [], isLoading } = useQuery<WaitlistEntry[]>({
     queryKey: ["/api/waitlist", statusFilter],
     queryFn: async () => {
-      const params = new URLSearchParams({ practiceId: "1" });
+      const params = new URLSearchParams();
       if (statusFilter !== "all") {
         params.append("status", statusFilter);
       }
-      const res = await fetch(`/api/waitlist?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch waitlist");
+      const query = params.toString();
+      const res = await apiRequest("GET", `/api/waitlist${query ? `?${query}` : ""}`);
       return res.json();
     },
   });
@@ -163,8 +163,7 @@ export default function WaitlistPage() {
   const { data: stats } = useQuery<WaitlistStats>({
     queryKey: ["/api/waitlist/stats"],
     queryFn: async () => {
-      const res = await fetch("/api/waitlist/stats?practiceId=1");
-      if (!res.ok) throw new Error("Failed to fetch stats");
+      const res = await apiRequest("GET", "/api/waitlist/stats");
       return res.json();
     },
   });
@@ -173,8 +172,7 @@ export default function WaitlistPage() {
   const { data: patientsData } = useQuery<any>({
     queryKey: ["/api/patients"],
     queryFn: async () => {
-      const res = await fetch("/api/patients?practiceId=1");
-      if (!res.ok) throw new Error("Failed to fetch patients");
+      const res = await apiRequest("GET", "/api/patients");
       return res.json();
     },
   });
@@ -187,8 +185,7 @@ export default function WaitlistPage() {
   const { data: therapists = [] } = useQuery<Therapist[]>({
     queryKey: ["/api/therapists"],
     queryFn: async () => {
-      const res = await fetch("/api/therapists");
-      if (!res.ok) return [];
+      const res = await apiRequest("GET", "/api/therapists");
       return res.json();
     },
   });
@@ -196,12 +193,7 @@ export default function WaitlistPage() {
   // Create waitlist entry mutation
   const createEntry = useMutation({
     mutationFn: async (data: Partial<WaitlistEntry>) => {
-      const res = await fetch("/api/waitlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to create entry");
+      const res = await apiRequest("POST", "/api/waitlist", data);
       return res.json();
     },
     onSuccess: () => {
@@ -218,12 +210,7 @@ export default function WaitlistPage() {
   // Update entry mutation
   const updateEntry = useMutation({
     mutationFn: async ({ id, ...data }: { id: number } & Partial<WaitlistEntry>) => {
-      const res = await fetch(`/api/waitlist/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to update entry");
+      const res = await apiRequest("PATCH", `/api/waitlist/${id}`, data);
       return res.json();
     },
     onSuccess: () => {
@@ -236,8 +223,7 @@ export default function WaitlistPage() {
   // Delete entry mutation
   const deleteEntry = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/waitlist/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete entry");
+      await apiRequest("DELETE", `/api/waitlist/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist"] });
@@ -250,14 +236,7 @@ export default function WaitlistPage() {
   // Accept offer mutation
   const acceptOffer = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/waitlist/${id}/accept`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "Failed" }));
-        throw new Error(err.message || "Failed to accept offer");
-      }
+      const res = await apiRequest("POST", `/api/waitlist/${id}/accept`);
       return res.json();
     },
     onSuccess: (data) => {
@@ -278,11 +257,7 @@ export default function WaitlistPage() {
   // Decline offer mutation
   const declineOffer = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/waitlist/${id}/decline`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) throw new Error("Failed to decline offer");
+      const res = await apiRequest("POST", `/api/waitlist/${id}/decline`);
       return res.json();
     },
     onSuccess: (data) => {
@@ -302,12 +277,7 @@ export default function WaitlistPage() {
   // Notify patient mutation
   const notifyPatient = useMutation({
     mutationFn: async ({ id, date, time }: { id: number; date: string; time: string }) => {
-      const res = await fetch(`/api/waitlist/${id}/notify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, time }),
-      });
-      if (!res.ok) throw new Error("Failed to notify patient");
+      const res = await apiRequest("POST", `/api/waitlist/${id}/notify`, { date, time });
       return res.json();
     },
     onSuccess: (data) => {
@@ -332,12 +302,7 @@ export default function WaitlistPage() {
   // Offer slot manually mutation
   const offerSlot = useMutation({
     mutationFn: async (params: { date: string; startTime: string; endTime?: string; appointmentType?: string }) => {
-      const res = await fetch("/api/waitlist/auto-fill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...params, practiceId: 1 }),
-      });
-      if (!res.ok) throw new Error("Failed to auto-fill");
+      const res = await apiRequest("POST", "/api/waitlist/auto-fill", params);
       return res.json();
     },
     onSuccess: (data) => {

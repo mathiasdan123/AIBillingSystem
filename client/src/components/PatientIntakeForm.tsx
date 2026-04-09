@@ -807,7 +807,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Sex</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1249,7 +1249,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Did you have any problems during pregnancy?</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select" />
@@ -1286,7 +1286,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Was the birth...</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1322,7 +1322,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Type of Delivery</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1371,7 +1371,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>NICU Stay Required?</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1445,7 +1445,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>How often does your child get sick?</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select" />
@@ -1469,7 +1469,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Does your child have any allergies?</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1506,7 +1506,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Has hearing been tested?</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1527,7 +1527,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Has vision been tested?</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select" />
@@ -1626,7 +1626,7 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Are there any formal custody arrangements in place?</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Select" />
@@ -1780,7 +1780,7 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
               <FormField control={form.control} name="handPreference" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Hand preference</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                     </FormControl>
@@ -2190,7 +2190,7 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Relationship to Subscriber</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select relationship" />

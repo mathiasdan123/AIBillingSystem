@@ -82,11 +82,19 @@ export default function CalendarPage() {
   // Fetch patients for the dropdown
   const { data: patients = [] } = useQuery<any[]>({
     queryKey: ["/api/patients"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/patients");
+      return res.json();
+    },
   });
 
   // Fetch therapists for the dropdown
   const { data: therapists = [] } = useQuery<any[]>({
     queryKey: ["/api/users"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users");
+      return res.json();
+    },
   });
 
   // Fetch locations for the dropdown

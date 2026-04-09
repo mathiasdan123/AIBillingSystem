@@ -167,7 +167,7 @@ interface PayerTrendRow {
  * Analyze historical claim outcome data and generate actionable insights.
  * Uses SQL aggregations for data analysis plus OpenAI for natural language generation.
  */
-export async function generateInsights(practiceId: number): Promise<{ generated: number }> {
+export async function generateInsights(practiceId: number): Promise<{ generated: number; openAiAvailable: boolean }> {
   try {
     // 1. Denial patterns: group by payer + cpt + icd10, compute denial rates
     const denialPatterns: DenialPatternRow[] = await db
@@ -413,13 +413,13 @@ export async function generateInsights(practiceId: number): Promise<{ generated:
       insightCount: newInsights.length,
     });
 
-    return { generated: newInsights.length };
+    return { generated: newInsights.length, openAiAvailable: client !== null };
   } catch (error) {
     logger.error("AI Learning: insight generation failed", {
       practiceId,
       error: error instanceof Error ? error.message : String(error),
     });
-    throw error;
+    return { generated: 0, openAiAvailable: getOpenAI() !== null };
   }
 }
 
