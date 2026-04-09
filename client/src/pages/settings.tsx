@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,7 @@ interface McpApiKeyData {
 function McpIntegrationTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [keyName, setKeyName] = useState("");
   const [newKey, setNewKey] = useState<{ key: string; name: string } | null>(null);
 
@@ -287,55 +289,20 @@ function McpIntegrationTab() {
         </CardContent>
       </Card>
 
-      {/* Setup Instructions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <ExternalLink className="w-5 h-5 mr-2" />
-            Setup Instructions
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">1</div>
-              <div>
-                <p className="font-medium text-slate-900">Generate an API key</p>
-                <p className="text-sm text-slate-600">Create a key above and copy the config snippet.</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">2</div>
-              <div>
-                <p className="font-medium text-slate-900">Open Claude Desktop settings</p>
-                <p className="text-sm text-slate-600">Go to Settings &gt; Developer &gt; Edit Config in Claude Desktop.</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">3</div>
-              <div>
-                <p className="font-medium text-slate-900">Paste and save</p>
-                <p className="text-sm text-slate-600">Paste the config snippet, save, and restart Claude Desktop. You can then ask Claude about your patients, claims, eligibility, and more.</p>
-              </div>
-            </div>
-
-            <Separator />
-
+      {/* Setup Guide Link */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
             <div>
-              <Label className="text-slate-700">Example config template</Label>
-              <pre className="mt-2 p-3 bg-slate-50 rounded-lg border text-xs font-mono overflow-x-auto whitespace-pre">
-{JSON.stringify({
-  mcpServers: {
-    therapybill: {
-      url: `${window.location.origin}/mcp`,
-      headers: {
-        Authorization: "Bearer <your-api-key>",
-      },
-    },
-  },
-}, null, 2)}
-              </pre>
+              <h3 className="font-semibold text-blue-900 text-lg">Need help setting up?</h3>
+              <p className="text-sm text-blue-700 mt-1">
+                Follow our step-by-step guide to connect Claude Desktop to your practice. No technical knowledge required.
+              </p>
             </div>
+            <Button onClick={() => setLocation("/mcp-setup")} className="flex-shrink-0">
+              <ExternalLink className="w-4 h-4 mr-2" />
+              View Setup Guide
+            </Button>
           </div>
         </CardContent>
       </Card>

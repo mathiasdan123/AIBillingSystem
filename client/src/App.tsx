@@ -81,6 +81,9 @@ const DataExport = lazy(() => import("@/pages/data-export"));
 // Data import (admin only)
 const DataImport = lazy(() => import("@/pages/data-import"));
 
+// MCP setup guide
+const McpSetup = lazy(() => import("@/pages/mcp-setup"));
+
 // Public pricing page
 const Pricing = lazy(() => import("@/pages/pricing"));
 
@@ -230,6 +233,7 @@ function Router() {
               {isAdmin && <Route path="/data-import" component={DataImport} />}
               {isAdmin && <Route path="/daily-report" component={DailyReport} />}
               <Route path="/notification-settings" component={NotificationSettings} />
+              <Route path="/mcp-setup" component={McpSetup} />
               <Route path="/onboarding" component={Onboarding} />
               <Route path="/locations" component={Locations} />
               <Route path="/invite/:token" component={InvitePage} />
