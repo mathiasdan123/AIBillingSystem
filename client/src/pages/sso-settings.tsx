@@ -197,7 +197,7 @@ export default function SsoSettings() {
   }
 
   return (
-    <div className="container mx-auto py-6 max-w-3xl">
+    <div className="p-6 pt-20 md:pt-6 md:ml-64 max-w-3xl">
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
           <Shield className="w-6 h-6 text-blue-600" />
