@@ -914,6 +914,7 @@ function AddWaitlistForm({
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
   const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
   const [formData, setFormData] = useState({
     patientId: "",
     therapistId: "",
@@ -1055,17 +1056,46 @@ function AddWaitlistForm({
                       const p = patients.find((p) => String(p.id) === formData.patientId);
                       return p ? `${p.firstName} ${p.lastName}` : "Select a patient";
                     })()
-                  : "Search or type patient name..."}
+                  : (isNewPatient && newPatientData.firstName)
+                    ? `${newPatientData.firstName} ${newPatientData.lastName} (new)`
+                    : "Search or type patient name..."}
                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
               <Command>
-                <CommandInput placeholder="Type a name to search..." />
+                <CommandInput
+                  placeholder="Type a name to search..."
+                  value={patientSearch}
+                  onValueChange={setPatientSearch}
+                />
                 <CommandList>
                   <CommandEmpty>
-                    <div className="text-center py-2">
-                      <p className="text-sm text-muted-foreground mb-2">No patient found</p>
+                    <div className="text-center py-2 space-y-2">
+                      {patientSearch.trim() && (
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            const parts = patientSearch.trim().split(/\s+/);
+                            const firstName = parts[0] || "";
+                            const lastName = parts.slice(1).join(" ") || "";
+                            setIsNewPatient(true);
+                            setNewPatientData({ ...newPatientData, firstName, lastName });
+                            setFormData((prev) => ({ ...prev, patientId: "" }));
+                            setPatientSearchOpen(false);
+                            setPatientSearch("");
+                          }}
+                        >
+                          <Plus className="mr-1 h-3 w-3" />
+                          Create new patient: "{patientSearch.trim()}"
+                        </Button>
+                      )}
+                      <p className="text-sm text-muted-foreground">
+                        {patientSearch.trim() ? "Or" : "No patient found."}
+                      </p>
                       <Button
                         type="button"
                         variant="outline"
@@ -1074,10 +1104,11 @@ function AddWaitlistForm({
                           setIsNewPatient(true);
                           setPatientSearchOpen(false);
                           setFormData((prev) => ({ ...prev, patientId: "" }));
+                          setPatientSearch("");
                         }}
                       >
                         <Plus className="mr-1 h-3 w-3" />
-                        Add New Patient
+                        Add New Patient Manually
                       </Button>
                     </div>
                   </CommandEmpty>

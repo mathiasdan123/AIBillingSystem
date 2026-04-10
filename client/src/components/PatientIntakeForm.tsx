@@ -1258,8 +1258,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                     <SelectContent>
                       <SelectItem value="no">No</SelectItem>
                       <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
+                  {(field.value === "other" || field.value?.startsWith("other:")) && (
+                    <Input
+                      placeholder="Please specify"
+                      className="mt-2"
+                      defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                      onChange={(e) => {
+                        form.setValue("pregnancyProblems", e.target.value ? `other: ${e.target.value}` : "other");
+                      }}
+                    />
+                  )}
                 </FormItem>
               )}
             />
@@ -1296,8 +1307,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                         <SelectItem value="full_term">Full Term</SelectItem>
                         <SelectItem value="premature">Premature</SelectItem>
                         <SelectItem value="post_term">Post Term</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
                       </SelectContent>
                     </Select>
+                    {(field.value === "other" || field.value?.startsWith("other:")) && (
+                      <Input
+                        placeholder="Please specify"
+                        className="mt-2"
+                        defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                        onChange={(e) => {
+                          form.setValue("birthType", e.target.value ? `other: ${e.target.value}` : "other");
+                        }}
+                      />
+                    )}
                   </FormItem>
                 )}
               />
@@ -1332,8 +1354,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                         <SelectItem value="vaginal">Vaginal</SelectItem>
                         <SelectItem value="c_section">C-Section</SelectItem>
                         <SelectItem value="assisted">Assisted (forceps/vacuum)</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
                       </SelectContent>
                     </Select>
+                    {(field.value === "other" || field.value?.startsWith("other:")) && (
+                      <Input
+                        placeholder="Please specify"
+                        className="mt-2"
+                        defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                        onChange={(e) => {
+                          form.setValue("deliveryType", e.target.value ? `other: ${e.target.value}` : "other");
+                        }}
+                      />
+                    )}
                   </FormItem>
                 )}
               />
@@ -1380,8 +1413,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                       <SelectContent>
                         <SelectItem value="no">No</SelectItem>
                         <SelectItem value="yes">Yes</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
                       </SelectContent>
                     </Select>
+                    {(field.value === "other" || field.value?.startsWith("other:")) && (
+                      <Input
+                        placeholder="Please specify"
+                        className="mt-2"
+                        defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                        onChange={(e) => {
+                          form.setValue("nicuStay", e.target.value ? `other: ${e.target.value}` : "other");
+                        }}
+                      />
+                    )}
                   </FormItem>
                 )}
               />
@@ -1456,8 +1500,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                       <SelectItem value="sometimes">Sometimes</SelectItem>
                       <SelectItem value="often">Often</SelectItem>
                       <SelectItem value="very_often">Very Often</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
+                  {(field.value === "other" || field.value?.startsWith("other:")) && (
+                    <Input
+                      placeholder="Please specify"
+                      className="mt-2"
+                      defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                      onChange={(e) => {
+                        form.setValue("sicknessFrequency", e.target.value ? `other: ${e.target.value}` : "other");
+                      }}
+                    />
+                  )}
                 </FormItem>
               )}
             />
@@ -1516,8 +1571,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                         <SelectItem value="no">No</SelectItem>
                         <SelectItem value="yes_normal">Yes - Normal</SelectItem>
                         <SelectItem value="yes_abnormal">Yes - Abnormal</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
                       </SelectContent>
                     </Select>
+                    {(field.value === "other" || field.value?.startsWith("other:")) && (
+                      <Input
+                        placeholder="Please specify"
+                        className="mt-2"
+                        defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                        onChange={(e) => {
+                          form.setValue("hearingTested", e.target.value ? `other: ${e.target.value}` : "other");
+                        }}
+                      />
+                    )}
                   </FormItem>
                 )}
               />
@@ -1537,8 +1603,19 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                         <SelectItem value="no">No</SelectItem>
                         <SelectItem value="yes_normal">Yes - Normal</SelectItem>
                         <SelectItem value="yes_abnormal">Yes - Abnormal</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
                       </SelectContent>
                     </Select>
+                    {(field.value === "other" || field.value?.startsWith("other:")) && (
+                      <Input
+                        placeholder="Please specify"
+                        className="mt-2"
+                        defaultValue={field.value?.startsWith("other:") ? field.value.slice(7) : ""}
+                        onChange={(e) => {
+                          form.setValue("visionTested", e.target.value ? `other: ${e.target.value}` : "other");
+                        }}
+                      />
+                    )}
                   </FormItem>
                 )}
               />
