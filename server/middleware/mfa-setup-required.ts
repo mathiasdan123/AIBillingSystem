@@ -23,6 +23,7 @@ const MFA_SETUP_EXEMPT_PATHS = [
   '/auth/user',
   '/auth/logout',
   '/auth/login',
+  '/demo-login',
 ];
 
 export const mfaSetupRequired = async (req: Request, res: Response, next: NextFunction) => {
