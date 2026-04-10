@@ -4,69 +4,69 @@
 <meta charset="UTF-8">
 <title>TherapyBill AI - Sell Sheet</title>
 <style>
-  @page { size: letter; margin: 0.5in; }
+  @page { size: letter; margin: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1a1a2e; line-height: 1.4; font-size: 10.5pt; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1a1a2e; line-height: 1.3; font-size: 10.5pt; }
 
-  .page { max-width: 7.5in; margin: 0 auto; }
+  .page { width: 100%; padding: 0.25in 0.35in; }
 
   /* Header */
-  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 16px; }
-  .header h1 { font-size: 24pt; color: #2563eb; font-weight: 800; letter-spacing: -0.5px; }
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2563eb; padding-bottom: 8px; margin-bottom: 10px; }
+  .header h1 { font-size: 26pt; color: #2563eb; font-weight: 800; letter-spacing: -0.5px; }
   .header h1 span { color: #1a1a2e; }
   .header .tagline { font-size: 9pt; color: #64748b; text-align: right; max-width: 220px; line-height: 1.3; }
 
   /* Hero */
-  .hero { background: linear-gradient(135deg, #eff6ff, #e0e7ff); border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }
-  .hero h2 { font-size: 14pt; color: #1e40af; margin-bottom: 4px; }
+  .hero { background: linear-gradient(135deg, #eff6ff, #e0e7ff); border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; }
+  .hero h2 { font-size: 14pt; color: #1e40af; margin-bottom: 3px; }
   .hero p { font-size: 10pt; color: #334155; }
   .hero .stat { font-weight: 800; color: #dc2626; }
 
   /* Two column layout */
-  .columns { display: flex; gap: 18px; margin-bottom: 14px; }
+  .columns { display: flex; gap: 10px; margin-bottom: 4px; }
   .col { flex: 1; }
 
   /* Section headers */
-  h3 { font-size: 11pt; color: #2563eb; border-bottom: 1.5px solid #bfdbfe; padding-bottom: 3px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  h3 { font-size: 11pt; color: #2563eb; border-bottom: 1.5px solid #bfdbfe; padding-bottom: 2px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
 
   /* Feature lists */
-  .features { list-style: none; margin-bottom: 14px; }
-  .features li { padding: 3px 0; padding-left: 16px; position: relative; font-size: 9.5pt; }
+  .features { list-style: none; margin-bottom: 10px; }
+  .features li { padding: 2px 0; padding-left: 16px; position: relative; font-size: 8.5pt; }
   .features li::before { content: "\2713"; position: absolute; left: 0; color: #16a34a; font-weight: 700; }
 
   /* Time savings table */
-  .savings-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9pt; }
-  .savings-table th { background: #1e40af; color: white; padding: 5px 8px; text-align: left; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.3px; }
+  .savings-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 9.5pt; }
+  .savings-table th { background: #1e40af; color: white; padding: 5px 8px; text-align: left; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.3px; }
   .savings-table td { padding: 4px 8px; border-bottom: 1px solid #e2e8f0; }
   .savings-table tr:nth-child(even) { background: #f8fafc; }
   .savings-table .before { color: #991b1b; }
   .savings-table .after { color: #166534; font-weight: 600; }
 
   /* AI highlight box */
-  .ai-box { background: linear-gradient(135deg, #1e40af, #7c3aed); color: white; border-radius: 8px; padding: 14px 18px; margin-bottom: 14px; }
+  .ai-box { background: linear-gradient(135deg, #1e40af, #7c3aed); color: white; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; }
   .ai-box h3 { color: white; border-bottom-color: rgba(255,255,255,0.3); }
-  .ai-box .stat-row { display: flex; gap: 12px; margin-top: 8px; }
-  .ai-box .stat-item { flex: 1; text-align: center; background: rgba(255,255,255,0.15); border-radius: 6px; padding: 8px; }
-  .ai-box .stat-item .num { font-size: 18pt; font-weight: 800; }
-  .ai-box .stat-item .label { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.9; }
+  .ai-box .stat-row { display: flex; gap: 6px; margin-top: 5px; }
+  .ai-box .stat-item { flex: 1; text-align: center; background: rgba(255,255,255,0.15); border-radius: 5px; padding: 5px; }
+  .ai-box .stat-item .num { font-size: 11pt; font-weight: 800; }
+  .ai-box .stat-item .label { font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.9; }
 
   /* Platform section */
-  .platform-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-  .platform-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; }
-  .platform-card h4 { font-size: 9pt; color: #1e40af; margin-bottom: 4px; font-weight: 700; }
-  .platform-card p { font-size: 8pt; color: #475569; line-height: 1.35; }
+  .platform-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .platform-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; padding: 8px; }
+  .platform-card h4 { font-size: 9.5pt; color: #1e40af; margin-bottom: 2px; font-weight: 700; }
+  .platform-card p { font-size: 8.5pt; color: #475569; line-height: 1.3; }
 
   /* Migration */
-  .migration { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; }
+  .migration { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 6px 10px; margin-bottom: 4px; }
   .migration h3 { color: #166534; border-bottom-color: #86efac; }
   .migration .logos { font-size: 8.5pt; color: #475569; margin-top: 4px; }
 
   /* CTA */
-  .cta { background: #1e40af; color: white; border-radius: 8px; padding: 16px; text-align: center; }
-  .cta h3 { color: white; border: none; margin-bottom: 6px; font-size: 13pt; }
-  .cta p { font-size: 10pt; margin-bottom: 2px; }
-  .cta .url { font-size: 13pt; font-weight: 800; letter-spacing: 0.5px; }
-  .cta .small { font-size: 8pt; opacity: 0.8; margin-top: 6px; }
+  .cta { background: #1e40af; color: white; border-radius: 6px; padding: 8px; text-align: center; }
+  .cta h3 { color: white; border: none; margin-bottom: 4px; font-size: 12pt; }
+  .cta p { font-size: 9.5pt; margin-bottom: 2px; }
+  .cta .url { font-size: 12pt; font-weight: 800; letter-spacing: 0.5px; }
+  .cta .small { font-size: 7.5pt; opacity: 0.8; margin-top: 4px; }
 
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -174,9 +174,9 @@
     </div>
   </div>
 
-  <div style="margin-top: 14px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 7.5pt; color: #64748b; line-height: 1.4;">
-    <strong>Disclaimer:</strong> TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
-  </div>
+  <p style="margin-top: 4px; font-size: 6pt; color: #94a3b8; line-height: 1.2;">
+    <strong>Disclaimer:</strong> TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider.
+  </p>
 
 </div>
 </body>

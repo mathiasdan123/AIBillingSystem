@@ -391,8 +391,8 @@ function parseCAS(elements: string[]): Parsed835Adjustment[] {
   const groupCode = elements[1] || '';
   const adjustments: Parsed835Adjustment[] = [];
 
-  // CAS can have up to 6 adjustment groups in one segment
-  // Pattern: group, reason, amount, quantity (repeated up to 6 times)
+  // CAS segment: CAS*groupCode*reasonCode1*amount1*quantity1*reasonCode2*amount2*quantity2...
+  // Each adjustment is a triplet: reasonCode, amount, quantity (repeated up to 6 times)
   for (let i = 2; i < elements.length; i += 3) {
     const reasonCode = elements[i];
     const amount = elements[i + 1];
