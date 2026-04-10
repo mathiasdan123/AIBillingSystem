@@ -180,4 +180,121 @@ router.get('/admin/cache/stats', isAuthenticated, isAdmin, async (_req, res) => 
   }
 });
 
+// POST /api/admin/reset-demo-data - Wipe all practice data and re-seed demo patients
+// Protected by admin role + confirmation parameter to prevent accidental use
+router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (req: any, res: Response) => {
+  try {
+    const { confirm } = req.body;
+    if (confirm !== 'RESET_ALL_DATA') {
+      return res.status(400).json({
+        message: 'Safety check failed. Send { "confirm": "RESET_ALL_DATA" } to proceed.',
+      });
+    }
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const { getDb } = await import('../db');
+    const db = await getDb();
+    const { sql } = await import('drizzle-orm');
+
+    logger.warn('Admin: resetting all demo data', {
+      practiceId,
+      userId: req.user?.claims?.sub,
+    });
+
+    // Delete in FK-safe order (children first)
+    const tables = [
+      'eligibility_checks',
+      'eligibility_alerts',
+      'claim_line_items',
+      'claim_follow_ups',
+      'claim_corrections',
+      'claim_outcomes',
+      'claim_status_checks',
+      'appeal_outcomes',
+      'appeals',
+      'soap_note_goal_progress',
+      'goal_progress_notes',
+      'treatment_objectives',
+      'treatment_interventions',
+      'treatment_goals',
+      'treatment_plans',
+      'soap_note_drafts',
+      'soap_notes',
+      'treatment_sessions',
+      'payment_plan_installments',
+      'payment_plans',
+      'payment_transactions',
+      'payment_postings',
+      'patient_payments',
+      'payments',
+      'invoices',
+      'superbills',
+      'time_entries',
+      'remittance_line_items',
+      'remittance_advice',
+      'expenses',
+      'message_notifications',
+      'messages',
+      'conversations',
+      'patient_documents',
+      'patient_statements',
+      'patient_consents',
+      'patient_assessments',
+      'assessment_schedules',
+      'survey_responses',
+      'survey_assignments',
+      'patient_portal_access',
+      'patient_insurance_authorizations',
+      'treatment_authorizations',
+      'patient_plan_documents',
+      'patient_plan_benefits',
+      'patient_payment_methods',
+      'patient_progress_notes',
+      'referral_communications',
+      'referrals',
+      'appointment_requests',
+      'online_bookings',
+      'waitlist',
+      'review_requests',
+      'patient_feedback',
+      'appointments',
+      'claims',
+      'insurances',
+      'patients',
+    ];
+
+    let deleted = 0;
+    for (const table of tables) {
+      try {
+        const result = await db.execute(
+          sql.raw(`DELETE FROM ${table} WHERE practice_id = ${practiceId}`)
+        );
+        const count = (result as any).rowCount || 0;
+        if (count > 0) {
+          logger.info(`Reset: deleted ${count} rows from ${table}`);
+          deleted += count;
+        }
+      } catch (err: any) {
+        // Some tables may not have practice_id — skip silently
+        logger.debug(`Reset: skipped ${table}: ${err.message}`);
+      }
+    }
+
+    // Re-seed demo patients
+    const { seedDatabase } = await import('../seeds');
+    await seedDatabase({ force: true });
+
+    logger.warn('Admin: demo data reset complete', { practiceId, deletedRows: deleted });
+
+    res.json({
+      success: true,
+      message: `Deleted ${deleted} rows across ${tables.length} tables and re-seeded demo data.`,
+      deletedRows: deleted,
+    });
+  } catch (error) {
+    logger.error('Failed to reset demo data', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to reset demo data' });
+  }
+});
+
 export default router;

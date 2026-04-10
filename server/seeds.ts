@@ -3,7 +3,7 @@ import { practices, cptCodes, icd10Codes, insurances, users } from "@shared/sche
 import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
 
-export async function seedDatabase() {
+export async function seedDatabase(options?: { force?: boolean }) {
   const isProduction = process.env.NODE_ENV === 'production';
 
   try {
@@ -157,7 +157,7 @@ export async function seedDatabase() {
     // Seed demo patients only if none exist
     const existingPatientCount = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE deleted_at IS NULL`);
     const activePatients = parseInt(existingPatientCount.rows[0]?.count || '0', 10);
-    if (!isProduction && activePatients === 0) {
+    if ((options?.force || !isProduction) && activePatients === 0) {
       console.log("No patients found — seeding demo patients...");
       const demoPatients = [
         { fn: 'Liam', ln: 'Martinez', dob: '2019-06-12', email: 'rosa.martinez@email.com', phone: '5552345678', addr: '456 Oak Street, Wellness City, WC 12345', ins: 'Blue Cross Blue Shield', insId: 'BCBS123456789', pol: 'POL-2024-001', grp: 'GRP-100' },

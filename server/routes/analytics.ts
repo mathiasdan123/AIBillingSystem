@@ -70,26 +70,18 @@ const getAuthorizedPracticeId = (req: any): number => {
 // Dashboard analytics (financial data filtered by role)
 router.get('/dashboard', isAuthenticated, async (req: any, res) => {
   try {
+    const practiceId = getAuthorizedPracticeId(req);
     const userId = req.user?.claims?.sub;
     const user = userId ? await storage.getUser(userId) : null;
     const isAdminOrBillingRole = user?.role === 'admin' || user?.role === 'billing';
 
-    // Base stats visible to all authenticated users
-    const baseStats = {
-      totalPatients: 3,
-      activeClaims: 2,
-      pendingPayments: 1,
-      claimApprovalRate: 94.2
-    };
+    const stats = await storage.getDashboardStats(practiceId);
 
-    // Financial data only for admin/billing
     if (isAdminOrBillingRole) {
-      res.json({
-        ...baseStats,
-        monthlyRevenue: 12500,
-        averageReimbursement: 142.50
-      });
+      res.json(stats);
     } else {
+      // Non-admin users get limited view (no financial data)
+      const { monthlyRevenue, totalRevenue, ...baseStats } = stats as any;
       res.json(baseStats);
     }
   } catch (error) {

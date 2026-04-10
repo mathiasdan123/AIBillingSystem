@@ -80,11 +80,11 @@ export default function Landing() {
             From patient intake to insurance reimbursement. Schedule, document, bill, and get paid—all powered by AI that ensures billing accuracy while minimizing your work.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
-            <Button size="lg" onClick={handleLogin} className="px-8 py-6 text-lg bg-blue-600 hover:bg-blue-700">
-              Start Free Trial <ArrowRight className="ml-2 w-5 h-5" />
+            <Button size="lg" onClick={handleTryDemo} disabled={demoLoading} className="px-8 py-6 text-lg bg-green-600 hover:bg-green-700 text-white">
+              {demoLoading ? 'Loading...' : 'Try Free Demo'} <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
-            <Button size="lg" variant="outline" onClick={handleTryDemo} disabled={demoLoading} className="px-8 py-6 text-lg border-green-500 text-green-600 hover:bg-green-50">
-              {demoLoading ? 'Loading...' : 'Try Demo'}
+            <Button size="lg" variant="outline" onClick={handleLogin} className="px-8 py-6 text-lg border-blue-500 text-blue-600 hover:bg-blue-50">
+              Start Free Trial
             </Button>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-slate-600">
