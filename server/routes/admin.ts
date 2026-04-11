@@ -262,6 +262,10 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
       'patients',
     ];
 
+    // Diagnostic: check patients exist before deleting
+    const patientCheck = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE practice_id = ${practiceId}`);
+    logger.warn(`Reset: found ${JSON.stringify(patientCheck.rows)} patients for practice ${practiceId}`);
+
     let deleted = 0;
     for (const table of tables) {
       try {
@@ -270,8 +274,8 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
           sql`DELETE FROM ${sql.raw(table)} WHERE practice_id = ${practiceId}`
         );
         const count = (result as any).rowCount ?? (result as any).rows?.length ?? 0;
+        logger.warn(`Reset: ${table} -> deleted ${count} (rowCount=${(result as any).rowCount}, rows=${(result as any).rows?.length})`);
         if (count > 0) {
-          logger.info(`Reset: deleted ${count} rows from ${table}`);
           deleted += count;
         }
       } catch (err: any) {
