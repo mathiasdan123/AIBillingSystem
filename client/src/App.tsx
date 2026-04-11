@@ -84,6 +84,9 @@ const DataImport = lazy(() => import("@/pages/data-import"));
 // MCP setup guide
 const McpSetup = lazy(() => import("@/pages/mcp-setup"));
 
+// Self-service signup
+const Signup = lazy(() => import("@/pages/signup"));
+
 // Public pricing page
 const Pricing = lazy(() => import("@/pages/pricing"));
 
@@ -159,6 +162,7 @@ function Router() {
           <Suspense fallback={<PageLoader />}>
             <Switch>
               <Route path="/" component={Landing} />
+              <Route path="/signup" component={Signup} />
               <Route path="/pricing" component={Pricing} />
               <Route path="/intake" component={PatientIntake} />
               <Route path="/invite/:token" component={InvitePage} />

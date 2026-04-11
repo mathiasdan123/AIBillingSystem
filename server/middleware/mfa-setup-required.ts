@@ -23,6 +23,11 @@ const MFA_SETUP_EXEMPT_PATHS = [
   '/auth/user',
   '/auth/logout',
   '/auth/login',
+  '/auth/signup',
+  '/auth/register',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/verify-email',
   '/demo-login',
 ];
 

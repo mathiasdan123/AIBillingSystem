@@ -160,6 +160,109 @@ passport.use(
 );
 
 /**
+ * POST /api/auth/signup
+ * Self-service practice signup: creates a new practice + admin user in one step
+ */
+router.post('/signup', registrationLimiter, async (req, res) => {
+  try {
+    const { practiceName, email, password, firstName, lastName } = req.body;
+
+    // Validate required fields
+    if (!practiceName || !email || !password || !firstName || !lastName) {
+      return res.status(400).json({ message: 'All fields are required: practiceName, email, password, firstName, lastName' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const trimmedPracticeName = practiceName.trim();
+
+    if (trimmedPracticeName.length < 2) {
+      return res.status(400).json({ message: 'Practice name must be at least 2 characters' });
+    }
+
+    // Validate password
+    const validation = validatePassword(password);
+    if (!validation.valid) {
+      return res.status(400).json({
+        message: 'Password does not meet requirements',
+        errors: validation.errors,
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await storage.getUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return res.status(400).json({ message: 'Unable to create account with this email' });
+    }
+
+    // Create the practice
+    const practice = await storage.createPractice({
+      name: trimmedPracticeName,
+      onboardingCompleted: false,
+      onboardingStep: 0,
+    });
+
+    // Hash password and create admin user linked to the practice
+    const passwordHash = await hashPassword(password);
+    const user = await storage.createUserWithPassword({
+      email: normalizedEmail,
+      passwordHash,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      practiceId: practice.id,
+      role: 'admin',
+    });
+
+    // Generate email verification token
+    const verificationToken = generateSecureToken();
+    const verificationExpires = calculateVerificationTokenExpiry();
+    await storage.setEmailVerificationToken(user.id, verificationToken, verificationExpires);
+
+    // Send verification email
+    const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    await sendEmailVerificationEmail(normalizedEmail, {
+      verificationUrl: `${baseUrl}/verify-email/${verificationToken}`,
+      firstName: firstName.trim() || 'there',
+    });
+
+    logger.info('Practice signup completed', { userId: user.id, practiceId: practice.id, email: normalizedEmail });
+
+    // Log the user in
+    const userSession = {
+      claims: {
+        sub: user.id,
+        email: user.email,
+        first_name: user.firstName,
+        last_name: user.lastName,
+      },
+      expires_at: Math.floor(Date.now() / 1000) + 86400,
+    };
+
+    req.login(userSession, (err) => {
+      if (err) {
+        logger.error('Session login error after signup', { error: err });
+        return res.status(500).json({ message: 'Signup successful but login failed' });
+      }
+
+      res.status(201).json({
+        message: 'Signup successful',
+        redirectTo: '/onboarding',
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          practiceId: practice.id,
+        },
+      });
+    });
+  } catch (error) {
+    logger.error('Signup error', { error });
+    res.status(500).json({ message: 'Failed to create practice' });
+  }
+});
+
+/**
  * POST /api/auth/register
  * Register a new user with email and password
  */

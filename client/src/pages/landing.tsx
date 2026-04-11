@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +11,7 @@ import {
 import { AuthModal } from "@/components/AuthModal";
 
 export default function Landing() {
+  const [, setLocation] = useLocation();
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
   // Auto-login for demo mode
@@ -83,7 +85,7 @@ export default function Landing() {
             <Button size="lg" onClick={handleTryDemo} disabled={demoLoading} className="px-8 py-6 text-lg bg-green-600 hover:bg-green-700 text-white">
               {demoLoading ? 'Loading...' : 'Try Free Demo'} <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
-            <Button size="lg" variant="outline" onClick={handleLogin} className="px-8 py-6 text-lg border-blue-500 text-blue-600 hover:bg-blue-50">
+            <Button size="lg" variant="outline" onClick={() => setLocation('/signup')} className="px-8 py-6 text-lg border-blue-500 text-blue-600 hover:bg-blue-50">
               Start Free Trial
             </Button>
           </div>
