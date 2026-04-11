@@ -115,6 +115,7 @@ export const practices = pgTable("practices", {
   // Stedi clearinghouse fields
   stediApiKey: varchar("stedi_api_key"),
   stediPartnerId: varchar("stedi_partner_id"),
+  sandboxMode: boolean("sandbox_mode").default(true),
   // Onboarding fields
   onboardingCompleted: boolean("onboarding_completed").default(false),
   onboardingStep: integer("onboarding_step").default(0),

@@ -926,7 +926,9 @@ router.post('/bulk-eligibility', isAuthenticated, async (req: any, res) => {
     }
 
     const { StediAdapter } = await import('../payer-integrations/adapters/payers/StediAdapter');
-    const stediApiKey = process.env.STEDI_API_KEY;
+    const { getStediApiKeyForPractice } = await import('../services/stediService');
+    const stediKeyInfo = await getStediApiKeyForPractice(getAuthorizedPracticeId(req)).catch(() => null);
+    const stediApiKey = stediKeyInfo?.apiKey || process.env.STEDI_API_KEY;
 
     const summary = {
       checked: 0,

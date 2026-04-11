@@ -8,17 +8,48 @@
  * - Electronic remittance advice (835)
  */
 
-// Stedi API base URL
+// Stedi API base URL (same for test and production — the API key determines the environment)
 const STEDI_API_BASE = 'https://healthcare.us.stedi.com/2024-04-01';
 
-// Check if Stedi is configured
+// Check if Stedi is configured (globally or for a practice)
 export function isStediConfigured(): boolean {
   return !!process.env.STEDI_API_KEY;
 }
 
-// Get headers for Stedi API requests
-function getHeaders(): HeadersInit {
-  const apiKey = process.env.STEDI_API_KEY;
+/**
+ * Resolve the Stedi API key for a specific practice.
+ * - If practice is in sandbox mode (or has no key), uses the global test key
+ * - If practice is in live mode with a key, decrypts and uses the practice's key
+ */
+export async function getStediApiKeyForPractice(practiceId: number): Promise<{ apiKey: string; isSandbox: boolean }> {
+  try {
+    const { storage } = await import('../storage');
+    const { decryptField } = await import('./phiEncryptionService');
+    const practice = await storage.getPractice(practiceId);
+    if (practice && !practice.sandboxMode && practice.stediApiKey) {
+      // Live mode — use practice's own key
+      const decryptedKey = typeof practice.stediApiKey === 'string'
+        ? practice.stediApiKey
+        : decryptField(practice.stediApiKey as any);
+      if (decryptedKey) {
+        return { apiKey: decryptedKey, isSandbox: false };
+      }
+    }
+  } catch {
+    // Fall through to global key
+  }
+
+  // Sandbox mode or no practice key — use global test key
+  const globalKey = process.env.STEDI_API_KEY;
+  if (!globalKey) {
+    throw new Error('STEDI_API_KEY environment variable is not configured');
+  }
+  return { apiKey: globalKey, isSandbox: true };
+}
+
+// Get headers for Stedi API requests (accepts optional API key override)
+function getHeaders(apiKeyOverride?: string): HeadersInit {
+  const apiKey = apiKeyOverride || process.env.STEDI_API_KEY;
   if (!apiKey) {
     throw new Error('STEDI_API_KEY environment variable is not configured');
   }
@@ -113,7 +144,8 @@ export interface EligibilityResponse {
   errors?: string[];
 }
 
-export async function checkEligibility(request: EligibilityRequest): Promise<EligibilityResponse> {
+export async function checkEligibility(request: EligibilityRequest, practiceId?: number): Promise<EligibilityResponse> {
+  const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
   const payload = {
     controlNumber: generateControlNumber(),
     tradingPartnerServiceId: request.payer.id,
@@ -148,7 +180,7 @@ export async function checkEligibility(request: EligibilityRequest): Promise<Eli
   try {
     const response = await fetch(`${STEDI_API_BASE}/eligibility-checks`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
     });
 
@@ -259,13 +291,14 @@ export interface ClaimSubmissionResponse {
   warnings?: string[];
 }
 
-export async function submitClaim(claim: ClaimSubmission): Promise<ClaimSubmissionResponse> {
+export async function submitClaim(claim: ClaimSubmission, practiceId?: number): Promise<ClaimSubmissionResponse> {
+  const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
   const payload = build837P(claim);
 
   try {
     const response = await fetch(`${STEDI_API_BASE}/claims`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
     });
 
@@ -336,7 +369,8 @@ export interface ClaimStatusResponse {
   errors?: string[];
 }
 
-export async function checkClaimStatus(request: ClaimStatusRequest): Promise<ClaimStatusResponse> {
+export async function checkClaimStatus(request: ClaimStatusRequest, practiceId?: number): Promise<ClaimStatusResponse> {
+  const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
   const payload = {
     controlNumber: generateControlNumber(),
     tradingPartnerServiceId: request.payer.id,
@@ -360,7 +394,7 @@ export async function checkClaimStatus(request: ClaimStatusRequest): Promise<Cla
   try {
     const response = await fetch(`${STEDI_API_BASE}/claim-status`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
     });
 

@@ -379,7 +379,9 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
       insurance = insurances.find((i: any) => i.id === insuranceId);
     }
 
-    const stediApiKey = process.env.STEDI_API_KEY;
+    const { getStediApiKeyForPractice } = await import('../services/stediService');
+    const stediKeyInfo = await getStediApiKeyForPractice(getAuthorizedPracticeId(req)).catch(() => null);
+    const stediApiKey = stediKeyInfo?.apiKey || process.env.STEDI_API_KEY;
     const hasRealApi = !!stediApiKey || (insurance?.eligibilityApiConfig &&
                        Object.keys(insurance.eligibilityApiConfig as object).length > 0);
 

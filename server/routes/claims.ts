@@ -650,7 +650,9 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
     }
 
     // Submit valid claims sequentially with a small delay for rate limiting
-    const stediApiKey = process.env.STEDI_API_KEY;
+    const { getStediApiKeyForPractice } = await import('../services/stediService');
+    const stediKeyInfo = await getStediApiKeyForPractice(getAuthorizedPracticeId(req)).catch(() => null);
+    const stediApiKey = stediKeyInfo?.apiKey || process.env.STEDI_API_KEY;
     const results: Array<{
       claimId: number;
       claimNumber: string;
@@ -872,7 +874,9 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       insurance = insurances.find((i: any) => i.id === claim.insuranceId);
     }
 
-    const stediApiKey = process.env.STEDI_API_KEY;
+    const { getStediApiKeyForPractice: getKey2 } = await import('../services/stediService');
+    const stediKeyInfo2 = await getKey2(getAuthorizedPracticeId(req)).catch(() => null);
+    const stediApiKey = stediKeyInfo2?.apiKey || process.env.STEDI_API_KEY;
     let clearinghouseResult: any = null;
     let submissionMethod = 'manual';
 
@@ -1021,7 +1025,9 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
       insurance = insurances.find((i: any) => i.id === claim.insuranceId);
     }
 
-    const stediApiKey = process.env.STEDI_API_KEY;
+    const { getStediApiKeyForPractice: getKey3 } = await import('../services/stediService');
+    const stediKeyInfo3 = await getKey3(getAuthorizedPracticeId(req)).catch(() => null);
+    const stediApiKey = stediKeyInfo3?.apiKey || process.env.STEDI_API_KEY;
 
     if (!stediApiKey) {
       return res.json({
