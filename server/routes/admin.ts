@@ -200,100 +200,87 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
       userId: req.user?.claims?.sub,
     });
 
-    // Delete in FK-safe order (children first)
-    const tables = [
-      'eligibility_checks',
-      'eligibility_alerts',
-      'claim_line_items',
-      'claim_follow_ups',
-      'claim_corrections',
-      'claim_outcomes',
-      'claim_status_checks',
-      'appeal_outcomes',
-      'appeals',
-      'soap_note_goal_progress',
-      'goal_progress_notes',
-      'treatment_objectives',
-      'treatment_interventions',
-      'treatment_goals',
-      'treatment_plans',
-      'soap_note_drafts',
-      'soap_notes',
-      'treatment_sessions',
-      'payment_plan_installments',
-      'payment_plans',
-      'payment_transactions',
-      'payment_postings',
-      'patient_payments',
-      'payments',
-      'invoices',
-      'superbills',
-      'time_entries',
-      'remittance_line_items',
-      'remittance_advice',
-      'expenses',
-      'message_notifications',
-      'messages',
-      'conversations',
-      'patient_documents',
-      'patient_statements',
-      'patient_consents',
-      'patient_assessments',
-      'assessment_schedules',
-      'survey_responses',
-      'survey_assignments',
-      'patient_portal_access',
-      'patient_insurance_authorizations',
-      'treatment_authorizations',
-      'patient_plan_documents',
-      'patient_plan_benefits',
-      'patient_payment_methods',
-      'patient_progress_notes',
-      'referral_communications',
-      'referrals',
-      'appointment_requests',
-      'online_bookings',
-      'waitlist',
-      'review_requests',
-      'patient_feedback',
-      'appointments',
-      'claims',
-      'insurances',
-      'patients',
-    ];
-
-    // Diagnostic: check patients exist before deleting
+    // Delete using explicit cascading subqueries in FK-safe order
     const patientCheck = await db.execute(sql`SELECT COUNT(*) as count FROM patients WHERE practice_id = ${practiceId}`);
     logger.warn(`Reset: found ${JSON.stringify(patientCheck.rows)} patients for practice ${practiceId}`);
 
     let deleted = 0;
-    for (const table of tables) {
+    const run = async (label: string, query: ReturnType<typeof sql>) => {
       try {
-        // Use sql.raw for table name (can't parameterize table names) but parameterize the value
-        const result = await db.execute(
-          sql`DELETE FROM ${sql.raw(table)} WHERE practice_id = ${practiceId}`
-        );
-        const count = (result as any).rowCount ?? (result as any).rows?.length ?? 0;
-        logger.warn(`Reset: ${table} -> deleted ${count} (rowCount=${(result as any).rowCount}, rows=${(result as any).rows?.length})`);
+        const result = await db.execute(query);
+        const count = (result as any).rowCount ?? 0;
         if (count > 0) {
+          logger.warn(`Reset: deleted ${count} from ${label}`);
           deleted += count;
         }
       } catch (err: any) {
-        // Some tables may not have practice_id — try patient_id FK instead
-        try {
-          const result2 = await db.execute(
-            sql`DELETE FROM ${sql.raw(table)} WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`
-          );
-          const count2 = (result2 as any).rowCount ?? 0;
-          if (count2 > 0) {
-            logger.info(`Reset: deleted ${count2} rows from ${table} (via patient_id)`);
-            deleted += count2;
-          }
-        } catch (err2: any) {
-          logger.warn(`Reset: skipped ${table}: primary=${err.message}, fallback=${err2.message}`);
-        }
+        logger.warn(`Reset: error on ${label}: ${err.message}`);
       }
-    }
+    };
+
+    // Tables with claim_id FK (must delete before claims)
+    await run('claim_line_items', sql`DELETE FROM claim_line_items WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`);
+    await run('claim_follow_ups', sql`DELETE FROM claim_follow_ups WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`);
+    await run('claim_corrections', sql`DELETE FROM claim_corrections WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`);
+    await run('claim_outcomes', sql`DELETE FROM claim_outcomes WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`);
+    await run('claim_status_checks', sql`DELETE FROM claim_status_checks WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`);
+    await run('appeal_outcomes', sql`DELETE FROM appeal_outcomes WHERE appeal_id IN (SELECT id FROM appeals WHERE practice_id = ${practiceId})`);
+    await run('appeals', sql`DELETE FROM appeals WHERE practice_id = ${practiceId}`);
+    await run('payment_postings', sql`DELETE FROM payment_postings WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`);
+    await run('superbills', sql`DELETE FROM superbills WHERE practice_id = ${practiceId}`);
+
+    // Tables with patient_id FK (must delete before patients)
+    await run('eligibility_checks', sql`DELETE FROM eligibility_checks WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('eligibility_alerts', sql`DELETE FROM eligibility_alerts WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('soap_note_goal_progress', sql`DELETE FROM soap_note_goal_progress WHERE soap_note_id IN (SELECT id FROM soap_notes WHERE practice_id = ${practiceId})`);
+    await run('soap_note_drafts', sql`DELETE FROM soap_note_drafts WHERE practice_id = ${practiceId}`);
+    await run('soap_notes', sql`DELETE FROM soap_notes WHERE practice_id = ${practiceId}`);
+    await run('treatment_sessions', sql`DELETE FROM treatment_sessions WHERE practice_id = ${practiceId}`);
+    await run('goal_progress_notes', sql`DELETE FROM goal_progress_notes WHERE goal_id IN (SELECT id FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id = ${practiceId}))`);
+    await run('treatment_objectives', sql`DELETE FROM treatment_objectives WHERE goal_id IN (SELECT id FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id = ${practiceId}))`);
+    await run('treatment_interventions', sql`DELETE FROM treatment_interventions WHERE goal_id IN (SELECT id FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id = ${practiceId}))`);
+    await run('treatment_goals', sql`DELETE FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id = ${practiceId})`);
+    await run('treatment_plans', sql`DELETE FROM treatment_plans WHERE practice_id = ${practiceId}`);
+    await run('payment_plan_installments', sql`DELETE FROM payment_plan_installments WHERE plan_id IN (SELECT id FROM payment_plans WHERE practice_id = ${practiceId})`);
+    await run('payment_plans', sql`DELETE FROM payment_plans WHERE practice_id = ${practiceId}`);
+    await run('payment_transactions', sql`DELETE FROM payment_transactions WHERE practice_id = ${practiceId}`);
+    await run('patient_payments', sql`DELETE FROM patient_payments WHERE practice_id = ${practiceId}`);
+    await run('payments', sql`DELETE FROM payments WHERE practice_id = ${practiceId}`);
+    await run('invoices', sql`DELETE FROM invoices WHERE practice_id = ${practiceId}`);
+    await run('time_entries', sql`DELETE FROM time_entries WHERE practice_id = ${practiceId}`);
+    await run('remittance_line_items', sql`DELETE FROM remittance_line_items WHERE remittance_id IN (SELECT id FROM remittance_advice WHERE practice_id = ${practiceId})`);
+    await run('remittance_advice', sql`DELETE FROM remittance_advice WHERE practice_id = ${practiceId}`);
+    await run('expenses', sql`DELETE FROM expenses WHERE practice_id = ${practiceId}`);
+    await run('message_notifications', sql`DELETE FROM message_notifications WHERE conversation_id IN (SELECT id FROM conversations WHERE practice_id = ${practiceId})`);
+    await run('messages', sql`DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE practice_id = ${practiceId})`);
+    await run('conversations', sql`DELETE FROM conversations WHERE practice_id = ${practiceId}`);
+    await run('patient_documents', sql`DELETE FROM patient_documents WHERE practice_id = ${practiceId}`);
+    await run('patient_statements', sql`DELETE FROM patient_statements WHERE practice_id = ${practiceId}`);
+    await run('patient_consents', sql`DELETE FROM patient_consents WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('patient_assessments', sql`DELETE FROM patient_assessments WHERE practice_id = ${practiceId}`);
+    await run('assessment_schedules', sql`DELETE FROM assessment_schedules WHERE practice_id = ${practiceId}`);
+    await run('survey_responses', sql`DELETE FROM survey_responses WHERE practice_id = ${practiceId}`);
+    await run('survey_assignments', sql`DELETE FROM survey_assignments WHERE practice_id = ${practiceId}`);
+    await run('patient_portal_access', sql`DELETE FROM patient_portal_access WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('patient_insurance_authorizations', sql`DELETE FROM patient_insurance_authorizations WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('treatment_authorizations', sql`DELETE FROM treatment_authorizations WHERE practice_id = ${practiceId}`);
+    await run('patient_plan_documents', sql`DELETE FROM patient_plan_documents WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('patient_plan_benefits', sql`DELETE FROM patient_plan_benefits WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('patient_payment_methods', sql`DELETE FROM patient_payment_methods WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('patient_progress_notes', sql`DELETE FROM patient_progress_notes WHERE practice_id = ${practiceId}`);
+    await run('referral_communications', sql`DELETE FROM referral_communications WHERE referral_id IN (SELECT id FROM referrals WHERE practice_id = ${practiceId})`);
+    await run('referrals', sql`DELETE FROM referrals WHERE practice_id = ${practiceId}`);
+    await run('appointment_requests', sql`DELETE FROM appointment_requests WHERE practice_id = ${practiceId}`);
+    await run('online_bookings', sql`DELETE FROM online_bookings WHERE practice_id = ${practiceId}`);
+    await run('waitlist', sql`DELETE FROM waitlist WHERE practice_id = ${practiceId}`);
+    await run('review_requests', sql`DELETE FROM review_requests WHERE practice_id = ${practiceId}`);
+    await run('patient_feedback', sql`DELETE FROM patient_feedback WHERE practice_id = ${practiceId}`);
+    await run('appointments', sql`DELETE FROM appointments WHERE practice_id = ${practiceId}`);
+
+    // Now safe to delete claims, insurances, patients
+    await run('claims', sql`DELETE FROM claims WHERE practice_id = ${practiceId}`);
+    await run('insurances', sql`DELETE FROM insurances WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`);
+    await run('patients', sql`DELETE FROM patients WHERE practice_id = ${practiceId}`);
 
     // Re-seed demo patients
     const { seedDatabase } = await import('../seeds');
@@ -303,7 +290,7 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
 
     res.json({
       success: true,
-      message: `Deleted ${deleted} rows across ${tables.length} tables and re-seeded demo data.`,
+      message: `Deleted ${deleted} rows and re-seeded demo data.`,
       deletedRows: deleted,
     });
   } catch (error) {
