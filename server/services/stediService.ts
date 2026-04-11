@@ -26,20 +26,28 @@ export async function getStediApiKeyForPractice(practiceId: number): Promise<{ a
     const { storage } = await import('../storage');
     const { decryptField } = await import('./phiEncryptionService');
     const practice = await storage.getPractice(practiceId);
-    if (practice && !practice.sandboxMode && practice.stediApiKey) {
-      // Live mode — use practice's own key
-      const decryptedKey = typeof practice.stediApiKey === 'string'
-        ? practice.stediApiKey
-        : decryptField(practice.stediApiKey as any);
-      if (decryptedKey) {
-        return { apiKey: decryptedKey, isSandbox: false };
+    if (practice && !practice.sandboxMode) {
+      // Live mode — use practice's own key if set, otherwise global production key
+      if (practice.stediApiKey) {
+        const decryptedKey = typeof practice.stediApiKey === 'string'
+          ? practice.stediApiKey
+          : decryptField(practice.stediApiKey as any);
+        if (decryptedKey) {
+          return { apiKey: decryptedKey, isSandbox: false };
+        }
       }
+      // No practice-specific key — use global key in live mode
+      const globalKey = process.env.STEDI_API_KEY;
+      if (!globalKey) {
+        throw new Error('STEDI_API_KEY environment variable is not configured');
+      }
+      return { apiKey: globalKey, isSandbox: false };
     }
   } catch {
-    // Fall through to global key
+    // Fall through to global key in sandbox mode
   }
 
-  // Sandbox mode or no practice key — use global test key
+  // Sandbox mode — use global key (test environment)
   const globalKey = process.env.STEDI_API_KEY;
   if (!globalKey) {
     throw new Error('STEDI_API_KEY environment variable is not configured');

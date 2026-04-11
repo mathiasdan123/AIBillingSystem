@@ -164,14 +164,6 @@ function ClearinghouseTab() {
               <Switch
                 checked={!isSandbox}
                 onCheckedChange={(checked) => {
-                  if (checked && !practice?.stediApiKey) {
-                    toast({
-                      title: "Cannot go live",
-                      description: "Enter your Stedi API key below before switching to live mode.",
-                      variant: "destructive",
-                    });
-                    return;
-                  }
                   updateClearinghouseMutation.mutate({ sandboxMode: !checked });
                 }}
               />
@@ -237,9 +229,9 @@ function ClearinghouseTab() {
           <div className="flex items-start gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-slate-600 space-y-2">
-              <p><strong>New practices start in sandbox mode.</strong> All eligibility checks and claim submissions go to the Stedi test environment.</p>
-              <p>To submit real claims, you need a <strong>Stedi production API key</strong> and <strong>payer enrollment</strong> for each insurance company you bill.</p>
-              <p>Once your key is entered and payers are enrolled, toggle the switch above to <strong>Live Mode</strong>.</p>
+              <p><strong>New practices start in sandbox mode.</strong> All eligibility checks and claim submissions go to a test environment — nothing is sent to real insurance companies.</p>
+              <p>When you're ready to submit real claims, toggle the switch above to <strong>Live Mode</strong>. Your claims will be processed through our clearinghouse.</p>
+              <p><strong>Advanced:</strong> If you have your own Stedi account, you can enter your API key above to use your own clearinghouse credentials instead of ours.</p>
             </div>
           </div>
         </CardContent>
