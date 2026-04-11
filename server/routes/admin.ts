@@ -266,17 +266,29 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
     let deleted = 0;
     for (const table of tables) {
       try {
+        // Use sql.raw for table name (can't parameterize table names) but parameterize the value
         const result = await db.execute(
-          sql.raw(`DELETE FROM ${table} WHERE practice_id = ${practiceId}`)
+          sql`DELETE FROM ${sql.raw(table)} WHERE practice_id = ${practiceId}`
         );
-        const count = (result as any).rowCount || 0;
+        const count = (result as any).rowCount ?? (result as any).rows?.length ?? 0;
         if (count > 0) {
           logger.info(`Reset: deleted ${count} rows from ${table}`);
           deleted += count;
         }
       } catch (err: any) {
-        // Some tables may not have practice_id — skip silently
-        logger.debug(`Reset: skipped ${table}: ${err.message}`);
+        // Some tables may not have practice_id — try patient_id FK instead
+        try {
+          const result2 = await db.execute(
+            sql`DELETE FROM ${sql.raw(table)} WHERE patient_id IN (SELECT id FROM patients WHERE practice_id = ${practiceId})`
+          );
+          const count2 = (result2 as any).rowCount ?? 0;
+          if (count2 > 0) {
+            logger.info(`Reset: deleted ${count2} rows from ${table} (via patient_id)`);
+            deleted += count2;
+          }
+        } catch {
+          logger.debug(`Reset: skipped ${table}: ${err.message}`);
+        }
       }
     }
 
