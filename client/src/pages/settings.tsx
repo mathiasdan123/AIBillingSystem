@@ -16,7 +16,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink, Palette, BadgeCheck } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink, Palette, BadgeCheck, Wifi, AlertTriangle } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -81,6 +81,171 @@ interface UserData {
   lastName: string;
   role: string;
   createdAt: string;
+}
+
+// ─── Clearinghouse Tab Component ──────────────────────────────────────────
+
+function ClearinghouseTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [stediKey, setStediKey] = useState("");
+  const [partnerId, setPartnerId] = useState("");
+
+  const { data: practice, isLoading } = useQuery<any>({
+    queryKey: ["/api/practices/1"],
+  });
+
+  // Pre-fill from practice data
+  useEffect(() => {
+    if (practice) {
+      setPartnerId(practice.stediPartnerId || "");
+    }
+  }, [practice]);
+
+  const isSandbox = practice?.sandboxMode !== false;
+
+  const updateClearinghouseMutation = useMutation({
+    mutationFn: async (data: { stediApiKey?: string; stediPartnerId?: string; sandboxMode?: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/practices/${practice?.id || 1}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/practices/1"] });
+      toast({ title: "Saved", description: "Clearinghouse settings updated" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update clearinghouse settings", variant: "destructive" });
+    },
+  });
+
+  const testConnectionMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/payer-credentials", {
+        payerName: "stedi_test",
+        credentialType: "health_check",
+        credentials: { apiKey: stediKey || "test" },
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Connection successful", description: "Stedi API key is valid" });
+    },
+    onError: () => {
+      toast({ title: "Connection failed", description: "Could not verify the API key", variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin w-6 h-6 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Sandbox Mode Status */}
+      <Card className={isSandbox ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className={`font-semibold text-lg ${isSandbox ? "text-amber-900" : "text-green-900"}`}>
+                {isSandbox ? "Sandbox Mode (Testing)" : "Live Mode (Production)"}
+              </h3>
+              <p className={`text-sm mt-1 ${isSandbox ? "text-amber-700" : "text-green-700"}`}>
+                {isSandbox
+                  ? "Claims are sent to the Stedi test environment. No real submissions to insurance companies."
+                  : "Claims are sent to real insurance companies via Stedi production API."}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-500">{isSandbox ? "Sandbox" : "Live"}</span>
+              <Switch
+                checked={!isSandbox}
+                onCheckedChange={(checked) => {
+                  if (checked && !practice?.stediApiKey) {
+                    toast({
+                      title: "Cannot go live",
+                      description: "Enter your Stedi API key below before switching to live mode.",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  updateClearinghouseMutation.mutate({ sandboxMode: !checked });
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Stedi API Key */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Key className="w-5 h-5 mr-2" />
+            Stedi Clearinghouse Credentials
+          </CardTitle>
+          <CardDescription>
+            Enter your Stedi production API key to submit real claims. Get your key at{" "}
+            <a href="https://www.stedi.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">stedi.com</a>
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label>Stedi API Key</Label>
+            <div className="flex gap-2 mt-1">
+              <Input
+                type="password"
+                placeholder={practice?.stediApiKey ? "Key saved (enter new to replace)" : "Enter your Stedi API key"}
+                value={stediKey}
+                onChange={(e) => setStediKey(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Stedi Partner ID (optional)</Label>
+            <Input
+              placeholder="Your Stedi partner ID"
+              value={partnerId}
+              onChange={(e) => setPartnerId(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => {
+                const data: any = {};
+                if (stediKey) data.stediApiKey = stediKey;
+                if (partnerId) data.stediPartnerId = partnerId;
+                if (Object.keys(data).length > 0) {
+                  updateClearinghouseMutation.mutate(data);
+                  setStediKey("");
+                }
+              }}
+              disabled={(!stediKey && !partnerId) || updateClearinghouseMutation.isPending}
+            >
+              {updateClearinghouseMutation.isPending ? "Saving..." : "Save Credentials"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Info */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="text-sm text-slate-600 space-y-2">
+              <p><strong>New practices start in sandbox mode.</strong> All eligibility checks and claim submissions go to the Stedi test environment.</p>
+              <p>To submit real claims, you need a <strong>Stedi production API key</strong> and <strong>payer enrollment</strong> for each insurance company you bill.</p>
+              <p>Once your key is entered and payers are enrolled, toggle the switch above to <strong>Live Mode</strong>.</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 // ─── MCP Integration Tab Component ─────────────────────────────────────────
@@ -664,6 +829,7 @@ export default function Settings() {
     ...(isAdmin ? [
       { id: "users", label: "User Management", icon: Users },
       { id: "baa", label: "BAA Tracking", icon: FileText },
+      { id: "clearinghouse", label: "Clearinghouse", icon: Wifi },
       { id: "mcp", label: "MCP Integration", icon: Key },
     ] : []),
   ];
@@ -1688,6 +1854,10 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
+          )}
+
+          {activeTab === "clearinghouse" && isAdmin && (
+            <ClearinghouseTab />
           )}
 
           {activeTab === "mcp" && isAdmin && (
