@@ -192,8 +192,7 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
     }
 
     const practiceId = getAuthorizedPracticeId(req);
-    const { getDb } = await import('../db');
-    const db = await getDb();
+    const { db } = await import('../db');
     const { sql } = await import('drizzle-orm');
 
     logger.warn('Admin: resetting all demo data', {
