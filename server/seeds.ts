@@ -160,12 +160,12 @@ export async function seedDatabase(options?: { force?: boolean }) {
     if ((options?.force || !isProduction) && activePatients === 0) {
       console.log("No patients found — seeding demo patients...");
       const demoPatients = [
-        { fn: 'Liam', ln: 'Martinez', dob: '2019-06-12', email: 'rosa.martinez@email.com', phone: '5552345678', addr: '456 Oak Street, Wellness City, WC 12345', ins: 'Blue Cross Blue Shield', insId: 'BCBS123456789', pol: 'POL-2024-001', grp: 'GRP-100' },
-        { fn: 'Olivia', ln: 'Thompson', dob: '2020-03-08', email: 'karen.thompson@email.com', phone: '5553456789', addr: '789 Maple Avenue, Wellness City, WC 12346', ins: 'Aetna', insId: 'AET987654321', pol: 'POL-2024-002', grp: 'GRP-200' },
-        { fn: 'Ethan', ln: 'Williams', dob: '2018-11-22', email: 'james.williams@email.com', phone: '5554567890', addr: '321 Pine Road, Wellness City, WC 12347', ins: 'UnitedHealth', insId: 'UHC456789123', pol: 'POL-2024-003', grp: 'GRP-300' },
-        { fn: 'Sophia', ln: 'Chen', dob: '2021-01-15', email: 'mei.chen@email.com', phone: '5555678901', addr: '654 Elm Court, Wellness City, WC 12348', ins: 'Cigna', insId: 'CIG789123456', pol: 'POL-2024-004', grp: 'GRP-400' },
-        { fn: 'Noah', ln: 'Patel', dob: '2017-08-30', email: 'priya.patel@email.com', phone: '5556789012', addr: '987 Birch Lane, Wellness City, WC 12349', ins: 'Medicare', insId: 'MED321654987', pol: 'POL-2024-005', grp: 'GRP-500' },
-        { fn: 'Ava', ln: 'Robinson', dob: '2020-09-17', email: 'tanya.robinson@email.com', phone: '5557890123', addr: '246 Cedar Drive, Wellness City, WC 12350', ins: 'Humana', insId: 'HUM654987321', pol: 'POL-2024-006', grp: 'GRP-600' },
+        { fn: 'Mason', ln: 'Hartwell', dob: '2019-06-12', email: 'diana.hartwell@example.net', phone: '(555) 814-2937', addr: '1204 Sycamore Blvd, Brookfield, IL 60513', ins: 'Blue Cross Blue Shield', insId: 'BCBS7741928035', pol: 'GHP-88201-A', grp: 'BX-4410' },
+        { fn: 'Clara', ln: 'Nguyen', dob: '2020-03-08', email: 'tran.nguyen@example.net', phone: '(555) 623-8104', addr: '387 Willowbrook Dr, Oakdale, MN 55128', ins: 'Aetna', insId: 'AET3390217864', pol: 'GHP-55032-B', grp: 'AT-7720' },
+        { fn: 'Declan', ln: 'Okafor', dob: '2018-11-22', email: 'grace.okafor@example.net', phone: '(555) 471-5928', addr: '92 Ridgewood Terrace, Cary, NC 27513', ins: 'UnitedHealthcare', insId: 'UHC8856034172', pol: 'GHP-67210-C', grp: 'UH-3305' },
+        { fn: 'Isla', ln: 'Brennan', dob: '2021-01-15', email: 'kevin.brennan@example.net', phone: '(555) 309-6741', addr: '5510 Hawthorn Ct, Plano, TX 75024', ins: 'Cigna', insId: 'CIG2104897563', pol: 'GHP-43018-D', grp: 'CI-9180' },
+        { fn: 'Felix', ln: 'Sandoval', dob: '2017-08-30', email: 'maria.sandoval@example.net', phone: '(555) 182-4503', addr: '741 Birchwood Ave, Eugene, OR 97401', ins: 'Medicare', insId: 'MCA6627183049', pol: 'GHP-91405-E', grp: 'MC-5560' },
+        { fn: 'Zara', ln: 'Lindqvist', dob: '2020-09-17', email: 'anna.lindqvist@example.net', phone: '(555) 547-3286', addr: '2038 Cedarwood Ln, Madison, WI 53711', ins: 'Humana', insId: 'HUM4415928370', pol: 'GHP-72604-F', grp: 'HU-2245' },
       ];
       for (const p of demoPatients) {
         try {
