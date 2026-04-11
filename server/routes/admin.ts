@@ -289,8 +289,8 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
             logger.info(`Reset: deleted ${count2} rows from ${table} (via patient_id)`);
             deleted += count2;
           }
-        } catch {
-          logger.debug(`Reset: skipped ${table}: ${err.message}`);
+        } catch (err2: any) {
+          logger.warn(`Reset: skipped ${table}: primary=${err.message}, fallback=${err2.message}`);
         }
       }
     }
