@@ -156,6 +156,11 @@ app.use(cors({
       return callback(null, true);
     }
 
+    // Allow the production domain
+    if (origin === 'https://app.therapybillai.com') {
+      return callback(null, true);
+    }
+
     // In production, check against allowed origins
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
