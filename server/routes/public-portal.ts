@@ -506,6 +506,48 @@ router.get('/public/portal/:token/documents/:id', async (req, res) => {
   }
 });
 
+// Download/view document file (redirects to storagePath or serves inline)
+router.get('/public/portal/:token/documents/:id/download', async (req, res) => {
+  try {
+    const { token, id } = req.params;
+    const access = await storage.getPatientPortalByToken(token);
+
+    if (!access) {
+      return res.status(401).json({ message: 'Invalid or expired session' });
+    }
+
+    const document = await storage.getPatientDocument(parseInt(id));
+    if (!document || document.patientId !== access.patientId || !document.visibleToPatient) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Mark as viewed
+    await storage.markDocumentViewed(document.id);
+
+    // If storagePath is a URL (e.g., S3), redirect to it
+    if (document.storagePath.startsWith('http://') || document.storagePath.startsWith('https://')) {
+      return res.redirect(document.storagePath);
+    }
+
+    // If storagePath is a local file path, serve it
+    const path = await import('path');
+    const fs = await import('fs');
+    const resolvedPath = path.resolve(document.storagePath);
+
+    if (!fs.existsSync(resolvedPath)) {
+      return res.status(404).json({ message: 'Document file not found' });
+    }
+
+    res.setHeader('Content-Type', document.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${document.fileName}"`);
+    const fileStream = fs.createReadStream(resolvedPath);
+    fileStream.pipe(res);
+  } catch (error) {
+    logger.error('Error downloading document', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to download document' });
+  }
+});
+
 // Sign document
 router.post('/public/portal/:token/documents/:id/sign', async (req, res) => {
   try {
@@ -535,6 +577,117 @@ router.post('/public/portal/:token/documents/:id/sign', async (req, res) => {
   } catch (error) {
     logger.error('Error signing document', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to sign document' });
+  }
+});
+
+// ==================== PORTAL MESSAGES ====================
+
+// Get patient's conversations via portal token
+router.get('/public/portal/:token/messages', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const access = await storage.getPatientPortalByToken(token);
+
+    if (!access) {
+      return res.status(401).json({ message: 'Invalid or expired session' });
+    }
+
+    if (!access.canSendMessages) {
+      return res.status(403).json({ message: 'Messaging not allowed' });
+    }
+
+    const conversations = await storage.getPatientConversations(access.patientId);
+    res.json(conversations);
+  } catch (error) {
+    logger.error('Error fetching portal conversations', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch conversations' });
+  }
+});
+
+// Get a specific conversation with messages via portal token
+router.get('/public/portal/:token/messages/:conversationId', async (req, res) => {
+  try {
+    const { token, conversationId } = req.params;
+    const access = await storage.getPatientPortalByToken(token);
+
+    if (!access) {
+      return res.status(401).json({ message: 'Invalid or expired session' });
+    }
+
+    if (!access.canSendMessages) {
+      return res.status(403).json({ message: 'Messaging not allowed' });
+    }
+
+    const data = await storage.getConversationWithMessages(parseInt(conversationId));
+
+    if (!data || data.conversation.patientId !== access.patientId) {
+      return res.status(404).json({ message: 'Conversation not found' });
+    }
+
+    // Mark messages as read by patient
+    await storage.markConversationReadByPatient(parseInt(conversationId));
+
+    res.json(data);
+  } catch (error) {
+    logger.error('Error fetching portal conversation', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch conversation' });
+  }
+});
+
+// Patient sends a message via portal token
+router.post('/public/portal/:token/messages/:conversationId/reply', async (req, res) => {
+  try {
+    const { token, conversationId } = req.params;
+    const { content } = req.body;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ message: 'Message content is required' });
+    }
+
+    const access = await storage.getPatientPortalByToken(token);
+
+    if (!access) {
+      return res.status(401).json({ message: 'Invalid or expired session' });
+    }
+
+    if (!access.canSendMessages) {
+      return res.status(403).json({ message: 'Messaging not allowed' });
+    }
+
+    const convId = parseInt(conversationId);
+    const conversationData = await storage.getConversationWithMessages(convId);
+
+    if (!conversationData || conversationData.conversation.patientId !== access.patientId) {
+      return res.status(404).json({ message: 'Conversation not found' });
+    }
+
+    const patient = await storage.getPatient(access.patientId);
+
+    const message = await storage.createMessage({
+      conversationId: convId,
+      senderId: null,
+      senderType: 'patient',
+      senderName: patient ? `${patient.firstName} ${patient.lastName}` : 'Patient',
+      content: content.trim(),
+      attachments: [],
+      containsPhi: true,
+    });
+
+    // Create notification for therapist
+    if (conversationData.conversation.therapistId) {
+      await storage.createMessageNotification({
+        messageId: message.id,
+        recipientType: 'therapist',
+        recipientId: conversationData.conversation.therapistId,
+        notificationType: 'email',
+        status: 'pending',
+      });
+    }
+
+    res.status(201).json(message);
+  } catch (error) {
+    logger.error('Error sending portal message', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to send message' });
   }
 });
 

@@ -13,6 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   Calendar,
@@ -29,6 +31,8 @@ import {
   LogOut,
   Home,
   PenTool,
+  Send,
+  ArrowLeft,
 } from "lucide-react";
 
 interface DashboardData {
@@ -191,6 +195,15 @@ export default function PatientPortalPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedDocument, setSelectedDocument] = useState<any>(null);
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
+  const [newMessageText, setNewMessageText] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [showContactDialog, setShowContactDialog] = useState(false);
+  const [contactForm, setContactForm] = useState({
+    phone: "",
+    email: "",
+    address: "",
+  });
 
   // If we have a magic link token, exchange it for a portal token
   useEffect(() => {
@@ -273,6 +286,62 @@ export default function PatientPortalPage() {
     enabled: !!portalToken && dashboard?.permissions?.canViewDocuments,
   });
 
+  // Fetch conversations
+  const { data: portalConversations = [] } = useQuery<any[]>({
+    queryKey: ["/api/public/portal", portalToken, "messages"],
+    queryFn: async () => {
+      const res = await fetch(`/api/public/portal/${portalToken}/messages`);
+      if (!res.ok) throw new Error("Failed to fetch conversations");
+      return res.json();
+    },
+    enabled: !!portalToken && dashboard?.permissions?.canSendMessages,
+  });
+
+  // Fetch selected conversation with messages
+  const { data: conversationData, isLoading: isLoadingConversation } = useQuery<{
+    conversation: any;
+    messages: any[];
+    patient: any;
+  }>({
+    queryKey: ["/api/public/portal", portalToken, "messages", selectedConversationId],
+    queryFn: async () => {
+      const res = await fetch(`/api/public/portal/${portalToken}/messages/${selectedConversationId}`);
+      if (!res.ok) throw new Error("Failed to fetch conversation");
+      return res.json();
+    },
+    enabled: !!portalToken && !!selectedConversationId && dashboard?.permissions?.canSendMessages,
+    refetchInterval: 15000, // Poll for new messages every 15 seconds
+  });
+
+  // Send message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: async ({ conversationId, content }: { conversationId: number; content: string }) => {
+      const res = await fetch(`/api/public/portal/${portalToken}/messages/${conversationId}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || "Failed to send message");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setNewMessageText("");
+      queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "messages", selectedConversationId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "dashboard"] });
+    },
+  });
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    if (conversationData?.messages) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [conversationData?.messages]);
+
   // Sign document mutation
   const signDocumentMutation = useMutation({
     mutationFn: async ({ documentId, signatureData }: { documentId: number; signatureData: string }) => {
@@ -290,6 +359,37 @@ export default function PatientPortalPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "dashboard"] });
+    },
+  });
+
+  // Update profile mutation
+  const updateProfileMutation = useMutation({
+    mutationFn: async (data: { phone: string; email: string; address: string }) => {
+      const res = await fetch(`/api/public/portal/${portalToken}/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || "Failed to update profile");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/public/portal", portalToken, "dashboard"] });
+      toast({
+        title: "Profile Updated",
+        description: "Your contact information has been updated successfully.",
+      });
+      setShowContactDialog(false);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update Failed",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -423,6 +523,17 @@ export default function PatientPortalPage() {
                 Documents
               </TabsTrigger>
             )}
+            {dashboard.permissions.canSendMessages && (
+              <TabsTrigger value="messages">
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Messages
+                {dashboard.unreadMessages > 0 && (
+                  <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
+                    {dashboard.unreadMessages}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="profile">
               <User className="h-4 w-4 mr-2" />
               Profile
@@ -492,7 +603,7 @@ export default function PatientPortalPage() {
                         ? `You have ${dashboard.unreadMessages} unread message(s)`
                         : "No new messages"}
                     </p>
-                    <Button variant="outline" className="w-full">
+                    <Button variant="outline" className="w-full" onClick={() => setActiveTab("messages")}>
                       Open Messages
                     </Button>
                   </CardContent>
@@ -726,7 +837,16 @@ export default function PatientPortalPage() {
                               Signed
                             </Badge>
                           ) : null}
-                          <Button variant="outline" size="sm">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              window.open(
+                                `/api/public/portal/${portalToken}/documents/${doc.id}/download`,
+                                '_blank'
+                              );
+                            }}
+                          >
                             <Eye className="h-4 w-4 mr-2" />
                             View
                           </Button>
@@ -737,6 +857,179 @@ export default function PatientPortalPage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Messages Tab */}
+          <TabsContent value="messages">
+            {selectedConversationId && conversationData ? (
+              /* Conversation Detail View */
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedConversationId(null);
+                        setNewMessageText("");
+                      }}
+                    >
+                      <ArrowLeft className="h-4 w-4 mr-1" />
+                      Back
+                    </Button>
+                    <div>
+                      <CardTitle className="text-base">
+                        {conversationData.conversation.subject || "Conversation"}
+                      </CardTitle>
+                      <CardDescription>
+                        {conversationData.conversation.status === "active" ? "Active conversation" : conversationData.conversation.status}
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {/* Messages list */}
+                  <div className="border rounded-lg bg-slate-50 p-4 max-h-[500px] overflow-y-auto space-y-4 mb-4">
+                    {isLoadingConversation ? (
+                      <div className="flex justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      </div>
+                    ) : conversationData.messages.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">No messages yet. Start the conversation below.</p>
+                    ) : (
+                      conversationData.messages.map((msg: any) => {
+                        const isPatient = msg.senderType === "patient";
+                        return (
+                          <div
+                            key={msg.id}
+                            className={`flex ${isPatient ? "justify-end" : "justify-start"}`}
+                          >
+                            <div
+                              className={`max-w-[75%] rounded-lg p-3 ${
+                                isPatient
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-white border"
+                              }`}
+                            >
+                              <p className={`text-xs font-medium mb-1 ${isPatient ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                                {msg.senderName || (isPatient ? "You" : "Therapist")}
+                              </p>
+                              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                              <p className={`text-xs mt-1 ${isPatient ? "text-primary-foreground/50" : "text-muted-foreground"}`}>
+                                {new Date(msg.createdAt).toLocaleString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+
+                  {/* Reply input */}
+                  {conversationData.conversation.status === "active" && (
+                    <div className="flex gap-2">
+                      <Textarea
+                        placeholder="Type your message..."
+                        value={newMessageText}
+                        onChange={(e) => setNewMessageText(e.target.value)}
+                        className="min-h-[80px] resize-none"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            if (newMessageText.trim() && !sendMessageMutation.isPending) {
+                              sendMessageMutation.mutate({
+                                conversationId: selectedConversationId,
+                                content: newMessageText.trim(),
+                              });
+                            }
+                          }
+                        }}
+                      />
+                      <Button
+                        className="self-end"
+                        disabled={!newMessageText.trim() || sendMessageMutation.isPending}
+                        onClick={() => {
+                          if (newMessageText.trim()) {
+                            sendMessageMutation.mutate({
+                              conversationId: selectedConversationId,
+                              content: newMessageText.trim(),
+                            });
+                          }
+                        }}
+                      >
+                        {sendMessageMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                  {sendMessageMutation.isError && (
+                    <p className="text-sm text-destructive mt-2">
+                      {sendMessageMutation.error?.message || "Failed to send message"}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              /* Conversations List View */
+              <Card>
+                <CardHeader>
+                  <CardTitle>Messages</CardTitle>
+                  <CardDescription>View and respond to messages from your provider</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {portalConversations.length === 0 ? (
+                    <p className="text-muted-foreground text-center py-8">No conversations yet</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {portalConversations.map((conv: any) => (
+                        <div
+                          key={conv.id}
+                          className="flex items-center justify-between p-4 rounded-lg border cursor-pointer hover:bg-slate-50 transition-colors"
+                          onClick={() => setSelectedConversationId(conv.id)}
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                              (conv.unreadByPatient || 0) > 0 ? "bg-primary/10" : "bg-slate-100"
+                            }`}>
+                              <MessageSquare className={`h-6 w-6 ${
+                                (conv.unreadByPatient || 0) > 0 ? "text-primary" : "text-slate-500"
+                              }`} />
+                            </div>
+                            <div>
+                              <p className="font-medium">{conv.subject || "Conversation"}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {conv.lastMessageAt
+                                  ? new Date(conv.lastMessageAt).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })
+                                  : "No messages yet"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {(conv.unreadByPatient || 0) > 0 && (
+                              <Badge variant="destructive">{conv.unreadByPatient}</Badge>
+                            )}
+                            <Badge variant="outline">{conv.status}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Profile Tab */}
@@ -781,7 +1074,19 @@ export default function PatientPortalPage() {
                 </div>
                 {dashboard.permissions.canUpdateProfile && (
                   <div className="mt-6 pt-6 border-t">
-                    <Button variant="outline">Update Contact Information</Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setContactForm({
+                          phone: dashboard.patient?.phone || "",
+                          email: dashboard.patient?.email || "",
+                          address: dashboard.patient?.address || "",
+                        });
+                        setShowContactDialog(true);
+                      }}
+                    >
+                      Update Contact Information
+                    </Button>
                   </div>
                 )}
               </CardContent>
@@ -874,6 +1179,67 @@ export default function PatientPortalPage() {
                 </div>
               </>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Update Contact Information Dialog */}
+      <Dialog open={showContactDialog} onOpenChange={setShowContactDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Contact Information</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="contact-phone">Phone Number</Label>
+              <Input
+                id="contact-phone"
+                type="tel"
+                value={contactForm.phone}
+                onChange={(e) => setContactForm((prev) => ({ ...prev, phone: e.target.value }))}
+                placeholder="(555) 123-4567"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contact-email">Email Address</Label>
+              <Input
+                id="contact-email"
+                type="email"
+                value={contactForm.email}
+                onChange={(e) => setContactForm((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="you@example.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contact-address">Address</Label>
+              <Input
+                id="contact-address"
+                value={contactForm.address}
+                onChange={(e) => setContactForm((prev) => ({ ...prev, address: e.target.value }))}
+                placeholder="123 Main St, City, State ZIP"
+              />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowContactDialog(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={updateProfileMutation.isPending}
+                onClick={() => updateProfileMutation.mutate(contactForm)}
+              >
+                {updateProfileMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                )}
+                Save Changes
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
