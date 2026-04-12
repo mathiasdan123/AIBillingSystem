@@ -88,7 +88,7 @@ async function seedDemoPracticeHistory(db: any, practiceId: number) {
   }
   console.log("  Seeded 6 SOAP notes");
 
-  // Seed claims (mix of statuses)
+  // Seed claims (mix of statuses) + line items
   const claimData = [
     { idx: 0, offset: '28 days', status: 'paid', amount: 289, paidAmount: 245, cpt: '97530', icd: 'F82', claimNum: 'CLM-DEMO-001' },
     { idx: 1, offset: '25 days', status: 'paid', amount: 216, paidAmount: 183, cpt: '97110', icd: 'F82', claimNum: 'CLM-DEMO-002' },
@@ -107,13 +107,22 @@ async function seedDemoPracticeHistory(db: any, practiceId: number) {
     const submittedAt = ['submitted', 'paid', 'denied'].includes(c.status) ? `NOW() - INTERVAL '${c.offset}'` : 'NULL';
     const paidAt = c.status === 'paid' ? `NOW() - INTERVAL '${c.offset}' + INTERVAL '12 days'` : 'NULL';
     try {
-      await db.execute(sql.raw(`
-        INSERT INTO claims (practice_id, patient_id, claim_number, status, service_date, diagnosis_code, procedure_code, total_amount, paid_amount, denial_reason, submitted_at, paid_at, created_at)
-        VALUES (${practiceId}, ${pid}, '${c.claimNum}', '${c.status}', (NOW() - INTERVAL '${c.offset}')::date, '${c.icd}', '${c.cpt}', ${c.amount}, ${c.paidAmount}, ${denialReason}, ${submittedAt}, ${paidAt}, NOW())
+      const claimResult = await db.execute(sql.raw(`
+        INSERT INTO claims (practice_id, patient_id, claim_number, status, total_amount, paid_amount, denial_reason, submitted_at, paid_at, created_at)
+        VALUES (${practiceId}, ${pid}, '${c.claimNum}', '${c.status}', ${c.amount}, ${c.paidAmount}, ${denialReason}, ${submittedAt}, ${paidAt}, NOW())
+        RETURNING id
       `));
+      const claimId = claimResult.rows[0]?.id;
+      if (claimId) {
+        // Add claim line item with CPT code
+        await db.execute(sql.raw(`
+          INSERT INTO claim_line_items (claim_id, cpt_code_id, units, rate, amount, date_of_service, created_at)
+          VALUES (${claimId}, (SELECT id FROM cpt_codes WHERE code = '${c.cpt}' LIMIT 1), 4, ${c.amount / 4}, ${c.amount}, (NOW() - INTERVAL '${c.offset}')::date, NOW())
+        `));
+      }
     } catch (e: any) { console.error(`Seed claim error: ${e.message}`); }
   }
-  console.log("  Seeded 9 claims");
+  console.log("  Seeded 9 claims with line items");
 
   // Seed payments for paid claims
   const payments = [
