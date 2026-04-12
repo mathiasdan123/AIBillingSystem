@@ -83,6 +83,59 @@ const getDateRange = (period: string, customStartDate?: string, customEndDate?: 
   return { startDate, endDate };
 };
 
+// ==================== STAFF NOTIFICATION PREFERENCES ====================
+
+router.get('/notification-preferences/me', isAuthenticated, async (req: any, res) => {
+  try {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const user = await storage.getUser(userId);
+    const practiceId = (user as any)?.practiceId || 1;
+
+    const { getStaffPreferences } = await import('../services/notificationPreferencesService');
+    const prefs = await getStaffPreferences(userId, practiceId);
+    res.json(prefs);
+  } catch (error) {
+    logger.error('Error fetching notification preferences', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch notification preferences' });
+  }
+});
+
+router.patch('/notification-preferences/me', isAuthenticated, async (req: any, res) => {
+  try {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const user = await storage.getUser(userId);
+    const practiceId = (user as any)?.practiceId || 1;
+
+    const { getStaffPreferences, updatePreferences } = await import('../services/notificationPreferencesService');
+    // Ensure record exists
+    const existing = await getStaffPreferences(userId, practiceId);
+
+    const allowedFields = [
+      'emailEnabled', 'smsEnabled', 'portalEnabled',
+      'appointmentReminders', 'billingNotifications', 'claimUpdates',
+      'surveyReminders', 'marketingEmails',
+      'quietHoursStart', 'quietHoursEnd',
+    ];
+
+    const updates: Record<string, any> = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    const updated = await updatePreferences(existing.id, updates);
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error updating notification preferences', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to update notification preferences' });
+  }
+});
+
 // ==================== APPOINTMENT REMINDERS ====================
 
 router.get('/reminders/status', isAuthenticated, async (req: any, res) => {

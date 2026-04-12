@@ -183,10 +183,17 @@ export default function AiInsightsPage() {
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/ai-insights"] });
-      toast({
-        title: t("aiInsights.insightsGenerated"),
-        description: `${result.generated} ${t("aiInsights.newInsightsFound")}`,
-      });
+      if (result.generated === 0) {
+        toast({
+          title: "Not enough data yet",
+          description: "AI insights require at least 3-5 claims per payer to detect patterns. Keep submitting claims and check back soon!",
+        });
+      } else {
+        toast({
+          title: t("aiInsights.insightsGenerated"),
+          description: `${result.generated} ${t("aiInsights.newInsightsFound")}`,
+        });
+      }
     },
     onError: () => {
       toast({

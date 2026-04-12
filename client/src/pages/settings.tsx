@@ -471,7 +471,7 @@ export default function Settings() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [practiceId] = useState(1);
+  const [practiceId] = useState(user?.practiceId || 1);
   const [activeTab, setActiveTab] = useState("practice");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("therapist");
