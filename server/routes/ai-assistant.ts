@@ -11,6 +11,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { getUserPracticeContext } from '../services/practiceContext';
+import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import logger from '../services/logger';
 
 const router = Router();
@@ -296,6 +297,58 @@ const assistantTools: Anthropic.Tool[] = [
       required: ['page'],
     },
   },
+  {
+    name: 'submit_claim',
+    description: 'Create and submit an insurance claim for a patient session. Use when a therapist wants to bill for a completed session. Requires patient, CPT codes, diagnosis code, and service date. The claim is created in draft status for the therapist to review before submission.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to bill for' },
+        patientName: { type: 'string' as const, description: 'Patient name (if ID not known)' },
+        serviceDate: { type: 'string' as const, description: 'Date of service in YYYY-MM-DD format' },
+        cptCodes: {
+          type: 'array' as const,
+          items: { type: 'string' as const },
+          description: 'CPT codes for services rendered (e.g., ["97530", "97110"])',
+        },
+        diagnosisCode: { type: 'string' as const, description: 'ICD-10 diagnosis code' },
+        units: { type: 'number' as const, description: 'Number of units (default based on CPT code)' },
+        totalAmount: { type: 'number' as const, description: 'Total billed amount in dollars' },
+      },
+      required: ['patientId', 'serviceDate', 'cptCodes'],
+    },
+  },
+  {
+    name: 'check_eligibility',
+    description: 'Check if a patient has active insurance coverage by running a real-time eligibility verification through the clearinghouse. Use this when a user asks about eligibility, insurance status, or coverage for a patient. Requires a patient ID or patient name to look up.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to check eligibility for' },
+        patientName: { type: 'string' as const, description: 'Patient name to search for (if ID not known)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'generate_soap_note',
+    description: 'Generate a SOAP note with billing codes for a therapy session. Use when a therapist describes a session and wants documentation generated. Collects session details and produces subjective, objective, assessment, and plan sections with CPT code recommendations.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID' },
+        patientName: { type: 'string' as const, description: 'Patient name (if ID not known)' },
+        sessionDuration: { type: 'number' as const, description: 'Session duration in minutes (default 60)' },
+        activities: { type: 'array' as const, items: { type: 'string' as const }, description: 'Activities performed during session' },
+        mood: { type: 'string' as const, description: 'Patient mood/presentation' },
+        performance: { type: 'string' as const, description: 'Overall performance level' },
+        assistanceLevel: { type: 'string' as const, description: 'Level of assistance needed' },
+        planNextSteps: { type: 'string' as const, description: 'Plan for next session' },
+        location: { type: 'string' as const, description: 'Treatment location (clinic, telehealth, home)' },
+      },
+      required: ['patientId', 'activities'],
+    },
+  },
 ];
 
 // Execute tool calls against the database
@@ -509,6 +562,228 @@ async function executeTool(
         };
         const path = pageMap[args.page as string] || '/';
         return JSON.stringify({ action: 'navigate', path, label: `Go to ${args.page}` });
+      }
+
+      case 'submit_claim': {
+        let patientId = args.patientId as number | undefined;
+
+        // If name provided instead of ID, search for patient
+        if (!patientId && args.patientName) {
+          const patients = await storage.getPatients(practiceId);
+          const match = patients.find((p: any) =>
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes((args.patientName as string).toLowerCase()),
+          );
+          if (!match) return JSON.stringify({ error: `Patient "${args.patientName}" not found. Please check the name or provide a patient ID.` });
+          patientId = match.id;
+        }
+
+        if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID.' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+
+        const cptCodes = args.cptCodes as string[];
+        if (!cptCodes || cptCodes.length === 0) {
+          return JSON.stringify({ error: 'At least one CPT code is required.' });
+        }
+
+        const serviceDate = args.serviceDate as string;
+        if (!serviceDate) return JSON.stringify({ error: 'Service date is required (YYYY-MM-DD).' });
+
+        // Calculate total amount: use provided amount or default based on units
+        const units = (args.units as number) || cptCodes.length;
+        const totalAmount = (args.totalAmount as number) || units * 75; // Default $75/unit if not specified
+
+        // Generate a claim number
+        const claimNumber = `CLM-${Date.now()}-${patientId}`;
+
+        // Create the claim in draft status
+        const claim = await storage.createClaim({
+          practiceId,
+          patientId,
+          claimNumber,
+          totalAmount: String(totalAmount),
+          status: 'draft',
+        });
+
+        return JSON.stringify({
+          success: true,
+          claim: {
+            id: claim.id,
+            claimNumber: claim.claimNumber,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            serviceDate,
+            cptCodes,
+            diagnosisCode: (args.diagnosisCode as string) || 'Not specified',
+            units,
+            totalAmount: `$${totalAmount.toFixed(2)}`,
+            status: 'draft',
+          },
+          message: `Claim ${claim.claimNumber} created for ${patient.firstName} ${patient.lastName}. The claim is in draft status — please review it in the Claims page and submit when ready. [Action: View Claims]`,
+        });
+      }
+
+      case 'check_eligibility': {
+        let patientId = args.patientId as number | undefined;
+
+        // If name provided, search for patient
+        if (!patientId && args.patientName) {
+          const patients = await storage.getPatients(practiceId);
+          const match = patients.find((p: any) =>
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes((args.patientName as string).toLowerCase()),
+          );
+          if (!match) return JSON.stringify({ error: `Patient "${args.patientName}" not found` });
+          patientId = match.id;
+        }
+
+        if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found' });
+
+        const practice = await storage.getPractice(practiceId);
+
+        // Resolve payer ID from insurance provider name
+        const { checkEligibility, PAYER_IDS } = await import('../services/stediService');
+        const insuranceName = (patient.insuranceProvider || '').toLowerCase();
+        const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
+
+        const result = await checkEligibility({
+          payer: { id: payerId, name: patient.insuranceProvider || 'Unknown' },
+          provider: {
+            npi: practice?.npi || '',
+            organizationName: practice?.name || undefined,
+          },
+          subscriber: {
+            memberId: patient.insuranceId || patient.policyNumber || '',
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+            dateOfBirth: patient.dateOfBirth || '',
+          },
+          serviceTypeCodes: ['30'],
+        }, practiceId);
+
+        return JSON.stringify({
+          patient: `${patient.firstName} ${patient.lastName}`,
+          insurance: patient.insuranceProvider,
+          status: result.status,
+          planName: result.planName,
+          groupNumber: result.groupNumber,
+          effectiveDate: result.effectiveDate,
+          copay: result.copay,
+          deductible: result.deductible,
+          outOfPocketMax: result.outOfPocketMax,
+          coinsurance: result.coinsurance,
+          coverageActive: result.status === 'active',
+          errors: result.errors,
+        });
+      }
+
+      case 'generate_soap_note': {
+        let patientId = args.patientId as number | undefined;
+
+        // If name provided instead of ID, search for patient
+        if (!patientId && args.patientName) {
+          const patients = await storage.getPatients(practiceId);
+          const searchName = (args.patientName as string).toLowerCase();
+          const match = patients.find((p) =>
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes(searchName),
+          );
+          if (!match) return JSON.stringify({ error: `Patient "${args.patientName}" not found. Please provide a valid patient name or ID.` });
+          patientId = match.id;
+        }
+
+        if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID to generate a SOAP note.' });
+
+        const soapPatient = await storage.getPatient(patientId);
+        if (!soapPatient) return JSON.stringify({ error: 'Patient not found.' });
+
+        const activities = (args.activities as string[]) || [];
+        if (activities.length === 0) return JSON.stringify({ error: 'Please provide at least one activity performed during the session.' });
+
+        const soapDuration = (args.sessionDuration as number) || 60;
+        const soapMood = (args.mood as string) || 'cooperative and engaged';
+        const soapLocation = (args.location as string) || 'clinic';
+        const soapPerformance = (args.performance as string) || 'fair';
+        const soapAssistanceLevel = (args.assistanceLevel as string) || 'moderate assistance';
+        const soapPlanNextSteps = (args.planNextSteps as string) || 'Continue current treatment goals';
+
+        // Call the AI SOAP note + billing generation service
+        const soapResult = await generateSoapNoteAndBilling({
+          patientId,
+          activities,
+          mood: soapMood,
+          duration: soapDuration,
+          location: soapLocation,
+          assessment: {
+            performance: soapPerformance,
+            assistance: soapAssistanceLevel,
+            strength: 'see assessment details',
+            motorPlanning: 'see assessment details',
+            sensoryRegulation: 'see assessment details',
+          },
+          planNextSteps: soapPlanNextSteps,
+        });
+
+        // Save the SOAP note to the database by creating a treatment session first
+        let savedNoteId: number | null = null;
+        try {
+          // Get a default CPT code for the session record
+          const cptCodes = await storage.getCptCodes();
+          const defaultCptCode = cptCodes.length > 0 ? cptCodes[0] : null;
+
+          if (defaultCptCode && userId) {
+            const session = await storage.createTreatmentSession({
+              practiceId,
+              patientId,
+              therapistId: userId,
+              sessionDate: new Date().toISOString().split('T')[0],
+              duration: soapDuration,
+              cptCodeId: defaultCptCode.id,
+              status: 'completed',
+              dataSource: 'ai_extracted',
+            });
+
+            const savedNote = await storage.createSoapNote({
+              sessionId: session.id,
+              subjective: soapResult.subjective,
+              objective: soapResult.objective,
+              assessment: soapResult.assessment,
+              plan: soapResult.plan,
+              location: soapLocation,
+              interventions: activities,
+              aiSuggestedCptCodes: soapResult.cptCodes,
+              therapistId: userId,
+              dataSource: 'ai_extracted',
+            });
+            savedNoteId = savedNote.id;
+          }
+        } catch (saveError) {
+          logger.error('Error saving AI-generated SOAP note', {
+            error: saveError instanceof Error ? saveError.message : String(saveError),
+          });
+          // Continue - we still return the generated content even if save fails
+        }
+
+        return JSON.stringify({
+          success: true,
+          patient: `${soapPatient.firstName} ${soapPatient.lastName}`,
+          savedNoteId,
+          subjective: soapResult.subjective,
+          objective: soapResult.objective,
+          assessment: soapResult.assessment,
+          plan: soapResult.plan,
+          cptCodes: soapResult.cptCodes.map((c) => ({
+            code: c.code,
+            name: c.name,
+            units: c.units,
+            rationale: c.rationale,
+          })),
+          timeBlocks: soapResult.timeBlocks,
+          totalReimbursement: soapResult.totalReimbursement,
+          billingRationale: soapResult.billingRationale,
+          disclaimer: 'All coding decisions must be reviewed and approved by the treating provider.',
+        });
       }
 
       default:
