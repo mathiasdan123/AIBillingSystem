@@ -3,6 +3,140 @@ import { practices, cptCodes, icd10Codes, insurances, users } from "@shared/sche
 import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
 
+/**
+ * Seed realistic practice history: appointments, claims, sessions, SOAP notes, payments.
+ * Uses relative dates (NOW() - INTERVAL) so data stays fresh.
+ */
+async function seedDemoPracticeHistory(db: any, practiceId: number) {
+  console.log("Seeding demo practice history...");
+
+  // Get patient IDs
+  const patientRows = await db.execute(sql`SELECT id, first_name, last_name FROM patients WHERE practice_id = ${practiceId} AND deleted_at IS NULL ORDER BY id LIMIT 6`);
+  const patients = patientRows.rows;
+  if (patients.length === 0) return;
+
+  // Seed appointments (8 past completed, 1 cancelled, 3 future scheduled)
+  const apptData = [
+    { idx: 0, offset: '28 days', title: 'OT Evaluation', status: 'completed' },
+    { idx: 1, offset: '25 days', title: 'Therapy Session', status: 'completed' },
+    { idx: 2, offset: '21 days', title: 'Therapy Session', status: 'completed' },
+    { idx: 0, offset: '18 days', title: 'Therapy Session', status: 'completed' },
+    { idx: 3, offset: '14 days', title: 'OT Evaluation', status: 'completed' },
+    { idx: 1, offset: '10 days', title: 'Therapy Session', status: 'completed' },
+    { idx: 4, offset: '7 days', title: 'Therapy Session', status: 'completed' },
+    { idx: 2, offset: '3 days', title: 'Therapy Session', status: 'completed' },
+    { idx: 5, offset: '5 days', title: 'Therapy Session', status: 'cancelled' },
+    { idx: 0, offset: '-2 days', title: 'Therapy Session', status: 'scheduled' },
+    { idx: 3, offset: '-4 days', title: 'Therapy Session', status: 'scheduled' },
+    { idx: 1, offset: '-6 days', title: 'Therapy Session', status: 'scheduled' },
+  ];
+
+  for (const a of apptData) {
+    const pid = patients[a.idx % patients.length].id;
+    const sign = a.offset.startsWith('-') ? '+' : '-';
+    const interval = a.offset.replace('-', '');
+    try {
+      await db.execute(sql.raw(`
+        INSERT INTO appointments (practice_id, patient_id, start_time, end_time, title, status, created_at)
+        VALUES (${practiceId}, ${pid}, NOW() ${sign} INTERVAL '${interval}' + INTERVAL '10 hours', NOW() ${sign} INTERVAL '${interval}' + INTERVAL '11 hours', '${a.title}', '${a.status}', NOW())
+      `));
+    } catch (e: any) { console.error(`Seed appt error: ${e.message}`); }
+  }
+  console.log("  Seeded 12 appointments");
+
+  // Seed treatment sessions (linked to completed appointments)
+  const sessions = [
+    { idx: 0, offset: '28 days', duration: 60, type: 'OT Evaluation', notes: 'Initial evaluation completed. Fine motor delays noted. Grip strength below age expectations.' },
+    { idx: 1, offset: '25 days', duration: 45, type: 'Therapy Session', notes: 'Worked on bilateral coordination. Patient showed improvement in bead stringing task.' },
+    { idx: 2, offset: '21 days', duration: 45, type: 'Therapy Session', notes: 'Sensory integration activities. Patient tolerated textured materials better than previous session.' },
+    { idx: 0, offset: '18 days', duration: 45, type: 'Therapy Session', notes: 'Fine motor strengthening exercises. Handwriting practice with adaptive grip.' },
+    { idx: 3, offset: '14 days', duration: 60, type: 'OT Evaluation', notes: 'Initial evaluation. Visual motor integration deficits identified. Recommended 2x weekly.' },
+    { idx: 1, offset: '10 days', duration: 45, type: 'Therapy Session', notes: 'Continued bilateral coordination. Introduced scissor skills activities.' },
+    { idx: 4, offset: '7 days', duration: 45, type: 'Therapy Session', notes: 'Self-care skills training. Patient practiced buttoning and zipping with moderate assist.' },
+    { idx: 2, offset: '3 days', duration: 45, type: 'Therapy Session', notes: 'Sensory diet review and modification. Introduced weighted vest during tabletop activities.' },
+  ];
+
+  for (const s of sessions) {
+    const pid = patients[s.idx % patients.length].id;
+    try {
+      await db.execute(sql.raw(`
+        INSERT INTO treatment_sessions (practice_id, patient_id, session_date, duration, session_type, status, notes, created_at)
+        VALUES (${practiceId}, ${pid}, (NOW() - INTERVAL '${s.offset}')::date, ${s.duration}, '${s.type}', 'completed', '${s.notes.replace(/'/g, "''")}', NOW())
+      `));
+    } catch (e: any) { console.error(`Seed session error: ${e.message}`); }
+  }
+  console.log("  Seeded 8 treatment sessions");
+
+  // Seed SOAP notes
+  const soapNotes = [
+    { idx: 0, offset: '28 days', subjective: 'Parent reports child struggles with holding pencils and self-feeding. Difficulty with buttons and zippers.', objective: 'Grip strength 2/5 bilateral. Tripod grasp inconsistent. In-hand manipulation below age expectations. VMI standard score 72.', assessment: 'Fine motor delays impacting school performance and self-care independence. Patient demonstrates difficulty with precision grasp patterns.', plan: 'Continue OT 2x/week. Focus on grip strengthening, in-hand manipulation, and adaptive strategies for classroom.' },
+    { idx: 1, offset: '25 days', subjective: 'Child excited to play games. Parent notes improved bead stringing at home.', objective: 'Bilateral coordination improved. Completed 10-bead string in 3 min (prev 5 min). Midline crossing present for 7/10 trials.', assessment: 'Good progress in bilateral coordination. Continued difficulty with asymmetrical bilateral tasks.', plan: 'Progress to more complex bilateral tasks. Introduce scissor skills next session.' },
+    { idx: 2, offset: '21 days', subjective: 'Parent reports child covers ears at school assemblies. Avoids messy play at home.', objective: 'Tolerated theraputty for 8 min (prev 3 min). Accepted finger painting briefly. Vestibular input calming.', assessment: 'Sensory over-responsivity improving with graded exposure. Tactile defensiveness remains significant.', plan: 'Continue sensory diet. Introduce brushing protocol. Provide home program for sensory regulation.' },
+    { idx: 0, offset: '18 days', subjective: 'Teacher reports improved handwriting legibility. Parent happy with progress.', objective: 'Handwriting sample shows improved letter formation 6/10 letters (prev 3/10). Adaptive pencil grip used independently.', assessment: 'Fine motor gains evident in functional handwriting tasks. Grip endurance still limited.', plan: 'Continue strengthening exercises. Begin timed handwriting activities. Fade adaptive grip.' },
+    { idx: 3, offset: '14 days', subjective: 'Parent concerned about clumsiness and difficulty with playground equipment. Falls frequently.', objective: 'BOT-2 body coordination composite: 25th percentile. Balance: single leg stand 4 sec (age expectation 8 sec). Motor planning: 3-step sequences completed with verbal cues.', assessment: 'Motor planning and balance deficits consistent with developmental coordination disorder. Impacts participation in age-appropriate play.', plan: 'OT 2x/week focusing on motor planning, balance, and body awareness. Provide obstacle course home program.' },
+    { idx: 4, offset: '7 days', subjective: 'Child says dressing is hard. Parent helps with most fasteners.', objective: 'Completed buttoning 4/6 buttons with moderate assist. Zipper management with hand-over-hand. Shoe tying not yet attempted.', assessment: 'Self-care deficits consistent with fine motor delays. Motivated to improve independence.', plan: 'Continue self-care skills training. Grade fastener difficulty. Introduce backward chaining for shoe tying.' },
+  ];
+
+  for (const s of soapNotes) {
+    const pid = patients[s.idx % patients.length].id;
+    try {
+      await db.execute(sql.raw(`
+        INSERT INTO soap_notes (practice_id, patient_id, session_date, subjective, objective, assessment, plan, cpt_codes, therapist_name, status, data_source, created_at)
+        VALUES (${practiceId}, ${pid}, (NOW() - INTERVAL '${s.offset}')::date, '${s.subjective.replace(/'/g, "''")}', '${s.objective.replace(/'/g, "''")}', '${s.assessment.replace(/'/g, "''")}', '${s.plan.replace(/'/g, "''")}', '["97530","97110"]'::jsonb, 'Demo Therapist', 'completed', 'manual', NOW())
+      `));
+    } catch (e: any) { console.error(`Seed SOAP error: ${e.message}`); }
+  }
+  console.log("  Seeded 6 SOAP notes");
+
+  // Seed claims (mix of statuses)
+  const claimData = [
+    { idx: 0, offset: '28 days', status: 'paid', amount: 289, paidAmount: 245, cpt: '97530', icd: 'F82', claimNum: 'CLM-DEMO-001' },
+    { idx: 1, offset: '25 days', status: 'paid', amount: 216, paidAmount: 183, cpt: '97110', icd: 'F82', claimNum: 'CLM-DEMO-002' },
+    { idx: 2, offset: '21 days', status: 'paid', amount: 289, paidAmount: 252, cpt: '97530', icd: 'F80.9', claimNum: 'CLM-DEMO-003' },
+    { idx: 0, offset: '18 days', status: 'submitted', amount: 216, paidAmount: 0, cpt: '97110', icd: 'F82', claimNum: 'CLM-DEMO-004' },
+    { idx: 3, offset: '14 days', status: 'submitted', amount: 289, paidAmount: 0, cpt: '97530', icd: 'F82', claimNum: 'CLM-DEMO-005' },
+    { idx: 1, offset: '10 days', status: 'denied', amount: 216, paidAmount: 0, cpt: '97110', icd: 'F82', claimNum: 'CLM-DEMO-006' },
+    { idx: 4, offset: '7 days', status: 'submitted', amount: 289, paidAmount: 0, cpt: '97530', icd: 'F82', claimNum: 'CLM-DEMO-007' },
+    { idx: 2, offset: '3 days', status: 'draft', amount: 216, paidAmount: 0, cpt: '97110', icd: 'F80.9', claimNum: 'CLM-DEMO-008' },
+    { idx: 0, offset: '1 day', status: 'draft', amount: 289, paidAmount: 0, cpt: '97530', icd: 'F82', claimNum: 'CLM-DEMO-009' },
+  ];
+
+  for (const c of claimData) {
+    const pid = patients[c.idx % patients.length].id;
+    const denialReason = c.status === 'denied' ? "'Prior authorization required'" : 'NULL';
+    const submittedAt = ['submitted', 'paid', 'denied'].includes(c.status) ? `NOW() - INTERVAL '${c.offset}'` : 'NULL';
+    const paidAt = c.status === 'paid' ? `NOW() - INTERVAL '${c.offset}' + INTERVAL '12 days'` : 'NULL';
+    try {
+      await db.execute(sql.raw(`
+        INSERT INTO claims (practice_id, patient_id, claim_number, status, service_date, diagnosis_code, procedure_code, total_amount, paid_amount, denial_reason, submitted_at, paid_at, created_at)
+        VALUES (${practiceId}, ${pid}, '${c.claimNum}', '${c.status}', (NOW() - INTERVAL '${c.offset}')::date, '${c.icd}', '${c.cpt}', ${c.amount}, ${c.paidAmount}, ${denialReason}, ${submittedAt}, ${paidAt}, NOW())
+      `));
+    } catch (e: any) { console.error(`Seed claim error: ${e.message}`); }
+  }
+  console.log("  Seeded 9 claims");
+
+  // Seed payments for paid claims
+  const payments = [
+    { idx: 0, offset: '16 days', amount: 245, type: 'insurance', ref: 'ERA-2026-001' },
+    { idx: 1, offset: '13 days', amount: 183, type: 'insurance', ref: 'ERA-2026-002' },
+    { idx: 2, offset: '9 days', amount: 252, type: 'insurance', ref: 'ERA-2026-003' },
+    { idx: 0, offset: '15 days', amount: 25, type: 'patient', ref: 'COPAY-001' },
+    { idx: 1, offset: '12 days', amount: 30, type: 'patient', ref: 'COPAY-002' },
+  ];
+
+  for (const p of payments) {
+    const pid = patients[p.idx % patients.length].id;
+    try {
+      await db.execute(sql.raw(`
+        INSERT INTO payments (practice_id, patient_id, amount, payment_type, payment_date, reference_number, status, created_at)
+        VALUES (${practiceId}, ${pid}, ${p.amount}, '${p.type}', (NOW() - INTERVAL '${p.offset}')::date, '${p.ref}', 'completed', NOW())
+      `));
+    } catch (e: any) { console.error(`Seed payment error: ${e.message}`); }
+  }
+  console.log("  Seeded 5 payments");
+  console.log("Demo practice history seeded successfully!");
+}
+
 export async function seedDatabase(options?: { force?: boolean }) {
   const isProduction = process.env.NODE_ENV === 'production';
 
@@ -178,6 +312,15 @@ export async function seedDatabase(options?: { force?: boolean }) {
         }
       }
       console.log("Sample patients seeded: 6 pediatric patients");
+
+      // Seed practice history (appointments, claims, sessions, SOAP notes, payments)
+      await seedDemoPracticeHistory(db, practiceId);
+    } else if (options?.force) {
+      // Force re-seed: check if practice history is missing
+      const claimCount = await db.execute(sql`SELECT COUNT(*) as count FROM claims WHERE practice_id = ${practiceId}`);
+      if (parseInt(claimCount.rows[0]?.count || '0', 10) === 0) {
+        await seedDemoPracticeHistory(db, practiceId);
+      }
     } else if (!isProduction) {
       console.log(`${activePatients} patients already exist — skipping seed`);
     }
