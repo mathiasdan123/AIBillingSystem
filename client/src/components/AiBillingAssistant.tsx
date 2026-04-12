@@ -312,17 +312,18 @@ export default function AiBillingAssistant() {
                   </svg>
                 </div>
                 <h4 className="text-sm font-medium text-slate-900 dark:text-slate-100 mb-1">
-                  How can I help?
+                  Welcome to TherapyBill AI!
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-                  Ask me about billing codes, billing accuracy, or your practice data.
+                  I'm your billing assistant. I can help you set up your practice, answer billing questions, and manage your claims. What would you like to do first?
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {[
-                    "What's my denial rate?",
+                    "Help me get started",
+                    "Add my first patient",
+                    "How does billing work?",
                     "Explain 97530 vs 97110",
-                    "Telehealth modifiers?",
-                    "Revenue this month?",
+                    "What's my denial rate?",
                   ].map((suggestion) => (
                     <button
                       key={suggestion}

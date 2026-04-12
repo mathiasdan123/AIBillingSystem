@@ -123,8 +123,19 @@ Your role:
 3. Provide practice management advice
 4. Query practice data when asked about specific metrics (patients, claims, revenue, etc.)
 5. Suggest actionable next steps when appropriate
+6. Detect new practices and guide them through setup
 
 ${BILLING_KNOWLEDGE}
+
+## Onboarding Guidance
+When a user first messages you, call get_practice_setup_status to understand their practice state. If they are a new practice (few or no patients, onboarding incomplete), proactively offer to guide them through setup:
+
+1. "Add your first patient" - suggest navigating to /patients and clicking Add Patient. Use [Action: Add Patient]
+2. "Set up your schedule" - suggest navigating to /calendar. Use [Action: View Calendar]
+3. "Submit a test claim" - explain they are in sandbox mode and can safely test. Use [Action: Create Claim]
+4. "Go live with real claims" - direct to Settings > Clearinghouse to toggle sandbox mode off. Use [Action: View Settings]
+
+Always be encouraging and guide them step-by-step. When the practice has no patients, claims, or appointments, focus on getting them started rather than showing analytics.
 
 Guidelines:
 - Be concise but thorough. Use bullet points for clarity.
@@ -230,6 +241,61 @@ const assistantTools: Anthropic.Tool[] = [
         required: [],
     },
   },
+  {
+    name: 'get_practice_setup_status',
+    description: 'Get the current setup and onboarding status for the practice. Call this when a user first messages you to understand if they are a new practice that needs setup guidance. Returns onboarding progress, patient/claim/appointment counts, sandbox mode status, and setup suggestions.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'create_patient',
+    description: 'Create a new patient in the practice. Use this when a user wants to add their first patient or add a new patient through the assistant.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        firstName: { type: 'string' as const, description: 'Patient first name' },
+        lastName: { type: 'string' as const, description: 'Patient last name' },
+        dateOfBirth: { type: 'string' as const, description: 'Date of birth in YYYY-MM-DD format' },
+        email: { type: 'string' as const, description: 'Patient or guardian email' },
+        phone: { type: 'string' as const, description: 'Phone number' },
+        insuranceProvider: { type: 'string' as const, description: 'Insurance company name' },
+      },
+      required: ['firstName', 'lastName'],
+    },
+  },
+  {
+    name: 'create_appointment',
+    description: 'Schedule an appointment for a patient. Use this when a user wants to create their first appointment or schedule a session.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to schedule for' },
+        date: { type: 'string' as const, description: 'Appointment date in YYYY-MM-DD format' },
+        time: { type: 'string' as const, description: 'Start time in HH:MM format (24h)' },
+        duration: { type: 'number' as const, description: 'Duration in minutes (default 60)' },
+        type: { type: 'string' as const, description: 'Appointment type (default "Therapy Session")' },
+      },
+      required: ['patientId', 'date', 'time'],
+    },
+  },
+  {
+    name: 'navigate_user',
+    description: 'Direct the user to a specific page in the app. Use this to help them find the right place for what they want to do.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        page: {
+          type: 'string' as const,
+          enum: ['patients', 'calendar', 'claims', 'settings', 'soap-notes', 'analytics', 'mcp-setup', 'onboarding'],
+          description: 'The page to navigate to',
+        },
+      },
+      required: ['page'],
+    },
+  },
 ];
 
 // Execute tool calls against the database
@@ -237,6 +303,7 @@ async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
   practiceId: number,
+  userId?: string,
 ): Promise<string> {
   try {
     switch (toolName) {
@@ -346,6 +413,104 @@ async function executeTool(
         return JSON.stringify(arData);
       }
 
+      case 'get_practice_setup_status': {
+        const practice = await storage.getPractice(practiceId);
+        const patients = await storage.getPatients(practiceId);
+        const claims = await storage.getClaims(practiceId);
+        const appointments = await storage.getAppointments(practiceId);
+
+        const totalPatients = patients.length;
+        const totalClaims = claims.length;
+        const totalAppointments = appointments.length;
+        const hasStediKey = !!(practice?.stediApiKey || process.env.STEDI_API_KEY);
+
+        // Check MFA status if we have a userId
+        let mfaEnabled = false;
+        if (userId) {
+          try {
+            const user = await storage.getUser(userId);
+            if (user) {
+              mfaEnabled = !!user.mfaEnabled;
+            }
+          } catch {
+            // Non-blocking
+          }
+        }
+
+        // Build setup suggestions based on what's missing
+        const setupSuggestions: string[] = [];
+        if (totalPatients === 0) {
+          setupSuggestions.push('Add your first patient');
+        }
+        if (totalAppointments === 0) {
+          setupSuggestions.push('Create an appointment');
+        }
+        if (totalClaims === 0 && totalPatients > 0) {
+          setupSuggestions.push('Submit a test claim');
+        }
+        if (!mfaEnabled) {
+          setupSuggestions.push('Enable MFA for HIPAA compliance');
+        }
+        if (!hasStediKey) {
+          setupSuggestions.push('Configure clearinghouse API key in Settings');
+        }
+
+        return JSON.stringify({
+          onboardingCompleted: practice?.onboardingCompleted ?? false,
+          onboardingStep: practice?.onboardingStep ?? 0,
+          totalPatients,
+          totalClaims,
+          totalAppointments,
+          hasStediKey,
+          mfaEnabled,
+          setupSuggestions,
+        });
+      }
+
+      case 'create_patient': {
+        const patientData: any = {
+          practiceId,
+          firstName: args.firstName as string,
+          lastName: args.lastName as string,
+        };
+        if (args.dateOfBirth) patientData.dateOfBirth = args.dateOfBirth;
+        if (args.email) patientData.email = args.email;
+        if (args.phone) patientData.phone = args.phone;
+        if (args.insuranceProvider) patientData.insuranceProvider = args.insuranceProvider;
+        const patient = await storage.createPatient(patientData);
+        return JSON.stringify({ success: true, patient: { id: patient.id, firstName: patient.firstName, lastName: patient.lastName }, message: `Patient ${patient.firstName} ${patient.lastName} created successfully.` });
+      }
+
+      case 'create_appointment': {
+        const duration = (args.duration as number) || 60;
+        const startTime = new Date(`${args.date}T${args.time}:00`);
+        const endTime = new Date(startTime.getTime() + duration * 60000);
+        const appt = await storage.createAppointment({
+          practiceId,
+          patientId: args.patientId as number,
+          startTime,
+          endTime,
+          title: (args.type as string) || 'Therapy Session',
+          status: 'scheduled',
+        });
+        return JSON.stringify({ success: true, appointment: { id: appt.id, date: args.date, time: args.time, duration }, message: 'Appointment scheduled successfully.' });
+      }
+
+      case 'navigate_user': {
+        const pageMap: Record<string, string> = {
+          patients: '/patients',
+          calendar: '/calendar',
+          claims: '/claims',
+          settings: '/settings',
+          'soap-notes': '/soap-notes',
+          analytics: '/analytics',
+          'mcp-setup': '/mcp-setup',
+          onboarding: '/onboarding',
+        };
+        const path = pageMap[args.page as string] || '/';
+        return JSON.stringify({ action: 'navigate', path, label: `Go to ${args.page}` });
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
@@ -385,6 +550,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Get practice context for data queries
     const context = await getUserPracticeContext(req);
     const practiceId = context?.practiceId || 1;
+    const userId = context?.userId;
 
     // Build conversation messages for Claude
     const messages: Anthropic.MessageParam[] = [];
@@ -427,7 +593,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const toolResult = await executeTool(block.name, (block.input as Record<string, unknown>) || {}, practiceId);
+          const toolResult = await executeTool(block.name, (block.input as Record<string, unknown>) || {}, practiceId, userId);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -463,6 +629,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       'view denied claims': '/claims',
       'view analytics': '/analytics',
       'view patients': '/patients',
+      'add patient': '/patients',
       'view calendar': '/calendar',
       'view reports': '/reports',
       'view denial reasons': '/analytics',
@@ -472,6 +639,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       'submit claim': '/claims',
       'check authorization': '/patients',
       'view settings': '/settings',
+      'enable mfa': '/settings',
     };
 
     let match;
