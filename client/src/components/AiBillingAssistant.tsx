@@ -167,7 +167,7 @@ export default function AiBillingAssistant() {
           onClick={() => setIsOpen(true)}
           className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           aria-label="Open AI billing assistant"
-          title="AI Billing Assistant"
+          title="Blanche"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -208,7 +208,7 @@ export default function AiBillingAssistant() {
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
               <div>
-                <h3 className="text-sm font-semibold">AI Billing Assistant</h3>
+                <h3 className="text-sm font-semibold">Blanche</h3>
                 <p className="text-xs text-blue-100">Ask about billing, coding, or your practice</p>
               </div>
             </div>
@@ -312,10 +312,10 @@ export default function AiBillingAssistant() {
                   </svg>
                 </div>
                 <h4 className="text-sm font-medium text-slate-900 dark:text-slate-100 mb-1">
-                  Welcome to TherapyBill AI!
+                  Hi, I'm Blanche!
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-                  I'm your billing assistant. I can help you set up your practice, answer billing questions, and manage your claims. What would you like to do first?
+                  I'm your TherapyBill assistant. I can help you set up your practice, answer billing questions, manage claims, and more. What would you like to do?
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {[
