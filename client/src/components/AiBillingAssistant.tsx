@@ -15,6 +15,8 @@ interface AssistantStatus {
 }
 
 const STORAGE_KEY = "ai-assistant-chat-history";
+const DISMISSED_KEY = "ai-assistant-dismissed";
+const GREETED_KEY = "ai-assistant-greeted";
 
 function loadHistory(): ChatMessage[] {
   try {
@@ -47,8 +49,32 @@ export default function AiBillingAssistant() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [statusChecked, setStatusChecked] = useState(false);
+  const [showGreeting, setShowGreeting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-show greeting popup on first visit (not the full chat — just a small intro)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const dismissed = localStorage.getItem(DISMISSED_KEY);
+    const greeted = localStorage.getItem(GREETED_KEY);
+    if (!dismissed && !greeted && !isOpen) {
+      // Show greeting after a short delay so the page loads first
+      const timer = setTimeout(() => setShowGreeting(true), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthenticated, isOpen]);
+
+  const handleDismissGreeting = () => {
+    setShowGreeting(false);
+    localStorage.setItem(DISMISSED_KEY, "true");
+  };
+
+  const handleAcceptGreeting = () => {
+    setShowGreeting(false);
+    localStorage.setItem(GREETED_KEY, "true");
+    setIsOpen(true);
+  };
 
   // Check assistant availability on first open
   useEffect(() => {
@@ -161,10 +187,50 @@ export default function AiBillingAssistant() {
 
   return (
     <>
+      {/* Greeting Popup — shows once on first visit */}
+      {showGreeting && !isOpen && (
+        <div className="fixed bottom-24 right-6 z-50 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0 text-lg font-bold">B</div>
+            <div className="flex-1">
+              <h4 className="font-semibold text-slate-900 dark:text-slate-100 text-sm">Hi, I'm Blanche!</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                I'm your TherapyBill assistant. I can help you set up your practice, check insurance eligibility, write SOAP notes, and manage billing. Want me to help you get started?
+              </p>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={handleAcceptGreeting}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  Yes, help me!
+                </button>
+                <button
+                  onClick={handleDismissGreeting}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                >
+                  I'll explore on my own
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={handleDismissGreeting}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 -mt-1"
+              aria-label="Dismiss"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Floating Chat Bubble */}
       {!isOpen && (
         <button
-          onClick={() => setIsOpen(true)}
+          onClick={() => {
+            setShowGreeting(false);
+            localStorage.setItem(GREETED_KEY, "true");
+            setIsOpen(true);
+          }}
           className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           aria-label="Open AI billing assistant"
           title="Blanche"
