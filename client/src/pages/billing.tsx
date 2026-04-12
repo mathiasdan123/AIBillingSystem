@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   CreditCard, CheckCircle, DollarSign, Calendar,
-  Shield, Loader2, Plus
+  Shield, Loader2, Plus, AlertTriangle, ExternalLink
 } from "lucide-react";
 import {
   Dialog,
@@ -51,6 +51,18 @@ interface PaymentHistory {
   status: string;
   description: string;
   created: string;
+}
+
+interface SubscriptionInfo {
+  plan: string;
+  planName: string;
+  monthlyPrice: number;
+  annualPrice: number;
+  billingInterval: string;
+  hasSubscription: boolean;
+  cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: string | null;
+  status: string | null;
 }
 
 // Card Form Component - must be inside Elements provider
@@ -184,10 +196,16 @@ export default function Billing() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [showAddCard, setShowAddCard] = useState(false);
+  const [checkoutPlanId, setCheckoutPlanId] = useState<string | null>(null);
 
   // Fetch billing info
   const { data: billingInfo, isLoading: billingLoading } = useQuery<BillingInfo>({
     queryKey: ['/api/billing/info'],
+  });
+
+  // Fetch subscription details
+  const { data: subscriptionInfo } = useQuery<SubscriptionInfo>({
+    queryKey: ['/api/billing/subscription'],
   });
 
   // Fetch payment methods
@@ -217,6 +235,50 @@ export default function Billing() {
       toast({ title: 'Error', description: 'Failed to update payment method', variant: 'destructive' });
     },
   });
+
+  // Create checkout session and redirect to Stripe
+  const checkoutMutation = useMutation({
+    mutationFn: async ({ planId, interval }: { planId: string; interval: 'month' | 'year' }) => {
+      const res = await apiRequest('POST', '/api/billing/create-checkout-session', {
+        planId,
+        interval,
+      });
+      return res.json();
+    },
+    onSuccess: (data: { url: string }) => {
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to start checkout. Please try again.', variant: 'destructive' });
+      setCheckoutPlanId(null);
+    },
+  });
+
+  // Cancel subscription
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/billing/cancel-subscription', {});
+      return res.json();
+    },
+    onSuccess: (data: { currentPeriodEnd: string }) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing/subscription'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing/info'] });
+      toast({
+        title: 'Subscription cancelled',
+        description: `Your subscription will remain active until ${new Date(data.currentPeriodEnd).toLocaleDateString()}.`,
+      });
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to cancel subscription', variant: 'destructive' });
+    },
+  });
+
+  const handleSelectPlan = (planId: string) => {
+    setCheckoutPlanId(planId);
+    checkoutMutation.mutate({ planId, interval: 'month' });
+  };
 
   const plans = [
     {
@@ -280,12 +342,26 @@ export default function Billing() {
             <div>
               <h3 className="text-xl font-bold text-slate-900">{billingInfo?.planName || 'Starter'}</h3>
               <p className="text-slate-600">Practice Management</p>
+              {subscriptionInfo?.hasSubscription && subscriptionInfo.status === 'active' && (
+                <Badge className="mt-1 bg-green-100 text-green-800">Active</Badge>
+              )}
+              {subscriptionInfo?.cancelAtPeriodEnd && subscriptionInfo.currentPeriodEnd && (
+                <p className="text-sm text-amber-600 mt-1 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  Cancels {new Date(subscriptionInfo.currentPeriodEnd).toLocaleDateString()}
+                </p>
+              )}
             </div>
             <div className="text-right">
               <div className="text-2xl font-bold text-blue-600">
                 ${billingInfo?.monthlyPrice || 99}/mo
               </div>
               <p className="text-sm text-slate-500">+ 6% billing engine (optional)</p>
+              {subscriptionInfo?.hasSubscription && subscriptionInfo.currentPeriodEnd && !subscriptionInfo.cancelAtPeriodEnd && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Next billing: {new Date(subscriptionInfo.currentPeriodEnd).toLocaleDateString()}
+                </p>
+              )}
             </div>
           </div>
 
@@ -300,6 +376,27 @@ export default function Billing() {
               ))}
             </ul>
           </div>
+
+          {subscriptionInfo?.hasSubscription && !subscriptionInfo.cancelAtPeriodEnd && (
+            <div className="mt-4 pt-4 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-600 border-red-200 hover:bg-red-50"
+                onClick={() => cancelMutation.mutate()}
+                disabled={cancelMutation.isPending}
+              >
+                {cancelMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Cancelling...
+                  </>
+                ) : (
+                  'Cancel Subscription'
+                )}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -468,8 +565,23 @@ export default function Billing() {
                     Current Plan
                   </Button>
                 ) : (
-                  <Button className="w-full mt-4" variant={plan.recommended ? 'default' : 'outline'}>
-                    Switch Plan
+                  <Button
+                    className="w-full mt-4"
+                    variant={plan.recommended ? 'default' : 'outline'}
+                    onClick={() => handleSelectPlan(plan.id)}
+                    disabled={checkoutMutation.isPending}
+                  >
+                    {checkoutPlanId === plan.id && checkoutMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Redirecting...
+                      </>
+                    ) : (
+                      <>
+                        <ExternalLink className="w-4 h-4 mr-2" />
+                        Subscribe
+                      </>
+                    )}
                   </Button>
                 )}
               </div>

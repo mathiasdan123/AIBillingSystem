@@ -107,6 +107,7 @@ export const practices = pgTable("practices", {
   lastEnrollmentCheck: timestamp("last_enrollment_check"),
   // Stripe billing fields
   stripeCustomerId: varchar("stripe_customer_id"),
+  stripeSubscriptionId: varchar("stripe_subscription_id"),
   stripePaymentMethodId: varchar("stripe_payment_method_id"),
   billingPlan: varchar("billing_plan").default("starter"), // starter, professional, practice
   billingPercentage: decimal("billing_percentage", { precision: 5, scale: 2 }).default("6"), // billing engine: 6% of insurance collections

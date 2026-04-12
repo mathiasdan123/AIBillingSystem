@@ -9,6 +9,9 @@
  * - GET /api/billing/info - Get billing info for practice
  * - GET /api/billing/history - Get payment history
  * - POST /api/billing/patient-payment-link - Create patient payment link
+ * - POST /api/billing/create-checkout-session - Create Stripe Checkout for subscription
+ * - GET /api/billing/subscription - Get current subscription details
+ * - POST /api/billing/cancel-subscription - Cancel subscription at period end
  * - POST /api/webhooks/stripe - Stripe webhook handler
  *
  * Mounted at /api so all paths include their full prefix.
@@ -244,6 +247,171 @@ router.post('/billing/patient-payment-link', isAuthenticated, async (req: any, r
   }
 });
 
+// ─── Subscription Checkout & Management ──────────────────────────────────────
+
+// Create Stripe Checkout Session for subscribing to a plan
+router.post('/billing/create-checkout-session', isAuthenticated, async (req: any, res) => {
+  try {
+    if (!stripeService.isStripeConfigured()) {
+      return res.status(503).json({
+        message: 'Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.',
+      });
+    }
+
+    const { planId, interval = 'month' } = req.body;
+
+    // Validate planId
+    const validPlans: Array<stripeService.PlanId> = ['starter', 'professional', 'practice'];
+    if (!validPlans.includes(planId)) {
+      return res.status(400).json({ message: 'Invalid plan ID. Must be starter, professional, or practice.' });
+    }
+
+    // Validate interval
+    const validIntervals: Array<stripeService.BillingInterval> = ['month', 'year'];
+    if (!validIntervals.includes(interval)) {
+      return res.status(400).json({ message: 'Invalid interval. Must be month or year.' });
+    }
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const practice = await storage.getPractice(practiceId);
+
+    if (!practice) {
+      return res.status(404).json({ message: 'Practice not found' });
+    }
+
+    // Get or create Stripe customer
+    const customer = await stripeService.getOrCreateCustomer({
+      id: practice.id,
+      name: practice.name,
+      email: practice.email || '',
+      stripeCustomerId: practice.stripeCustomerId,
+    });
+
+    // Save customer ID if new
+    if (!practice.stripeCustomerId) {
+      await storage.updatePractice(practiceId, { stripeCustomerId: customer.id });
+    }
+
+    // Look up or create the Stripe Price
+    const priceId = await stripeService.getOrCreatePrice(planId as stripeService.PlanId, interval as stripeService.BillingInterval);
+
+    // Build success/cancel URLs
+    const origin = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || 'http://localhost:5000';
+    const successUrl = `${origin}/settings?subscription=success`;
+    const cancelUrl = `${origin}/subscription`;
+
+    // Create the checkout session
+    const session = await stripeService.createCheckoutSession({
+      customerId: customer.id,
+      priceId,
+      practiceId,
+      planId,
+      successUrl,
+      cancelUrl,
+    });
+
+    logger.info('Checkout session created', { practiceId, planId, interval, sessionId: session.id });
+    res.json({ url: session.url });
+  } catch (error) {
+    logger.error('Error creating checkout session', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to create checkout session' });
+  }
+});
+
+// Get current subscription details
+router.get('/billing/subscription', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const practice = await storage.getPractice(practiceId);
+
+    if (!practice) {
+      return res.status(404).json({ message: 'Practice not found' });
+    }
+
+    const currentPlanKey = (practice.billingPlan || 'starter') as keyof typeof stripeService.PRICING_PLANS;
+    const plan = stripeService.PRICING_PLANS[currentPlanKey] || stripeService.PRICING_PLANS.starter;
+
+    // Base response without active subscription
+    const response: Record<string, any> = {
+      plan: currentPlanKey,
+      planName: plan.name,
+      monthlyPrice: plan.monthlyPriceCents / 100,
+      annualPrice: plan.annualPriceCents / 100,
+      billingInterval: practice.billingInterval || 'monthly',
+      hasSubscription: false,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: null,
+      status: null,
+    };
+
+    // If there's an active Stripe subscription, fetch its details
+    if (practice.stripeSubscriptionId && stripeService.isStripeConfigured()) {
+      try {
+        const subscription = await stripeService.getSubscription(practice.stripeSubscriptionId);
+        response.hasSubscription = true;
+        response.status = subscription.status;
+        response.cancelAtPeriodEnd = subscription.cancel_at_period_end;
+        // current_period_end lives on subscription items in newer Stripe API versions
+        const periodEnd = subscription.items.data[0]?.current_period_end;
+        if (periodEnd) {
+          response.currentPeriodEnd = new Date(periodEnd * 1000).toISOString();
+        }
+      } catch (err) {
+        // Subscription may have been deleted — just return without it
+        logger.warn('Could not retrieve subscription', {
+          practiceId,
+          subscriptionId: practice.stripeSubscriptionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    res.json(response);
+  } catch (error) {
+    logger.error('Error getting subscription', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to get subscription details' });
+  }
+});
+
+// Cancel subscription at end of billing period
+router.post('/billing/cancel-subscription', isAuthenticated, async (req: any, res) => {
+  try {
+    if (!stripeService.isStripeConfigured()) {
+      return res.status(503).json({ message: 'Stripe is not configured.' });
+    }
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const practice = await storage.getPractice(practiceId);
+
+    if (!practice) {
+      return res.status(404).json({ message: 'Practice not found' });
+    }
+
+    if (!practice.stripeSubscriptionId) {
+      return res.status(400).json({ message: 'No active subscription to cancel' });
+    }
+
+    const subscription = await stripeService.cancelSubscriptionAtPeriodEnd(practice.stripeSubscriptionId);
+    const periodEnd = subscription.items.data[0]?.current_period_end;
+    const periodEndISO = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+
+    logger.info('Subscription set to cancel at period end', {
+      practiceId,
+      subscriptionId: subscription.id,
+      cancelAt: periodEndISO,
+    });
+
+    res.json({
+      success: true,
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: periodEndISO,
+    });
+  } catch (error) {
+    logger.error('Error cancelling subscription', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to cancel subscription' });
+  }
+});
+
 // Stripe webhook handler - requires raw body for signature verification
 // Raw body is provided by express.raw() middleware in index.ts
 router.post('/webhooks/stripe', async (req: any, res) => {
@@ -363,11 +531,85 @@ router.post('/webhooks/stripe', async (req: any, res) => {
           }
           break;
 
-        case 'setup_intent.succeeded':
+        case 'setup_intent.succeeded': {
           const setupIntent = event.data.object as any;
           logger.info('Setup intent succeeded', { setupIntentId: setupIntent.id });
           // Payment method saved
           break;
+        }
+
+        case 'checkout.session.completed': {
+          const session = event.data.object as any;
+          if (session.mode === 'subscription') {
+            const sessionMeta = session.metadata || {};
+            const sessionPracticeId = parseInt(sessionMeta.practiceId);
+            const sessionPlanId = sessionMeta.planId;
+            const subscriptionId = session.subscription;
+
+            if (sessionPracticeId && sessionPlanId && subscriptionId) {
+              const intervalLabel = session.metadata?.interval || 'monthly';
+              await storage.updatePractice(sessionPracticeId, {
+                billingPlan: sessionPlanId,
+                stripeSubscriptionId: subscriptionId,
+                stripeCustomerId: session.customer,
+                billingInterval: intervalLabel,
+              } as any);
+              logger.info('Practice subscription activated via checkout', {
+                practiceId: sessionPracticeId,
+                planId: sessionPlanId,
+                subscriptionId,
+              });
+            } else {
+              logger.warn('Checkout session completed but missing metadata', {
+                sessionId: session.id,
+                metadata: sessionMeta,
+              });
+            }
+          }
+          break;
+        }
+
+        case 'customer.subscription.updated': {
+          const updatedSub = event.data.object as any;
+          const subMeta = updatedSub.metadata || {};
+          const subPracticeId = parseInt(subMeta.practiceId);
+
+          if (subPracticeId) {
+            const planId = subMeta.planId;
+            const updates: Record<string, any> = {};
+            if (planId) {
+              updates.billingPlan = planId;
+            }
+            if (Object.keys(updates).length > 0) {
+              await storage.updatePractice(subPracticeId, updates as any);
+              logger.info('Practice subscription updated', {
+                practiceId: subPracticeId,
+                planId,
+                subscriptionId: updatedSub.id,
+                status: updatedSub.status,
+              });
+            }
+          }
+          break;
+        }
+
+        case 'customer.subscription.deleted': {
+          const deletedSub = event.data.object as any;
+          const deletedMeta = deletedSub.metadata || {};
+          const deletedPracticeId = parseInt(deletedMeta.practiceId);
+
+          if (deletedPracticeId) {
+            await storage.updatePractice(deletedPracticeId, {
+              billingPlan: 'starter',
+              stripeSubscriptionId: null,
+            } as any);
+            logger.info('Practice subscription cancelled/deleted, downgraded to starter', {
+              practiceId: deletedPracticeId,
+              subscriptionId: deletedSub.id,
+            });
+          }
+          break;
+        }
 
         default:
           logger.info('Unhandled event type', { eventType: event.type });

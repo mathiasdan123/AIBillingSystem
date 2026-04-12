@@ -402,3 +402,115 @@ export async function createCustomer(
 export async function getPaymentMethod(paymentMethodId: string): Promise<Stripe.PaymentMethod> {
   return await getStripe().paymentMethods.retrieve(paymentMethodId);
 }
+
+// ─── Subscription Checkout ──────────────────────────────────────────────────
+
+export type PlanId = keyof typeof PRICING_PLANS;
+export type BillingInterval = 'month' | 'year';
+
+/**
+ * Look up a Stripe Price by lookup_key, or create it if missing.
+ * Uses lookup_keys set by createStripePricingCatalog (e.g. "therapybill-starter-monthly").
+ */
+export async function getOrCreatePrice(
+  planId: PlanId,
+  interval: BillingInterval
+): Promise<string> {
+  const s = getStripe();
+  const plan = PRICING_PLANS[planId];
+  const intervalLabel = interval === 'year' ? 'annual' : 'monthly';
+  const lookupKey = `therapybill-${planId}-${intervalLabel}`;
+
+  // Try to find existing price by lookup_key
+  const existingPrices = await s.prices.list({ lookup_keys: [lookupKey], limit: 1 });
+  if (existingPrices.data.length > 0) {
+    return existingPrices.data[0].id;
+  }
+
+  // No price found — find or create the product, then create the price
+  const existingProducts = await s.products.search({
+    query: `metadata["planKey"]:"${planId}"`,
+    limit: 1,
+  });
+
+  let productId: string;
+  if (existingProducts.data.length > 0) {
+    productId = existingProducts.data[0].id;
+  } else {
+    const product = await s.products.create({
+      name: `TherapyBill AI \u2014 ${plan.name}`,
+      description: plan.tagline,
+      metadata: { planKey: planId },
+    });
+    productId = product.id;
+  }
+
+  const amountCents = interval === 'year' ? plan.annualPriceCents : plan.monthlyPriceCents;
+  const price = await s.prices.create({
+    product: productId,
+    unit_amount: amountCents,
+    currency: 'usd',
+    recurring: { interval },
+    lookup_key: lookupKey,
+    metadata: { planKey: planId, interval: intervalLabel },
+  });
+
+  return price.id;
+}
+
+/**
+ * Create a Stripe Checkout Session for a subscription.
+ */
+export async function createCheckoutSession(params: {
+  customerId: string;
+  priceId: string;
+  practiceId: number;
+  planId: string;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<Stripe.Checkout.Session> {
+  const session = await getStripe().checkout.sessions.create({
+    mode: 'subscription',
+    customer: params.customerId,
+    line_items: [{ price: params.priceId, quantity: 1 }],
+    success_url: params.successUrl,
+    cancel_url: params.cancelUrl,
+    metadata: {
+      practiceId: params.practiceId.toString(),
+      planId: params.planId,
+    },
+    subscription_data: {
+      metadata: {
+        practiceId: params.practiceId.toString(),
+        planId: params.planId,
+      },
+    },
+  });
+
+  return session;
+}
+
+/**
+ * Get a Stripe subscription by ID.
+ */
+export async function getSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
+  return await getStripe().subscriptions.retrieve(subscriptionId);
+}
+
+/**
+ * Cancel a Stripe subscription at the end of the current billing period.
+ */
+export async function cancelSubscriptionAtPeriodEnd(subscriptionId: string): Promise<Stripe.Subscription> {
+  return await getStripe().subscriptions.update(subscriptionId, {
+    cancel_at_period_end: true,
+  });
+}
+
+/**
+ * Reactivate a subscription that was set to cancel at period end.
+ */
+export async function reactivateSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
+  return await getStripe().subscriptions.update(subscriptionId, {
+    cancel_at_period_end: false,
+  });
+}
