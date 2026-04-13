@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CheckCircle, FileText, Users, TrendingUp, Clock, Shield, DollarSign,
   Mic, Video, Calendar, MessageSquare, ClipboardList, BarChart3, Star,
-  Brain, Zap, Lock, ArrowRight, Mail, Phone, Send
+  Brain, Zap, Lock, ArrowRight, Mail, Phone, Send, Monitor
 } from "lucide-react";
 import { AuthModal } from "@/components/AuthModal";
 
@@ -88,6 +88,7 @@ export default function Landing() {
             </div>
             <div className="flex items-center gap-4">
               <a href="#features" className="text-slate-600 hover:text-slate-900 hidden sm:block">Features</a>
+              <a href="#claude-desktop" className="text-slate-600 hover:text-slate-900 hidden sm:block">AI Assistant</a>
               <a href="/pricing" className="text-slate-600 hover:text-slate-900 hidden sm:block">Pricing</a>
               <a href="#contact" className="text-slate-600 hover:text-slate-900 hidden sm:block">Contact</a>
               <Button onClick={handleLogin} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold">
@@ -246,6 +247,21 @@ export default function Landing() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <a href="#claude-desktop" className="block">
+              <Card className="hover:shadow-lg transition-shadow border-2 border-blue-300 bg-gradient-to-br from-blue-50 to-indigo-50 relative">
+                <Badge className="absolute -top-3 right-4 bg-blue-600 text-white">New</Badge>
+                <CardHeader>
+                  <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center mb-4">
+                    <Monitor className="w-6 h-6 text-white" />
+                  </div>
+                  <CardTitle>AI Desktop Assistant</CardTitle>
+                  <CardDescription>
+                    Connect to Claude Desktop and manage billing, SOAP notes, claims, and eligibility through natural conversation
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            </a>
+
             <Card className="hover:shadow-lg transition-shadow">
               <CardHeader>
                 <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
@@ -371,6 +387,171 @@ export default function Landing() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Claude Desktop Integration Showcase */}
+      <section id="claude-desktop" className="py-20 bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 relative overflow-hidden">
+        {/* Subtle background glow */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
+        </div>
+
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+          <div className="text-center mb-16">
+            <Badge className="mb-6 bg-blue-500/20 text-blue-300 border border-blue-400/30 hover:bg-blue-500/20">
+              <Monitor className="w-3.5 h-3.5 mr-1.5" /> Claude Desktop Integration
+            </Badge>
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-6">
+              Manage Your Practice by <span className="text-blue-400">Talking to It</span>
+            </h2>
+            <p className="text-lg sm:text-xl text-slate-300 max-w-3xl mx-auto">
+              Connect TherapyBill to Claude Desktop and manage billing, documentation, and claims through natural conversation. No forms. No clicking. Just talk.
+            </p>
+          </div>
+
+          {/* Conversation Examples */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
+            {/* Morning Check-in */}
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/[0.08] transition-colors">
+              <div className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-4">Morning Check-in</div>
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%] text-sm">
+                    What's on my schedule today?
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm">
+                    You have 4 sessions today. First up: Mason Hartwell at 9am, Therapy Session. Clara Nguyen at 10:30am, Re-eval...
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* SOAP Note */}
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/[0.08] transition-colors">
+              <div className="text-xs font-semibold text-green-400 uppercase tracking-wider mb-4">After a Session</div>
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%] text-sm">
+                    Write a SOAP note for Mason. 45 min, fine motor activities, bead stringing, handwriting. Cooperative, grip improving.
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm">
+                    SOAP note generated with CPT 97530 (3 units) and 97110 (1 unit). Estimated reimbursement: $289. Saved to patient record.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Billing */}
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/[0.08] transition-colors">
+              <div className="text-xs font-semibold text-yellow-400 uppercase tracking-wider mb-4">Billing</div>
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%] text-sm">
+                    Create a claim for that session
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm">
+                    Draft claim CLM-2026-042 created for Mason Hartwell. 4 units, $289 billed to Aetna. Ready for review in Claims.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Eligibility */}
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/[0.08] transition-colors">
+              <div className="text-xs font-semibold text-purple-400 uppercase tracking-wider mb-4">Eligibility</div>
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[85%] text-sm">
+                    Check eligibility for all my patients this week
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm">
+                    Checked 6 patients. All active. Clara Nguyen's deductible is met. Mason Hartwell has $25 copay remaining.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Denial Follow-up */}
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/[0.08] transition-colors md:col-span-2 lg:col-span-2">
+              <div className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-4">Denial Follow-up</div>
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[70%] text-sm">
+                    Any denied claims I should follow up on?
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="bg-white/10 text-slate-200 rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[70%] text-sm">
+                    1 denied claim: CLM-006 for Jordan Reeves, denied for prior auth required. Success probability for appeal: 78%. Want me to draft an appeal letter?
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Time Savings Comparison */}
+          <div className="max-w-3xl mx-auto mb-12">
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-8">
+              <h3 className="text-xl font-bold text-white text-center mb-8">Time Saved Per Session</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
+                <div>
+                  <div className="text-sm text-slate-400 mb-2">Without Claude Desktop</div>
+                  <div className="text-3xl font-bold text-red-400">15-20 min</div>
+                  <div className="text-xs text-slate-500 mt-1">of admin per session</div>
+                </div>
+                <div className="flex items-center justify-center">
+                  <ArrowRight className="w-8 h-8 text-blue-400 hidden sm:block" />
+                  <div className="sm:hidden h-px w-16 bg-blue-400/30 mx-auto" />
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400 mb-2">With Claude Desktop</div>
+                  <div className="text-3xl font-bold text-green-400">2-3 min</div>
+                  <div className="text-xs text-slate-500 mt-1">per session</div>
+                </div>
+              </div>
+              <div className="mt-8 text-center">
+                <div className="inline-flex items-center gap-2 bg-green-500/10 border border-green-400/20 rounded-full px-6 py-2">
+                  <Clock className="w-4 h-4 text-green-400" />
+                  <span className="text-green-300 font-semibold">That's 2+ hours saved every day</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CTA */}
+          <div className="text-center">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Button
+                size="lg"
+                onClick={handleTryDemo}
+                disabled={demoLoading}
+                className="px-8 py-6 text-lg bg-blue-500 hover:bg-blue-600 text-white"
+              >
+                Try It Free <ArrowRight className="ml-2 w-5 h-5" />
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={() => setLocation('/settings')}
+                className="px-8 py-6 text-lg border-white/20 text-white hover:bg-white/10"
+              >
+                See Setup Guide
+              </Button>
+            </div>
+            <p className="text-slate-500 text-sm mt-4">
+              Works with Claude Desktop on Mac and Windows. Setup takes under 2 minutes.
+            </p>
           </div>
         </div>
       </section>
@@ -667,6 +848,7 @@ export default function Landing() {
               <ul className="space-y-3">
                 <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
                 <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
+                <li><a href="#claude-desktop" className="hover:text-white transition-colors">AI Desktop Assistant</a></li>
                 <li><a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a></li>
                 <li><a href="#practice-management" className="hover:text-white transition-colors">Practice Management</a></li>
                 <li><a href="#contact" className="hover:text-white transition-colors">Contact Us</a></li>
