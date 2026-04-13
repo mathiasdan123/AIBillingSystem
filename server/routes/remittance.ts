@@ -13,6 +13,7 @@ import { Router, type Response } from 'express';
 import { isAuthenticated } from '../replitAuth';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import { parse835, flattenToLineItems } from '../services/edi835Parser';
+import { assessUnderpayment } from '../services/underpaymentAnalyzer';
 import { db } from '../db';
 import {
   remittanceAdvice,
@@ -20,8 +21,9 @@ import {
   claims,
   claimLineItems,
   patients,
+  feeSchedules,
 } from '@shared/schema';
-import { eq, and, desc, count, sql, ilike, or } from 'drizzle-orm';
+import { eq, and, desc, count, sql, ilike, or, lte, gte } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
@@ -414,14 +416,64 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
 
         // Update claim with payment info
         const paidAmt = parseFloat(String(lineItem.paidAmount || '0'));
+        const claimUpdate: Record<string, any> = {
+          paidAmount: String(paidAmt),
+          status: paidAmt > 0 ? 'paid' : 'denied',
+          paidAt: paidAmt > 0 ? new Date() : undefined,
+          updatedAt: new Date(),
+        };
+
+        // --- Underpayment detection ---
+        // Look up the fee schedule for this payer + CPT code to find expected reimbursement
+        if (lineItem.cptCode && remittance.payerName) {
+          try {
+            const today = new Date().toISOString().split('T')[0];
+            const feeScheduleEntries = await db
+              .select()
+              .from(feeSchedules)
+              .where(
+                and(
+                  eq(feeSchedules.practiceId, practiceId),
+                  eq(feeSchedules.cptCode, lineItem.cptCode),
+                  ilike(feeSchedules.payerName, `%${remittance.payerName}%`),
+                  lte(feeSchedules.effectiveDate, today),
+                )
+              )
+              .orderBy(desc(feeSchedules.effectiveDate))
+              .limit(1);
+
+            if (feeScheduleEntries.length > 0) {
+              const feeEntry = feeScheduleEntries[0];
+              const expectedReimbursement = parseFloat(String(feeEntry.expectedReimbursement));
+
+              // Flag as underpayment if paid amount is more than $5 below expected
+              if (expectedReimbursement > 0 && paidAmt < expectedReimbursement - 5) {
+                // Set expectedAmount on the claim for tracking
+                claimUpdate.expectedAmount = String(expectedReimbursement);
+
+                logger.info('Underpayment detected during ERA auto-match', {
+                  claimId: bestMatch.claimId,
+                  cptCode: lineItem.cptCode,
+                  payerName: remittance.payerName,
+                  expectedReimbursement,
+                  paidAmount: paidAmt,
+                  underpaymentAmount: expectedReimbursement - paidAmt,
+                });
+              }
+            }
+          } catch (feeErr) {
+            // Non-blocking — don't fail the match if fee schedule lookup fails
+            logger.error('Fee schedule lookup failed during underpayment detection', {
+              error: feeErr instanceof Error ? feeErr.message : String(feeErr),
+              cptCode: lineItem.cptCode,
+              payerName: remittance.payerName,
+            });
+          }
+        }
+
         await db
           .update(claims)
-          .set({
-            paidAmount: String(paidAmt),
-            status: paidAmt > 0 ? 'paid' : 'denied',
-            paidAt: paidAmt > 0 ? new Date() : undefined,
-            updatedAt: new Date(),
-          })
+          .set(claimUpdate)
           .where(eq(claims.id, bestMatch.claimId));
 
         matchedCount++;

@@ -12,6 +12,16 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { getUserPracticeContext } from '../services/practiceContext';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
+import { assessUnderpayment, analyzeAdjustment } from '../services/underpaymentAnalyzer';
+import { db } from '../db';
+import {
+  remittanceAdvice,
+  remittanceLineItems,
+  claims,
+  feeSchedules,
+  patients,
+} from '@shared/schema';
+import { eq, and, desc, sql, ilike, lte, isNotNull } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
@@ -32,6 +42,8 @@ const SONNET_TOOLS = new Set([
   'suggest_claim_correction',
   'create_appointment',
   'batch_eligibility_check',
+  'review_underpayments',
+  'draft_underpayment_dispute',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -39,6 +51,8 @@ const SONNET_KEYWORDS = [
   'soap', 'appeal', 'denial', 'denied', 'generate', 'draft', 'write',
   'create claim', 'submit claim', 'analyze', 'review denied',
   'appeal letter', 'correction', 'medical necessity',
+  'underpay', 'underpaid', 'underpayment', 'dispute', 'short pay', 'short paid',
+  'paid less', 'below contracted', 'partial payment',
 ];
 
 /**
@@ -612,6 +626,34 @@ const assistantTools: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: 'review_underpayments',
+    description: 'Review all claims where insurance paid less than the expected reimbursement (from the fee schedule). Analyzes CAS adjustment reason codes to determine whether underpayments are standard contractual adjustments, patient responsibility, or true underpayments worth disputing. Use when a user asks about underpayments, short pays, insurance paying less than expected, or wants to review ERA adjustments.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        daysBack: {
+          type: 'number' as const,
+          description: 'Number of days to look back for underpayments. Defaults to 90.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'draft_underpayment_dispute',
+    description: 'Draft a dispute letter for an underpaid claim. Looks up the claim, ERA/remittance data, adjustment reason codes, and fee schedule expected rate, then generates a professional dispute letter requesting reprocessing at the contracted rate. Use when a user wants to dispute an underpayment or fight a short pay from insurance.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: {
+          type: 'number' as const,
+          description: 'The ID of the underpaid claim to draft a dispute for.',
+        },
+      },
+      required: ['claimId'],
     },
   },
 ];
@@ -1428,6 +1470,347 @@ async function executeTool(
         });
       }
 
+      case 'review_underpayments': {
+        const daysBack = Number(args.daysBack) || 90;
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+        // Find matched remittance line items with their claims for this practice
+        const matchedLineItems = await db
+          .select({
+            lineItemId: remittanceLineItems.id,
+            claimId: remittanceLineItems.claimId,
+            cptCode: remittanceLineItems.cptCode,
+            chargedAmount: remittanceLineItems.chargedAmount,
+            allowedAmount: remittanceLineItems.allowedAmount,
+            paidAmount: remittanceLineItems.paidAmount,
+            adjustmentAmount: remittanceLineItems.adjustmentAmount,
+            adjustmentReasonCodes: remittanceLineItems.adjustmentReasonCodes,
+            patientName: remittanceLineItems.patientName,
+            serviceDate: remittanceLineItems.serviceDate,
+            payerName: remittanceAdvice.payerName,
+            claimNumber: claims.claimNumber,
+            claimTotalAmount: claims.totalAmount,
+            claimExpectedAmount: claims.expectedAmount,
+            claimStatus: claims.status,
+            remittanceDate: remittanceAdvice.receivedDate,
+          })
+          .from(remittanceLineItems)
+          .innerJoin(remittanceAdvice, eq(remittanceLineItems.remittanceId, remittanceAdvice.id))
+          .innerJoin(claims, eq(remittanceLineItems.claimId, claims.id))
+          .where(
+            and(
+              eq(remittanceAdvice.practiceId, practiceId),
+              eq(remittanceLineItems.status, 'matched'),
+              isNotNull(remittanceLineItems.claimId),
+            )
+          )
+          .orderBy(desc(remittanceAdvice.receivedDate))
+          .limit(100);
+
+        if (matchedLineItems.length === 0) {
+          return JSON.stringify({
+            message: 'No matched remittance line items found. Upload and auto-match ERA/835 files first to enable underpayment detection.',
+            underpayments: [],
+            totalUnderpaid: 0,
+          });
+        }
+
+        // For each matched line item, look up fee schedule and assess underpayment
+        const underpayments: Array<{
+          claimId: number;
+          claimNumber: string | null;
+          patientName: string;
+          cptCode: string | null;
+          payerName: string;
+          serviceDate: string | null;
+          billedAmount: number;
+          expectedReimbursement: number | null;
+          paidAmount: number;
+          underpaymentAmount: number;
+          adjustmentAnalysis: Array<{ code: string; description: string; amount: number; category: string; disputable: boolean; explanation: string }>;
+          worthDisputing: boolean;
+          recommendation: string;
+        }> = [];
+
+        let totalUnderpaidAmount = 0;
+        let totalWorthDisputing = 0;
+
+        for (const li of matchedLineItems) {
+          const paidAmt = parseFloat(String(li.paidAmount || '0'));
+          const billedAmt = parseFloat(String(li.chargedAmount || '0'));
+
+          // Look up expected reimbursement from fee schedule
+          let expectedReimbursement: number | null = null;
+
+          // First check if claim already has expectedAmount set
+          if (li.claimExpectedAmount) {
+            expectedReimbursement = parseFloat(String(li.claimExpectedAmount));
+          }
+
+          // Otherwise look up from fee schedule
+          if (expectedReimbursement === null && li.cptCode && li.payerName) {
+            try {
+              const today = new Date().toISOString().split('T')[0];
+              const feeEntries = await db
+                .select()
+                .from(feeSchedules)
+                .where(
+                  and(
+                    eq(feeSchedules.practiceId, practiceId),
+                    eq(feeSchedules.cptCode, li.cptCode),
+                    ilike(feeSchedules.payerName, `%${li.payerName}%`),
+                    lte(feeSchedules.effectiveDate, today),
+                  )
+                )
+                .orderBy(desc(feeSchedules.effectiveDate))
+                .limit(1);
+
+              if (feeEntries.length > 0) {
+                expectedReimbursement = parseFloat(String(feeEntries[0].expectedReimbursement));
+              }
+            } catch {
+              // Non-blocking
+            }
+          }
+
+          // Parse adjustment reason codes from stored JSON
+          const adjustmentCodes = Array.isArray(li.adjustmentReasonCodes)
+            ? (li.adjustmentReasonCodes as Array<{ code: string; description?: string; amount?: number }>)
+            : [];
+
+          // Build adjustments with amounts - if individual amounts not stored, distribute total
+          const totalAdjustmentAmount = parseFloat(String(li.adjustmentAmount || '0'));
+          const adjustmentsWithAmounts = adjustmentCodes.map((adj, idx) => {
+            const adjAmount = typeof adj.amount === 'number' ? adj.amount : (
+              adjustmentCodes.length > 0 ? totalAdjustmentAmount / adjustmentCodes.length : 0
+            );
+            return { code: adj.code || '', amount: adjAmount };
+          });
+
+          const assessment = assessUnderpayment({
+            adjustments: adjustmentsWithAmounts,
+            billedAmount: billedAmt,
+            paidAmount: paidAmt,
+            expectedReimbursement,
+            claimId: li.claimId || undefined,
+            cptCode: li.cptCode || undefined,
+          });
+
+          if (assessment.isUnderpaid) {
+            totalUnderpaidAmount += assessment.underpaymentAmount;
+            if (assessment.worthDisputing) totalWorthDisputing++;
+
+            underpayments.push({
+              claimId: li.claimId!,
+              claimNumber: li.claimNumber,
+              patientName: li.patientName,
+              cptCode: li.cptCode,
+              payerName: li.payerName,
+              serviceDate: li.serviceDate,
+              billedAmount: billedAmt,
+              expectedReimbursement,
+              paidAmount: paidAmt,
+              underpaymentAmount: assessment.underpaymentAmount,
+              adjustmentAnalysis: assessment.adjustmentAnalyses.map((a) => ({
+                code: a.code,
+                description: a.description,
+                amount: a.amount,
+                category: a.category,
+                disputable: a.disputable,
+                explanation: a.explanation,
+              })),
+              worthDisputing: assessment.worthDisputing,
+              recommendation: assessment.recommendation,
+            });
+          }
+        }
+
+        return JSON.stringify({
+          totalLineItemsReviewed: matchedLineItems.length,
+          totalUnderpayments: underpayments.length,
+          totalUnderpaidAmount: `$${totalUnderpaidAmount.toFixed(2)}`,
+          totalWorthDisputing,
+          underpayments: underpayments.slice(0, 20), // Limit to 20 for response size
+          message: underpayments.length > 0
+            ? `Found ${underpayments.length} underpaid claim(s) totaling $${totalUnderpaidAmount.toFixed(2)}. ${totalWorthDisputing} appear(s) worth disputing. I can draft dispute letters for any of them.`
+            : 'No underpayments detected in matched remittance data. All payments appear to be in line with expected reimbursement rates.',
+        });
+      }
+
+      case 'draft_underpayment_dispute': {
+        const disputeClaimId = args.claimId as number;
+        if (!disputeClaimId) return JSON.stringify({ error: 'Please provide a claim ID.' });
+
+        const disputeClaim = await storage.getClaim(disputeClaimId);
+        if (!disputeClaim) return JSON.stringify({ error: `Claim ${disputeClaimId} not found.` });
+        if (disputeClaim.practiceId !== practiceId) return JSON.stringify({ error: 'Claim does not belong to this practice.' });
+
+        // Get patient info
+        let disputePatient = { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null as string | null, insuranceProvider: null as string | null, insuranceId: null as string | null };
+        if (disputeClaim.patientId) {
+          const pat = await storage.getPatient(disputeClaim.patientId);
+          if (pat) {
+            disputePatient = {
+              firstName: pat.firstName,
+              lastName: pat.lastName,
+              dateOfBirth: pat.dateOfBirth,
+              insuranceProvider: pat.insuranceProvider,
+              insuranceId: pat.insuranceId || pat.policyNumber || null,
+            };
+          }
+        }
+
+        // Get practice info
+        const disputePractice = await storage.getPractice(practiceId);
+
+        // Find the remittance line item(s) matched to this claim
+        const matchedRemitItems = await db
+          .select({
+            lineItemId: remittanceLineItems.id,
+            cptCode: remittanceLineItems.cptCode,
+            chargedAmount: remittanceLineItems.chargedAmount,
+            allowedAmount: remittanceLineItems.allowedAmount,
+            paidAmount: remittanceLineItems.paidAmount,
+            adjustmentAmount: remittanceLineItems.adjustmentAmount,
+            adjustmentReasonCodes: remittanceLineItems.adjustmentReasonCodes,
+            remarkCodes: remittanceLineItems.remarkCodes,
+            serviceDate: remittanceLineItems.serviceDate,
+            payerName: remittanceAdvice.payerName,
+            payerId: remittanceAdvice.payerId,
+            checkNumber: remittanceAdvice.checkNumber,
+            checkDate: remittanceAdvice.checkDate,
+          })
+          .from(remittanceLineItems)
+          .innerJoin(remittanceAdvice, eq(remittanceLineItems.remittanceId, remittanceAdvice.id))
+          .where(eq(remittanceLineItems.claimId, disputeClaimId));
+
+        if (matchedRemitItems.length === 0) {
+          return JSON.stringify({
+            error: 'No remittance/ERA data found for this claim. Upload and match an ERA file first, then try again.',
+          });
+        }
+
+        const remitItem = matchedRemitItems[0];
+        const paidAmt = parseFloat(String(remitItem.paidAmount || '0'));
+        const billedAmt = parseFloat(String(remitItem.chargedAmount || '0'));
+        const payerName = remitItem.payerName || disputePatient.insuranceProvider || 'Insurance Company';
+
+        // Look up expected reimbursement from fee schedule
+        let expectedReimbursement: number | null = null;
+        let feeScheduleSource = '';
+
+        if (disputeClaim.expectedAmount) {
+          expectedReimbursement = parseFloat(String(disputeClaim.expectedAmount));
+          feeScheduleSource = 'claim expected amount';
+        }
+
+        if (expectedReimbursement === null && remitItem.cptCode) {
+          try {
+            const today = new Date().toISOString().split('T')[0];
+            const feeEntries = await db
+              .select()
+              .from(feeSchedules)
+              .where(
+                and(
+                  eq(feeSchedules.practiceId, practiceId),
+                  eq(feeSchedules.cptCode, remitItem.cptCode),
+                  ilike(feeSchedules.payerName, `%${payerName}%`),
+                  lte(feeSchedules.effectiveDate, today),
+                )
+              )
+              .orderBy(desc(feeSchedules.effectiveDate))
+              .limit(1);
+
+            if (feeEntries.length > 0) {
+              expectedReimbursement = parseFloat(String(feeEntries[0].expectedReimbursement));
+              feeScheduleSource = `fee schedule (effective ${feeEntries[0].effectiveDate})`;
+            }
+          } catch {
+            // Non-blocking
+          }
+        }
+
+        // Analyze adjustment codes
+        const adjustmentCodes = Array.isArray(remitItem.adjustmentReasonCodes)
+          ? (remitItem.adjustmentReasonCodes as Array<{ code: string; description?: string; amount?: number }>)
+          : [];
+
+        const totalAdjustmentAmount = parseFloat(String(remitItem.adjustmentAmount || '0'));
+        const adjustmentsWithAmounts = adjustmentCodes.map((adj) => {
+          const adjAmount = typeof adj.amount === 'number' ? adj.amount : (
+            adjustmentCodes.length > 0 ? totalAdjustmentAmount / adjustmentCodes.length : 0
+          );
+          return { code: adj.code || '', amount: adjAmount };
+        });
+
+        const assessment = assessUnderpayment({
+          adjustments: adjustmentsWithAmounts,
+          billedAmount: billedAmt,
+          paidAmount: paidAmt,
+          expectedReimbursement,
+          claimId: disputeClaimId,
+          cptCode: remitItem.cptCode || undefined,
+        });
+
+        // Build the dispute context for Blanche to draft a letter
+        const underpaymentAmount = expectedReimbursement ? (expectedReimbursement - paidAmt) : (billedAmt - paidAmt);
+
+        const disputeContext = {
+          claimId: disputeClaim.id,
+          claimNumber: disputeClaim.claimNumber,
+          patientName: `${disputePatient.firstName} ${disputePatient.lastName}`,
+          patientDOB: disputePatient.dateOfBirth,
+          memberId: disputePatient.insuranceId,
+          payerName,
+          payerId: remitItem.payerId,
+          checkNumber: remitItem.checkNumber,
+          checkDate: remitItem.checkDate,
+          serviceDate: remitItem.serviceDate,
+          cptCode: remitItem.cptCode,
+          billedAmount: `$${billedAmt.toFixed(2)}`,
+          allowedAmount: remitItem.allowedAmount ? `$${parseFloat(String(remitItem.allowedAmount)).toFixed(2)}` : null,
+          paidAmount: `$${paidAmt.toFixed(2)}`,
+          expectedReimbursement: expectedReimbursement ? `$${expectedReimbursement.toFixed(2)}` : 'Not available — no fee schedule entry found',
+          feeScheduleSource,
+          underpaymentAmount: `$${underpaymentAmount.toFixed(2)}`,
+          adjustmentAnalysis: assessment.adjustmentAnalyses.map((a) => ({
+            code: a.code,
+            description: a.description,
+            amount: `$${a.amount.toFixed(2)}`,
+            category: a.category,
+            disputable: a.disputable,
+            explanation: a.explanation,
+            recommendedAction: a.recommendedAction,
+          })),
+          patientResponsibilityTotal: `$${assessment.patientResponsibilityTotal.toFixed(2)}`,
+          contractualAdjustmentTotal: `$${assessment.contractualAdjustmentTotal.toFixed(2)}`,
+          payerInitiatedTotal: `$${assessment.payerInitiatedTotal.toFixed(2)}`,
+          worthDisputing: assessment.worthDisputing,
+          practiceName: disputePractice?.name || 'Practice',
+          practiceNPI: disputePractice?.npi || null,
+          practiceAddress: disputePractice?.address || null,
+          practicePhone: disputePractice?.phone || null,
+        };
+
+        // Generate the dispute letter text
+        const disputeLetter = generateDisputeLetterText(disputeContext);
+
+        return JSON.stringify({
+          ...disputeContext,
+          disputeLetter,
+          recommendedActions: [
+            assessment.worthDisputing ? 'Submit this dispute letter to the payer via their provider dispute process' : 'This may not be worth disputing — the adjustments appear standard',
+            'Keep a copy of the dispute letter and all supporting documentation',
+            'Follow up with the payer in 30 days if no response received',
+            expectedReimbursement ? 'Reference the contracted rate from your fee schedule as evidence' : 'Consider adding fee schedule entries for this payer/CPT combination to enable better tracking',
+          ],
+          message: assessment.worthDisputing
+            ? 'Dispute letter drafted. Review and customize before sending to the payer. The letter references your contracted rate and identifies the specific adjustment codes that appear incorrect.'
+            : 'I\'ve drafted a dispute letter, but note that the adjustments on this claim may be standard contractual adjustments. Review the analysis carefully before deciding to dispute.',
+        });
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
@@ -1440,6 +1823,78 @@ async function executeTool(
       error: `Failed to retrieve data: ${error instanceof Error ? error.message : 'Unknown error'}`,
     });
   }
+}
+
+/**
+ * Generate a dispute letter for an underpaid claim.
+ */
+function generateDisputeLetterText(context: {
+  claimNumber: string | null;
+  patientName: string;
+  patientDOB: string | null;
+  memberId: string | null;
+  payerName: string;
+  serviceDate: string | null;
+  cptCode: string | null;
+  billedAmount: string;
+  paidAmount: string;
+  expectedReimbursement: string;
+  underpaymentAmount: string;
+  adjustmentAnalysis: Array<{ code: string; description: string; amount: string; disputable: boolean; explanation: string }>;
+  practiceName: string;
+  practiceNPI: string | null;
+  practiceAddress: string | null;
+  practicePhone: string | null;
+}): string {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const disputableAdj = context.adjustmentAnalysis.filter((a) => a.disputable);
+  const adjSection = disputableAdj.length > 0
+    ? disputableAdj.map((a) =>
+        `  - Adjustment ${a.code} (${a.description}): ${a.amount} — ${a.explanation}`
+      ).join('\n')
+    : '  - No specific disputable adjustment codes identified, but the total payment is below the contracted rate.';
+
+  return `${today}
+
+${context.payerName}
+Provider Dispute Department
+
+RE: Underpayment Dispute
+Claim Number: ${context.claimNumber || 'N/A'}
+Patient: ${context.patientName}
+Date of Birth: ${context.patientDOB || 'On file'}
+Member ID: ${context.memberId || 'On file'}
+Date of Service: ${context.serviceDate || 'See claim'}
+CPT Code: ${context.cptCode || 'See claim'}
+
+Dear Claims Department,
+
+I am writing to dispute the reimbursement amount for the above-referenced claim. Our records indicate that the payment received does not reflect the contracted reimbursement rate for this service.
+
+PAYMENT DETAILS:
+- Billed Amount: ${context.billedAmount}
+- Expected Reimbursement (Contracted Rate): ${context.expectedReimbursement}
+- Amount Paid: ${context.paidAmount}
+- Underpayment Amount: ${context.underpaymentAmount}
+
+ADJUSTMENT CODES IN QUESTION:
+${adjSection}
+
+Based on our provider agreement, the expected reimbursement for CPT code ${context.cptCode || '[code]'} is ${context.expectedReimbursement}. The payment of ${context.paidAmount} represents an underpayment of ${context.underpaymentAmount} below the contracted rate.
+
+We respectfully request that this claim be reprocessed at the correct contracted rate. Please review the applicable fee schedule and provider agreement on file for verification.
+
+If there has been a change to the fee schedule or contracted rates, please provide written notification of the effective date and updated rates as required under our provider agreement.
+
+Please process this dispute within 30 business days per applicable state prompt-payment regulations. If you require additional information, please contact our office.
+
+Sincerely,
+
+${context.practiceName}
+NPI: ${context.practiceNPI || '[NPI]'}
+${context.practiceAddress || '[Address]'}
+${context.practicePhone || '[Phone]'}`;
 }
 
 // POST /api/ai/assistant - Chat with the AI assistant

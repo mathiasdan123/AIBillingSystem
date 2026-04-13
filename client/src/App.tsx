@@ -62,6 +62,7 @@ const NotificationSettings = lazy(() => import("@/pages/notification-settings"))
 const BillingTasks = lazy(() => import("@/pages/billing-tasks"));
 const Benchmarking = lazy(() => import("@/pages/benchmarking"));
 const DailyReport = lazy(() => import("@/pages/daily-report"));
+const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -244,6 +245,7 @@ function Router() {
               <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/mcp-setup" component={McpSetup} />
               <Route path="/onboarding" component={Onboarding} />
+              <Route path="/billing-guide" component={BillingGuide} />
               <Route path="/locations" component={Locations} />
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />
