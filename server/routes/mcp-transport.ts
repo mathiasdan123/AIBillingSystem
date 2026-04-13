@@ -1,16 +1,32 @@
 /**
- * MCP Streamable HTTP Transport Route
+ * MCP Streamable HTTP Transport Route with OAuth 2.1 Authentication
  *
- * Mounts the MCP server on the main Express app at POST /mcp.
- * Claude Desktop (and other MCP clients) connect here with:
- *   { "url": "https://app.therapybillai.com/mcp", "headers": { "Authorization": "Bearer tbai_xxx" } }
+ * Supports two authentication modes:
+ *   1. OAuth 2.1 (Claude Desktop Connectors) — full flow with /.well-known discovery,
+ *      dynamic client registration, /authorize, /token, and Bearer token on /mcp.
+ *   2. Direct Bearer token — existing API key passed as Authorization: Bearer <api-key>
  *
- * Each authenticated API key gets its own McpServer + transport session.
+ * Claude Desktop (and other MCP clients) connect via the Connectors UI at:
+ *   URL: https://app.therapybillai.com/mcp
+ *
+ * The SDK's mcpAuthRouter handles:
+ *   - /.well-known/oauth-protected-resource/mcp  (RFC 9728 discovery)
+ *   - /.well-known/oauth-authorization-server     (RFC 8414 metadata)
+ *   - /register   (RFC 7591 Dynamic Client Registration)
+ *   - /authorize  (OAuth 2.1 authorization endpoint)
+ *   - /token      (OAuth 2.1 token endpoint)
+ *   - /revoke     (Token revocation)
  */
 
 import { Router, type Request, type Response } from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import {
+  mcpAuthRouter,
+  getOAuthProtectedResourceMetadataUrl,
+} from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { TherapyBillOAuthProvider } from '../mcp/oauth-provider';
 import { authenticateKey } from '../mcp/auth';
 import { createMcpServer } from '../mcp/server';
 import logger from '../services/logger';
@@ -18,7 +34,21 @@ import type { McpPracticeContext } from '../mcp/types';
 
 const router = Router();
 
+// ---------------------------------------------------------------------------
+// OAuth 2.1 provider (singleton)
+// ---------------------------------------------------------------------------
+
+const oauthProvider = new TherapyBillOAuthProvider();
+
+// Determine base URL for the OAuth issuer/resource server
+const BASE_URL = process.env.APP_URL || process.env.BASE_URL || 'https://app.therapybillai.com';
+const issuerUrl = new URL(BASE_URL);
+const mcpServerUrl = new URL('/mcp', BASE_URL);
+
+// ---------------------------------------------------------------------------
 // Session map: sessionId -> { server, transport, context }
+// ---------------------------------------------------------------------------
+
 interface McpSession {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
@@ -26,23 +56,26 @@ interface McpSession {
 }
 const sessions = new Map<string, McpSession>();
 
-/**
- * Extract Bearer token from Authorization header.
- */
-function extractBearerToken(req: Request): string | null {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return null;
-  return auth.slice(7);
-}
+// ---------------------------------------------------------------------------
+// Bearer auth middleware (validates OAuth access tokens AND direct API keys)
+// ---------------------------------------------------------------------------
 
-/**
- * POST /mcp — Handle MCP JSON-RPC requests
- */
-router.post('/', async (req: Request, res: Response) => {
+const bearerAuth = requireBearerAuth({
+  verifier: oauthProvider,
+  requiredScopes: [],
+  resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpServerUrl),
+});
+
+// ---------------------------------------------------------------------------
+// POST /mcp — Handle MCP JSON-RPC requests (with Bearer auth)
+// ---------------------------------------------------------------------------
+
+router.post('/', bearerAuth, async (req: Request, res: Response) => {
   try {
-    const apiKey = extractBearerToken(req);
-    if (!apiKey) {
-      return res.status(401).json({ error: 'Missing or invalid Authorization header. Use: Bearer <api-key>' });
+    // The bearer auth middleware validated the token and set req.auth
+    const token = req.auth?.token;
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
 
     // Check for existing session
@@ -55,10 +88,10 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // New session: authenticate and create server
+    // New session: authenticate the API key for practice context
     let context: McpPracticeContext;
     try {
-      context = await authenticateKey(apiKey);
+      context = await authenticateKey(token);
     } catch (err: any) {
       return res.status(401).json({ error: err.message || 'Authentication failed' });
     }
@@ -97,10 +130,11 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-/**
- * GET /mcp — SSE endpoint for server-initiated messages (optional)
- */
-router.get('/', async (req: Request, res: Response) => {
+// ---------------------------------------------------------------------------
+// GET /mcp — SSE endpoint for server-initiated messages (with Bearer auth)
+// ---------------------------------------------------------------------------
+
+router.get('/', bearerAuth, async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
   if (sessionId && sessions.has(sessionId)) {
     const session = sessions.get(sessionId)!;
@@ -110,10 +144,11 @@ router.get('/', async (req: Request, res: Response) => {
   res.status(400).json({ error: 'No active session. Send a POST request first.' });
 });
 
-/**
- * DELETE /mcp — Close an MCP session
- */
-router.delete('/', async (req: Request, res: Response) => {
+// ---------------------------------------------------------------------------
+// DELETE /mcp — Close an MCP session (with Bearer auth)
+// ---------------------------------------------------------------------------
+
+router.delete('/', bearerAuth, async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
   if (sessionId && sessions.has(sessionId)) {
     const session = sessions.get(sessionId)!;
@@ -124,12 +159,34 @@ router.delete('/', async (req: Request, res: Response) => {
   res.status(400).json({ error: 'No active session.' });
 });
 
+// ---------------------------------------------------------------------------
 // Clean up stale sessions every 30 minutes
+// ---------------------------------------------------------------------------
+
 setInterval(() => {
-  // Sessions are cleaned up via transport.onclose, but this is a safety net
   if (sessions.size > 0) {
     logger.info(`MCP HTTP sessions active: ${sessions.size}`);
   }
 }, 30 * 60 * 1000);
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
+
+/** The OAuth provider instance (needed for the /authorize/callback route). */
+export { oauthProvider };
+
+/** The auth router to mount at the app root (serves well-known, authorize, token, register). */
+export function getMcpAuthRouter() {
+  return mcpAuthRouter({
+    provider: oauthProvider,
+    issuerUrl,
+    baseUrl: issuerUrl,
+    resourceServerUrl: mcpServerUrl,
+    scopesSupported: ['mcp:tools'],
+    resourceName: 'TherapyBill AI MCP Server',
+    serviceDocumentationUrl: new URL('https://app.therapybillai.com/settings/mcp-integration'),
+  });
+}
 
 export default router;

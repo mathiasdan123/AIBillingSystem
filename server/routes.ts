@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import express from "express";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth } from "./replitAuth";
@@ -31,6 +32,8 @@ import {
   claimCorrectionsRouter,
   mcpApiKeysRouter,
   mcpTransportRouter,
+  getMcpAuthRouter,
+  mcpOAuthProvider,
   contactRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
@@ -257,8 +260,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // MCP API key management routes (admin only)
   app.use('/api/mcp-api-keys', mcpApiKeysRouter);
 
+  // MCP OAuth 2.1 auth endpoints (mounted at root for well-known discovery + authorize/token/register)
+  // These are required for Claude Desktop's "Add custom connector" flow.
+  app.use(getMcpAuthRouter());
+
+  // POST /authorize/callback — custom endpoint for the OAuth authorize page form submission
+  app.post('/authorize/callback', express.json(), async (req, res) => {
+    try {
+      const { session_id, api_key } = req.body;
+      if (!session_id || !api_key) {
+        return res.status(400).json({ error: 'session_id and api_key are required' });
+      }
+      const result = await mcpOAuthProvider.completeAuthorization(session_id, api_key);
+      if ('error' in result) {
+        return res.status(400).json({ error: result.error });
+      }
+      return res.json({ redirect_url: result.redirectUrl });
+    } catch (error) {
+      logger.error('MCP OAuth callback error', { error: error instanceof Error ? error.message : String(error) });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // MCP streamable HTTP transport (no /api prefix — MCP clients connect directly)
-  // Note: mounted BEFORE auth middleware section, uses its own Bearer token auth
+  // Note: uses OAuth Bearer token auth (or direct API key Bearer token)
   app.use('/mcp', mcpTransportRouter);
 
   // Insurance Authorization and Data routes

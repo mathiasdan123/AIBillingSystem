@@ -75,7 +75,7 @@ export { default as billingTasksRouter } from './billing-tasks';
 export { default as billingDocumentsRouter } from './billing-documents';
 export { default as claimCorrectionsRouter } from './claim-corrections';
 export { default as mcpApiKeysRouter } from './mcp-api-keys';
-export { default as mcpTransportRouter } from './mcp-transport';
+export { default as mcpTransportRouter, getMcpAuthRouter, oauthProvider as mcpOAuthProvider } from './mcp-transport';
 export { default as contactRouter } from './contact';
 
 // Existing routes (already modularized before this refactor)
