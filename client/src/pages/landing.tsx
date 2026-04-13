@@ -102,17 +102,20 @@ export default function Landing() {
       {/* Hero Section */}
       <section className="py-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto text-center">
-          <Badge className="mb-6 bg-green-100 text-green-700 hover:bg-green-100">
-            Complete Practice Management + AI Billing
+          <Badge className="mb-4 bg-blue-100 text-blue-700 hover:bg-blue-100 px-4 py-1.5 text-sm">
+            Now with Claude Desktop Integration — Manage Billing by Talking to It
           </Badge>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-900 leading-tight mb-6">
-            The <span className="text-blue-500">All-in-One Platform</span> for
-            <br />Therapy Practices
+            Just Tell <span className="text-blue-500">Blanche</span> What You Need.
+            <br /><span className="text-3xl sm:text-4xl lg:text-5xl text-slate-600">She Handles the Rest.</span>
           </h1>
-          <p className="text-xl text-slate-600 mb-8 max-w-3xl mx-auto">
-            From patient intake to insurance reimbursement. Schedule, document, bill, and get paid—all powered by AI that ensures billing accuracy while minimizing your work.
+          <p className="text-xl text-slate-600 mb-4 max-w-3xl mx-auto">
+            SOAP notes, claims, eligibility checks, denial appeals — all through natural conversation. No forms. No clicking through menus. Just talk to your AI billing assistant.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
+          <p className="text-base text-slate-500 mb-8 max-w-2xl mx-auto">
+            Zero tech skills needed. We walk you through every step — setup takes 2 minutes.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-6">
             <Button size="lg" onClick={handleTryDemo} disabled={demoLoading} className="px-8 py-6 text-lg bg-green-600 hover:bg-green-700 text-white">
               {demoLoading ? 'Loading...' : 'Try Free Demo'} <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
@@ -120,6 +123,11 @@ export default function Landing() {
               Start Free Trial
             </Button>
           </div>
+          <a href="#claude-desktop" className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium mb-8 transition-colors">
+            <Monitor className="w-4 h-4" />
+            See how the AI Desktop Assistant works
+            <ArrowRight className="w-3 h-3" />
+          </a>
           <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-slate-600">
             <div className="flex items-center">
               <Shield className="w-5 h-5 text-green-500 mr-2" />
@@ -132,6 +140,10 @@ export default function Landing() {
             <div className="flex items-center">
               <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
               No Setup Fees
+            </div>
+            <div className="flex items-center">
+              <Monitor className="w-5 h-5 text-green-500 mr-2" />
+              2-Minute Setup
             </div>
           </div>
         </div>
