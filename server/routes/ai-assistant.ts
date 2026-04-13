@@ -16,6 +16,204 @@ import logger from '../services/logger';
 
 const router = Router();
 
+// ---------------------------------------------------------------------------
+// Cost Optimization #1: Smart Model Routing
+// Use cheaper Haiku for simple queries, Sonnet for complex ones
+// ---------------------------------------------------------------------------
+const MODEL_HAIKU = 'claude-haiku-3-5-20241022';
+const MODEL_SONNET = 'claude-sonnet-4-20250514';
+
+// Tools that require Sonnet's stronger reasoning capabilities
+const SONNET_TOOLS = new Set([
+  'create_patient',
+  'submit_claim',
+  'generate_soap_note',
+  'draft_appeal_letter',
+  'suggest_claim_correction',
+  'create_appointment',
+  'batch_eligibility_check',
+]);
+
+// Keywords that indicate a complex query requiring Sonnet
+const SONNET_KEYWORDS = [
+  'soap', 'appeal', 'denial', 'denied', 'generate', 'draft', 'write',
+  'create claim', 'submit claim', 'analyze', 'review denied',
+  'appeal letter', 'correction', 'medical necessity',
+];
+
+/**
+ * Determine which model to use based on message complexity.
+ * Returns MODEL_HAIKU for simple lookups/questions, MODEL_SONNET for complex tasks.
+ */
+function selectModel(message: string, conversationHistory?: Array<{ role: string; content: string }>): string {
+  const normalizedMsg = message.toLowerCase().trim();
+  const wordCount = message.split(/\s+/).length;
+
+  // Check for Sonnet keywords regardless of length
+  for (const keyword of SONNET_KEYWORDS) {
+    if (normalizedMsg.includes(keyword)) {
+      return MODEL_SONNET;
+    }
+  }
+
+  // Long messages (50+ words) are more likely complex
+  if (wordCount >= 50) {
+    return MODEL_SONNET;
+  }
+
+  // Check conversation history for ongoing complex tasks
+  if (conversationHistory && conversationHistory.length > 0) {
+    const lastFewMessages = conversationHistory.slice(-4);
+    for (const msg of lastFewMessages) {
+      const content = (msg.content || '').toLowerCase();
+      for (const keyword of SONNET_KEYWORDS) {
+        if (content.includes(keyword)) {
+          return MODEL_SONNET;
+        }
+      }
+    }
+  }
+
+  // Default to Haiku for simple queries
+  return MODEL_HAIKU;
+}
+
+// ---------------------------------------------------------------------------
+// Cost Optimization #2: Response Caching for Common Questions
+// Cache pure knowledge questions that don't use tool calls
+// ---------------------------------------------------------------------------
+interface CachedResponse {
+  content: string;
+  suggestedActions: { label: string; path: string }[];
+  timestamp: number;
+}
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_MAX_SIZE = 500;
+const responseCache = new Map<string, CachedResponse>();
+
+/** Normalize a message for cache key lookup (lowercase, collapse whitespace, strip punctuation) */
+function normalizeCacheKey(message: string): string {
+  return message
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+/** Check if a message is a cacheable knowledge question (no practice-specific data needed) */
+function isCacheableQuestion(message: string): boolean {
+  const normalized = message.toLowerCase().trim();
+
+  // Questions that reference practice-specific data are NOT cacheable
+  const practiceSpecificPatterns = [
+    'my patient', 'my claim', 'my practice', 'my revenue', 'my denial',
+    'how many patient', 'how many claim', 'how many appointment',
+    'patient named', 'claim number', 'dashboard', 'statistics', 'stats',
+    'eligibility', 'schedule', 'appointment', 'create', 'submit', 'add',
+    'generate', 'draft', 'appeal', 'denied claim',
+  ];
+  for (const pattern of practiceSpecificPatterns) {
+    if (normalized.includes(pattern)) return false;
+  }
+
+  // Questions about general billing knowledge ARE cacheable
+  const cacheablePatterns = [
+    /what is cpt/i, /what('s| is) the 8.minute/i, /what('s| is) (a |the )?modifier/i,
+    /what does cpt/i, /explain.*cpt/i, /tell me about.*cpt/i,
+    /what('s| is) (the )?difference between/i, /how do(es)? (i |you )?bill/i,
+    /what modifiers/i, /telehealth modifier/i, /8.minute rule/i,
+    /what is icd/i, /what('s| is) (a |the )?place of service/i,
+    /units? (for|per|in)/i, /how to navigate/i, /how do i (find|go|get to)/i,
+    /what('s| is) (a |the )?(go|gp|gn|kx) modifier/i,
+  ];
+  for (const pattern of cacheablePatterns) {
+    if (pattern.test(normalized)) return true;
+  }
+
+  return false;
+}
+
+/** Store a response in the cache, evicting oldest entries if at capacity */
+function cacheResponse(key: string, content: string, suggestedActions: { label: string; path: string }[]): void {
+  // Evict oldest entries if at capacity
+  if (responseCache.size >= CACHE_MAX_SIZE) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    responseCache.forEach((v, k) => {
+      if (v.timestamp < oldestTime) {
+        oldestTime = v.timestamp;
+        oldestKey = k;
+      }
+    });
+    if (oldestKey) responseCache.delete(oldestKey);
+  }
+  responseCache.set(key, { content, suggestedActions, timestamp: Date.now() });
+}
+
+/** Get a cached response if available and not expired */
+function getCachedResponse(key: string): CachedResponse | null {
+  const cached = responseCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > CACHE_TTL_MS) {
+    responseCache.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+// ---------------------------------------------------------------------------
+// Cost Optimization #3: Rate Limiting per Practice
+// Prevent any single practice from running up excessive API costs
+// ---------------------------------------------------------------------------
+interface PracticeUsage {
+  count: number;
+  resetDate: string; // YYYY-MM-DD
+}
+
+const practiceUsageMap = new Map<number, PracticeUsage>();
+
+/** Get the daily message limit for a billing plan */
+function getPlanLimit(billingPlan: string | null | undefined): number {
+  switch (billingPlan) {
+    case 'practice': return Infinity; // Unlimited
+    case 'professional': return 300;
+    case 'starter': return 100;
+    default: return 50; // Free/trial
+  }
+}
+
+/** Get today's date string in YYYY-MM-DD format */
+function getTodayString(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+/** Check if a practice has exceeded its daily message limit. Returns the limit and current count. */
+function checkPracticeRateLimit(practiceId: number, billingPlan: string | null | undefined): { allowed: boolean; limit: number; used: number } {
+  const today = getTodayString();
+  const limit = getPlanLimit(billingPlan);
+
+  let usage = practiceUsageMap.get(practiceId);
+  if (!usage || usage.resetDate !== today) {
+    // New day — reset counter
+    usage = { count: 0, resetDate: today };
+    practiceUsageMap.set(practiceId, usage);
+  }
+
+  return { allowed: usage.count < limit, limit, used: usage.count };
+}
+
+/** Increment the usage counter for a practice */
+function incrementPracticeUsage(practiceId: number): void {
+  const today = getTodayString();
+  let usage = practiceUsageMap.get(practiceId);
+  if (!usage || usage.resetDate !== today) {
+    usage = { count: 0, resetDate: today };
+  }
+  usage.count++;
+  practiceUsageMap.set(practiceId, usage);
+}
+
 let anthropic: Anthropic | null = null;
 
 function getAnthropicClient(): Anthropic | null {
@@ -1271,6 +1469,44 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     const practiceId = context?.practiceId || 1;
     const userId = context?.userId;
 
+    // --- Cost Optimization #3: Check per-practice rate limit ---
+    let billingPlan: string | null = null;
+    try {
+      const practice = await storage.getPractice(practiceId);
+      billingPlan = practice?.billingPlan || null;
+    } catch {
+      // Non-blocking — default to free tier limit
+    }
+
+    const rateCheck = checkPracticeRateLimit(practiceId, billingPlan);
+    if (!rateCheck.allowed) {
+      return res.json({
+        response: "You've reached your daily assistant limit. Upgrade your plan for more, or try again tomorrow.",
+        suggestedActions: [{ label: 'View Plans', path: '/settings' }],
+        tokensUsed: 0,
+        rateLimited: true,
+      });
+    }
+
+    // --- Cost Optimization #2: Check response cache ---
+    const cacheKey = normalizeCacheKey(message);
+    if (isCacheableQuestion(message)) {
+      const cached = getCachedResponse(cacheKey);
+      if (cached) {
+        // Still count toward rate limit
+        incrementPracticeUsage(practiceId);
+        return res.json({
+          response: cached.content,
+          suggestedActions: cached.suggestedActions,
+          tokensUsed: 0,
+          cached: true,
+        });
+      }
+    }
+
+    // --- Cost Optimization #1: Select model based on complexity ---
+    const selectedModel = selectModel(message, conversationHistory);
+
     // Build conversation messages for Claude
     const messages: Anthropic.MessageParam[] = [];
 
@@ -1290,9 +1526,12 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Add the current user message
     messages.push({ role: 'user', content: message.trim() });
 
+    // Track which model is actually used (may upgrade mid-conversation)
+    let currentModel = selectedModel;
+
     // First API call - may include tool use
     let response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: currentModel,
       system: SYSTEM_PROMPT,
       messages,
       tools: assistantTools,
@@ -1312,6 +1551,11 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
+          // Smart model routing: upgrade to Sonnet if a complex tool is invoked
+          if (currentModel === MODEL_HAIKU && SONNET_TOOLS.has(block.name)) {
+            currentModel = MODEL_SONNET;
+          }
+
           const toolResult = await executeTool(block.name, (block.input as Record<string, unknown>) || {}, practiceId, userId);
           toolResults.push({
             type: 'tool_result',
@@ -1324,9 +1568,9 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       // Add tool results as user message
       messages.push({ role: 'user', content: toolResults });
 
-      // Get next response
+      // Get next response (may now be upgraded to Sonnet)
       response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: currentModel,
         system: SYSTEM_PROMPT,
         messages,
         tools: assistantTools,
@@ -1381,10 +1625,20 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Clean content of action tags for display
     const cleanContent = content.replace(/\[Action:\s*[^\]]+\]/g, '').trim();
 
+    // Increment rate limit counter on successful response
+    incrementPracticeUsage(practiceId);
+
+    // Cache the response if it was a cacheable question and no tools were used
+    const usedTools = toolRounds > 0;
+    if (!usedTools && isCacheableQuestion(message)) {
+      cacheResponse(cacheKey, cleanContent, suggestedActions);
+    }
+
     res.json({
       response: cleanContent,
       suggestedActions,
       tokensUsed: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
+      model: currentModel,
     });
   } catch (error) {
     logger.error('AI assistant error', {
@@ -1403,9 +1657,9 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
           message: 'Too many requests to the AI service. Please wait a moment and try again.',
         });
       }
-      if (error.message.includes('overloaded')) {
+      if (error.message.includes('overloaded') || error.message.includes('529')) {
         return res.status(503).json({
-          message: 'The AI service is temporarily overloaded. Please try again in a moment.',
+          message: "Blanche is experiencing high demand right now. Please try again in a moment — it usually clears up within a minute or two!",
         });
       }
     }
