@@ -88,8 +88,9 @@ function selectModel(message: string, conversationHistory?: Array<{ role: string
     }
   }
 
-  // Default to Haiku for simple queries
-  return MODEL_HAIKU;
+  // Use Sonnet for all queries until Haiku 4 model is confirmed available
+  // TODO: re-enable Haiku routing once model name is verified
+  return MODEL_SONNET;
 }
 
 // ---------------------------------------------------------------------------
