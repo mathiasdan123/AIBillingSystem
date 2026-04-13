@@ -171,6 +171,21 @@ const i18n = {
       expiry: 'This link expires in 15 minutes for security purposes.',
       didntRequest: "If you didn't request this link, please ignore this email.",
     },
+    practiceWelcome: {
+      subject: (practiceName: string) => `Welcome to TherapyBill AI - ${practiceName}`,
+      headerTitle: 'Welcome to TherapyBill AI',
+      greeting: (name: string) => `Hi ${name},`,
+      intro: (practiceName: string) => `Thank you for signing up ${practiceName} with TherapyBill AI! Your practice account is ready.`,
+      features: 'Here is what you can do next:',
+      featureList: [
+        'Complete your practice onboarding to set up insurance and billing preferences',
+        'Add patients and their insurance information',
+        'Start submitting claims with AI-powered billing accuracy review',
+        'Set up appointment scheduling and automated reminders',
+      ],
+      buttonText: 'Go to Dashboard',
+      closing: 'If you have any questions, reply to this email or visit our help center.',
+    },
     claimStatusUpdate: {
       subject: (claimNumber: string, status: string) => `Claim ${claimNumber} - ${status}`,
       headerTitle: 'Claim Status Update',
@@ -274,6 +289,21 @@ const i18n = {
       buttonText: 'Acceder al Portal de Pacientes',
       expiry: 'Este enlace expira en 15 minutos por razones de seguridad.',
       didntRequest: 'Si no solicit\u00f3 este enlace, por favor ignore este correo.',
+    },
+    practiceWelcome: {
+      subject: (practiceName: string) => `Bienvenido a TherapyBill AI - ${practiceName}`,
+      headerTitle: 'Bienvenido a TherapyBill AI',
+      greeting: (name: string) => `Hola ${name},`,
+      intro: (practiceName: string) => `Gracias por registrar ${practiceName} en TherapyBill AI. Su cuenta de consultorio esta lista.`,
+      features: 'Esto es lo que puede hacer a continuacion:',
+      featureList: [
+        'Complete la configuracion de su consultorio para establecer preferencias de seguros y facturacion',
+        'Agregue pacientes y su informacion de seguro',
+        'Comience a enviar reclamos con revision de precision de facturacion impulsada por IA',
+        'Configure la programacion de citas y recordatorios automaticos',
+      ],
+      buttonText: 'Ir al Panel',
+      closing: 'Si tiene alguna pregunta, responda a este correo o visite nuestro centro de ayuda.',
     },
     claimStatusUpdate: {
       subject: (claimNumber: string, status: string) => `Reclamo ${claimNumber} - ${status}`,
@@ -853,6 +883,64 @@ ${data.practiceName}`;
 
   return {
     subject: t.subject,
+    html,
+    text,
+  };
+}
+
+export interface PracticeWelcomeData {
+  firstName: string;
+  practiceName: string;
+  dashboardUrl?: string;
+  locale?: Locale;
+}
+
+export function practiceWelcome(data: PracticeWelcomeData): EmailOutput {
+  const locale = data.locale || 'en';
+  const t = i18n[locale].practiceWelcome;
+
+  const featureListHtml = t.featureList
+    .map((f: string) => `<li style="margin-bottom: 8px; color: #475569;">${escapeHtml(f)}</li>`)
+    .join('');
+
+  let bodyContent = `
+      ${pText(t.greeting(data.firstName), '#1e293b')}
+      ${pText(t.intro(data.practiceName))}
+      ${pText(t.features)}
+      <ul style="padding-left: 20px; margin: 15px 0;">${featureListHtml}</ul>`;
+
+  if (data.dashboardUrl) {
+    bodyContent += buttonHtml(t.buttonText, data.dashboardUrl);
+  }
+
+  bodyContent += pText(t.closing);
+
+  const html = wrapHtml(
+    t.headerTitle,
+    BRAND_GRADIENT,
+    `${t.headerTitle} — ${escapeHtml(data.practiceName)}`,
+    bodyContent,
+    footerText([data.practiceName, 'TherapyBill AI']),
+  );
+
+  const text = `${t.headerTitle.toUpperCase()}
+${'='.repeat(t.headerTitle.length)}
+
+${t.greeting(data.firstName)}
+
+${t.intro(data.practiceName)}
+
+${t.features}
+${t.featureList.map((f: string) => `- ${f}`).join('\n')}
+
+${data.dashboardUrl ? `${t.buttonText}: ${data.dashboardUrl}` : ''}
+
+${t.closing}
+
+${data.practiceName}`;
+
+  return {
+    subject: t.subject(data.practiceName),
     html,
     text,
   };

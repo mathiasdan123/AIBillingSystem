@@ -16,6 +16,9 @@ import {
   FileText,
   ClipboardList,
   ClipboardCheck,
+  DollarSign,
+  MessageSquare,
+  FolderOpen,
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import PatientPortalLogin from "./PatientPortalLogin";
@@ -25,6 +28,9 @@ import PatientPortalAppointments from "./PatientPortalAppointments";
 import PatientPortalProgressNotes from "./PatientPortalProgressNotes";
 import PatientPortalSurveys from "./PatientPortalSurveys";
 import PatientPortalIntake from "./PatientPortalIntake";
+import PatientPortalStatements from "./PatientPortalStatements";
+import PatientPortalDocuments from "./PatientPortalDocuments";
+import PatientPortalMessages from "./PatientPortalMessages";
 
 export default function PatientPortalPage() {
   const params = useParams<{ token?: string; tab?: string }>();
@@ -184,6 +190,33 @@ export default function PatientPortalPage() {
                 {t('portal.appointments')}
               </Button>
               <Button
+                variant={activeTab === "statements" ? "default" : "ghost"}
+                size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
+                onClick={() => handleNavigate("statements")}
+              >
+                <DollarSign className="h-4 w-4 mr-2" />
+                {t('portal.statements', 'Statements')}
+              </Button>
+              <Button
+                variant={activeTab === "documents" ? "default" : "ghost"}
+                size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
+                onClick={() => handleNavigate("documents")}
+              >
+                <FolderOpen className="h-4 w-4 mr-2" />
+                {t('portal.documents', 'Documents')}
+              </Button>
+              <Button
+                variant={activeTab === "messages" ? "default" : "ghost"}
+                size="sm"
+                className={!intakeCompleted ? "opacity-50" : ""}
+                onClick={() => handleNavigate("messages")}
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                {t('portal.messages', 'Messages')}
+              </Button>
+              <Button
                 variant={activeTab === "progress-notes" ? "default" : "ghost"}
                 size="sm"
                 className={!intakeCompleted ? "opacity-50" : ""}
@@ -263,6 +296,30 @@ export default function PatientPortalPage() {
                 {t('portal.appointments')}
               </Button>
               <Button
+                variant={activeTab === "statements" ? "default" : "ghost"}
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
+                onClick={() => handleNavigate("statements")}
+              >
+                <DollarSign className="h-4 w-4 mr-2" />
+                {t('portal.statements', 'Statements')}
+              </Button>
+              <Button
+                variant={activeTab === "documents" ? "default" : "ghost"}
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
+                onClick={() => handleNavigate("documents")}
+              >
+                <FolderOpen className="h-4 w-4 mr-2" />
+                {t('portal.documents', 'Documents')}
+              </Button>
+              <Button
+                variant={activeTab === "messages" ? "default" : "ghost"}
+                className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
+                onClick={() => handleNavigate("messages")}
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                {t('portal.messages', 'Messages')}
+              </Button>
+              <Button
                 variant={activeTab === "progress-notes" ? "default" : "ghost"}
                 className={`w-full justify-start ${!intakeCompleted ? "opacity-50" : ""}`}
                 onClick={() => handleNavigate("progress-notes")}
@@ -306,6 +363,15 @@ export default function PatientPortalPage() {
         )}
         {activeTab === "appointments" && (
           <PatientPortalAppointments token={portalToken} />
+        )}
+        {activeTab === "statements" && (
+          <PatientPortalStatements token={portalToken} />
+        )}
+        {activeTab === "documents" && (
+          <PatientPortalDocuments token={portalToken} />
+        )}
+        {activeTab === "messages" && (
+          <PatientPortalMessages token={portalToken} />
         )}
         {activeTab === "progress-notes" && (
           <PatientPortalProgressNotes token={portalToken} />

@@ -16,7 +16,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink, Palette, BadgeCheck, Wifi, AlertTriangle } from "lucide-react";
+import { Building, User, Bell, Shield, CreditCard, FileText, Users, Mail, Copy, Clock, CheckCircle, Key, Trash2, Star, ExternalLink, Palette, BadgeCheck, Wifi, AlertTriangle, DollarSign, Plus, Loader2, Pencil } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -467,6 +468,542 @@ function McpIntegrationTab() {
   );
 }
 
+// ─── Common OT/Behavioral Health CPT Codes ──────────────────────────────────
+const COMMON_CPT_CODES = [
+  { code: "97530", description: "Therapeutic activities" },
+  { code: "97110", description: "Therapeutic exercises" },
+  { code: "97140", description: "Manual therapy" },
+  { code: "97150", description: "Group therapeutic procedures" },
+  { code: "97165", description: "OT evaluation, low complexity" },
+  { code: "97166", description: "OT evaluation, moderate complexity" },
+  { code: "97167", description: "OT evaluation, high complexity" },
+  { code: "97168", description: "OT re-evaluation" },
+  { code: "97535", description: "Self-care/home management training" },
+  { code: "97542", description: "Wheelchair management training" },
+  { code: "97760", description: "Orthotic management and training" },
+  { code: "97761", description: "Prosthetic management and training" },
+  { code: "90834", description: "Psychotherapy, 45 min" },
+  { code: "90837", description: "Psychotherapy, 60 min" },
+  { code: "90847", description: "Family psychotherapy with patient" },
+  { code: "90791", description: "Psychiatric diagnostic evaluation" },
+  { code: "96130", description: "Psychological testing evaluation" },
+  { code: "96131", description: "Psychological testing, additional hour" },
+];
+
+// ─── Fee Schedule Tab Component ──────────────────────────────────────────
+interface FeeScheduleEntry {
+  id: number;
+  practiceId: number;
+  payerName: string;
+  cptCode: string;
+  description: string | null;
+  billedAmount: string;
+  expectedReimbursement: string;
+  effectiveDate: string;
+  expirationDate: string | null;
+  notes: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+function FeeScheduleTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<FeeScheduleEntry | null>(null);
+  const [filterPayer, setFilterPayer] = useState("");
+
+  // Form state for add/edit
+  const [formData, setFormData] = useState({
+    payerName: "",
+    cptCode: "",
+    description: "",
+    billedAmount: "",
+    expectedReimbursement: "",
+    effectiveDate: new Date().toISOString().split("T")[0],
+    expirationDate: "",
+    notes: "",
+  });
+
+  const resetForm = () => {
+    setFormData({
+      payerName: "",
+      cptCode: "",
+      description: "",
+      billedAmount: "",
+      expectedReimbursement: "",
+      effectiveDate: new Date().toISOString().split("T")[0],
+      expirationDate: "",
+      notes: "",
+    });
+    setEditingEntry(null);
+  };
+
+  // Fetch fee schedule entries
+  const { data: entries, isLoading } = useQuery<FeeScheduleEntry[]>({
+    queryKey: ["/api/fee-schedules", filterPayer],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filterPayer) params.set("payerName", filterPayer);
+      const res = await fetch(`/api/fee-schedules?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch fee schedule");
+      return res.json();
+    },
+  });
+
+  // Get unique payer names for filter dropdown
+  const uniquePayers = entries
+    ? Array.from(new Set(entries.map((e) => e.payerName))).sort()
+    : [];
+
+  // Create mutation
+  const createMutation = useMutation({
+    mutationFn: async (data: typeof formData) => {
+      const res = await apiRequest("POST", "/api/fee-schedules", {
+        payerName: data.payerName,
+        cptCode: data.cptCode,
+        description: data.description || undefined,
+        billedAmount: data.billedAmount,
+        expectedReimbursement: data.expectedReimbursement,
+        effectiveDate: data.effectiveDate,
+        expirationDate: data.expirationDate || null,
+        notes: data.notes || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fee-schedules"] });
+      toast({ title: "Rate Added", description: "Fee schedule entry created successfully" });
+      setShowAddDialog(false);
+      resetForm();
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create fee schedule entry", variant: "destructive" });
+    },
+  });
+
+  // Update mutation
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: typeof formData }) => {
+      const res = await apiRequest("PUT", `/api/fee-schedules/${id}`, {
+        payerName: data.payerName,
+        cptCode: data.cptCode,
+        description: data.description || null,
+        billedAmount: data.billedAmount,
+        expectedReimbursement: data.expectedReimbursement,
+        effectiveDate: data.effectiveDate,
+        expirationDate: data.expirationDate || null,
+        notes: data.notes || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fee-schedules"] });
+      toast({ title: "Rate Updated", description: "Fee schedule entry updated successfully" });
+      setEditingEntry(null);
+      resetForm();
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update fee schedule entry", variant: "destructive" });
+    },
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/fee-schedules/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fee-schedules"] });
+      toast({ title: "Deleted", description: "Fee schedule entry removed" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete fee schedule entry", variant: "destructive" });
+    },
+  });
+
+  const handleSubmit = () => {
+    if (!formData.payerName || !formData.cptCode || !formData.billedAmount || !formData.expectedReimbursement || !formData.effectiveDate) {
+      toast({ title: "Validation Error", description: "Payer name, CPT code, billed amount, expected reimbursement, and effective date are required", variant: "destructive" });
+      return;
+    }
+    if (editingEntry) {
+      updateMutation.mutate({ id: editingEntry.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  const startEdit = (entry: FeeScheduleEntry) => {
+    setEditingEntry(entry);
+    setFormData({
+      payerName: entry.payerName,
+      cptCode: entry.cptCode,
+      description: entry.description || "",
+      billedAmount: entry.billedAmount,
+      expectedReimbursement: entry.expectedReimbursement,
+      effectiveDate: entry.effectiveDate,
+      expirationDate: entry.expirationDate || "",
+      notes: entry.notes || "",
+    });
+  };
+
+  // Auto-fill description when CPT code changes
+  const handleCptChange = (code: string) => {
+    const match = COMMON_CPT_CODES.find((c) => c.code === code);
+    setFormData((prev) => ({
+      ...prev,
+      cptCode: code,
+      description: match ? match.description : prev.description,
+    }));
+  };
+
+  // Group entries by payer
+  const groupedEntries = entries?.reduce((acc, entry) => {
+    if (!acc[entry.payerName]) acc[entry.payerName] = [];
+    acc[entry.payerName].push(entry);
+    return acc;
+  }, {} as Record<string, FeeScheduleEntry[]>) || {};
+
+  const formContent = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <Label>Payer / Insurance Name *</Label>
+          <Input
+            value={formData.payerName}
+            onChange={(e) => setFormData({ ...formData, payerName: e.target.value })}
+            placeholder="e.g., Aetna, Blue Cross Blue Shield"
+          />
+        </div>
+        <div>
+          <Label>CPT Code *</Label>
+          <Select value={formData.cptCode} onValueChange={handleCptChange}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select CPT code" />
+            </SelectTrigger>
+            <SelectContent>
+              {COMMON_CPT_CODES.map((cpt) => (
+                <SelectItem key={cpt.code} value={cpt.code}>
+                  {cpt.code} - {cpt.description}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {formData.cptCode && !COMMON_CPT_CODES.find((c) => c.code === formData.cptCode) && (
+            <Input
+              className="mt-2"
+              value={formData.cptCode}
+              onChange={(e) => setFormData({ ...formData, cptCode: e.target.value })}
+              placeholder="Or type a custom CPT code"
+            />
+          )}
+        </div>
+      </div>
+
+      <div>
+        <Label>Description</Label>
+        <Input
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          placeholder="e.g., Therapeutic activities, 15-min unit"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <Label>Your Billed Rate ($) *</Label>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            value={formData.billedAmount}
+            onChange={(e) => setFormData({ ...formData, billedAmount: e.target.value })}
+            placeholder="e.g., 150.00"
+          />
+          <p className="text-xs text-slate-500 mt-1">What you charge per unit/session</p>
+        </div>
+        <div>
+          <Label>Expected Reimbursement ($) *</Label>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            value={formData.expectedReimbursement}
+            onChange={(e) => setFormData({ ...formData, expectedReimbursement: e.target.value })}
+            placeholder="e.g., 85.00"
+          />
+          <p className="text-xs text-slate-500 mt-1">What the payer typically pays</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <Label>Effective Date *</Label>
+          <Input
+            type="date"
+            value={formData.effectiveDate}
+            onChange={(e) => setFormData({ ...formData, effectiveDate: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label>Expiration Date</Label>
+          <Input
+            type="date"
+            value={formData.expirationDate}
+            onChange={(e) => setFormData({ ...formData, expirationDate: e.target.value })}
+          />
+          <p className="text-xs text-slate-500 mt-1">Leave blank if no expiration</p>
+        </div>
+      </div>
+
+      <div>
+        <Label>Notes</Label>
+        <Textarea
+          value={formData.notes}
+          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+          placeholder="Optional notes about this rate..."
+          rows={2}
+        />
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (editingEntry) {
+              setEditingEntry(null);
+              resetForm();
+            } else {
+              setShowAddDialog(false);
+              resetForm();
+            }
+          }}
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handleSubmit}
+          disabled={createMutation.isPending || updateMutation.isPending}
+        >
+          {(createMutation.isPending || updateMutation.isPending) && (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          )}
+          {editingEntry ? "Update Rate" : "Add Rate"}
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <DollarSign className="w-5 h-5" />
+                Fee Schedule
+              </CardTitle>
+              <CardDescription>
+                Set your billed rates and expected reimbursements per CPT code and payer.
+                These rates replace any hardcoded defaults and are used for cost estimation and underpayment detection.
+              </CardDescription>
+            </div>
+            <Dialog open={showAddDialog} onOpenChange={(open) => { setShowAddDialog(open); if (!open) resetForm(); }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Rate
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Fee Schedule Rate</DialogTitle>
+                  <DialogDescription>
+                    Set the rate you charge and expected reimbursement for a CPT code from a specific payer.
+                  </DialogDescription>
+                </DialogHeader>
+                {formContent}
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+      </Card>
+
+      {/* Filter */}
+      {uniquePayers.length > 1 && (
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-4">
+              <Label>Filter by Payer:</Label>
+              <Select value={filterPayer || "all"} onValueChange={(v) => setFilterPayer(v === "all" ? "" : v)}>
+                <SelectTrigger className="w-64">
+                  <SelectValue placeholder="All payers" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All payers</SelectItem>
+                  {uniquePayers.map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {filterPayer && (
+                <Button variant="ghost" size="sm" onClick={() => setFilterPayer("")}>
+                  Clear
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Inline Edit Form */}
+      {editingEntry && (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Pencil className="w-4 h-4" />
+              Editing: {editingEntry.cptCode} - {editingEntry.payerName}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {formContent}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Fee Schedule Table */}
+      {isLoading ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" />
+          </CardContent>
+        </Card>
+      ) : !entries || entries.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <DollarSign className="h-12 w-12 mx-auto text-slate-300 mb-4" />
+            <h3 className="text-lg font-medium text-slate-700 mb-2">No Fee Schedule Rates</h3>
+            <p className="text-slate-500 mb-4">
+              Add your session rates per CPT code so the system uses your actual pricing instead of defaults.
+            </p>
+            <Button onClick={() => setShowAddDialog(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Your First Rate
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        Object.entries(groupedEntries).map(([payer, payerEntries]) => (
+          <Card key={payer}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">{payer}</CardTitle>
+              <CardDescription>{payerEntries.length} rate(s)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left p-2 font-medium text-slate-600">CPT Code</th>
+                      <th className="text-left p-2 font-medium text-slate-600">Description</th>
+                      <th className="text-right p-2 font-medium text-slate-600">Billed Rate</th>
+                      <th className="text-right p-2 font-medium text-slate-600">Expected Reimb.</th>
+                      <th className="text-center p-2 font-medium text-slate-600">Effective</th>
+                      <th className="text-center p-2 font-medium text-slate-600">Expires</th>
+                      <th className="text-center p-2 font-medium text-slate-600">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payerEntries.map((entry) => (
+                      <tr key={entry.id} className="border-t hover:bg-slate-50/50">
+                        <td className="p-2">
+                          <Badge variant="outline" className="font-mono">{entry.cptCode}</Badge>
+                        </td>
+                        <td className="p-2 text-slate-600">
+                          {entry.description || "-"}
+                        </td>
+                        <td className="p-2 text-right font-medium">
+                          ${parseFloat(entry.billedAmount).toFixed(2)}
+                        </td>
+                        <td className="p-2 text-right text-slate-600">
+                          ${parseFloat(entry.expectedReimbursement).toFixed(2)}
+                        </td>
+                        <td className="p-2 text-center text-slate-500 text-xs">
+                          {entry.effectiveDate}
+                        </td>
+                        <td className="p-2 text-center text-slate-500 text-xs">
+                          {entry.expirationDate || "-"}
+                        </td>
+                        <td className="p-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => startEdit(entry)}
+                              aria-label="Edit rate"
+                            >
+                              <Pencil className="h-4 w-4 text-slate-500" />
+                            </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="sm" aria-label="Delete rate">
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete Rate</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Remove the {entry.cptCode} rate for {entry.payerName}? This cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => deleteMutation.mutate(entry.id)}>
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        ))
+      )}
+
+      {/* Info Card */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 bg-blue-100 rounded-lg shrink-0">
+              <DollarSign className="h-5 w-5 text-blue-600" />
+            </div>
+            <div>
+              <h3 className="font-medium text-slate-900 mb-1">About Fee Schedules</h3>
+              <ul className="text-sm text-slate-600 space-y-1">
+                <li><strong>Billed Rate</strong> is what you charge per CPT code unit (replaces the default $289).</li>
+                <li><strong>Expected Reimbursement</strong> is what the payer typically pays for that code.</li>
+                <li>These rates are used for cost estimation, underpayment detection, and SOAP note billing suggestions.</li>
+                <li>You can also manage insurance-specific reimbursement details on the <strong>Insurance Rates</strong> page.</li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
@@ -817,6 +1354,7 @@ export default function Settings() {
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
     { id: "billing", label: "Billing", icon: CreditCard },
+    { id: "fee-schedule", label: "Fee Schedule", icon: DollarSign },
     { id: "therapists", label: "Therapists", icon: BadgeCheck },
     ...(isAdmin ? [
       { id: "users", label: "User Management", icon: Users },
@@ -1311,6 +1849,10 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {activeTab === "fee-schedule" && (
+            <FeeScheduleTab />
           )}
 
           {activeTab === "branding" && (

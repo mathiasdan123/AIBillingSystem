@@ -29,7 +29,7 @@ import {
 } from '../email';
 import logger from '../services/logger';
 import { sendEmail } from '../services/emailService';
-import { passwordReset } from '../services/emailTemplates';
+import { passwordReset, practiceWelcome } from '../services/emailTemplates';
 
 /**
  * Send password reset email using the new template system.
@@ -225,6 +225,21 @@ router.post('/signup', registrationLimiter, async (req, res) => {
     });
 
     logger.info('Practice signup completed', { userId: user.id, practiceId: practice.id, email: normalizedEmail });
+
+    // Send welcome email (non-blocking)
+    try {
+      const dashboardUrl = `${baseUrl}/dashboard`;
+      const { subject, html, text } = practiceWelcome({
+        firstName: firstName.trim() || 'there',
+        practiceName: trimmedPracticeName,
+        dashboardUrl,
+      });
+      sendEmail({ to: normalizedEmail, subject, html, text, fromName: 'TherapyBill AI' }).catch((err) => {
+        logger.warn('Welcome email send failed (non-blocking)', { error: err instanceof Error ? err.message : String(err) });
+      });
+    } catch (welcomeErr) {
+      logger.warn('Welcome email generation failed (non-blocking)', { error: welcomeErr instanceof Error ? welcomeErr.message : String(welcomeErr) });
+    }
 
     // Log the user in
     const userSession = {

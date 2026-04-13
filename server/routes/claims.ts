@@ -28,6 +28,8 @@ import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
 import { predictDenial } from '../services/aiDenialPredictor';
 import { recordClaimOutcome } from '../services/aiLearningService';
+import { sendEmail } from '../services/emailService';
+import { claimStatusUpdate } from '../services/emailTemplates';
 import {
   bulkSubmitClaims,
   bulkUpdateClaimStatus,
@@ -1083,6 +1085,43 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
 
       const updatedClaim = await storage.updateClaim(claimId, updateData);
 
+      // Send claim status email when status changes to paid or denied (non-blocking)
+      if (updateData.status === 'paid' || updateData.status === 'denied') {
+        try {
+          const practiceId = getAuthorizedPracticeId(req);
+          const practice = await storage.getPractice(practiceId);
+          const patient = await storage.getPatient(claim.patientId);
+          const admins = await storage.getAdminsByPractice(practiceId);
+          const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+          if (admins.length > 0 && patient && practice) {
+            const statusLabel = updateData.status === 'paid' ? 'Paid' : 'Denied';
+            const { subject, html, text } = claimStatusUpdate({
+              claimNumber: claim.claimNumber || `CLM-${claimId}`,
+              patientName: `${patient.firstName} ${patient.lastName}`,
+              status: statusLabel,
+              billedAmount: parseFloat(claim.totalAmount as any) || 0,
+              paidAmount: updateData.status === 'paid' ? parseFloat(String(statusResult.paidAmount || '0')) : undefined,
+              denialReason: updateData.status === 'denied' ? (statusResult.denialReason || 'Claim denied by payer') : undefined,
+              dateOfService: claim.createdAt?.toISOString().split('T')[0] || 'N/A',
+              payerName: 'Insurance',
+              practiceName: practice.name || 'Your Practice',
+              viewClaimUrl: `${baseUrl}/claims/${claimId}`,
+            });
+
+            for (const admin of admins) {
+              if (admin.email) {
+                sendEmail({ to: admin.email, subject, html, text, fromName: practice.name || 'TherapyBill AI' }).catch((err) => {
+                  logger.warn('Claim status email failed (non-blocking)', { error: err instanceof Error ? err.message : String(err) });
+                });
+              }
+            }
+          }
+        } catch (emailErr) {
+          logger.warn('Claim status notification email failed (non-blocking)', { error: emailErr instanceof Error ? emailErr.message : String(emailErr) });
+        }
+      }
+
       res.json({
         success: true,
         message: 'Claim status retrieved from clearinghouse',
@@ -1154,6 +1193,39 @@ router.post('/:id/paid', isAuthenticated, isAdminOrBilling, async (req: any, res
         claimId,
         error: learningError instanceof Error ? learningError.message : String(learningError),
       });
+    }
+
+    // Send claim status email to practice admins (non-blocking)
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      const practice = await storage.getPractice(practiceId);
+      const patient = await storage.getPatient(claim.patientId);
+      const admins = await storage.getAdminsByPractice(practiceId);
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+      if (admins.length > 0 && patient && practice) {
+        const { subject, html, text } = claimStatusUpdate({
+          claimNumber: claim.claimNumber || `CLM-${claimId}`,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          status: 'Paid',
+          billedAmount: parseFloat(claim.totalAmount as any) || 0,
+          paidAmount: parseFloat(paidAmount?.toString() || claim.submittedAmount || claim.totalAmount || '0'),
+          dateOfService: claim.createdAt?.toISOString().split('T')[0] || 'N/A',
+          payerName: 'Insurance',
+          practiceName: practice.name || 'Your Practice',
+          viewClaimUrl: `${baseUrl}/claims/${claimId}`,
+        });
+
+        for (const admin of admins) {
+          if (admin.email) {
+            sendEmail({ to: admin.email, subject, html, text, fromName: practice.name || 'TherapyBill AI' }).catch((err) => {
+              logger.warn('Claim paid email failed (non-blocking)', { error: err instanceof Error ? err.message : String(err) });
+            });
+          }
+        }
+      }
+    } catch (emailErr) {
+      logger.warn('Claim paid notification email failed (non-blocking)', { error: emailErr instanceof Error ? emailErr.message : String(emailErr) });
     }
 
     res.json({
@@ -1359,6 +1431,38 @@ router.post('/:id/deny', isAuthenticated, isAdminOrBilling, async (req: any, res
       }
     } catch (aiError) {
       logger.error('Error generating AI appeal', { error: aiError instanceof Error ? aiError.message : String(aiError) });
+    }
+
+    // Send claim denied email to practice admins (non-blocking)
+    try {
+      const practice = await storage.getPractice(practiceId);
+      const patient = await storage.getPatient(claim.patientId);
+      const admins = await storage.getAdminsByPractice(practiceId);
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+      if (admins.length > 0 && patient && practice) {
+        const { subject, html, text } = claimStatusUpdate({
+          claimNumber: claim.claimNumber || `CLM-${claimId}`,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          status: 'Denied',
+          billedAmount: parseFloat(claim.totalAmount as any) || 0,
+          denialReason: denialReason || 'No reason provided',
+          dateOfService: claim.createdAt?.toISOString().split('T')[0] || 'N/A',
+          payerName: 'Insurance',
+          practiceName: practice.name || 'Your Practice',
+          viewClaimUrl: `${baseUrl}/claims/${claimId}`,
+        });
+
+        for (const admin of admins) {
+          if (admin.email) {
+            sendEmail({ to: admin.email, subject, html, text, fromName: practice.name || 'TherapyBill AI' }).catch((err) => {
+              logger.warn('Claim denied email failed (non-blocking)', { error: err instanceof Error ? err.message : String(err) });
+            });
+          }
+        }
+      }
+    } catch (emailErr) {
+      logger.warn('Claim denied notification email failed (non-blocking)', { error: emailErr instanceof Error ? emailErr.message : String(emailErr) });
     }
 
     res.json({

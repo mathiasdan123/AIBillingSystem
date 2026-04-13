@@ -42,8 +42,7 @@ const BookingSettings = lazy(() => import("@/pages/booking-settings"));
 const Telehealth = lazy(() => import("@/pages/telehealth"));
 const TelehealthJoin = lazy(() => import("@/pages/telehealth-join"));
 const Messages = lazy(() => import("@/pages/messages"));
-const PatientPortal = lazy(() => import("@/pages/patient-portal"));
-const NewPatientPortal = lazy(() => import("@/pages/patient-portal/index"));
+const PatientPortal = lazy(() => import("@/pages/patient-portal/index"));
 const MfaChallenge = lazy(() => import("@/pages/mfa-challenge"));
 const OutcomeMeasures = lazy(() => import("@/pages/outcome-measures"));
 const PublicFeedback = lazy(() => import("@/pages/public-feedback"));
@@ -89,6 +88,10 @@ const Signup = lazy(() => import("@/pages/signup"));
 
 // Public pricing page
 const Pricing = lazy(() => import("@/pages/pricing"));
+
+// Legal pages
+const PrivacyPolicy = lazy(() => import("@/pages/privacy-policy"));
+const TermsOfService = lazy(() => import("@/pages/terms-of-service"));
 
 // Error boundary for route-level errors
 class ErrorBoundary extends Component<
@@ -164,6 +167,8 @@ function Router() {
               <Route path="/" component={Landing} />
               <Route path="/signup" component={Signup} />
               <Route path="/pricing" component={Pricing} />
+              <Route path="/privacy" component={PrivacyPolicy} />
+              <Route path="/terms" component={TermsOfService} />
               <Route path="/intake" component={PatientIntake} />
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />
@@ -171,9 +176,9 @@ function Router() {
               <Route path="/join/:code" component={TelehealthJoin} />
               <Route path="/portal" component={PatientPortal} />
               <Route path="/portal/login/:token" component={PatientPortal} />
-              <Route path="/patient-portal" component={NewPatientPortal} />
-              <Route path="/patient-portal/login" component={NewPatientPortal} />
-              <Route path="/patient-portal/login/:token" component={NewPatientPortal} />
+              <Route path="/patient-portal" component={PatientPortal} />
+              <Route path="/patient-portal/login" component={PatientPortal} />
+              <Route path="/patient-portal/login/:token" component={PatientPortal} />
               <Route path="/feedback/:token" component={PublicFeedback} />
               <Route path="/forgot-password" component={ForgotPassword} />
               <Route path="/reset-password/:token" component={ResetPassword} />
