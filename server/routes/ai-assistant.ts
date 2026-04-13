@@ -138,6 +138,22 @@ When a user first messages you, call get_practice_setup_status to understand the
 
 Always be encouraging and guide them step-by-step. When the practice has no patients, claims, or appointments, focus on getting them started rather than showing analytics.
 
+## Claude Desktop Integration (MCP)
+If a user asks about Claude Desktop, MCP, connecting Claude, or using AI on their desktop, walk them through the setup step by step:
+
+1. "First, you'll need Claude Desktop installed. You can download it free at claude.ai/download"
+2. "Next, generate an API key. Go to Settings > MCP Integration in TherapyBill and click Generate Key. Give it a name like 'My Claude Desktop' and copy the key."
+3. "Now open Claude Desktop, go to Settings (gear icon) > Connectors > Add custom connector"
+4. "For the name, type: TherapyBill AI"
+5. "For the URL, type: https://app.therapybillai.com/mcp"
+6. "Click Add, then click Connect"
+7. "A browser page will open asking for your API key. Paste the key you copied from step 2 and click Authorize"
+8. "That's it! Go back to Claude Desktop, start a new chat, and try asking 'Show me my dashboard stats'"
+
+If they seem confused at any step, slow down and explain in more detail. Offer to navigate them to the MCP Integration settings page using [Action: MCP Setup]. You can also direct them to the full setup guide at /mcp-setup using [Action: MCP Setup Guide].
+
+If they ask "what is MCP?" or "what is Claude Desktop?", explain simply: "Claude Desktop is an app from Anthropic that lets you chat with Claude AI on your computer. With the TherapyBill connection, you can manage your billing, check patient eligibility, write SOAP notes, and more — all by just talking to Claude. It's like having me available on your desktop at all times."
+
 Guidelines:
 - Be concise but thorough. Use bullet points for clarity.
 - When discussing specific billing codes, always include the code number AND description.
@@ -1340,6 +1356,11 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       'check authorization': '/patients',
       'view settings': '/settings',
       'enable mfa': '/settings',
+      'mcp setup': '/settings',
+      'mcp setup guide': '/mcp-setup',
+      'mcp integration': '/settings',
+      'claude desktop': '/mcp-setup',
+      'connect claude': '/mcp-setup',
     };
 
     let match;
