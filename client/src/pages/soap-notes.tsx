@@ -7,6 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
@@ -14,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   FileText, Brain, CheckCircle, Clock, Lightbulb, Sparkles,
-  Plus, X, ChevronDown, ChevronUp, Loader2, Mic
+  Plus, X, ChevronDown, ChevronUp, Loader2, Mic, ChevronsUpDown, Check
 } from "lucide-react";
 import { VoiceInput } from "@/components/VoiceInput";
 import { TextToSpeech } from "@/components/TextToSpeech";
@@ -170,6 +172,10 @@ export default function SoapNotes() {
 
   // Session info
   const [selectedPatient, setSelectedPatient] = useState<number | null>(null);
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "" });
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
   const [duration, setDuration] = useState(60); // Default to 1 hour sessions
   const [location, setLocation] = useState("Sensory Gym");
@@ -584,7 +590,8 @@ export default function SoapNotes() {
 
   // AI Generation - Calls the real AI backend service
   const generateNoteAndCodes = async () => {
-    if (!selectedPatient || selectedActivities.length === 0) {
+    const hasPatient = selectedPatient || (isNewPatient && newPatientData.firstName.trim());
+    if (!hasPatient || selectedActivities.length === 0) {
       toast({
         title: "Missing Information",
         description: "Please select a patient and at least one activity.",
@@ -616,7 +623,7 @@ export default function SoapNotes() {
     try {
       // Call the AI backend service
       const response = await apiRequest("POST", "/api/ai/generate-soap-billing", {
-        patientId: selectedPatient,
+        patientId: selectedPatient || 0,
         activities: selectedActivities.map(a => a.name), // Activity names for backward compatibility
         activityAssessments: selectedActivities, // Full activity objects with assessments
         additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
@@ -697,13 +704,33 @@ export default function SoapNotes() {
 
   const createSoapNoteMutation = useMutation({
     mutationFn: async () => {
-      if (!generatedNote || !selectedPatient) return;
+      if (!generatedNote || (!selectedPatient && !isNewPatient)) return;
+
+      let patientId = selectedPatient;
+
+      // If creating a new patient, do that first
+      if (isNewPatient && newPatientData.firstName.trim() && newPatientData.lastName.trim()) {
+        const res = await apiRequest("POST", "/api/patients", {
+          firstName: newPatientData.firstName.trim(),
+          lastName: newPatientData.lastName.trim(),
+          dateOfBirth: "2000-01-01",
+          practiceId: 1,
+        });
+        const newPatient = await res.json();
+        patientId = newPatient.id;
+        setSelectedPatient(patientId);
+        setIsNewPatient(false);
+        setNewPatientData({ firstName: "", lastName: "" });
+        queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      }
+
+      if (!patientId) return;
 
       const primaryCode = generatedNote.cptCodes[0]?.code || "97530";
 
       const sessionData = {
         practiceId: 1,
-        patientId: selectedPatient,
+        patientId,
         therapistId: user?.id || "",
         sessionDate,
         duration,
@@ -719,7 +746,7 @@ export default function SoapNotes() {
       const session = await sessionResponse.json();
 
       const soapNoteData = {
-        patientId: selectedPatient,
+        patientId,
         sessionId: session.id,
         subjective: generatedNote.subjective,
         objective: generatedNote.objective,
@@ -865,9 +892,9 @@ export default function SoapNotes() {
             <CardContent>
               <VoiceInput
                 onTranscription={handleTranscription}
-                disabled={!selectedPatient}
+                disabled={!selectedPatient && !(isNewPatient && newPatientData.firstName.trim())}
               />
-              {!selectedPatient && (
+              {!selectedPatient && !(isNewPatient && newPatientData.firstName.trim()) && (
                 <p className="text-sm text-amber-600 mt-2">Please select a patient first.</p>
               )}
             </CardContent>
@@ -887,21 +914,123 @@ export default function SoapNotes() {
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div>
                     <Label className="text-xs text-muted-foreground">Patient</Label>
-                    <Select
-                      value={selectedPatient?.toString() || ""}
-                      onValueChange={(v) => setSelectedPatient(parseInt(v))}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Select" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {patients?.map((p) => (
-                          <SelectItem key={p.id} value={p.id.toString()}>
-                            {p.firstName} {p.lastName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {isNewPatient ? (
+                      <div className="mt-1 space-y-1">
+                        <div className="flex gap-1">
+                          <Input
+                            placeholder="First"
+                            value={newPatientData.firstName}
+                            onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                            className="h-9 text-sm"
+                          />
+                          <Input
+                            placeholder="Last"
+                            value={newPatientData.lastName}
+                            onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                            className="h-9 text-sm"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs h-6 px-1"
+                          onClick={() => {
+                            setIsNewPatient(false);
+                            setNewPatientData({ firstName: "", lastName: "" });
+                          }}
+                        >
+                          Select existing
+                        </Button>
+                      </div>
+                    ) : (
+                      <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={patientSearchOpen}
+                            className="w-full justify-between font-normal mt-1 h-9 text-sm"
+                          >
+                            {selectedPatient
+                              ? (() => {
+                                  const p = patients?.find((p: any) => p.id === selectedPatient);
+                                  return p ? `${p.firstName} ${p.lastName}` : "Select";
+                                })()
+                              : "Search patient..."}
+                            <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                          <Command>
+                            <CommandInput
+                              placeholder="Type a name to search..."
+                              value={patientSearch}
+                              onValueChange={setPatientSearch}
+                            />
+                            <CommandList>
+                              <CommandEmpty>
+                                <div className="text-center py-2 space-y-2">
+                                  {patientSearch.trim() && (
+                                    <Button
+                                      type="button"
+                                      variant="default"
+                                      size="sm"
+                                      className="w-full"
+                                      onClick={() => {
+                                        const parts = patientSearch.trim().split(/\s+/);
+                                        const firstName = parts[0] || "";
+                                        const lastName = parts.slice(1).join(" ") || "";
+                                        setIsNewPatient(true);
+                                        setNewPatientData({ firstName, lastName });
+                                        setSelectedPatient(null);
+                                        setPatientSearchOpen(false);
+                                        setPatientSearch("");
+                                      }}
+                                    >
+                                      <Plus className="mr-1 h-3 w-3" />
+                                      Create new patient: "{patientSearch.trim()}"
+                                    </Button>
+                                  )}
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      setIsNewPatient(true);
+                                      setPatientSearchOpen(false);
+                                      setPatientSearch("");
+                                    }}
+                                  >
+                                    <Plus className="mr-1 h-3 w-3" />
+                                    Add New Patient Manually
+                                  </Button>
+                                </div>
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {patients?.map((p: any) => (
+                                  <CommandItem
+                                    key={p.id}
+                                    value={`${p.firstName} ${p.lastName}`}
+                                    onSelect={() => {
+                                      setSelectedPatient(p.id);
+                                      setPatientSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={`mr-2 h-4 w-4 ${
+                                        selectedPatient === p.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                    />
+                                    {p.firstName} {p.lastName}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    )}
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Date</Label>
@@ -1577,7 +1706,7 @@ export default function SoapNotes() {
             {/* Generate Button */}
             <Button
               onClick={generateNoteAndCodes}
-              disabled={isGenerating || !selectedPatient || selectedActivities.length === 0}
+              disabled={isGenerating || (!selectedPatient && !(isNewPatient && newPatientData.firstName.trim())) || selectedActivities.length === 0}
               className="w-full h-12 text-base bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
             >
               {isGenerating ? (

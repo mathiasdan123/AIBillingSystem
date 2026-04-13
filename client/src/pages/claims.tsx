@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -14,7 +16,8 @@ import {
   Plus, Search, Send, CheckCircle, Clock, XCircle, AlertCircle,
   DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical,
   Copy, RefreshCw, Loader2, Scale, Mail, ShieldAlert, ShieldCheck,
-  TriangleAlert, CircleAlert, Info, Lightbulb, Download, Printer
+  TriangleAlert, CircleAlert, Info, Lightbulb, Download, Printer,
+  ChevronsUpDown, Check
 } from "lucide-react";
 import { exportToCsv } from "@/lib/exportUtils";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
@@ -654,6 +657,12 @@ export default function Claims() {
     errors: Array<{ claimId: number; error: string }>;
     results: Array<{ claimId: number; claimNumber: string; success: boolean; error?: string }>;
   }>({ show: false, total: 0, succeeded: 0, failed: 0, errors: [], results: [] });
+
+  // Patient search state (shared for claim form + superbill)
+  const [claimPatientSearchOpen, setClaimPatientSearchOpen] = useState(false);
+  const [claimPatientSearch, setClaimPatientSearch] = useState("");
+  const [superbillPatientSearchOpen, setSuperbillPatientSearchOpen] = useState(false);
+  const [superbillPatientSearch, setSuperbillPatientSearch] = useState("");
 
   // Superbill creation state
   const [superbillPatient, setSuperbillPatient] = useState("");
@@ -1463,18 +1472,57 @@ export default function Claims() {
                     <FormItem>
                       <FormLabel>Patient</FormLabel>
                       <FormControl>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select patient" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {patients?.map((patient) => (
-                              <SelectItem key={patient.id} value={patient.id.toString()}>
-                                {patient.firstName} {patient.lastName}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Popover open={claimPatientSearchOpen} onOpenChange={setClaimPatientSearchOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={claimPatientSearchOpen}
+                              className="w-full justify-between font-normal"
+                            >
+                              {field.value
+                                ? (() => {
+                                    const p = patients?.find((p: any) => String(p.id) === field.value);
+                                    return p ? `${p.firstName} ${p.lastName}` : "Select patient";
+                                  })()
+                                : "Search patient..."}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                            <Command>
+                              <CommandInput
+                                placeholder="Type a name to search..."
+                                value={claimPatientSearch}
+                                onValueChange={setClaimPatientSearch}
+                              />
+                              <CommandList>
+                                <CommandEmpty>
+                                  <p className="text-sm text-muted-foreground py-2">No patient found.</p>
+                                </CommandEmpty>
+                                <CommandGroup>
+                                  {patients?.map((p: any) => (
+                                    <CommandItem
+                                      key={p.id}
+                                      value={`${p.firstName} ${p.lastName}`}
+                                      onSelect={() => {
+                                        field.onChange(p.id.toString());
+                                        setClaimPatientSearchOpen(false);
+                                      }}
+                                    >
+                                      <Check
+                                        className={`mr-2 h-4 w-4 ${
+                                          field.value === String(p.id) ? "opacity-100" : "opacity-0"
+                                        }`}
+                                      />
+                                      {p.firstName} {p.lastName}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1648,18 +1696,57 @@ export default function Claims() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Patient *</Label>
-                <Select value={superbillPatient} onValueChange={setSuperbillPatient}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {patients?.map((patient) => (
-                      <SelectItem key={patient.id} value={patient.id.toString()}>
-                        {patient.firstName} {patient.lastName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={superbillPatientSearchOpen} onOpenChange={setSuperbillPatientSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={superbillPatientSearchOpen}
+                      className="w-full justify-between font-normal"
+                    >
+                      {superbillPatient
+                        ? (() => {
+                            const p = patients?.find((p: any) => String(p.id) === superbillPatient);
+                            return p ? `${p.firstName} ${p.lastName}` : "Select patient";
+                          })()
+                        : "Search patient..."}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput
+                        placeholder="Type a name to search..."
+                        value={superbillPatientSearch}
+                        onValueChange={setSuperbillPatientSearch}
+                      />
+                      <CommandList>
+                        <CommandEmpty>
+                          <p className="text-sm text-muted-foreground py-2">No patient found.</p>
+                        </CommandEmpty>
+                        <CommandGroup>
+                          {patients?.map((p: any) => (
+                            <CommandItem
+                              key={p.id}
+                              value={`${p.firstName} ${p.lastName}`}
+                              onSelect={() => {
+                                setSuperbillPatient(String(p.id));
+                                setSuperbillPatientSearchOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={`mr-2 h-4 w-4 ${
+                                  superbillPatient === String(p.id) ? "opacity-100" : "opacity-0"
+                                }`}
+                              />
+                              {p.firstName} {p.lastName}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div>
                 <Label>Insurance</Label>

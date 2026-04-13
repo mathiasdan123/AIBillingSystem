@@ -9,6 +9,7 @@ import { useForm } from 'react-hook-form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
 
 interface PatientInfoSectionProps {
   data: any;
@@ -105,6 +106,54 @@ export function PatientInfoSection({ data, onChange }: PatientInfoSectionProps) 
           />
         </div>
       </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="schoolDistrict">School District</Label>
+        <Input
+          id="schoolDistrict"
+          placeholder="e.g., Springfield USD"
+          {...register('schoolDistrict')}
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="hasIep">IEP (Individualized Education Program)?</Label>
+          <Select
+            value={watchedFields.hasIep || ''}
+            onValueChange={(value) => setValue('hasIep', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="yes">Yes</SelectItem>
+              <SelectItem value="no">No</SelectItem>
+              <SelectItem value="in_process">In Process</SelectItem>
+              <SelectItem value="unknown">Unknown</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="has504Plan">504 Plan?</Label>
+          <Select
+            value={watchedFields.has504Plan || ''}
+            onValueChange={(value) => setValue('has504Plan', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="yes">Yes</SelectItem>
+              <SelectItem value="no">No</SelectItem>
+              <SelectItem value="in_process">In Process</SelectItem>
+              <SelectItem value="unknown">Unknown</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <Separator />
 
       <div className="space-y-2">
         <Label htmlFor="otherLanguages">Other Languages Spoken</Label>

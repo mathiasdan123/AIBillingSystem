@@ -14,6 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -53,6 +55,8 @@ import {
   Settings,
   Link,
   Save,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 
 interface ReviewRequest {
@@ -1424,6 +1428,8 @@ function SendRequestForm({
     googleReviewUrl: "",
     sendVia: "both",
   });
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1438,21 +1444,58 @@ function SendRequestForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-2">
         <Label>Patient</Label>
-        <Select
-          value={formData.patientId}
-          onValueChange={(value) => setFormData((prev) => ({ ...prev, patientId: value }))}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select a patient" />
-          </SelectTrigger>
-          <SelectContent>
-            {patients.map((patient) => (
-              <SelectItem key={patient.id} value={String(patient.id)}>
-                {patient.firstName} {patient.lastName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={patientSearchOpen}
+              className="w-full justify-between font-normal"
+            >
+              {formData.patientId
+                ? (() => {
+                    const p = patients.find((p) => String(p.id) === formData.patientId);
+                    return p ? `${p.firstName} ${p.lastName}` : "Select a patient";
+                  })()
+                : "Search or type patient name..."}
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+            <Command>
+              <CommandInput
+                placeholder="Type a name to search..."
+                value={patientSearch}
+                onValueChange={setPatientSearch}
+              />
+              <CommandList>
+                <CommandEmpty>
+                  <p className="text-sm text-muted-foreground py-2">No patient found.</p>
+                </CommandEmpty>
+                <CommandGroup>
+                  {patients.map((patient) => (
+                    <CommandItem
+                      key={patient.id}
+                      value={`${patient.firstName} ${patient.lastName}`}
+                      onSelect={() => {
+                        setFormData((prev) => ({ ...prev, patientId: String(patient.id) }));
+                        setPatientSearchOpen(false);
+                      }}
+                    >
+                      <Check
+                        className={`mr-2 h-4 w-4 ${
+                          formData.patientId === String(patient.id) ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      {patient.firstName} {patient.lastName}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </div>
       <div className="space-y-2">
         <Label>Google Review URL</Label>

@@ -42,6 +42,9 @@ const patientSchema = z.object({
   schoolGrade: z.string().optional(),
   teacherName: z.string().optional(),
   schoolConcerns: z.string().optional(),
+  schoolDistrict: z.string().optional(),
+  hasIep: z.string().optional(),
+  has504Plan: z.string().optional(),
 
   // Insurance
   insuranceProvider: z.string().optional(),
@@ -256,6 +259,9 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
         schoolGrade: data.schoolGrade,
         teacherName: data.teacherName,
         schoolConcerns: data.schoolConcerns,
+        schoolDistrict: data.schoolDistrict,
+        hasIep: data.hasIep,
+        has504Plan: data.has504Plan,
         // Parent info
         parent1: {
           name: data.parent1Name,
@@ -907,18 +913,79 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
               />
             </div>
 
-            <FormField
-              control={form.control}
-              name="teacherName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Teacher's Name</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Mrs. Smith" {...field} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="teacherName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Teacher's Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Mrs. Smith" {...field} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="schoolDistrict"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>School District</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g., Springfield USD" {...field} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="hasIep"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>IEP (Individualized Education Program)?</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="yes">Yes</SelectItem>
+                        <SelectItem value="no">No</SelectItem>
+                        <SelectItem value="in_process">In Process</SelectItem>
+                        <SelectItem value="unknown">Unknown</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="has504Plan"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>504 Plan?</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="yes">Yes</SelectItem>
+                        <SelectItem value="no">No</SelectItem>
+                        <SelectItem value="in_process">In Process</SelectItem>
+                        <SelectItem value="unknown">Unknown</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <FormField
               control={form.control}

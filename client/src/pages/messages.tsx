@@ -25,13 +25,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   MessageSquare,
@@ -48,6 +41,8 @@ import {
   Copy,
   Link,
   RefreshCw,
+  Phone,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -98,9 +93,11 @@ export default function MessagesPage() {
   const [newMessage, setNewMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewConversation, setShowNewConversation] = useState(false);
-  const [selectedPatientId, setSelectedPatientId] = useState<string>("");
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patientSearchQuery, setPatientSearchQuery] = useState("");
   const [initialMessage, setInitialMessage] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -109,9 +106,32 @@ export default function MessagesPage() {
     queryKey: ["/api/messages/conversations"],
   });
 
-  // Fetch patients for new conversation
-  const { data: patients = [] } = useQuery<Patient[]>({
-    queryKey: ["/api/patients"],
+  // Debounced patient search
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      setDebouncedSearch(patientSearchQuery);
+    }, 300);
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [patientSearchQuery]);
+
+  const { data: searchResults = [], isFetching: isSearching } = useQuery<Patient[]>({
+    queryKey: ["/api/patients/search", debouncedSearch],
+    queryFn: async () => {
+      if (!debouncedSearch || debouncedSearch.length < 2) return [];
+      const res = await fetch(`/api/patients/search?q=${encodeURIComponent(debouncedSearch)}`);
+      if (!res.ok) throw new Error("Search failed");
+      return res.json();
+    },
+    enabled: debouncedSearch.length >= 2,
   });
 
   // Fetch messages for selected conversation
@@ -168,7 +188,8 @@ export default function MessagesPage() {
     },
     onSuccess: (data) => {
       setShowNewConversation(false);
-      setSelectedPatientId("");
+      setSelectedPatient(null);
+      setPatientSearchQuery("");
       setInitialMessage("");
       setSelectedConversation(data.conversation);
       queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
@@ -290,7 +311,14 @@ export default function MessagesPage() {
                   </Badge>
                 )}
               </div>
-              <Dialog open={showNewConversation} onOpenChange={setShowNewConversation}>
+              <Dialog open={showNewConversation} onOpenChange={(open) => {
+                setShowNewConversation(open);
+                if (!open) {
+                  setPatientSearchQuery("");
+                  setSelectedPatient(null);
+                  setInitialMessage("");
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button size="sm">
                     <Plus className="h-4 w-4 mr-1" />
@@ -303,19 +331,96 @@ export default function MessagesPage() {
                   </DialogHeader>
                   <div className="space-y-4 py-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Select Patient</label>
-                      <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Choose a patient" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {patients.map((patient) => (
-                            <SelectItem key={patient.id} value={patient.id.toString()}>
-                              {patient.firstName} {patient.lastName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <label className="text-sm font-medium">Search Patient</label>
+                      {selectedPatient ? (
+                        <div className="flex items-center gap-2 p-3 rounded-md border bg-blue-50">
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                              {getInitials(`${selectedPatient.firstName} ${selectedPatient.lastName}`)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm">
+                              {selectedPatient.firstName} {selectedPatient.lastName}
+                            </p>
+                            {selectedPatient.phone && (
+                              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Phone className="h-3 w-3" />
+                                {selectedPatient.phone}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedPatient(null);
+                              setPatientSearchQuery("");
+                            }}
+                            className="text-xs"
+                          >
+                            Change
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              value={patientSearchQuery}
+                              onChange={(e) => setPatientSearchQuery(e.target.value)}
+                              placeholder="Search by name or phone number..."
+                              className="pl-9"
+                              autoFocus
+                            />
+                            {isSearching && (
+                              <Loader2 className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                            )}
+                          </div>
+                          {patientSearchQuery.length >= 2 && (
+                            <div className="border rounded-md max-h-48 overflow-y-auto">
+                              {searchResults.length === 0 && !isSearching ? (
+                                <div className="p-4 text-center text-sm text-muted-foreground">
+                                  No patients found
+                                </div>
+                              ) : (
+                                searchResults.map((patient) => (
+                                  <div
+                                    key={patient.id}
+                                    onClick={() => setSelectedPatient(patient)}
+                                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-50 border-b last:border-b-0 transition-colors"
+                                  >
+                                    <Avatar className="h-8 w-8">
+                                      <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                                        {getInitials(`${patient.firstName} ${patient.lastName}`)}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-medium text-sm">
+                                        {patient.firstName} {patient.lastName}
+                                      </p>
+                                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                        {patient.phone && (
+                                          <span className="flex items-center gap-1">
+                                            <Phone className="h-3 w-3" />
+                                            {patient.phone}
+                                          </span>
+                                        )}
+                                        {patient.email && (
+                                          <span className="truncate">{patient.email}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+                          {patientSearchQuery.length > 0 && patientSearchQuery.length < 2 && (
+                            <p className="text-xs text-muted-foreground">Type at least 2 characters to search</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Initial Message (optional)</label>
@@ -328,15 +433,24 @@ export default function MessagesPage() {
                     </div>
                     <Button
                       className="w-full"
-                      disabled={!selectedPatientId || createConversation.isPending}
-                      onClick={() =>
-                        createConversation.mutate({
-                          patientId: parseInt(selectedPatientId),
-                          initialMessage: initialMessage || undefined,
-                        })
-                      }
+                      disabled={!selectedPatient || createConversation.isPending}
+                      onClick={() => {
+                        if (selectedPatient) {
+                          createConversation.mutate({
+                            patientId: selectedPatient.id,
+                            initialMessage: initialMessage || undefined,
+                          });
+                        }
+                      }}
                     >
-                      Start Conversation
+                      {createConversation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Starting...
+                        </>
+                      ) : (
+                        "Start Conversation"
+                      )}
                     </Button>
                   </div>
                 </DialogContent>

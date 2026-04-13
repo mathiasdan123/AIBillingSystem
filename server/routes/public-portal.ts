@@ -981,6 +981,9 @@ router.get('/patient-portal/profile', async (req, res) => {
 
     const { patient } = auth;
 
+    // Parse intakeData for medical/birth/school history display
+    const intakeData = patient.intakeData as Record<string, any> | null;
+
     res.json({
       id: patient.id,
       firstName: patient.firstName,
@@ -996,6 +999,19 @@ router.get('/patient-portal/profile', async (req, res) => {
       insuranceId: patient.insuranceId,
       policyNumber: patient.policyNumber,
       groupNumber: patient.groupNumber,
+      // Intake history data (read-only in profile)
+      schoolInfo: intakeData ? {
+        schoolName: intakeData.schoolName || intakeData.school,
+        schoolGrade: intakeData.schoolGrade || intakeData.grade,
+        teacherName: intakeData.teacherName || intakeData.teacher,
+        schoolDistrict: intakeData.schoolDistrict,
+        hasIep: intakeData.hasIep,
+        has504Plan: intakeData.has504Plan,
+        schoolConcerns: intakeData.schoolConcerns,
+      } : null,
+      birthHistory: intakeData?.birthHistory || null,
+      medicalHistory: intakeData?.medicalHistory || null,
+      socialHistory: intakeData?.socialHistory || null,
     });
   } catch (error) {
     logger.error('Error fetching profile', { error: error instanceof Error ? error.message : String(error) });

@@ -32,6 +32,10 @@ import {
   CreditCard,
   Bell,
   Moon,
+  GraduationCap,
+  Heart,
+  Baby,
+  Users,
 } from "lucide-react";
 
 interface PatientProfile {
@@ -50,6 +54,46 @@ interface PatientProfile {
   insuranceId?: string;
   policyNumber?: string;
   groupNumber?: string;
+  // Intake history (read-only)
+  schoolInfo?: {
+    schoolName?: string;
+    schoolGrade?: string;
+    teacherName?: string;
+    schoolDistrict?: string;
+    hasIep?: string;
+    has504Plan?: string;
+    schoolConcerns?: string;
+  } | null;
+  birthHistory?: {
+    pregnancyProblems?: string;
+    pregnancyDetails?: string;
+    birthType?: string;
+    birthWeeks?: string;
+    deliveryType?: string;
+    laborLength?: string;
+    complications?: string;
+    nicuStay?: string;
+    nicuDuration?: string;
+  } | null;
+  medicalHistory?: {
+    diagnosis?: string;
+    medications?: string;
+    sicknessFrequency?: string;
+    allergies?: string;
+    allergyDetails?: string;
+    hearingTested?: string;
+    hearingDetails?: string;
+    visionTested?: string;
+    visionDetails?: string;
+    surgeries?: string;
+  } | null;
+  socialHistory?: {
+    custodyArrangements?: string;
+    custodyDetails?: string;
+    familyDetails?: string;
+    familyMedicalHistory?: string;
+    familyImpactHistory?: string;
+  } | null;
 }
 
 interface NotificationPrefs {
@@ -466,6 +510,143 @@ export default function PatientPortalProfile({ token }: PatientPortalProfileProp
         </CardContent>
       </Card>
 
+      {/* School Information (read-only from intake) */}
+      {profile.schoolInfo && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GraduationCap className="h-5 w-5" />
+              School Information
+            </CardTitle>
+            <CardDescription>
+              From intake form — contact the office to update
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <ReadOnlyField label="School Name" value={profile.schoolInfo.schoolName} />
+              <ReadOnlyField label="Grade" value={profile.schoolInfo.schoolGrade} />
+              <ReadOnlyField label="Teacher" value={profile.schoolInfo.teacherName} />
+              <ReadOnlyField label="School District" value={profile.schoolInfo.schoolDistrict} />
+              <ReadOnlyField label="IEP" value={formatYesNoStatus(profile.schoolInfo.hasIep)} />
+              <ReadOnlyField label="504 Plan" value={formatYesNoStatus(profile.schoolInfo.has504Plan)} />
+              {profile.schoolInfo.schoolConcerns && (
+                <div className="md:col-span-2">
+                  <ReadOnlyField label="School Concerns" value={profile.schoolInfo.schoolConcerns} />
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Medical History (read-only from intake) */}
+      {profile.medicalHistory && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Heart className="h-5 w-5" />
+              Medical History
+            </CardTitle>
+            <CardDescription>
+              From intake form — contact the office to update
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <ReadOnlyField label="Diagnosis" value={profile.medicalHistory.diagnosis} />
+              <ReadOnlyField label="Medications" value={profile.medicalHistory.medications} />
+              <ReadOnlyField label="Allergies" value={profile.medicalHistory.allergies} />
+              {profile.medicalHistory.allergyDetails && (
+                <ReadOnlyField label="Allergy Details" value={profile.medicalHistory.allergyDetails} />
+              )}
+              <ReadOnlyField label="Hearing Tested" value={profile.medicalHistory.hearingTested} />
+              {profile.medicalHistory.hearingDetails && (
+                <ReadOnlyField label="Hearing Details" value={profile.medicalHistory.hearingDetails} />
+              )}
+              <ReadOnlyField label="Vision Tested" value={profile.medicalHistory.visionTested} />
+              {profile.medicalHistory.visionDetails && (
+                <ReadOnlyField label="Vision Details" value={profile.medicalHistory.visionDetails} />
+              )}
+              {profile.medicalHistory.surgeries && (
+                <div className="md:col-span-2">
+                  <ReadOnlyField label="Surgeries" value={profile.medicalHistory.surgeries} />
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Birth History (read-only from intake) */}
+      {profile.birthHistory && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Baby className="h-5 w-5" />
+              Birth History
+            </CardTitle>
+            <CardDescription>
+              From intake form — contact the office to update
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <ReadOnlyField label="Pregnancy Problems" value={profile.birthHistory.pregnancyProblems} />
+              {profile.birthHistory.pregnancyDetails && (
+                <ReadOnlyField label="Pregnancy Details" value={profile.birthHistory.pregnancyDetails} />
+              )}
+              <ReadOnlyField label="Birth Type" value={profile.birthHistory.birthType} />
+              <ReadOnlyField label="Weeks at Birth" value={profile.birthHistory.birthWeeks} />
+              <ReadOnlyField label="Delivery Type" value={profile.birthHistory.deliveryType} />
+              <ReadOnlyField label="Labor Length" value={profile.birthHistory.laborLength} />
+              {profile.birthHistory.complications && (
+                <ReadOnlyField label="Complications" value={profile.birthHistory.complications} />
+              )}
+              <ReadOnlyField label="NICU Stay" value={profile.birthHistory.nicuStay} />
+              {profile.birthHistory.nicuDuration && (
+                <ReadOnlyField label="NICU Duration" value={profile.birthHistory.nicuDuration} />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Social History (read-only from intake) */}
+      {profile.socialHistory && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Social History
+            </CardTitle>
+            <CardDescription>
+              From intake form — contact the office to update
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              {profile.socialHistory.custodyArrangements && (
+                <ReadOnlyField label="Custody Arrangements" value={profile.socialHistory.custodyArrangements} />
+              )}
+              {profile.socialHistory.custodyDetails && (
+                <ReadOnlyField label="Custody Details" value={profile.socialHistory.custodyDetails} />
+              )}
+              {profile.socialHistory.familyDetails && (
+                <div className="md:col-span-2">
+                  <ReadOnlyField label="Family Details" value={profile.socialHistory.familyDetails} />
+                </div>
+              )}
+              {profile.socialHistory.familyMedicalHistory && (
+                <div className="md:col-span-2">
+                  <ReadOnlyField label="Family Medical History" value={profile.socialHistory.familyMedicalHistory} />
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Payment Method */}
       <Card>
         <CardHeader>
@@ -540,6 +721,28 @@ function ProfileCheckItem({ label, completed }: { label: string; completed: bool
       )}
     </div>
   );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="text-sm py-2 px-3 bg-slate-50 rounded-md">
+        {value || "Not provided"}
+      </p>
+    </div>
+  );
+}
+
+function formatYesNoStatus(value?: string | null): string {
+  if (!value) return "Not provided";
+  switch (value) {
+    case "yes": return "Yes";
+    case "no": return "No";
+    case "in_process": return "In Process";
+    case "unknown": return "Unknown";
+    default: return value;
+  }
 }
 
 function PatientNotificationPreferences({ token }: { token: string }) {

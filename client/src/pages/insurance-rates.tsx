@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,7 +27,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   DollarSign, Plus, Trash2, Upload, Wand2, Loader2, Calculator,
-  FileText, CheckCircle, AlertCircle, Users, Building2, FileUp
+  FileText, CheckCircle, AlertCircle, Users, Building2, FileUp,
+  ChevronsUpDown, Check
 } from "lucide-react";
 
 interface InsuranceRate {
@@ -214,6 +217,8 @@ export default function InsuranceRates() {
 
   // Patient cost estimates
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
   const { data: patientEstimate, isLoading: estimateLoading } = useQuery<CostEstimate>({
     queryKey: ['/api/patients', selectedPatientId, 'cost-estimate'],
     queryFn: async () => {
@@ -651,21 +656,60 @@ export default function InsuranceRates() {
               <CardContent className="space-y-4">
                 <div>
                   <Label>Select Patient</Label>
-                  <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose a patient" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {patients?.map((p) => (
-                        <SelectItem key={p.id} value={p.id.toString()}>
-                          {p.firstName} {p.lastName}
-                          {p.insuranceProvider && (
-                            <span className="text-slate-400 ml-2">({p.insuranceProvider})</span>
-                          )}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={patientSearchOpen}
+                        className="w-full justify-between font-normal"
+                      >
+                        {selectedPatientId
+                          ? (() => {
+                              const p = patients?.find((p) => String(p.id) === selectedPatientId);
+                              return p ? `${p.firstName} ${p.lastName}` : "Choose a patient";
+                            })()
+                          : "Search or type patient name..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Type a name to search..."
+                          value={patientSearch}
+                          onValueChange={setPatientSearch}
+                        />
+                        <CommandList>
+                          <CommandEmpty>
+                            <p className="text-sm text-muted-foreground py-2">No patient found.</p>
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {patients?.map((p) => (
+                              <CommandItem
+                                key={p.id}
+                                value={`${p.firstName} ${p.lastName}`}
+                                onSelect={() => {
+                                  setSelectedPatientId(p.id.toString());
+                                  setPatientSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    selectedPatientId === String(p.id) ? "opacity-100" : "opacity-0"
+                                  }`}
+                                />
+                                {p.firstName} {p.lastName}
+                                {p.insuranceProvider && (
+                                  <span className="text-slate-400 ml-2">({p.insuranceProvider})</span>
+                                )}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div className="p-4 bg-blue-50 rounded-lg">

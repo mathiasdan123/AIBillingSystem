@@ -29,7 +29,7 @@ import {
   type InsertPatientPlanBenefits,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, isNull, lt, inArray, sql } from "drizzle-orm";
+import { eq, desc, and, isNull, lt, inArray, sql, or } from "drizzle-orm";
 import {
   encryptPatientRecord,
   decryptPatientRecord,
@@ -126,6 +126,36 @@ export async function getAllPatients(opts?: { limit?: number; offset?: number })
   if (opts?.limit) query = query.limit(opts.limit);
   if (opts?.offset) query = query.offset(opts.offset);
   const rows = await query;
+  return rows.map((r: any) => decryptPatientRecord(r) as Patient);
+}
+
+export async function searchPatients(query: string, limit: number = 20): Promise<Patient[]> {
+  const searchTerm = `%${query}%`;
+  // Strip non-digit characters for phone search
+  const digitsOnly = query.replace(/\D/g, '');
+  const phoneSearchTerm = digitsOnly.length >= 3 ? `%${digitsOnly}%` : null;
+
+  const conditions = [
+    sql`(${patients.firstName} || ' ' || ${patients.lastName}) ILIKE ${searchTerm}`,
+    sql`${patients.firstName} ILIKE ${searchTerm}`,
+    sql`${patients.lastName} ILIKE ${searchTerm}`,
+    sql`${patients.email} ILIKE ${searchTerm}`,
+  ];
+
+  if (phoneSearchTerm) {
+    // Search phone with digits only (strip formatting from stored phone)
+    conditions.push(
+      sql`REGEXP_REPLACE(${patients.phone}, '[^0-9]', '', 'g') LIKE ${phoneSearchTerm}`
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(patients)
+    .where(and(isNull(patients.deletedAt), or(...conditions)))
+    .orderBy(patients.lastName, patients.firstName)
+    .limit(limit);
+
   return rows.map((r: any) => decryptPatientRecord(r) as Patient);
 }
 

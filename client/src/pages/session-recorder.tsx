@@ -6,15 +6,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Mic, MicOff, Square, Play, Pause, Loader2, FileText,
   DollarSign, Clock, CheckCircle, AlertCircle, Save, RefreshCw,
-  Volume2, Wand2
+  Volume2, Wand2, Plus, ChevronsUpDown, Check
 } from "lucide-react";
 
 interface SoapNote {
@@ -62,6 +64,10 @@ export default function SessionRecorder() {
   // Form state
   const [consentGiven, setConsentGiven] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState("");
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
   const [sessionDuration, setSessionDuration] = useState("45");
   const [sessionType, setSessionType] = useState("occupational therapy");
   const [manualTranscription, setManualTranscription] = useState("");
@@ -95,11 +101,14 @@ export default function SessionRecorder() {
   const processRecordingMutation = useMutation({
     mutationFn: async (data: { audioBase64: string; mimeType: string }) => {
       const patient = patients?.find(p => p.id === parseInt(selectedPatient));
+      const patientName = isNewPatient
+        ? `${newPatientData.firstName} ${newPatientData.lastName}`.trim() || "Patient"
+        : patient ? `${patient.firstName} ${patient.lastName}` : "Patient";
       const response = await apiRequest("POST", "/api/session-recorder/process", {
         audioBase64: data.audioBase64,
         mimeType: data.mimeType,
         patientId: patient?.id || 0,
-        patientName: patient ? `${patient.firstName} ${patient.lastName}` : "Patient",
+        patientName,
         therapistName: "Therapist",
         sessionDuration: parseInt(sessionDuration),
         insuranceName: patient?.insuranceProvider || "Unknown",
@@ -128,10 +137,13 @@ export default function SessionRecorder() {
   const processTextMutation = useMutation({
     mutationFn: async (transcription: string) => {
       const patient = patients?.find(p => p.id === parseInt(selectedPatient));
+      const patientName = isNewPatient
+        ? `${newPatientData.firstName} ${newPatientData.lastName}`.trim() || "Patient"
+        : patient ? `${patient.firstName} ${patient.lastName}` : "Patient";
       const response = await apiRequest("POST", "/api/session-recorder/process-text", {
         transcription,
         patientId: patient?.id || 0,
-        patientName: patient ? `${patient.firstName} ${patient.lastName}` : "Patient",
+        patientName,
         therapistName: "Therapist",
         sessionDuration: parseInt(sessionDuration),
         insuranceName: patient?.insuranceProvider || "Unknown",
@@ -159,15 +171,35 @@ export default function SessionRecorder() {
   // Save SOAP note mutation
   const saveSoapNoteMutation = useMutation({
     mutationFn: async () => {
-      if (!editedSoapNote || !selectedPatient) {
+      if (!editedSoapNote || (!selectedPatient && !isNewPatient)) {
         throw new Error("Missing required data");
       }
 
+      let patientId = selectedPatient ? parseInt(selectedPatient) : 0;
+
+      // If creating a new patient, do that first
+      if (isNewPatient && newPatientData.firstName.trim() && newPatientData.lastName.trim()) {
+        const res = await apiRequest("POST", "/api/patients", {
+          firstName: newPatientData.firstName.trim(),
+          lastName: newPatientData.lastName.trim(),
+          phone: newPatientData.phone.trim() || null,
+          email: newPatientData.email.trim() || null,
+          dateOfBirth: "2000-01-01",
+          practiceId: 1,
+        });
+        const newPatient = await res.json();
+        patientId = newPatient.id;
+        setSelectedPatient(String(patientId));
+        setIsNewPatient(false);
+        setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+        queryClient.invalidateQueries({ queryKey: ['/api/patients?practiceId=1'] });
+      }
+
       // First create a session
-      const patient = patients?.find(p => p.id === parseInt(selectedPatient));
+      const patient = patients?.find(p => p.id === patientId);
       const sessionResponse = await apiRequest("POST", "/api/sessions", {
         practiceId: 1,
-        patientId: parseInt(selectedPatient),
+        patientId,
         therapistId: "session-recorder",
         sessionDate: new Date().toISOString().split('T')[0],
         duration: parseInt(sessionDuration),
@@ -329,22 +361,141 @@ export default function SessionRecorder() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label>Patient</Label>
-                <Select value={selectedPatient} onValueChange={setSelectedPatient}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {patients?.map((patient) => (
-                      <SelectItem key={patient.id} value={patient.id.toString()}>
-                        {patient.firstName} {patient.lastName}
-                        {patient.insuranceProvider && (
-                          <span className="text-slate-400 ml-2">({patient.insuranceProvider})</span>
-                        )}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center justify-between mb-1">
+                  <Label>Patient</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs h-7 px-2"
+                    onClick={() => {
+                      setIsNewPatient(!isNewPatient);
+                      if (!isNewPatient) {
+                        setSelectedPatient("");
+                      } else {
+                        setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+                      }
+                    }}
+                  >
+                    {isNewPatient ? "Select Existing Patient" : "+ New Patient"}
+                  </Button>
+                </div>
+                {isNewPatient ? (
+                  <div className="space-y-2 p-3 border rounded-md bg-muted/30">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-xs">First Name *</Label>
+                        <Input
+                          placeholder="First name"
+                          value={newPatientData.firstName}
+                          onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Last Name *</Label>
+                        <Input
+                          placeholder="Last name"
+                          value={newPatientData.lastName}
+                          onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={patientSearchOpen}
+                        className="w-full justify-between font-normal"
+                      >
+                        {selectedPatient
+                          ? (() => {
+                              const p = patients?.find((p: any) => String(p.id) === selectedPatient);
+                              return p ? `${p.firstName} ${p.lastName}` : "Select a patient";
+                            })()
+                          : "Search or type patient name..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Type a name to search..."
+                          value={patientSearch}
+                          onValueChange={setPatientSearch}
+                        />
+                        <CommandList>
+                          <CommandEmpty>
+                            <div className="text-center py-2 space-y-2">
+                              {patientSearch.trim() && (
+                                <Button
+                                  type="button"
+                                  variant="default"
+                                  size="sm"
+                                  className="w-full"
+                                  onClick={() => {
+                                    const parts = patientSearch.trim().split(/\s+/);
+                                    const firstName = parts[0] || "";
+                                    const lastName = parts.slice(1).join(" ") || "";
+                                    setIsNewPatient(true);
+                                    setNewPatientData({ ...newPatientData, firstName, lastName });
+                                    setSelectedPatient("");
+                                    setPatientSearchOpen(false);
+                                    setPatientSearch("");
+                                  }}
+                                >
+                                  <Plus className="mr-1 h-3 w-3" />
+                                  Create new patient: "{patientSearch.trim()}"
+                                </Button>
+                              )}
+                              <p className="text-sm text-muted-foreground">
+                                {patientSearch.trim() ? "Or" : "No patient found."}
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setIsNewPatient(true);
+                                  setPatientSearchOpen(false);
+                                  setSelectedPatient("");
+                                  setPatientSearch("");
+                                }}
+                              >
+                                <Plus className="mr-1 h-3 w-3" />
+                                Add New Patient Manually
+                              </Button>
+                            </div>
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {patients?.map((p: any) => (
+                              <CommandItem
+                                key={p.id}
+                                value={`${p.firstName} ${p.lastName}`}
+                                onSelect={() => {
+                                  setSelectedPatient(String(p.id));
+                                  setPatientSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    selectedPatient === String(p.id) ? "opacity-100" : "opacity-0"
+                                  }`}
+                                />
+                                {p.firstName} {p.lastName}
+                                {p.insuranceProvider && (
+                                  <span className="text-slate-400 ml-2">({p.insuranceProvider})</span>
+                                )}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -430,7 +581,7 @@ export default function SessionRecorder() {
                   <Button
                     size="lg"
                     onClick={startRecording}
-                    disabled={!consentGiven || !selectedPatient}
+                    disabled={!consentGiven || (!selectedPatient && !(isNewPatient && newPatientData.firstName.trim()))}
                     className="bg-red-600 hover:bg-red-700"
                   >
                     <Mic className="mr-2 h-5 w-5" />
@@ -511,7 +662,7 @@ export default function SessionRecorder() {
                 className="w-full"
                 variant="outline"
                 onClick={() => processTextMutation.mutate(manualTranscription)}
-                disabled={!manualTranscription || !selectedPatient || processTextMutation.isPending}
+                disabled={!manualTranscription || (!selectedPatient && !(isNewPatient && newPatientData.firstName.trim())) || processTextMutation.isPending}
               >
                 {processTextMutation.isPending ? (
                   <>
@@ -661,7 +812,7 @@ export default function SessionRecorder() {
                 className="w-full"
                 size="lg"
                 onClick={() => saveSoapNoteMutation.mutate()}
-                disabled={saveSoapNoteMutation.isPending || !selectedPatient}
+                disabled={saveSoapNoteMutation.isPending || (!selectedPatient && !(isNewPatient && newPatientData.firstName.trim()))}
               >
                 {saveSoapNoteMutation.isPending ? (
                   <>

@@ -166,6 +166,29 @@ const verifyPatientAccess = async (req: any, patientId: number): Promise<{
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
+// Search patients by name, email, or phone
+router.get('/search', isAuthenticated, async (req: any, res) => {
+  try {
+    const query = (req.query.q as string || '').trim();
+    if (!query || query.length < 2) {
+      return res.json([]);
+    }
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const results = await storage.searchPatients(query, limit);
+    // Return minimal fields for the search results
+    res.json(results.map((p: any) => ({
+      id: p.id,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      email: p.email || null,
+      phone: p.phone || null,
+    })));
+  } catch (error) {
+    logger.error('Error searching patients', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to search patients' });
+  }
+});
+
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     const { page, limit, offset } = parsePagination(req.query);

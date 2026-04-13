@@ -92,6 +92,7 @@ export const storage = {
   updatePatient: patientFns.updatePatient,
   softDeletePatient: patientFns.softDeletePatient,
   getAllPatients: patientFns.getAllPatients,
+  searchPatients: patientFns.searchPatients,
   countAllPatients: patientFns.countAllPatients,
   getPatientsByIds: patientFns.getPatientsByIds,
   hardDeletePatient: patientFns.hardDeletePatient,

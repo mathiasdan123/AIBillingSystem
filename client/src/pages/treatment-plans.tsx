@@ -15,6 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -24,7 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient as globalQueryClient } from "@/lib/queryClient";
 import {
   Target,
   Plus,
@@ -39,6 +41,8 @@ import {
   AlertCircle,
   ChevronRight,
   FileText,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 
 // Types matching the schema
@@ -182,6 +186,10 @@ export default function TreatmentPlansPage() {
   // View state
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
+  const [isNewPatient, setIsNewPatient] = useState(false);
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
   const [showCreatePlan, setShowCreatePlan] = useState(false);
   const [showCreateGoal, setShowCreateGoal] = useState(false);
   const [editingGoal, setEditingGoal] = useState<TreatmentGoal | null>(null);
@@ -473,22 +481,164 @@ export default function TreatmentPlansPage() {
         {!selectedPatientId && (
           <Card>
             <CardHeader>
-              <CardTitle>Select Patient</CardTitle>
-              <CardDescription>Choose a patient to view or create treatment plans</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Select Patient</CardTitle>
+                  <CardDescription>Choose a patient to view or create treatment plans</CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs h-7 px-2"
+                  onClick={() => {
+                    setIsNewPatient(!isNewPatient);
+                    if (isNewPatient) {
+                      setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+                    }
+                  }}
+                >
+                  {isNewPatient ? "Select Existing Patient" : "+ New Patient"}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              <Select onValueChange={(v) => setSelectedPatientId(parseInt(v))}>
-                <SelectTrigger className="w-full max-w-md">
-                  <SelectValue placeholder="Select a patient..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {patients?.map((p) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>
-                      {p.firstName} {p.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {isNewPatient ? (
+                <div className="space-y-3 max-w-md">
+                  <div className="space-y-2 p-3 border rounded-md bg-muted/30">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-xs">First Name *</Label>
+                        <Input
+                          placeholder="First name"
+                          value={newPatientData.firstName}
+                          onChange={(e) => setNewPatientData({ ...newPatientData, firstName: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Last Name *</Label>
+                        <Input
+                          placeholder="Last name"
+                          value={newPatientData.lastName}
+                          onChange={(e) => setNewPatientData({ ...newPatientData, lastName: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    disabled={!newPatientData.firstName.trim() || !newPatientData.lastName.trim()}
+                    onClick={async () => {
+                      try {
+                        const res = await apiRequest("POST", "/api/patients", {
+                          firstName: newPatientData.firstName.trim(),
+                          lastName: newPatientData.lastName.trim(),
+                          dateOfBirth: "2000-01-01",
+                          practiceId: 1,
+                        });
+                        const newPatient = await res.json();
+                        setSelectedPatientId(newPatient.id);
+                        setIsNewPatient(false);
+                        setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+                        globalQueryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+                        toast({ title: "Patient Created", description: `${newPatient.firstName} ${newPatient.lastName} added.` });
+                      } catch {
+                        toast({ title: "Error", description: "Failed to create patient", variant: "destructive" });
+                      }
+                    }}
+                  >
+                    Create Patient & Continue
+                  </Button>
+                </div>
+              ) : (
+                <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={patientSearchOpen}
+                      className="w-full max-w-md justify-between font-normal"
+                    >
+                      {selectedPatientId
+                        ? (() => {
+                            const p = patients?.find((p) => p.id === selectedPatientId);
+                            return p ? `${p.firstName} ${p.lastName}` : "Select a patient";
+                          })()
+                        : "Search or type patient name..."}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput
+                        placeholder="Type a name to search..."
+                        value={patientSearch}
+                        onValueChange={setPatientSearch}
+                      />
+                      <CommandList>
+                        <CommandEmpty>
+                          <div className="text-center py-2 space-y-2">
+                            {patientSearch.trim() && (
+                              <Button
+                                type="button"
+                                variant="default"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => {
+                                  const parts = patientSearch.trim().split(/\s+/);
+                                  const firstName = parts[0] || "";
+                                  const lastName = parts.slice(1).join(" ") || "";
+                                  setIsNewPatient(true);
+                                  setNewPatientData({ ...newPatientData, firstName, lastName });
+                                  setPatientSearchOpen(false);
+                                  setPatientSearch("");
+                                }}
+                              >
+                                <Plus className="mr-1 h-3 w-3" />
+                                Create new patient: "{patientSearch.trim()}"
+                              </Button>
+                            )}
+                            <p className="text-sm text-muted-foreground">
+                              {patientSearch.trim() ? "Or" : "No patient found."}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setIsNewPatient(true);
+                                setPatientSearchOpen(false);
+                                setPatientSearch("");
+                              }}
+                            >
+                              <Plus className="mr-1 h-3 w-3" />
+                              Add New Patient Manually
+                            </Button>
+                          </div>
+                        </CommandEmpty>
+                        <CommandGroup>
+                          {patients?.map((p) => (
+                            <CommandItem
+                              key={p.id}
+                              value={`${p.firstName} ${p.lastName}`}
+                              onSelect={() => {
+                                setSelectedPatientId(p.id);
+                                setPatientSearchOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={`mr-2 h-4 w-4 ${
+                                  selectedPatientId === p.id ? "opacity-100" : "opacity-0"
+                                }`}
+                              />
+                              {p.firstName} {p.lastName}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              )}
             </CardContent>
           </Card>
         )}

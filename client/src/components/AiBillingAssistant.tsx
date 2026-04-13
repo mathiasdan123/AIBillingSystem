@@ -44,6 +44,7 @@ function saveHistory(messages: ChatMessage[]) {
 export default function AiBillingAssistant() {
   const { isAuthenticated } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -52,6 +53,59 @@ export default function AiBillingAssistant() {
   const [showGreeting, setShowGreeting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Drag state
+  const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, elX: 0, elY: 0 });
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    // Ignore if clicking a button inside the header
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    isDraggingRef.current = true;
+
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      elX: rect.left,
+      elY: rect.top,
+    };
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const dx = ev.clientX - dragStartRef.current.mouseX;
+      const dy = ev.clientY - dragStartRef.current.mouseY;
+      let newX = dragStartRef.current.elX + dx;
+      let newY = dragStartRef.current.elY + dy;
+
+      // Clamp within viewport
+      const pw = panel.offsetWidth;
+      const ph = panel.offsetHeight;
+      newX = Math.max(0, Math.min(window.innerWidth - pw, newX));
+      newY = Math.max(0, Math.min(window.innerHeight - ph, newY));
+
+      setPosition({ x: newX, y: newY });
+    };
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  const handleHeaderDoubleClick = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    setPosition({ x: 0, y: 0 });
+  }, []);
 
   // Auto-show greeting popup on first visit (not the full chat — just a small intro)
   useEffect(() => {
@@ -265,9 +319,22 @@ export default function AiBillingAssistant() {
 
       {/* Chat Panel */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 w-[400px] max-w-[calc(100vw-2rem)] h-[600px] max-h-[calc(100vh-4rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+        <div
+          ref={panelRef}
+          className={`fixed z-50 w-[400px] max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden ${isMinimized ? "" : "h-[600px] max-h-[calc(100vh-4rem)]"}`}
+          style={
+            position.x === 0 && position.y === 0
+              ? { bottom: "1.5rem", right: "1.5rem" }
+              : { top: position.y, left: position.x }
+          }
+        >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-blue-600 text-white rounded-t-xl flex-shrink-0">
+          <div
+            className="flex items-center justify-between px-4 py-3 bg-blue-600 text-white rounded-t-xl flex-shrink-0 select-none"
+            style={{ cursor: isDraggingRef.current ? "grabbing" : "grab" }}
+            onMouseDown={handleHeaderMouseDown}
+            onDoubleClick={handleHeaderDoubleClick}
+          >
             <div className="flex items-center gap-2">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -313,10 +380,10 @@ export default function AiBillingAssistant() {
                 </button>
               )}
               <button
-                onClick={() => setIsOpen(false)}
+                onClick={() => setIsMinimized((prev) => !prev)}
                 className="p-1.5 hover:bg-blue-500 rounded-md transition-colors"
-                title="Minimize"
-                aria-label="Minimize chat"
+                title={isMinimized ? "Expand" : "Minimize"}
+                aria-label={isMinimized ? "Expand chat" : "Minimize chat"}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -329,7 +396,11 @@ export default function AiBillingAssistant() {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 >
-                  <path d="M5 12h14" />
+                  {isMinimized ? (
+                    <polyline points="17 11 12 6 7 11" />
+                  ) : (
+                    <path d="M5 12h14" />
+                  )}
                 </svg>
               </button>
               <button
@@ -357,7 +428,7 @@ export default function AiBillingAssistant() {
           </div>
 
           {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {!isMinimized && <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {/* Status warning */}
             {statusChecked && status && !status.available && (
               <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-3 text-sm text-amber-800 dark:text-amber-200">
@@ -482,10 +553,10 @@ export default function AiBillingAssistant() {
             )}
 
             <div ref={messagesEndRef} />
-          </div>
+          </div>}
 
           {/* Input Area */}
-          <div className="border-t border-slate-200 dark:border-slate-700 p-3 flex-shrink-0">
+          {!isMinimized && <div className="border-t border-slate-200 dark:border-slate-700 p-3 flex-shrink-0">
             {isAuthenticated ? (
               <>
                 <div className="flex items-end gap-2">
@@ -539,7 +610,7 @@ export default function AiBillingAssistant() {
                 </a>
               </div>
             )}
-          </div>
+          </div>}
         </div>
       )}
     </>

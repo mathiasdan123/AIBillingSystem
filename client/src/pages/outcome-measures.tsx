@@ -13,6 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +45,8 @@ import {
   CheckCircle,
   Clock,
   FileText,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 
 interface OutcomeMeasureTemplate {
@@ -91,6 +95,8 @@ interface AssessmentWithTrend {
 
 export default function OutcomeMeasures() {
   const [selectedPatient, setSelectedPatient] = useState<number | null>(null);
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<OutcomeMeasureTemplate | null>(null);
   const [showNewAssessment, setShowNewAssessment] = useState(false);
   const [assessmentResponses, setAssessmentResponses] = useState<Record<string, number>>({});
@@ -644,21 +650,57 @@ export default function OutcomeMeasures() {
           <div className="flex items-center gap-4">
             <div className="flex-1">
               <Label>Select Patient</Label>
-              <Select
-                value={selectedPatient?.toString() || ""}
-                onValueChange={(v) => setSelectedPatient(parseInt(v))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a patient..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {patients.map((patient) => (
-                    <SelectItem key={patient.id} value={patient.id.toString()}>
-                      {patient.firstName} {patient.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={patientSearchOpen}
+                    className="w-full justify-between font-normal"
+                  >
+                    {selectedPatient
+                      ? (() => {
+                          const p = patients.find((p) => p.id === selectedPatient);
+                          return p ? `${p.firstName} ${p.lastName}` : "Choose a patient...";
+                        })()
+                      : "Search or type patient name..."}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput
+                      placeholder="Type a name to search..."
+                      value={patientSearch}
+                      onValueChange={setPatientSearch}
+                    />
+                    <CommandList>
+                      <CommandEmpty>
+                        <p className="text-sm text-muted-foreground py-2">No patient found.</p>
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {patients.map((patient) => (
+                          <CommandItem
+                            key={patient.id}
+                            value={`${patient.firstName} ${patient.lastName}`}
+                            onSelect={() => {
+                              setSelectedPatient(patient.id);
+                              setPatientSearchOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={`mr-2 h-4 w-4 ${
+                                selectedPatient === patient.id ? "opacity-100" : "opacity-0"
+                              }`}
+                            />
+                            {patient.firstName} {patient.lastName}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             {selectedPatient && (
               <div className="text-sm text-muted-foreground">
