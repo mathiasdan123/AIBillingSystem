@@ -22,6 +22,7 @@ import {
   getExpiringEligibility,
   clearQueue,
 } from '../services/batchEligibilityService';
+import { checkEligibility, isStediConfigured, PAYER_IDS } from '../services/stediService';
 
 const router = Router();
 
@@ -160,6 +161,201 @@ router.delete('/queue', isAuthenticated, async (req: any, res: Response) => {
       error: error instanceof Error ? error.message : String(error),
     });
     res.status(500).json({ message: 'Failed to clear queue' });
+  }
+});
+
+// Batch check all patients with upcoming appointments (next 7 days)
+router.post('/batch-check', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+
+    if (!isStediConfigured()) {
+      return res.status(400).json({
+        message: 'Stedi API is not configured. Please set the STEDI_API_KEY.',
+      });
+    }
+
+    const practice = await storage.getPractice(practiceId);
+
+    // Get appointments for the next 7 days
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const upcomingAppointments = await storage.getAppointmentsByDateRange(
+      practiceId,
+      now,
+      sevenDaysFromNow
+    );
+
+    // Get unique patient IDs from non-cancelled appointments
+    const patientIds = Array.from(new Set(
+      upcomingAppointments
+        .filter((a) => a.status !== 'cancelled' && a.patientId)
+        .map((a) => a.patientId!)
+    ));
+
+    if (patientIds.length === 0) {
+      return res.json({
+        checked: 0,
+        eligible: 0,
+        ineligible: 0,
+        errors: 0,
+        results: [],
+        message: 'No upcoming appointments found in the next 7 days.',
+      });
+    }
+
+    // For each unique patient, check eligibility
+    const results: Array<{
+      patientId: number;
+      patientName: string;
+      insurance: string | null;
+      status: string;
+      eligible: boolean | null;
+      planName?: string;
+      copay?: unknown;
+      deductible?: unknown;
+      error?: string;
+    }> = [];
+    let eligibleCount = 0;
+    let ineligibleCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < patientIds.length; i++) {
+      // Rate limiting: 200ms delay between checks
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+
+      const patientId = patientIds[i];
+      try {
+        const patient = await storage.getPatient(patientId);
+        if (!patient) {
+          results.push({
+            patientId,
+            patientName: 'Unknown',
+            insurance: null,
+            status: 'error',
+            eligible: null,
+            error: 'Patient not found',
+          });
+          errorCount++;
+          continue;
+        }
+
+        // Skip patients without insurance info
+        if (!patient.insuranceProvider && !patient.insuranceId && !patient.policyNumber) {
+          results.push({
+            patientId,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            insurance: null,
+            status: 'skipped',
+            eligible: null,
+            error: 'No insurance information on file',
+          });
+          errorCount++;
+          continue;
+        }
+
+        // Resolve payer ID
+        const insuranceName = (patient.insuranceProvider || '').toLowerCase();
+        const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
+
+        const eligResult = await checkEligibility(
+          {
+            payer: { id: payerId, name: patient.insuranceProvider || 'Unknown' },
+            provider: {
+              npi: practice?.npi || '',
+              organizationName: practice?.name || undefined,
+            },
+            subscriber: {
+              memberId: patient.insuranceId || patient.policyNumber || '',
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth || '',
+            },
+            serviceTypeCodes: ['30'],
+          },
+          practiceId
+        );
+
+        const isEligible = eligResult.status === 'active';
+        if (isEligible) {
+          eligibleCount++;
+        } else if (eligResult.status === 'inactive') {
+          ineligibleCount++;
+        } else {
+          // unknown status counts as error
+          errorCount++;
+        }
+
+        // Store result in eligibility_checks table
+        try {
+          await storage.createEligibilityCheck({
+            patientId,
+            practiceId,
+            eligible: isEligible,
+            status: eligResult.status,
+            processingStatus: 'completed',
+            copay: eligResult.copay?.primary?.toString() || null,
+            deductible: eligResult.deductible?.individual?.toString() || null,
+            coinsurance: eligResult.coinsurance != null ? Math.round(eligResult.coinsurance) : null,
+            rawResponse: eligResult.raw,
+          });
+        } catch (storeErr) {
+          logger.warn('Failed to store eligibility check result', {
+            patientId,
+            error: storeErr instanceof Error ? storeErr.message : String(storeErr),
+          });
+        }
+
+        results.push({
+          patientId,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          insurance: patient.insuranceProvider || null,
+          status: eligResult.status,
+          eligible: isEligible,
+          planName: eligResult.planName,
+          copay: eligResult.copay,
+          deductible: eligResult.deductible,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error('Batch eligibility check error for patient', {
+          patientId,
+          error: errMsg,
+        });
+        results.push({
+          patientId,
+          patientName: 'Unknown',
+          insurance: null,
+          status: 'error',
+          eligible: null,
+          error: errMsg,
+        });
+        errorCount++;
+      }
+    }
+
+    logger.info('Batch eligibility check completed', {
+      practiceId,
+      checked: patientIds.length,
+      eligible: eligibleCount,
+      ineligible: ineligibleCount,
+      errors: errorCount,
+    });
+
+    res.json({
+      checked: patientIds.length,
+      eligible: eligibleCount,
+      ineligible: ineligibleCount,
+      errors: errorCount,
+      results,
+    });
+  } catch (error) {
+    logger.error('Error in batch eligibility check', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to run batch eligibility check' });
   }
 });
 

@@ -260,6 +260,10 @@ export function parse835(rawEdi: string): Parsed835 {
             const lastName = elements[3] || '';
             const firstName = elements[4] || '';
             currentClaim.patientName = `${firstName} ${lastName}`.trim();
+            // Member ID can appear in NM109 for QC as well
+            if (elements[9]) {
+              currentClaim.memberId = elements[9];
+            }
           } else if (entityIdCode === 'IL') {
             // Insured/subscriber
             const lastName = elements[3] || '';
@@ -304,6 +308,16 @@ export function parse835(rawEdi: string): Parsed835 {
             // Allowed amount
             currentServiceLine.allowedAmount = amount;
           }
+        }
+        break;
+      }
+
+      case 'LQ': {
+        // Remark codes (e.g., LQ*HE*N130)
+        const remarkQualifier = elements[1] || '';
+        const remarkCode = elements[2] || '';
+        if (remarkCode && currentServiceLine) {
+          currentServiceLine.remarkCodes.push(remarkCode);
         }
         break;
       }

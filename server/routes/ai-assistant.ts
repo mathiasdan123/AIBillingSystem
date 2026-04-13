@@ -147,7 +147,9 @@ Guidelines:
 - If asked about something outside your expertise, be honest about limitations.
 - When suggesting actions, format them as clear next steps the user can take.
 - Keep responses focused and practical — therapists are busy.
-- Important: TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered. Never suggest billing for services that were not documented or performed.`;
+- Important: TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered. Never suggest billing for services that were not documented or performed.
+
+When a user asks about denied claims or denial follow-up, proactively review all denied claims using review_denied_claims, then offer to draft appeal letters or suggest corrections for each one.`;
 
 // Tool definitions for Claude function calling
 const assistantTools: Anthropic.Tool[] = [
@@ -347,6 +349,52 @@ const assistantTools: Anthropic.Tool[] = [
         location: { type: 'string' as const, description: 'Treatment location (clinic, telehealth, home)' },
       },
       required: ['patientId', 'activities'],
+    },
+  },
+  {
+    name: 'review_denied_claims',
+    description: 'Review all denied claims for the practice. Returns a list of denied claims with claim number, patient name, amount, denial reason, service date, and suggested action. Use this when a user asks about denied claims, denials, or denial follow-up.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'draft_appeal_letter',
+    description: 'Draft an appeal letter for a denied claim. Looks up the claim details, denial reason, patient info, and service details, then generates a professional appeal letter with arguments for overturning the denial. Returns claim context and the generated appeal.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: {
+          type: 'number' as const,
+          description: 'The ID of the denied claim to draft an appeal for.',
+        },
+      },
+      required: ['claimId'],
+    },
+  },
+  {
+    name: 'suggest_claim_correction',
+    description: 'Analyze a denied claim and suggest specific corrections to fix the issue and get it paid. Examines the denial reason and recommends next steps such as resubmitting with corrections, obtaining prior authorization, or appealing.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: {
+          type: 'number' as const,
+          description: 'The ID of the denied claim to analyze for corrections.',
+        },
+      },
+      required: ['claimId'],
+    },
+  },
+  {
+    name: 'batch_eligibility_check',
+    description: 'Check insurance eligibility for all patients with upcoming appointments in the next 7 days. No parameters needed. Returns a summary of how many patients were checked, how many are eligible, ineligible, or had errors, plus per-patient details.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
     },
   },
 ];
@@ -783,6 +831,383 @@ async function executeTool(
           totalReimbursement: soapResult.totalReimbursement,
           billingRationale: soapResult.billingRationale,
           disclaimer: 'All coding decisions must be reviewed and approved by the treating provider.',
+        });
+      }
+
+      case 'review_denied_claims': {
+        const allClaims = await storage.getClaims(practiceId);
+        const deniedClaims = allClaims.filter((c: any) => c.status === 'denied');
+
+        if (deniedClaims.length === 0) {
+          return JSON.stringify({ message: 'No denied claims found for this practice.', deniedClaims: [] });
+        }
+
+        // Get patient names and line items for each denied claim
+        const deniedDetails = await Promise.all(
+          deniedClaims.slice(0, 20).map(async (claim: any) => {
+            let patientName = 'Unknown';
+            if (claim.patientId) {
+              try {
+                const patient = await storage.getPatient(claim.patientId);
+                if (patient) patientName = `${patient.firstName} ${patient.lastName}`;
+              } catch { /* non-blocking */ }
+            }
+
+            // Determine a suggested action based on denial reason
+            const reason = (claim.denialReason || '').toLowerCase();
+            let suggestedAction = 'Review denial reason and consider filing an appeal';
+            if (reason.includes('authorization') || reason.includes('prior auth')) {
+              suggestedAction = 'Obtain prior authorization and resubmit the claim';
+            } else if (reason.includes('duplicate')) {
+              suggestedAction = 'Check for duplicate claims and void if necessary';
+            } else if (reason.includes('missing') || reason.includes('incomplete') || reason.includes('information')) {
+              suggestedAction = 'Identify missing information, correct the claim, and resubmit';
+            } else if (reason.includes('not covered') || reason.includes('coverage') || reason.includes('non-covered')) {
+              suggestedAction = 'Review coverage terms; consider alternative CPT codes or filing an appeal';
+            } else if (reason.includes('timely') || reason.includes('filing')) {
+              suggestedAction = 'Gather proof of original submission and file a timely filing appeal';
+            } else if (reason.includes('medical necessity') || reason.includes('not medically necessary')) {
+              suggestedAction = 'Strengthen clinical documentation and file a medical necessity appeal';
+            } else if (reason.includes('coding') || reason.includes('modifier') || reason.includes('bundl')) {
+              suggestedAction = 'Review CPT/modifier coding and resubmit with corrections';
+            }
+
+            return {
+              claimId: claim.id,
+              claimNumber: claim.claimNumber,
+              patientName,
+              amount: `$${claim.totalAmount}`,
+              denialReason: claim.denialReason || 'Not specified',
+              serviceDate: claim.submittedAt || claim.createdAt,
+              suggestedAction,
+            };
+          }),
+        );
+
+        return JSON.stringify({
+          totalDenied: deniedClaims.length,
+          deniedClaims: deniedDetails,
+          message: `Found ${deniedClaims.length} denied claim(s). I can draft appeal letters or suggest corrections for any of them.`,
+        });
+      }
+
+      case 'draft_appeal_letter': {
+        const claimId = args.claimId as number;
+        if (!claimId) return JSON.stringify({ error: 'Please provide a claim ID.' });
+
+        const claim = await storage.getClaim(claimId);
+        if (!claim) return JSON.stringify({ error: `Claim ${claimId} not found.` });
+        if (claim.practiceId !== practiceId) return JSON.stringify({ error: 'Claim does not belong to this practice.' });
+
+        // Get patient info
+        let patientData = { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null as string | null, insuranceProvider: null as string | null, insuranceId: null as string | null };
+        if (claim.patientId) {
+          const patient = await storage.getPatient(claim.patientId);
+          if (patient) {
+            patientData = {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth,
+              insuranceProvider: patient.insuranceProvider,
+              insuranceId: patient.insuranceId || patient.policyNumber || null,
+            };
+          }
+        }
+
+        // Get practice info
+        const practice = await storage.getPractice(practiceId);
+        const practiceData = {
+          name: practice?.name || 'Practice',
+          npi: practice?.npi || null,
+          address: practice?.address || null,
+          phone: practice?.phone || null,
+        };
+
+        // Get line items with CPT/ICD codes
+        const lineItems = await storage.getClaimLineItems(claimId);
+        const lineItemDetails = await Promise.all(
+          lineItems.map(async (li: any) => {
+            let cptCode = null;
+            let icd10Code = null;
+            try {
+              if (li.cptCodeId) {
+                const codes = await storage.getCptCodes();
+                cptCode = codes.find((c: any) => c.id === li.cptCodeId) || null;
+              }
+              if (li.icd10CodeId) {
+                const codes = await storage.getIcd10Codes();
+                icd10Code = codes.find((c: any) => c.id === li.icd10CodeId) || null;
+              }
+            } catch { /* non-blocking */ }
+            return {
+              cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : undefined,
+              icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : undefined,
+              units: li.units || 1,
+              amount: li.amount || '0',
+            };
+          }),
+        );
+
+        const denialReason = claim.denialReason || 'Reason not specified';
+
+        // Try to use the Claude appeal service if available
+        try {
+          const { generateClaudeAppeal, isClaudeAppealAvailable } = await import('../services/claudeAppealService');
+          if (isClaudeAppealAvailable()) {
+            const appealResult = await generateClaudeAppeal({
+              claim: {
+                id: claim.id,
+                claimNumber: claim.claimNumber,
+                totalAmount: claim.totalAmount,
+                denialReason: claim.denialReason,
+                submittedAt: claim.submittedAt,
+              },
+              lineItems: lineItemDetails,
+              patient: patientData,
+              practice: practiceData,
+              denialReason,
+            });
+
+            return JSON.stringify({
+              claimId: claim.id,
+              claimNumber: claim.claimNumber,
+              patientName: `${patientData.firstName} ${patientData.lastName}`,
+              denialReason,
+              amount: `$${claim.totalAmount}`,
+              appealLetter: appealResult.appealLetter,
+              denialCategory: appealResult.denialCategory,
+              successProbability: appealResult.successProbability,
+              suggestedActions: appealResult.suggestedActions,
+              keyArguments: appealResult.keyArguments,
+              message: 'Appeal letter generated successfully. Review and customize before sending to the payer.',
+            });
+          }
+        } catch (appealError) {
+          logger.error('Failed to generate appeal via Claude service, returning claim details for manual drafting', {
+            error: appealError instanceof Error ? appealError.message : String(appealError),
+          });
+        }
+
+        // Fallback: return structured claim details so Blanche can write the appeal in her response
+        return JSON.stringify({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          patientName: `${patientData.firstName} ${patientData.lastName}`,
+          patientDOB: patientData.dateOfBirth,
+          insuranceProvider: patientData.insuranceProvider,
+          memberId: patientData.insuranceId,
+          practiceName: practiceData.name,
+          practiceNPI: practiceData.npi,
+          practiceAddress: practiceData.address,
+          practicePhone: practiceData.phone,
+          denialReason,
+          amount: `$${claim.totalAmount}`,
+          serviceDate: claim.submittedAt || claim.createdAt,
+          lineItems: lineItemDetails,
+          message: 'I have the claim details. I will draft an appeal letter based on this information.',
+        });
+      }
+
+      case 'suggest_claim_correction': {
+        const corrClaimId = args.claimId as number;
+        if (!corrClaimId) return JSON.stringify({ error: 'Please provide a claim ID.' });
+
+        const corrClaim = await storage.getClaim(corrClaimId);
+        if (!corrClaim) return JSON.stringify({ error: `Claim ${corrClaimId} not found.` });
+        if (corrClaim.practiceId !== practiceId) return JSON.stringify({ error: 'Claim does not belong to this practice.' });
+
+        const denialText = (corrClaim.denialReason || '').toLowerCase();
+        const corrections: { issue: string; correction: string; priority: string }[] = [];
+        let overallStrategy = 'appeal';
+
+        // Analyze denial reason and suggest corrections
+        if (denialText.includes('authorization') || denialText.includes('prior auth') || denialText.includes('pre-cert')) {
+          corrections.push({
+            issue: 'Prior authorization required',
+            correction: 'Obtain retroactive authorization from the payer if possible. Contact the insurance company to request a retroactive auth, citing clinical necessity and any documentation of the referral process. Then resubmit the claim with the authorization number.',
+            priority: 'high',
+          });
+          overallStrategy = 'resubmit_with_auth';
+        }
+
+        if (denialText.includes('duplicate')) {
+          corrections.push({
+            issue: 'Duplicate claim detected',
+            correction: 'Check your claims list for duplicate submissions for the same patient, date of service, and CPT codes. If a true duplicate exists, void the extra claim. If the services were distinct (e.g., different times or codes), add modifier 59 (Distinct Procedural Service) or modifier XE/XS/XP/XU and resubmit with documentation explaining why the services are separate.',
+            priority: 'high',
+          });
+          overallStrategy = 'correct_and_resubmit';
+        }
+
+        if (denialText.includes('missing') || denialText.includes('incomplete') || denialText.includes('invalid') || denialText.includes('information')) {
+          corrections.push({
+            issue: 'Missing or incomplete information',
+            correction: 'Review the claim for missing fields: patient demographics, insurance member ID, group number, referring provider NPI, diagnosis codes, or modifiers. Correct the missing data and resubmit. Common missing items include: GO/GP modifier on therapy codes, rendering provider NPI, and place of service code.',
+            priority: 'high',
+          });
+          overallStrategy = 'correct_and_resubmit';
+        }
+
+        if (denialText.includes('not covered') || denialText.includes('non-covered') || denialText.includes('coverage') || denialText.includes('benefit')) {
+          corrections.push({
+            issue: 'Service not covered under plan',
+            correction: 'Verify the patient\'s specific plan benefits for therapy services. Consider: (1) Using an alternative CPT code that is covered (e.g., 97530 instead of 97110 if functionally appropriate), (2) Adding appropriate modifiers, (3) Checking if a different diagnosis code better supports medical necessity, (4) Filing an appeal with clinical documentation showing the service was medically necessary.',
+            priority: 'medium',
+          });
+          overallStrategy = 'appeal_or_recode';
+        }
+
+        if (denialText.includes('timely') || denialText.includes('filing') || denialText.includes('deadline')) {
+          corrections.push({
+            issue: 'Timely filing deadline exceeded',
+            correction: 'Gather proof of original submission (clearinghouse confirmation, submission logs, or screenshots). File a timely filing appeal with this evidence. If the delay was due to incorrect payer information or a payer processing error, include documentation of the initial submission attempt.',
+            priority: 'critical',
+          });
+          overallStrategy = 'timely_filing_appeal';
+        }
+
+        if (denialText.includes('medical necessity') || denialText.includes('not medically necessary') || denialText.includes('not necessary')) {
+          corrections.push({
+            issue: 'Medical necessity not established',
+            correction: 'Strengthen clinical documentation by: (1) Ensuring SOAP notes clearly document functional deficits and skilled intervention need, (2) Including measurable treatment goals and progress data, (3) Referencing clinical practice guidelines (e.g., AOTA, APA), (4) Documenting why services require the skill of a licensed therapist. File an appeal with updated documentation.',
+            priority: 'high',
+          });
+          overallStrategy = 'appeal_with_documentation';
+        }
+
+        if (denialText.includes('coding') || denialText.includes('modifier') || denialText.includes('bundl') || denialText.includes('unbundl')) {
+          corrections.push({
+            issue: 'Coding or modifier error',
+            correction: 'Review CPT code selection and modifiers: (1) Ensure the correct therapy modifier is applied (GO for OT, GP for PT, GN for SLP), (2) Check for bundling conflicts (e.g., 97140 and 97530 billed same session may require modifier 59), (3) Verify units match documented treatment time per the 8-minute rule, (4) Correct any code-to-diagnosis mismatches. Resubmit with corrected codes.',
+            priority: 'high',
+          });
+          overallStrategy = 'correct_and_resubmit';
+        }
+
+        if (denialText.includes('eligib') || denialText.includes('not eligible') || denialText.includes('inactive') || denialText.includes('terminated')) {
+          corrections.push({
+            issue: 'Patient eligibility issue',
+            correction: 'Verify patient insurance eligibility for the date of service. Check: (1) Was the policy active on the service date? (2) Is the member ID correct? (3) Is there a coordination of benefits issue (secondary insurance)? Run an eligibility check and resubmit to the correct payer if needed.',
+            priority: 'high',
+          });
+          overallStrategy = 'verify_eligibility_and_resubmit';
+        }
+
+        // If no specific patterns matched, provide general guidance
+        if (corrections.length === 0) {
+          corrections.push({
+            issue: 'Denial reason requires manual review',
+            correction: `The denial reason "${corrClaim.denialReason || 'not specified'}" does not match a common pattern. Recommended steps: (1) Contact the payer to clarify the exact denial reason and required corrections, (2) Review the EOB/ERA for specific remark codes, (3) Consider filing a formal appeal with supporting clinical documentation.`,
+            priority: 'medium',
+          });
+          overallStrategy = 'contact_payer';
+        }
+
+        // Get line items for additional context
+        let lineItemSummary: any[] = [];
+        try {
+          const lineItems = await storage.getClaimLineItems(corrClaimId);
+          lineItemSummary = lineItems.map((li: any) => ({
+            units: li.units,
+            amount: li.amount,
+            modifier: li.modifier,
+          }));
+        } catch { /* non-blocking */ }
+
+        return JSON.stringify({
+          claimId: corrClaim.id,
+          claimNumber: corrClaim.claimNumber,
+          amount: `$${corrClaim.totalAmount}`,
+          denialReason: corrClaim.denialReason || 'Not specified',
+          overallStrategy,
+          corrections,
+          lineItems: lineItemSummary,
+          message: `Found ${corrections.length} suggested correction(s) for this denied claim. ${overallStrategy === 'appeal' ? 'I recommend filing an appeal.' : overallStrategy === 'correct_and_resubmit' ? 'I recommend correcting and resubmitting the claim.' : 'Review the corrections above and take action.'}`,
+        });
+      }
+
+      case 'batch_eligibility_check': {
+        const { checkEligibility: stediCheckEligibility, isStediConfigured, PAYER_IDS: payerIds } = await import('../services/stediService');
+
+        if (!isStediConfigured()) {
+          return JSON.stringify({ error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' });
+        }
+
+        const practice = await storage.getPractice(practiceId);
+
+        // Get appointments for the next 7 days
+        const now = new Date();
+        const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const upcomingAppts = await storage.getAppointmentsByDateRange(practiceId, now, sevenDaysFromNow);
+
+        // Get unique patient IDs from non-cancelled appointments
+        const uniquePatientIds = Array.from(new Set(
+          upcomingAppts
+            .filter((a: any) => a.status !== 'cancelled' && a.patientId)
+            .map((a: any) => a.patientId!)
+        ));
+
+        if (uniquePatientIds.length === 0) {
+          return JSON.stringify({
+            checked: 0,
+            eligible: 0,
+            ineligible: 0,
+            errors: 0,
+            results: [],
+            message: 'No upcoming appointments found in the next 7 days.',
+          });
+        }
+
+        const batchResults: Array<{ patientName: string; insurance: string | null; status: string; eligible: boolean | null; error?: string }> = [];
+        let batchEligible = 0;
+        let batchIneligible = 0;
+        let batchErrors = 0;
+
+        for (let i = 0; i < uniquePatientIds.length; i++) {
+          if (i > 0) await new Promise((resolve) => setTimeout(resolve, 200));
+          const pid = uniquePatientIds[i];
+          try {
+            const pat = await storage.getPatient(pid);
+            if (!pat) { batchErrors++; batchResults.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not found' }); continue; }
+            if (!pat.insuranceProvider && !pat.insuranceId && !pat.policyNumber) {
+              batchErrors++;
+              batchResults.push({ patientName: `${pat.firstName} ${pat.lastName}`, insurance: null, status: 'skipped', eligible: null, error: 'No insurance info' });
+              continue;
+            }
+
+            const insName = (pat.insuranceProvider || '').toLowerCase();
+            const pId = payerIds[insName] || pat.insuranceId || '60054';
+            const eligRes = await stediCheckEligibility({
+              payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
+              provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
+              subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
+              serviceTypeCodes: ['30'],
+            }, practiceId);
+
+            const isElig = eligRes.status === 'active';
+            if (isElig) batchEligible++;
+            else if (eligRes.status === 'inactive') batchIneligible++;
+            else batchErrors++;
+
+            batchResults.push({
+              patientName: `${pat.firstName} ${pat.lastName}`,
+              insurance: pat.insuranceProvider || null,
+              status: eligRes.status,
+              eligible: isElig,
+            });
+          } catch (batchErr) {
+            batchErrors++;
+            batchResults.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: batchErr instanceof Error ? batchErr.message : String(batchErr) });
+          }
+        }
+
+        return JSON.stringify({
+          checked: uniquePatientIds.length,
+          eligible: batchEligible,
+          ineligible: batchIneligible,
+          errors: batchErrors,
+          results: batchResults,
+          message: `Checked ${uniquePatientIds.length} patient(s) with upcoming appointments. ${batchEligible} eligible, ${batchIneligible} ineligible, ${batchErrors} error(s)/skipped.`,
         });
       }
 

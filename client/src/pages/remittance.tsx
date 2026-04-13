@@ -13,7 +13,7 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Upload, FileText, CheckCircle, XCircle, Clock, Search,
-  DollarSign, ArrowRight, Loader2, RefreshCw, Link2, AlertCircle
+  DollarSign, ArrowRight, Loader2, RefreshCw, Link2, AlertCircle, FileCode
 } from "lucide-react";
 
 // ==================== Types ====================
@@ -118,6 +118,38 @@ function formatDate(dateStr: string | null | undefined): string {
     return dateStr;
   }
 }
+
+// ==================== Sample 835 Data ====================
+
+const SAMPLE_835_DATA = `ISA*00*          *00*          *ZZ*AETNA          *ZZ*HEALINGHANDS   *260401*1200*^*00501*000000001*0*P*:~
+GS*HP*AETNA*HEALINGHANDS*20260401*1200*1*X*005010X221A1~
+ST*835*0001~
+BPR*I*1250.00*C*ACH*CTX*01*999999999*DA*123456789*1234567890**01*999999999*DA*987654321*20260401~
+TRN*1*123456789*1234567890~
+DTM*405*20260401~
+N1*PR*AETNA*XV*60054~
+N1*PE*HEALING HANDS OT*XX*1234567890~
+CLP*PAT001-20260315*1*200.00*150.00*25.00*12*AETNA123*11~
+NM1*QC*1*HARTWELL*MASON****MI*MEM123456~
+SVC*HC:97530*200.00*150.00**4~
+DTM*472*20260315~
+CAS*CO*45*25.00~
+CAS*PR*1*25.00~
+AMT*B6*175.00~
+CLP*PAT002-20260315*1*350.00*300.00*30.00*12*AETNA456~
+NM1*QC*1*CHEN*LILY****MI*MEM789012~
+SVC*HC:97110:GO*175.00*150.00**2~
+DTM*472*20260315~
+CAS*CO*45*15.00~
+CAS*PR*3*10.00~
+SVC*HC:97530*175.00*150.00**2~
+DTM*472*20260315~
+CAS*CO*45*5.00~
+CAS*PR*1*20.00~
+AMT*B6*150.00~
+SE*26*0001~
+GE*1*1~
+IEA*1*000000001~`;
 
 // ==================== Main Component ====================
 
@@ -498,21 +530,33 @@ export default function Remittance() {
             </div>
 
             {/* Format toggle */}
-            <div className="flex items-center gap-4">
-              <Button
-                variant={uploadMode === 'edi' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setUploadMode('edi')}
-              >
-                X12 835 (EDI)
-              </Button>
-              <Button
-                variant={uploadMode === 'json' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setUploadMode('json')}
-              >
-                JSON
-              </Button>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Button
+                  variant={uploadMode === 'edi' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setUploadMode('edi')}
+                >
+                  X12 835 (EDI)
+                </Button>
+                <Button
+                  variant={uploadMode === 'json' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setUploadMode('json')}
+                >
+                  JSON
+                </Button>
+              </div>
+              {uploadMode === 'edi' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEdiText(SAMPLE_835_DATA)}
+                  className="text-blue-600 hover:text-blue-700"
+                >
+                  <FileCode className="w-3 h-3 mr-1" /> Load Sample
+                </Button>
+              )}
             </div>
 
             {/* Text area */}

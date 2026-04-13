@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2 } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
@@ -215,6 +215,24 @@ export default function CalendarPage() {
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Batch eligibility check mutation
+  const batchEligibilityMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/eligibility/batch-check");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Batch Eligibility Check Complete",
+        description: `Checked ${data.checked} patient(s): ${data.eligible} eligible, ${data.ineligible} ineligible, ${data.errors} error(s).`,
+        duration: 8000,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Batch Eligibility Check Failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -446,6 +464,20 @@ export default function CalendarPage() {
                 </SelectContent>
               </Select>
             )}
+            <Button
+              variant="outline"
+              onClick={() => batchEligibilityMutation.mutate()}
+              disabled={batchEligibilityMutation.isPending}
+              className="min-h-[44px] text-xs md:text-sm"
+            >
+              {batchEligibilityMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-1 md:mr-2 animate-spin" />
+              ) : (
+                <ShieldCheck className="w-4 h-4 mr-1 md:mr-2" />
+              )}
+              <span className="hidden sm:inline">Batch Eligibility</span>
+              <span className="sm:hidden">Eligibility</span>
+            </Button>
             <Button variant="outline" onClick={() => setShowAvailability(true)} className="min-h-[44px] text-xs md:text-sm">
               <Clock className="w-4 h-4 mr-1 md:mr-2" />
               <span className="hidden sm:inline">Availability</span>
