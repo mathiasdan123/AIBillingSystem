@@ -30,7 +30,7 @@ const router = Router();
 // Cost Optimization #1: Smart Model Routing
 // Use cheaper Haiku for simple queries, Sonnet for complex ones
 // ---------------------------------------------------------------------------
-const MODEL_HAIKU = 'claude-haiku-3-5-20241022';
+const MODEL_HAIKU = 'claude-3-5-haiku-20241022';
 const MODEL_SONNET = 'claude-sonnet-4-20250514';
 
 // Tools that require Sonnet's stronger reasoning capabilities
