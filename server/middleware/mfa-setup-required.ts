@@ -29,6 +29,7 @@ const MFA_SETUP_EXEMPT_PATHS = [
   '/auth/reset-password',
   '/auth/verify-email',
   '/demo-login',
+  '/contact',
 ];
 
 export const mfaSetupRequired = async (req: Request, res: Response, next: NextFunction) => {

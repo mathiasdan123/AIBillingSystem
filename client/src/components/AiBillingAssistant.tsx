@@ -55,7 +55,6 @@ export default function AiBillingAssistant() {
 
   // Auto-show greeting popup on first visit (not the full chat — just a small intro)
   useEffect(() => {
-    if (!isAuthenticated) return;
     const dismissed = localStorage.getItem(DISMISSED_KEY);
     const greeted = localStorage.getItem(GREETED_KEY);
     if (!dismissed && !greeted && !isOpen) {
@@ -182,8 +181,15 @@ export default function AiBillingAssistant() {
     window.location.href = path;
   };
 
-  // Don't render if not authenticated
-  if (!isAuthenticated) return null;
+  // Pre-login greeting text and suggestion chips
+  const preLoginGreeting = "Hi, I'm Blanche! I can answer questions about TherapyBill. Want to know about pricing, features, or how we handle HIPAA compliance?";
+  const preLoginSuggestions = [
+    { label: "View Pricing", anchor: "#pricing" },
+    { label: "See Features", anchor: "#features" },
+    { label: "HIPAA Compliance", anchor: "#compliance" },
+    { label: "Contact Us", anchor: "#contact" },
+    { label: "Start Free Trial", anchor: "/signup" },
+  ];
 
   return (
     <>
@@ -195,14 +201,17 @@ export default function AiBillingAssistant() {
             <div className="flex-1">
               <h4 className="font-semibold text-slate-900 dark:text-slate-100 text-sm">Hi, I'm Blanche!</h4>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                I'm your TherapyBill assistant. I can help you set up your practice, check insurance eligibility, write SOAP notes, and manage billing. Want me to help you get started?
+                {isAuthenticated
+                  ? "I'm your TherapyBill assistant. I can help you set up your practice, check insurance eligibility, write SOAP notes, and manage billing. Want me to help you get started?"
+                  : "I can answer questions about TherapyBill AI. Want to know about pricing, features, or how we handle HIPAA compliance?"
+                }
               </p>
               <div className="flex gap-2 mt-3">
                 <button
                   onClick={handleAcceptGreeting}
                   className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                 >
-                  Yes, help me!
+                  {isAuthenticated ? "Yes, help me!" : "Tell me more!"}
                 </button>
                 <button
                   onClick={handleDismissGreeting}
@@ -275,7 +284,7 @@ export default function AiBillingAssistant() {
               </svg>
               <div>
                 <h3 className="text-sm font-semibold">Blanche</h3>
-                <p className="text-xs text-blue-100">Ask about billing, coding, or your practice</p>
+                <p className="text-xs text-blue-100">{isAuthenticated ? "Ask about billing, coding, or your practice" : "Learn about TherapyBill AI"}</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -381,28 +390,46 @@ export default function AiBillingAssistant() {
                   Hi, I'm Blanche!
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-                  I'm your TherapyBill assistant. I can help you set up your practice, answer billing questions, manage claims, and more. What would you like to do?
+                  {isAuthenticated
+                    ? "I'm your TherapyBill assistant. I can help you set up your practice, answer billing questions, manage claims, and more. What would you like to do?"
+                    : preLoginGreeting
+                  }
                 </p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  {[
-                    "Help me get started",
-                    "Add my first patient",
-                    "How does billing work?",
-                    "Explain 97530 vs 97110",
-                    "What's my denial rate?",
-                  ].map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      onClick={() => {
-                        setInput(suggestion);
-                        setTimeout(() => inputRef.current?.focus(), 50);
-                      }}
-                      className="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
+                {isAuthenticated ? (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {[
+                      "Help me get started",
+                      "Add my first patient",
+                      "How does billing work?",
+                      "Explain 97530 vs 97110",
+                      "What's my denial rate?",
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => {
+                          setInput(suggestion);
+                          setTimeout(() => inputRef.current?.focus(), 50);
+                        }}
+                        className="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {preLoginSuggestions.map((item) => (
+                      <a
+                        key={item.label}
+                        href={item.anchor}
+                        onClick={() => setIsOpen(false)}
+                        className="text-xs px-3 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-800/40 transition-colors"
+                      >
+                        {item.label}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -459,43 +486,59 @@ export default function AiBillingAssistant() {
 
           {/* Input Area */}
           <div className="border-t border-slate-200 dark:border-slate-700 p-3 flex-shrink-0">
-            <div className="flex items-end gap-2">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask about billing, coding, or your practice..."
-                rows={1}
-                className="flex-1 resize-none rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent max-h-24"
-                style={{ minHeight: "38px" }}
-                disabled={isLoading || (statusChecked && status !== null && !status.available)}
-              />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isLoading || (statusChecked && status !== null && !status.available)}
-                className="flex-shrink-0 p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-                aria-label="Send message"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+            {isAuthenticated ? (
+              <>
+                <div className="flex items-end gap-2">
+                  <textarea
+                    ref={inputRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Ask about billing, coding, or your practice..."
+                    rows={1}
+                    className="flex-1 resize-none rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent max-h-24"
+                    style={{ minHeight: "38px" }}
+                    disabled={isLoading || (statusChecked && status !== null && !status.available)}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isLoading || (statusChecked && status !== null && !status.available)}
+                    className="flex-shrink-0 p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    aria-label="Send message"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M22 2 11 13" />
+                      <path d="M22 2 15 22l-4-9-9-4z" />
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5 text-center">
+                  TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
+                </p>
+              </>
+            ) : (
+              <div className="text-center py-2">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                  Sign up for a free trial to access the full AI assistant!
+                </p>
+                <a
+                  href="/signup"
+                  className="inline-block px-4 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                 >
-                  <path d="M22 2 11 13" />
-                  <path d="M22 2 15 22l-4-9-9-4z" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5 text-center">
-              TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
-            </p>
+                  Start Free Trial
+                </a>
+              </div>
+            )}
           </div>
         </div>
       )}

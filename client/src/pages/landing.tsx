@@ -3,16 +3,20 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 import {
   CheckCircle, FileText, Users, TrendingUp, Clock, Shield, DollarSign,
   Mic, Video, Calendar, MessageSquare, ClipboardList, BarChart3, Star,
-  Brain, Zap, Lock, ArrowRight
+  Brain, Zap, Lock, ArrowRight, Mail, Phone, Send
 } from "lucide-react";
 import { AuthModal } from "@/components/AuthModal";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const { toast } = useToast();
+  const [contactForm, setContactForm] = useState({ name: "", email: "", message: "" });
+  const [contactLoading, setContactLoading] = useState(false);
 
   // Auto-login for demo mode
   useEffect(() => {
@@ -45,6 +49,31 @@ export default function Landing() {
     }
   };
 
+  const handleContactSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contactForm.name || !contactForm.email || !contactForm.message) return;
+    setContactLoading(true);
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(contactForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send message');
+      toast({ title: "Message sent!", description: "We'll get back to you shortly." });
+      setContactForm({ name: "", email: "", message: "" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send message. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setContactLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Header */}
@@ -60,6 +89,7 @@ export default function Landing() {
             <div className="flex items-center gap-4">
               <a href="#features" className="text-slate-600 hover:text-slate-900 hidden sm:block">Features</a>
               <a href="/pricing" className="text-slate-600 hover:text-slate-900 hidden sm:block">Pricing</a>
+              <a href="#contact" className="text-slate-600 hover:text-slate-900 hidden sm:block">Contact</a>
               <Button onClick={handleLogin} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold">
                 Sign In
               </Button>
@@ -537,6 +567,77 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Contact Us Section */}
+      <section id="contact" className="py-20 bg-white">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold text-slate-900 mb-4">
+              Questions? We're here to help.
+            </h2>
+            <p className="text-lg text-slate-600">
+              Send us a message and we'll get back to you within one business day.
+            </p>
+          </div>
+
+          <form onSubmit={handleContactSubmit} className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <label htmlFor="contact-name" className="block text-sm font-medium text-slate-700 mb-1">
+                  Name
+                </label>
+                <input
+                  id="contact-name"
+                  type="text"
+                  required
+                  value={contactForm.name}
+                  onChange={(e) => setContactForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Your name"
+                />
+              </div>
+              <div>
+                <label htmlFor="contact-email" className="block text-sm font-medium text-slate-700 mb-1">
+                  Email
+                </label>
+                <input
+                  id="contact-email"
+                  type="email"
+                  required
+                  value={contactForm.email}
+                  onChange={(e) => setContactForm(prev => ({ ...prev, email: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="you@example.com"
+                />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="contact-message" className="block text-sm font-medium text-slate-700 mb-1">
+                Message
+              </label>
+              <textarea
+                id="contact-message"
+                required
+                rows={5}
+                value={contactForm.message}
+                onChange={(e) => setContactForm(prev => ({ ...prev, message: e.target.value }))}
+                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-vertical"
+                placeholder="How can we help you?"
+              />
+            </div>
+            <div className="text-center">
+              <Button
+                type="submit"
+                disabled={contactLoading}
+                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+              >
+                {contactLoading ? 'Sending...' : 'Send Message'}
+                {!contactLoading && <Send className="ml-2 w-4 h-4" />}
+              </Button>
+            </div>
+          </form>
+        </div>
+      </section>
+
       {/* Footer */}
       <footer className="bg-slate-900 text-slate-400 py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -551,6 +652,14 @@ export default function Landing() {
               <p className="text-slate-400 mb-4">
                 The complete practice management and billing platform for therapy practices.
               </p>
+              <div className="space-y-2">
+                <a href="mailto:daniel@therapybillai.com" className="flex items-center gap-2 hover:text-white transition-colors text-sm">
+                  <Mail className="w-4 h-4" /> daniel@therapybillai.com
+                </a>
+                <a href="tel:+12014240779" className="flex items-center gap-2 hover:text-white transition-colors text-sm">
+                  <Phone className="w-4 h-4" /> (201) 424-0779
+                </a>
+              </div>
             </div>
 
             <div>
@@ -560,32 +669,32 @@ export default function Landing() {
                 <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
                 <li><a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a></li>
                 <li><a href="#practice-management" className="hover:text-white transition-colors">Practice Management</a></li>
-                <li><a href="#compliance" className="hover:text-white transition-colors">Compliance</a></li>
+                <li><a href="#contact" className="hover:text-white transition-colors">Contact Us</a></li>
               </ul>
             </div>
 
             <div>
               <h3 className="text-white font-semibold mb-6">Support</h3>
               <ul className="space-y-3">
-                <li><a href="mailto:support@therapybill.ai" className="hover:text-white transition-colors">Contact Support</a></li>
-                <li><a href="mailto:sales@therapybill.ai" className="hover:text-white transition-colors">Contact Sales</a></li>
-                <li><a href="mailto:support@therapybill.ai" className="hover:text-white transition-colors">Request a Demo</a></li>
+                <li><a href="mailto:daniel@therapybillai.com" className="hover:text-white transition-colors">Contact Support</a></li>
+                <li><a href="mailto:daniel@therapybillai.com" className="hover:text-white transition-colors">Contact Sales</a></li>
+                <li><a href="#contact" className="hover:text-white transition-colors">Request a Demo</a></li>
               </ul>
             </div>
 
             <div>
               <h3 className="text-white font-semibold mb-6">Legal</h3>
               <ul className="space-y-3">
-                <li><span className="cursor-default" title="Coming soon">Privacy Policy</span></li>
-                <li><span className="cursor-default" title="Coming soon">Terms of Service</span></li>
-                <li><span className="cursor-default" title="Coming soon">HIPAA Compliance</span></li>
-                <li><a href="mailto:compliance@therapybill.ai" className="hover:text-white transition-colors">BAA Request</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Privacy Policy</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Terms of Service</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">HIPAA Compliance</a></li>
+                <li><a href="mailto:daniel@therapybillai.com" className="hover:text-white transition-colors">BAA Request</a></li>
               </ul>
             </div>
           </div>
 
           <div className="border-t border-slate-800 mt-12 pt-8 flex flex-col md:flex-row justify-between items-center">
-            <p className="text-slate-400">© 2026 TherapyBill AI. All rights reserved.</p>
+            <p className="text-slate-400">&copy; 2026 TherapyBill AI. All rights reserved.</p>
             <div className="flex items-center space-x-6 mt-4 md:mt-0">
               <span className="text-sm">HIPAA Compliant</span>
               <span className="text-sm">SOC 2 Certified</span>
