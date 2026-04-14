@@ -178,6 +178,7 @@ export default function SoapNotes() {
   const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "" });
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
   const [duration, setDuration] = useState(60); // Default to 1 hour sessions
+  const [sessionType, setSessionType] = useState("treatment"); // treatment, initial_eval, re_eval
   const [location, setLocation] = useState("Sensory Gym");
   const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // $289 per 15-min unit
 
@@ -630,6 +631,7 @@ export default function SoapNotes() {
         mood: mood || "Cooperative",
         caregiverReport: caregiverReport || undefined,
         duration,
+        sessionType,
         location,
         assessment: {
           performance: assessment.performance || "Stable",
@@ -1052,6 +1054,24 @@ export default function SoapNotes() {
                         <SelectItem value="45">45 min (3 units)</SelectItem>
                         <SelectItem value="60">60 min (4 units)</SelectItem>
                         <SelectItem value="90">90 min (6 units)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Session Type</Label>
+                    <Select value={sessionType} onValueChange={(v) => {
+                      setSessionType(v);
+                      if (v === 'initial_eval') setRatePerUnit(550);
+                      else if (v === 're_eval') setRatePerUnit(400);
+                      else setRatePerUnit(DEFAULT_UNIT_RATE);
+                    }}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="treatment">Treatment Session</SelectItem>
+                        <SelectItem value="initial_eval">Initial Evaluation ($550)</SelectItem>
+                        <SelectItem value="re_eval">Re-Evaluation ($400)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
