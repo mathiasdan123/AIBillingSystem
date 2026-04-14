@@ -100,9 +100,9 @@ describe('MFA Required Middleware', () => {
     expect(isMfaSessionValid(session, 'user-1')).toBe(true);
   });
 
-  it('should return false if MFA session has expired (>15 minutes)', () => {
+  it('should return false if MFA session has expired (>8 hours)', () => {
     const session = {
-      mfaVerifiedAt: Date.now() - (16 * 60 * 1000), // 16 minutes ago
+      mfaVerifiedAt: Date.now() - (9 * 60 * 60 * 1000), // 9 hours ago
       mfaUserId: 'user-1',
     };
     expect(isMfaSessionValid(session, 'user-1')).toBe(false);
@@ -130,9 +130,9 @@ describe('MFA Required Middleware', () => {
   it('should return positive time when session is still valid', () => {
     const session = { mfaVerifiedAt: Date.now() - (5 * 60 * 1000) }; // 5 min ago
     const remaining = getMfaSessionTimeRemaining(session);
-    // Should be roughly 10 minutes (600,000ms) give or take
-    expect(remaining).toBeGreaterThan(9 * 60 * 1000);
-    expect(remaining).toBeLessThanOrEqual(10 * 60 * 1000);
+    // Should be roughly 7h55m give or take (8h timeout - 5min elapsed)
+    expect(remaining).toBeGreaterThan(7 * 60 * 60 * 1000);
+    expect(remaining).toBeLessThanOrEqual(8 * 60 * 60 * 1000);
   });
 
   // ---- requireMfaSetup middleware ----
@@ -238,7 +238,7 @@ describe('MFA Required Middleware', () => {
   // ---- MFA_CONFIG ----
 
   it('should export correct MFA session timeout config', () => {
-    expect(MFA_CONFIG.sessionTimeout).toBe(15 * 60 * 1000);
-    expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(15);
+    expect(MFA_CONFIG.sessionTimeout).toBe(8 * 60 * 60 * 1000);
+    expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(480);
   });
 });

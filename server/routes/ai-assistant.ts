@@ -1983,15 +1983,34 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Track which model is actually used (may upgrade mid-conversation)
     let currentModel = selectedModel;
 
-    // First API call - may include tool use
-    let response = await client.messages.create({
-      model: currentModel,
-      system: SYSTEM_PROMPT,
-      messages,
-      tools: assistantTools,
-      max_tokens: 1500,
-      temperature: 0.4,
-    });
+    // First API call - may include tool use (with fallback to Sonnet if Haiku fails)
+    let response: any;
+    try {
+      response = await client.messages.create({
+        model: currentModel,
+        system: SYSTEM_PROMPT,
+        messages,
+        tools: assistantTools,
+        max_tokens: 1500,
+        temperature: 0.4,
+      });
+    } catch (modelErr: any) {
+      // If Haiku fails (404, overloaded, etc.), retry with Sonnet
+      if (currentModel === MODEL_HAIKU) {
+        logger.warn('Haiku failed, falling back to Sonnet', { error: modelErr.message });
+        currentModel = MODEL_SONNET;
+        response = await client.messages.create({
+          model: currentModel,
+          system: SYSTEM_PROMPT,
+          messages,
+          tools: assistantTools,
+          max_tokens: 1500,
+          temperature: 0.4,
+        });
+      } else {
+        throw modelErr;
+      }
+    }
 
     // Handle tool use (up to 3 rounds to avoid infinite loops)
     let toolRounds = 0;
