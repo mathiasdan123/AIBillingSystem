@@ -26,6 +26,8 @@ import { getDb } from '../db';
 import { users, appointments, claims, treatmentSessions, soapNotes } from '@shared/schema';
 import { eq, and, gte, lte, sql, count, sum, avg } from 'drizzle-orm';
 import { cache, CacheKeys, CacheTTL } from '../services/cacheService';
+import { generateDailyReport, generateWeeklyReport } from '../services/insightsReportService';
+import { sendEmail, isSmtpConfigured } from '../services/emailService';
 
 const router = Router();
 
@@ -645,5 +647,190 @@ router.get('/therapist-productivity/trends', isAuthenticated, async (req: any, r
     res.status(500).json({ message: 'Failed to fetch therapist productivity trends' });
   }
 });
+
+// ==================== INSIGHT REPORTS ====================
+
+// Daily insights report
+router.get('/reports/daily-insights', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const dateParam = req.query.date as string | undefined;
+    const reportDate = dateParam ? new Date(dateParam) : undefined;
+
+    if (dateParam && isNaN(new Date(dateParam).getTime())) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD.' });
+    }
+
+    const report = await generateDailyReport(practiceId, reportDate);
+    res.json(report);
+  } catch (error) {
+    logger.error('Error generating daily insights report', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to generate daily insights report' });
+  }
+});
+
+// Weekly insights report
+router.get('/reports/weekly-insights', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const weekOfParam = req.query.weekOf as string | undefined;
+    const weekOf = weekOfParam ? new Date(weekOfParam) : undefined;
+
+    if (weekOfParam && isNaN(new Date(weekOfParam).getTime())) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD.' });
+    }
+
+    const report = await generateWeeklyReport(practiceId, weekOf);
+    res.json(report);
+  } catch (error) {
+    logger.error('Error generating weekly insights report', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to generate weekly insights report' });
+  }
+});
+
+// Email daily insights report to practice admins
+router.post('/reports/daily-insights/email', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+
+    if (!isSmtpConfigured()) {
+      return res.status(503).json({ message: 'Email service is not configured. Set SMTP environment variables.' });
+    }
+
+    const report = await generateDailyReport(practiceId);
+
+    // Get admin emails for this practice
+    const admins = await storage.getAdminsByPractice(practiceId);
+    const recipients = admins.map((a: any) => a.email).filter(Boolean);
+
+    if (recipients.length === 0) {
+      return res.status(400).json({ message: 'No admin email addresses found for this practice.' });
+    }
+
+    const subject = `Daily Insights Report - ${report.practiceName} - ${report.reportDate}`;
+    const html = buildDailyInsightsEmailHtml(report);
+    const text = buildDailyInsightsEmailText(report);
+
+    let sentCount = 0;
+    for (const email of recipients) {
+      const result = await sendEmail({
+        to: email,
+        subject,
+        html,
+        text,
+        fromName: 'TherapyBill AI Reports',
+      });
+      if (result.success) sentCount++;
+    }
+
+    res.json({
+      success: true,
+      message: `Report emailed to ${sentCount} recipient(s).`,
+      recipients: sentCount,
+    });
+  } catch (error) {
+    logger.error('Error emailing daily insights report', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to email daily insights report' });
+  }
+});
+
+// ==================== EMAIL TEMPLATE HELPERS ====================
+
+function buildDailyInsightsEmailHtml(report: ReturnType<typeof generateDailyReport> extends Promise<infer T> ? T : never): string {
+  const actionItemsHtml = report.actionItems
+    .map(
+      (item) =>
+        `<tr>
+          <td style="padding:6px 12px;border-bottom:1px solid #eee;">
+            <span style="color:${item.priority === 'high' ? '#dc2626' : item.priority === 'medium' ? '#d97706' : '#059669'};font-weight:bold;text-transform:uppercase;font-size:11px;">${item.priority}</span>
+          </td>
+          <td style="padding:6px 12px;border-bottom:1px solid #eee;font-size:13px;">${item.category}</td>
+          <td style="padding:6px 12px;border-bottom:1px solid #eee;font-size:13px;">${item.description}</td>
+        </tr>`,
+    )
+    .join('');
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a;">
+      <h2 style="color:#1e40af;">Daily Insights Report</h2>
+      <p style="color:#6b7280;font-size:14px;">${report.practiceName} &mdash; ${report.reportDate}</p>
+
+      <h3 style="margin-top:24px;color:#374151;">Claims Summary</h3>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+        <tr>
+          <td style="padding:8px;background:#f0f9ff;text-align:center;border:1px solid #e5e7eb;"><strong>${report.claimsSummary.newToday}</strong><br/><small>New</small></td>
+          <td style="padding:8px;background:#fef3c7;text-align:center;border:1px solid #e5e7eb;"><strong>${report.claimsSummary.submittedToday}</strong><br/><small>Submitted</small></td>
+          <td style="padding:8px;background:#d1fae5;text-align:center;border:1px solid #e5e7eb;"><strong>${report.claimsSummary.paidToday}</strong><br/><small>Paid</small></td>
+          <td style="padding:8px;background:#fee2e2;text-align:center;border:1px solid #e5e7eb;"><strong>${report.claimsSummary.deniedToday}</strong><br/><small>Denied</small></td>
+        </tr>
+      </table>
+
+      <p><strong>Revenue Collected:</strong> $${report.revenueCollectedToday.toFixed(2)}</p>
+      <p><strong>Trailing 7-Day Denial Rate:</strong> ${report.denialRateTrailing7Day}%</p>
+
+      <h3 style="margin-top:24px;color:#374151;">Patient Volume</h3>
+      <p>Completed: ${report.patientVolume.completed} | No-Shows: ${report.patientVolume.noShows} | Cancellations: ${report.patientVolume.cancellations}</p>
+
+      <h3 style="margin-top:24px;color:#374151;">Aging Claims</h3>
+      <p>30+ days: ${report.agingClaims.over30.count} ($${report.agingClaims.over30.amount.toFixed(2)}) |
+         60+ days: ${report.agingClaims.over60.count} ($${report.agingClaims.over60.amount.toFixed(2)}) |
+         90+ days: ${report.agingClaims.over90.count} ($${report.agingClaims.over90.amount.toFixed(2)})</p>
+
+      ${report.actionItems.length > 0 ? `
+        <h3 style="margin-top:24px;color:#374151;">Action Items</h3>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f9fafb;">
+              <th style="text-align:left;padding:6px 12px;border-bottom:2px solid #e5e7eb;font-size:12px;">Priority</th>
+              <th style="text-align:left;padding:6px 12px;border-bottom:2px solid #e5e7eb;font-size:12px;">Category</th>
+              <th style="text-align:left;padding:6px 12px;border-bottom:2px solid #e5e7eb;font-size:12px;">Description</th>
+            </tr>
+          </thead>
+          <tbody>${actionItemsHtml}</tbody>
+        </table>
+      ` : ''}
+
+      <p style="margin-top:24px;color:#9ca3af;font-size:12px;">Generated by TherapyBill AI at ${new Date().toLocaleString()}</p>
+    </div>
+  `;
+}
+
+function buildDailyInsightsEmailText(report: ReturnType<typeof generateDailyReport> extends Promise<infer T> ? T : never): string {
+  const lines: string[] = [
+    `Daily Insights Report - ${report.practiceName} - ${report.reportDate}`,
+    '',
+    'CLAIMS SUMMARY',
+    `  New: ${report.claimsSummary.newToday}  Submitted: ${report.claimsSummary.submittedToday}  Paid: ${report.claimsSummary.paidToday}  Denied: ${report.claimsSummary.deniedToday}`,
+    '',
+    `Revenue Collected: $${report.revenueCollectedToday.toFixed(2)}`,
+    `Trailing 7-Day Denial Rate: ${report.denialRateTrailing7Day}%`,
+    '',
+    'PATIENT VOLUME',
+    `  Completed: ${report.patientVolume.completed}  No-Shows: ${report.patientVolume.noShows}  Cancellations: ${report.patientVolume.cancellations}`,
+    '',
+    'AGING CLAIMS',
+    `  30+ days: ${report.agingClaims.over30.count} ($${report.agingClaims.over30.amount.toFixed(2)})`,
+    `  60+ days: ${report.agingClaims.over60.count} ($${report.agingClaims.over60.amount.toFixed(2)})`,
+    `  90+ days: ${report.agingClaims.over90.count} ($${report.agingClaims.over90.amount.toFixed(2)})`,
+  ];
+
+  if (report.actionItems.length > 0) {
+    lines.push('', 'ACTION ITEMS');
+    report.actionItems.forEach((item, i) => {
+      lines.push(`  ${i + 1}. [${item.priority.toUpperCase()}] ${item.category}: ${item.description}`);
+    });
+  }
+
+  lines.push('', `Generated by TherapyBill AI at ${new Date().toLocaleString()}`);
+  return lines.join('\n');
+}
+
+export { buildDailyInsightsEmailHtml, buildDailyInsightsEmailText };
 
 export default router;

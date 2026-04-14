@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { apiRequest } from "@/lib/queryClient";
+import { useMutation } from "@tanstack/react-query";
 import DashboardStats from "@/components/DashboardStats";
 import PatientArAgingSummary from "@/components/PatientArAgingSummary";
-import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles, Upload } from "lucide-react";
+import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles, Upload, BarChart3, Mail, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
 
@@ -52,6 +54,24 @@ export default function Dashboard() {
     queryKey: ['/api/reports/denied-claims', { period: 'today' }],
     enabled: isAuthenticated,
   }) as any;
+
+  const { data: dailyInsights, isLoading: insightsLoading } = useQuery({
+    queryKey: ['/api/analytics/reports/daily-insights'],
+    enabled: isAuthenticated,
+  }) as any;
+
+  const emailInsightsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/analytics/reports/daily-insights/email');
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: 'Report Emailed', description: 'Daily insights report sent to practice admins.' });
+    },
+    onError: () => {
+      toast({ title: 'Email Failed', description: 'Could not send report. Check SMTP settings.', variant: 'destructive' });
+    },
+  });
 
   const { data: onboardingStatus } = useQuery<{ step: number; completed: boolean }>({
     queryKey: ['/api/onboarding/status'],
@@ -217,6 +237,80 @@ export default function Dashboard() {
                     {t('dashboard.moreDeniedClaims', { count: deniedClaimsReport.claims.length - 3 })}
                   </p>
                 )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Daily Insights Widget */}
+      {dailyInsights && (
+        <Card className="mt-4 md:mt-6 border-blue-100 dark:border-blue-900">
+          <CardHeader className="pb-3 px-4 md:px-6">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center space-x-2 min-w-0">
+                <TrendingUp className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                <CardTitle className="text-sm md:text-base">Daily Insights</CardTitle>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs h-7 px-2"
+                  onClick={() => emailInsightsMutation.mutate()}
+                  disabled={emailInsightsMutation.isPending}
+                >
+                  <Mail className="w-3.5 h-3.5 mr-1" />
+                  {emailInsightsMutation.isPending ? 'Sending...' : 'Email'}
+                </Button>
+                <Link href="/insights-report">
+                  <Button size="sm" variant="outline" className="text-xs h-7 px-2">
+                    View Full Report
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="px-4 md:px-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <div className="text-center p-2.5 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-100 dark:border-blue-900">
+                <p className="text-lg md:text-xl font-bold text-blue-700 dark:text-blue-400">{dailyInsights.claimsSummary?.newToday || 0}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">Claims Today</p>
+              </div>
+              <div className="text-center p-2.5 bg-green-50 dark:bg-green-950 rounded-lg border border-green-100 dark:border-green-900">
+                <p className="text-lg md:text-xl font-bold text-green-700 dark:text-green-400">
+                  ${(dailyInsights.revenueCollectedToday || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">Revenue</p>
+              </div>
+              <div className="text-center p-2.5 bg-purple-50 dark:bg-purple-950 rounded-lg border border-purple-100 dark:border-purple-900">
+                <p className="text-lg md:text-xl font-bold text-purple-700 dark:text-purple-400">{dailyInsights.patientVolume?.completed || 0}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">Completed Appts</p>
+              </div>
+              <div className="text-center p-2.5 bg-amber-50 dark:bg-amber-950 rounded-lg border border-amber-100 dark:border-amber-900">
+                <p className={`text-lg md:text-xl font-bold ${(dailyInsights.denialRateTrailing7Day || 0) > 10 ? 'text-red-600' : 'text-amber-700 dark:text-amber-400'}`}>
+                  {dailyInsights.denialRateTrailing7Day || 0}%
+                </p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">7-Day Denial Rate</p>
+              </div>
+            </div>
+
+            {/* Top 3 Action Items */}
+            {dailyInsights.actionItems && dailyInsights.actionItems.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Top Action Items</p>
+                {dailyInsights.actionItems.slice(0, 3).map((item: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2 p-2 rounded bg-muted/50 text-sm">
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 mt-0.5 ${
+                      item.priority === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' :
+                      item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
+                      'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                    }`}>
+                      {item.priority.toUpperCase()}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{item.description}</span>
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>

@@ -63,6 +63,7 @@ const NotificationSettings = lazy(() => import("@/pages/notification-settings"))
 const BillingTasks = lazy(() => import("@/pages/billing-tasks"));
 const Benchmarking = lazy(() => import("@/pages/benchmarking"));
 const DailyReport = lazy(() => import("@/pages/daily-report"));
+const InsightsReport = lazy(() => import("@/pages/insights-report"));
 const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 const Credentialing = lazy(() => import("@/pages/credentialing"));
 
@@ -244,6 +245,7 @@ function Router() {
               {isAdmin && <Route path="/data-export" component={DataExport} />}
               {isAdmin && <Route path="/data-import" component={DataImport} />}
               {isAdmin && <Route path="/daily-report" component={DailyReport} />}
+              <Route path="/insights-report" component={InsightsReport} />
               {isAdmin && <Route path="/credentialing" component={Credentialing} />}
               <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/mcp-setup" component={McpSetup} />

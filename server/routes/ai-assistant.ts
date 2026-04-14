@@ -563,6 +563,18 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'verify_benefits',
+    description: 'Run a comprehensive benefits verification for a patient. Returns detailed coverage information including plan status, plan type (HMO/PPO/EPO), therapy-specific visit limits (OT, PT, ST, Mental Health), prior authorization requirements, copay, coinsurance, deductible progress (individual and family), and out-of-pocket maximum progress. Use this when a user asks to check benefits, verify coverage details, or wants to know visit limits for a patient.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to verify benefits for' },
+        patientName: { type: 'string' as const, description: 'Patient name to search for (if ID not known)' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'generate_soap_note',
     description: 'Generate a SOAP note with billing codes for a therapy session. Use when a therapist describes a session and wants documentation generated. Collects session details and produces subjective, objective, assessment, and plan sections with CPT code recommendations.',
     input_schema: {
@@ -982,6 +994,123 @@ async function executeTool(
           coinsurance: result.coinsurance,
           coverageActive: result.status === 'active',
           errors: result.errors,
+        });
+      }
+
+      case 'verify_benefits': {
+        let patientId = args.patientId as number | undefined;
+
+        // If name provided, search for patient
+        if (!patientId && args.patientName) {
+          const patients = await storage.getPatients(practiceId);
+          const match = patients.find((p: any) =>
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes((args.patientName as string).toLowerCase()),
+          );
+          if (!match) return JSON.stringify({ error: `Patient "${args.patientName}" not found` });
+          patientId = match.id;
+        }
+
+        if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found' });
+
+        const { getDetailedBenefits } = await import('../services/stediService');
+        const benefits = await getDetailedBenefits(patientId, practiceId);
+
+        // Build a human-readable summary
+        const lines: string[] = [];
+        lines.push(`Benefits Verification for ${patient.firstName} ${patient.lastName}`);
+        lines.push(`Insurance: ${patient.insuranceProvider || 'Unknown'}`);
+        lines.push(`Plan Status: ${benefits.planStatus.toUpperCase()}`);
+        if (benefits.planName) lines.push(`Plan: ${benefits.planName}`);
+        if (benefits.planType) lines.push(`Plan Type: ${benefits.planType}`);
+        if (benefits.effectiveDate) lines.push(`Effective: ${benefits.effectiveDate}`);
+        if (benefits.terminationDate) lines.push(`Terminates: ${benefits.terminationDate}`);
+
+        lines.push('');
+        lines.push('--- Financial Summary ---');
+        if (benefits.copay != null) lines.push(`Copay: $${benefits.copay}`);
+        if (benefits.coinsurance != null) lines.push(`Coinsurance: ${benefits.coinsurance}%`);
+        if (benefits.deductible?.individual) {
+          const met = benefits.deductible.individualMet || 0;
+          lines.push(`Individual Deductible: $${met} / $${benefits.deductible.individual} met`);
+        }
+        if (benefits.deductible?.family) {
+          const met = benefits.deductible.familyMet || 0;
+          lines.push(`Family Deductible: $${met} / $${benefits.deductible.family} met`);
+        }
+        if (benefits.outOfPocketMax?.individual) {
+          const met = benefits.outOfPocketMax.individualMet || 0;
+          lines.push(`Individual OOP Max: $${met} / $${benefits.outOfPocketMax.individual} met`);
+        }
+        if (benefits.outOfPocketMax?.family) {
+          const met = benefits.outOfPocketMax.familyMet || 0;
+          lines.push(`Family OOP Max: $${met} / $${benefits.outOfPocketMax.family} met`);
+        }
+
+        if (benefits.therapyVisits) {
+          lines.push('');
+          lines.push('--- Therapy Visit Limits ---');
+          const visitTypes: Array<{ key: string; label: string }> = [
+            { key: 'ot', label: 'Occupational Therapy (OT)' },
+            { key: 'pt', label: 'Physical Therapy (PT)' },
+            { key: 'st', label: 'Speech Therapy (ST)' },
+            { key: 'mentalHealth', label: 'Mental Health' },
+            { key: 'combined', label: 'Combined Therapy' },
+          ];
+          for (const { key, label } of visitTypes) {
+            const visits = (benefits.therapyVisits as any)[key];
+            if (visits?.allowed) {
+              const used = visits.used || 0;
+              const remaining = visits.remaining ?? (visits.allowed - used);
+              lines.push(`${label}: ${used} used / ${visits.allowed} allowed (${remaining} remaining)`);
+            }
+          }
+        }
+
+        lines.push('');
+        lines.push(`Prior Authorization Required: ${benefits.authRequired ? 'YES' : 'No'}`);
+        if (benefits.authNotes) lines.push(`Auth Notes: ${benefits.authNotes}`);
+
+        if (benefits.errors && benefits.errors.length > 0) {
+          lines.push('');
+          lines.push('Errors: ' + benefits.errors.join('; '));
+        }
+
+        // Also store the check
+        try {
+          await storage.createEligibilityCheck({
+            patientId,
+            practiceId,
+            insuranceId: null,
+            status: benefits.planStatus,
+            coverageType: benefits.planType || null,
+            effectiveDate: benefits.effectiveDate || null,
+            terminationDate: benefits.terminationDate || null,
+            copay: benefits.copay?.toString() || null,
+            deductible: benefits.deductible?.individual?.toString() || null,
+            deductibleMet: benefits.deductible?.individualMet?.toString() || null,
+            outOfPocketMax: benefits.outOfPocketMax?.individual?.toString() || null,
+            outOfPocketMet: benefits.outOfPocketMax?.individualMet?.toString() || null,
+            coinsurance: benefits.coinsurance != null ? Math.round(benefits.coinsurance) : null,
+            visitsAllowed: benefits.therapyVisits?.combined?.allowed || benefits.therapyVisits?.ot?.allowed || null,
+            visitsUsed: benefits.therapyVisits?.combined?.used || benefits.therapyVisits?.ot?.used || null,
+            authRequired: benefits.authRequired,
+            rawResponse: benefits,
+            benefitsDetail: benefits,
+          });
+        } catch (storeErr) {
+          // Non-fatal: log but don't fail
+          logger.warn('Failed to store benefits verification result', {
+            patientId,
+            error: storeErr instanceof Error ? storeErr.message : String(storeErr),
+          });
+        }
+
+        return JSON.stringify({
+          summary: lines.join('\n'),
+          benefits,
         });
       }
 

@@ -472,6 +472,66 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
   }
 });
 
+// ==================== DETAILED BENEFITS VERIFICATION ====================
+
+router.post('/insurance/detailed-benefits', isAuthenticated, async (req: any, res) => {
+  try {
+    const { patientId } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({ message: 'Patient ID is required' });
+    }
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const patient = await storage.getPatient(patientId);
+
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    const { getDetailedBenefits } = await import('../services/stediService');
+    const benefits = await getDetailedBenefits(patientId, practiceId);
+
+    // Store the result in eligibility_checks with benefitsDetail
+    const savedCheck = await storage.createEligibilityCheck({
+      patientId,
+      practiceId,
+      insuranceId: null,
+      status: benefits.planStatus,
+      coverageType: benefits.planType || null,
+      effectiveDate: benefits.effectiveDate || null,
+      terminationDate: benefits.terminationDate || null,
+      copay: benefits.copay?.toString() || null,
+      deductible: benefits.deductible?.individual?.toString() || null,
+      deductibleMet: benefits.deductible?.individualMet?.toString() || null,
+      outOfPocketMax: benefits.outOfPocketMax?.individual?.toString() || null,
+      outOfPocketMet: benefits.outOfPocketMax?.individualMet?.toString() || null,
+      coinsurance: benefits.coinsurance != null ? Math.round(benefits.coinsurance) : null,
+      visitsAllowed: benefits.therapyVisits?.combined?.allowed || benefits.therapyVisits?.ot?.allowed || null,
+      visitsUsed: benefits.therapyVisits?.combined?.used || benefits.therapyVisits?.ot?.used || null,
+      authRequired: benefits.authRequired,
+      rawResponse: benefits,
+      benefitsDetail: benefits,
+    });
+
+    res.json({
+      success: true,
+      benefits,
+      eligibilityCheck: savedCheck,
+      patient: {
+        id: patient.id,
+        name: `${patient.firstName} ${patient.lastName}`,
+        insurance: patient.insuranceProvider,
+        memberId: patient.insuranceId,
+        groupNumber: patient.groupNumber,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Error getting detailed benefits', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to get detailed benefits' });
+  }
+});
+
 // ==================== ELIGIBILITY ALERTS ====================
 
 router.get('/eligibility-alerts', isAuthenticated, async (req: any, res) => {

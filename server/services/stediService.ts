@@ -740,11 +740,363 @@ export async function resolvePayerId(
   };
 }
 
+/**
+ * Detailed Benefits Verification
+ *
+ * Enhanced eligibility check that returns therapy-specific visit limits,
+ * complete financial details, and plan classification.
+ */
+
+export interface DetailedBenefits {
+  // Plan status
+  planStatus: 'active' | 'inactive' | 'unknown';
+  planName?: string;
+  planNumber?: string;
+  groupNumber?: string;
+  planType?: string; // HMO, PPO, EPO, POS, self-funded, fully-funded, etc.
+
+  // Effective dates
+  effectiveDate?: string;
+  terminationDate?: string;
+
+  // Therapy-specific visit limits
+  therapyVisits?: {
+    ot?: { allowed?: number; used?: number; remaining?: number };
+    pt?: { allowed?: number; used?: number; remaining?: number };
+    st?: { allowed?: number; used?: number; remaining?: number };
+    mentalHealth?: { allowed?: number; used?: number; remaining?: number };
+    combined?: { allowed?: number; used?: number; remaining?: number };
+  };
+
+  // Prior authorization
+  authRequired: boolean;
+  authNotes?: string;
+
+  // Financial details
+  copay?: number;
+  specialistCopay?: number;
+  coinsurance?: number; // percentage
+  deductible?: {
+    individual?: number;
+    individualMet?: number;
+    family?: number;
+    familyMet?: number;
+  };
+  outOfPocketMax?: {
+    individual?: number;
+    individualMet?: number;
+    family?: number;
+    familyMet?: number;
+  };
+
+  // Coverage details from raw response
+  coverageDetails?: Array<{
+    serviceType: string;
+    serviceTypeCode?: string;
+    coverage: string;
+    inNetwork: boolean;
+    amount?: number;
+    percent?: number;
+    quantity?: number;
+    quantityQualifier?: string;
+    limitations?: string;
+  }>;
+
+  // Meta
+  checkedAt: string;
+  source: 'stedi' | 'mock' | 'mock_fallback';
+  errors?: string[];
+}
+
+/**
+ * Get detailed benefits for a patient, including therapy-specific visit limits.
+ * This performs a real-time eligibility check and parses the full 271 response.
+ */
+export async function getDetailedBenefits(
+  patientId: number,
+  practiceId: number,
+): Promise<DetailedBenefits> {
+  const { storage } = await import('../storage');
+  const patient = await storage.getPatient(patientId);
+  if (!patient) {
+    throw new Error('Patient not found');
+  }
+
+  const practice = await storage.getPractice(practiceId);
+  if (!practice) {
+    throw new Error('Practice not found');
+  }
+
+  // Resolve payer ID
+  const insuranceName = (patient.insuranceProvider || '').toLowerCase();
+  const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
+
+  // Run eligibility check with multiple service type codes for therapy-specific data
+  // 30 = Health Benefit Plan Coverage
+  // A7 = Occupational Therapy
+  // A8 = Physical Therapy
+  // A9 = Speech Therapy
+  // MH = Mental Health
+  const serviceTypeCodes = ['30', 'A7', 'A8', 'A9', 'MH'];
+
+  let stediKey;
+  try {
+    stediKey = await getStediApiKeyForPractice(practiceId);
+  } catch {
+    // Fall through to global key
+  }
+
+  const payload = {
+    controlNumber: generateControlNumber(),
+    tradingPartnerServiceId: payerId,
+    provider: {
+      organizationName: practice.name || undefined,
+      npi: practice.npi || '',
+    },
+    subscriber: {
+      memberId: patient.insuranceId || patient.policyNumber || '',
+      firstName: patient.firstName,
+      lastName: patient.lastName,
+      dateOfBirth: patient.dateOfBirth || '',
+    },
+    encounter: {
+      serviceTypeCodes,
+      dateOfService: new Date().toISOString().split('T')[0],
+    },
+  };
+
+  try {
+    const response = await fetch(`${STEDI_API_BASE}/eligibility-checks`, {
+      method: 'POST',
+      headers: getHeaders(stediKey?.apiKey),
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Stedi detailed benefits error:', error);
+      return {
+        planStatus: 'unknown',
+        authRequired: false,
+        checkedAt: new Date().toISOString(),
+        source: 'stedi',
+        errors: [error.message || 'Failed to check eligibility'],
+      };
+    }
+
+    const data = await response.json();
+    return parseDetailedBenefitsResponse(data);
+  } catch (error: any) {
+    console.error('Stedi detailed benefits error:', error);
+    return {
+      planStatus: 'unknown',
+      authRequired: false,
+      checkedAt: new Date().toISOString(),
+      source: 'stedi',
+      errors: [error.message || 'Network error checking eligibility'],
+    };
+  }
+}
+
+/**
+ * Parse full 271 response into DetailedBenefits with therapy-specific data.
+ */
+function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
+  const result: DetailedBenefits = {
+    planStatus: 'unknown',
+    authRequired: false,
+    checkedAt: new Date().toISOString(),
+    source: 'stedi',
+  };
+
+  try {
+    const benefitsInfo = data.benefitsInformation || [];
+
+    // Determine plan status
+    const activeBenefit = benefitsInfo.find((b: any) =>
+      b.code === '1' || b.informationCode === 'A'
+    );
+    if (activeBenefit) {
+      result.planStatus = 'active';
+    } else {
+      const inactiveBenefit = benefitsInfo.find((b: any) =>
+        b.code === '6' || b.informationCode === 'I'
+      );
+      result.planStatus = inactiveBenefit ? 'inactive' : 'unknown';
+    }
+
+    // Plan info
+    const planInfo = data.planInformation || {};
+    result.planName = planInfo.planName || data.planName;
+    result.planNumber = planInfo.planNumber || data.planNumber;
+    result.groupNumber = planInfo.groupNumber || data.groupNumber;
+
+    // Plan type classification
+    const planDesc = (result.planName || '').toLowerCase();
+    if (planDesc.includes('hmo')) result.planType = 'HMO';
+    else if (planDesc.includes('epo')) result.planType = 'EPO';
+    else if (planDesc.includes('pos')) result.planType = 'POS';
+    else if (planDesc.includes('ppo')) result.planType = 'PPO';
+    else if (planDesc.includes('hdhp') || planDesc.includes('high deductible')) result.planType = 'HDHP';
+    else if (planDesc.includes('medicaid')) result.planType = 'Medicaid';
+    else if (planDesc.includes('medicare')) result.planType = 'Medicare';
+    else result.planType = data.coverageType || undefined;
+
+    // Effective dates
+    result.effectiveDate = data.planDateInformation?.planBegin;
+    result.terminationDate = data.planDateInformation?.planEnd;
+
+    // Service type code to therapy type mapping
+    const serviceTypeToTherapy: Record<string, keyof NonNullable<DetailedBenefits['therapyVisits']>> = {
+      'A7': 'ot', 'OT': 'ot',
+      'A8': 'pt', 'PT': 'pt',
+      'A9': 'st', 'ST': 'st',
+      'MH': 'mentalHealth',
+    };
+
+    // Initialize therapy visits
+    const therapyVisits: DetailedBenefits['therapyVisits'] = {};
+
+    // Parse copay, deductible, OOP, coinsurance, visits, auth
+    const deductible: DetailedBenefits['deductible'] = {};
+    const outOfPocketMax: DetailedBenefits['outOfPocketMax'] = {};
+    const coverageDetails: DetailedBenefits['coverageDetails'] = [];
+
+    for (const benefit of benefitsInfo) {
+      const code = benefit.code;
+      const amount = parseFloat(benefit.amount || benefit.benefitAmount || '0');
+      const percent = parseFloat(benefit.percent || benefit.benefitPercent || '0');
+      const serviceTypeCode = benefit.serviceTypeCode || benefit.serviceType || '';
+      const inNetwork = benefit.inPlanNetworkIndicator !== 'N';
+      const coverageLevel = benefit.coverageLevelCode || '';
+
+      // Only process in-network benefits for primary display
+      if (!inNetwork) continue;
+
+      // Copay
+      if (code === 'B' && amount > 0) {
+        const therapyKey = serviceTypeToTherapy[serviceTypeCode];
+        if (serviceTypeCode === '98' || serviceTypeCode === '30' || !serviceTypeCode) {
+          result.copay = amount;
+        }
+        if (serviceTypeCode === 'AL' || serviceTypeCode === '98') {
+          result.specialistCopay = amount;
+        }
+      }
+
+      // Co-Insurance
+      if (code === 'A' && percent > 0) {
+        result.coinsurance = percent;
+      }
+
+      // Deductible
+      if (code === 'C' && amount > 0) {
+        if (coverageLevel === 'FAM') {
+          deductible.family = amount;
+        } else {
+          deductible.individual = amount;
+        }
+      }
+      // Deductible met / remaining
+      if (code === 'C' && benefit.timePeriodQualifier === '29') {
+        // Remaining deductible
+        if (coverageLevel === 'FAM') {
+          deductible.familyMet = (deductible.family || 0) - amount;
+        } else {
+          deductible.individualMet = (deductible.individual || 0) - amount;
+        }
+      }
+
+      // Out of Pocket Max
+      if (code === 'G' && amount > 0) {
+        if (coverageLevel === 'FAM') {
+          outOfPocketMax.family = amount;
+        } else {
+          outOfPocketMax.individual = amount;
+        }
+      }
+      if (code === 'G' && benefit.timePeriodQualifier === '29') {
+        if (coverageLevel === 'FAM') {
+          outOfPocketMax.familyMet = (outOfPocketMax.family || 0) - amount;
+        } else {
+          outOfPocketMax.individualMet = (outOfPocketMax.individual || 0) - amount;
+        }
+      }
+
+      // Visit limitations by therapy type
+      if (code === 'F' && benefit.quantityQualifier === 'VS') {
+        const qty = parseInt(benefit.quantity || '0');
+        const therapyKey = serviceTypeToTherapy[serviceTypeCode];
+        if (therapyKey && qty > 0) {
+          if (!therapyVisits[therapyKey]) therapyVisits[therapyKey] = {};
+          therapyVisits[therapyKey]!.allowed = qty;
+        } else if (qty > 0) {
+          // Generic visit limit
+          if (!therapyVisits.combined) therapyVisits.combined = {};
+          therapyVisits.combined.allowed = qty;
+        }
+      }
+
+      // Authorization required
+      if (code === 'CB') {
+        result.authRequired = true;
+        const therapyKey = serviceTypeToTherapy[serviceTypeCode];
+        if (therapyKey) {
+          result.authNotes = `Prior authorization required for ${therapyKey.toUpperCase()} services`;
+        }
+      }
+
+      // Build coverage details
+      if (code && (amount > 0 || percent > 0)) {
+        coverageDetails.push({
+          serviceType: benefit.serviceTypeName || serviceTypeCode,
+          serviceTypeCode,
+          coverage: getBenefitCodeDescription(code),
+          inNetwork,
+          amount: amount || undefined,
+          percent: percent || undefined,
+          quantity: benefit.quantity ? parseInt(benefit.quantity) : undefined,
+          quantityQualifier: benefit.quantityQualifier,
+          limitations: benefit.additionalInformation?.join('; '),
+        });
+      }
+    }
+
+    // Set parsed financial values
+    if (Object.keys(deductible).length > 0) result.deductible = deductible;
+    if (Object.keys(outOfPocketMax).length > 0) result.outOfPocketMax = outOfPocketMax;
+    if (Object.keys(therapyVisits).length > 0) result.therapyVisits = therapyVisits;
+    if (coverageDetails.length > 0) result.coverageDetails = coverageDetails;
+
+  } catch (error) {
+    console.error('Error parsing detailed benefits response:', error);
+  }
+
+  return result;
+}
+
+function getBenefitCodeDescription(code: string): string {
+  const descriptions: Record<string, string> = {
+    '1': 'Active Coverage',
+    '6': 'Inactive',
+    'A': 'Co-Insurance',
+    'B': 'Co-Payment',
+    'C': 'Deductible',
+    'CB': 'Authorization Required',
+    'F': 'Limitations',
+    'G': 'Out of Pocket Maximum',
+    'I': 'Non-Covered',
+    'Y': 'Contact Payer',
+  };
+  return descriptions[code] || code;
+}
+
 export default {
   isStediConfigured,
   checkEligibility,
   submitClaim,
   checkClaimStatus,
   resolvePayerId,
+  getDetailedBenefits,
   PAYER_IDS,
 };

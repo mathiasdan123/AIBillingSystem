@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import PatientIntakeForm from "@/components/PatientIntakeForm";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
 import BenefitsSummary from "@/components/BenefitsSummary";
+import BenefitsVerificationCard from "@/components/BenefitsVerificationCard";
+import InsuranceDocumentsSection from "@/components/InsuranceDocumentsSection";
 import { Skeleton, CardGridSkeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -1319,42 +1321,18 @@ export default function Patients() {
                 </div>
               )}
 
-              {/* Benefits Summary */}
+              {/* Benefits Verification Card */}
               <div className="border-t pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-foreground">Insurance Benefits</h4>
-                  {selectedPatient.insuranceProvider && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        checkEligibilityMutation.mutate({ patientId: selectedPatient.id });
-                      }}
-                      disabled={checkingEligibility === selectedPatient.id}
-                      aria-label="Verify insurance eligibility"
-                    >
-                      {checkingEligibility === selectedPatient.id ? (
-                        <>
-                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                          Checking...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-3 h-3 mr-1" />
-                          Verify Now
-                        </>
-                      )}
-                    </Button>
-                  )}
-                </div>
-
-                <BenefitsSummary
-                  eligibility={
-                    eligibilityResults[selectedPatient.id] ||
-                    storedEligibility ||
-                    null
-                  }
+                <BenefitsVerificationCard
+                  patientId={selectedPatient.id}
+                  patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
+                  insuranceProvider={selectedPatient.insuranceProvider}
                 />
+              </div>
+
+              {/* Insurance Documents Upload */}
+              <div className="border-t pt-4">
+                <InsuranceDocumentsSection patientId={selectedPatient.id} />
               </div>
 
               {/* Admin-Only: Plan Document Upload & Parsed Benefits */}

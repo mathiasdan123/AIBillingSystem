@@ -868,6 +868,7 @@ export const eligibilityChecks = pgTable("eligibility_checks", {
   visitsUsed: integer("visits_used"),
   authRequired: boolean("auth_required"),
   rawResponse: jsonb("raw_response"), // store full API response for debugging
+  benefitsDetail: jsonb("benefits_detail"), // detailed benefits breakdown (therapy visit limits, family deductibles, plan type, etc.)
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_eligibility_checks_patient").on(table.patientId),
@@ -3290,6 +3291,8 @@ export const DOCUMENT_FILE_TYPES = [
   'referral',
   'consent_form',
   'lab_results',
+  'eob',
+  'auth_letter',
   'other',
 ] as const;
 export type DocumentFileType = typeof DOCUMENT_FILE_TYPES[number];
