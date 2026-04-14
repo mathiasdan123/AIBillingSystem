@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -43,6 +44,7 @@ function saveHistory(messages: ChatMessage[]) {
 
 export default function AiBillingAssistant() {
   const { isAuthenticated } = useAuth();
+  const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
@@ -53,6 +55,8 @@ export default function AiBillingAssistant() {
   const [showGreeting, setShowGreeting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   // Drag state
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -159,8 +163,25 @@ export default function AiBillingAssistant() {
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100);
+    } else {
+      // Stop speech recognition when chat is closed
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+        setIsListening(false);
+      }
     }
   }, [isOpen]);
+
+  // Cleanup speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
@@ -230,6 +251,49 @@ export default function AiBillingAssistant() {
     setMessages([]);
     localStorage.removeItem(STORAGE_KEY);
   };
+
+  const startListening = useCallback(() => {
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SpeechRecognition) {
+      toast({ title: "Not supported", description: "Voice input requires Chrome, Edge, or Safari." });
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      let transcript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setInput(transcript);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onerror = (event: any) => {
+      setIsListening(false);
+      if (event.error === "not-allowed") {
+        toast({ title: "Microphone blocked", description: "Allow microphone access in your browser settings." });
+      } else if (event.error === "no-speech") {
+        toast({ title: "No speech detected", description: "Please try again and speak into your microphone." });
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  }, [toast]);
+
+  const stopListening = useCallback(() => {
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  }, []);
 
   const handleActionClick = (path: string) => {
     window.location.href = path;
@@ -572,6 +636,33 @@ export default function AiBillingAssistant() {
                     disabled={isLoading || (statusChecked && status !== null && !status.available)}
                   />
                   <button
+                    onClick={isListening ? stopListening : startListening}
+                    disabled={isLoading || (statusChecked && status !== null && !status.available)}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-600 disabled:cursor-not-allowed ${
+                      isListening
+                        ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
+                        : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600"
+                    }`}
+                    aria-label={isListening ? "Stop listening" : "Voice input"}
+                    title={isListening ? "Stop listening" : "Voice input"}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                      <line x1="12" x2="12" y1="19" y2="22" />
+                    </svg>
+                  </button>
+                  <button
                     onClick={handleSend}
                     disabled={!input.trim() || isLoading || (statusChecked && status !== null && !status.available)}
                     className="flex-shrink-0 p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -593,6 +684,12 @@ export default function AiBillingAssistant() {
                     </svg>
                   </button>
                 </div>
+                {isListening && (
+                  <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    Listening... click the microphone to stop
+                  </p>
+                )}
                 <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5 text-center">
                   TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered.
                 </p>
