@@ -135,7 +135,7 @@ export default function Landing() {
             </div>
             <div className="flex items-center">
               <Lock className="w-5 h-5 text-green-500 mr-2" />
-              SOC 2 Certified
+              AES-256 Encrypted
             </div>
             <div className="flex items-center">
               <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
@@ -723,7 +723,7 @@ export default function Landing() {
             </div>
             <div className="flex items-center gap-2 px-6 py-3 bg-slate-50 rounded-lg">
               <Shield className="w-6 h-6 text-purple-600" />
-              <span className="font-medium">SOC 2 Type II</span>
+              <span className="font-medium">AWS BAA Signed</span>
             </div>
           </div>
         </div>
@@ -891,7 +891,7 @@ export default function Landing() {
             <p className="text-slate-400">&copy; 2026 TherapyBill AI. All rights reserved.</p>
             <div className="flex items-center space-x-6 mt-4 md:mt-0">
               <span className="text-sm">HIPAA Compliant</span>
-              <span className="text-sm">SOC 2 Certified</span>
+              <span className="text-sm">AWS BAA Signed</span>
             </div>
           </div>
           <div className="border-t border-slate-800 mt-8 pt-6">
