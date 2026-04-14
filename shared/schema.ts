@@ -358,6 +358,9 @@ export const claims = pgTable("claims", {
   primaryPaidAmount: decimal("primary_paid_amount", { precision: 10, scale: 2 }), // what primary insurance paid
   primaryAdjustmentAmount: decimal("primary_adjustment_amount", { precision: 10, scale: 2 }), // primary adjustments
   cobData: jsonb("cob_data"), // Coordination of Benefits data
+  // Authorization / hold management
+  authorizationNumber: varchar("authorization_number"), // Prior auth number from payer
+  holdReason: varchar("hold_reason"), // e.g., "Authorization Pending" — blocks submission
   // AI denial prediction
   denialPrediction: jsonb("denial_prediction"), // { riskScore, riskLevel, issues, overallRecommendation }
   // Automated status checking
@@ -496,6 +499,10 @@ export const appointments = pgTable("appointments", {
   isRecurring: boolean("is_recurring").default(false), // True for any appointment that is part of a recurring series
   seriesId: varchar("series_id"), // Groups all appointments in a recurring series (nanoid)
   recurrenceEndDate: timestamp("recurrence_end_date"), // When the recurrence series ends
+  // Check-in / check-out tracking
+  checkedInAt: timestamp("checked_in_at"),
+  checkedOutAt: timestamp("checked_out_at"),
+  checkedInBy: varchar("checked_in_by"), // user ID of front desk staff who checked patient in
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -3750,6 +3757,69 @@ export const insertMcpApiKeySchema = createInsertSchema(mcpApiKeys).omit({
 });
 export type McpApiKey = typeof mcpApiKeys.$inferSelect;
 export type InsertMcpApiKey = z.infer<typeof insertMcpApiKeySchema>;
+
+// Provider Credentialing - tracks provider enrollment status with each payer
+export const providerCredentials = pgTable("provider_credentials", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  providerId: varchar("provider_id").notNull(), // user ID of the therapist/provider
+  providerName: varchar("provider_name").notNull(),
+  providerNpi: varchar("provider_npi"),
+  payerName: varchar("payer_name").notNull(),
+  payerId: varchar("payer_id"),
+  caqhProfileId: varchar("caqh_profile_id"),
+  enrollmentStatus: varchar("enrollment_status").default("pending"), // pending, active, expired, denied, in_progress
+  enrollmentDate: date("enrollment_date"),
+  expirationDate: date("expiration_date"),
+  reCredentialingDate: date("re_credentialing_date"),
+  applicationSubmittedAt: timestamp("application_submitted_at"),
+  notes: text("notes"),
+  documents: jsonb("documents"), // array of document references
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_provider_credentials_practice").on(table.practiceId),
+  index("idx_provider_credentials_provider").on(table.providerId),
+  index("idx_provider_credentials_status").on(table.enrollmentStatus),
+]);
+
+export const insertProviderCredentialSchema = createInsertSchema(providerCredentials).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type ProviderCredential = typeof providerCredentials.$inferSelect;
+export type InsertProviderCredential = z.infer<typeof insertProviderCredentialSchema>;
+
+export const providerCredentialsRelations = relations(providerCredentials, ({ one }) => ({
+  practice: one(practices, {
+    fields: [providerCredentials.practiceId],
+    references: [practices.id],
+  }),
+}));
+
+// ==================== Payer Crosswalk (Sub-Plan Routing) ====================
+
+// Maps insurance sub-plans/subsidiaries to correct payer IDs for claim routing
+export const payerCrosswalk = pgTable("payer_crosswalk", {
+  id: serial("id").primaryKey(),
+  parentPayerName: varchar("parent_payer_name").notNull(), // e.g., "Aetna"
+  subPlanName: varchar("sub_plan_name").notNull(), // e.g., "Aetna Better Health"
+  subPlanKeywords: jsonb("sub_plan_keywords").$type<string[]>(), // e.g., ["better health", "medicaid"]
+  tradingPartnerId: varchar("trading_partner_id").notNull(), // Stedi tradingPartnerServiceId
+  stediPayerId: varchar("stedi_payer_id"), // Optional Stedi-specific payer ID
+  state: varchar("state"), // For state-specific plans (e.g., "NJ", "NY")
+  notes: text("notes"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_payer_crosswalk_parent").on(table.parentPayerName),
+  index("idx_payer_crosswalk_active").on(table.isActive),
+]);
+
+export const insertPayerCrosswalkSchema = createInsertSchema(payerCrosswalk).omit({ id: true, createdAt: true });
+export type PayerCrosswalk = typeof payerCrosswalk.$inferSelect;
+export type InsertPayerCrosswalk = z.infer<typeof insertPayerCrosswalkSchema>;
 
 // Note: patientStatements table is defined earlier in this file (line ~1864)
 // patientStatementsRelations kept here for organizational purposes

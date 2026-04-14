@@ -945,3 +945,78 @@ ${data.practiceName}`;
     text,
   };
 }
+
+// ==================== INTAKE SUBMISSION NOTIFICATION ====================
+
+export interface IntakeSubmissionNotificationData {
+  patientFirstName: string;
+  patientLastName: string;
+  patientEmail?: string;
+  patientPhone?: string;
+  practiceName: string;
+  hasInsuranceCard?: boolean;
+  hasInsuranceInfo?: boolean;
+  reviewUrl?: string;
+}
+
+export function intakeSubmissionNotification(data: IntakeSubmissionNotificationData): EmailOutput {
+  const patientName = `${escapeHtml(data.patientFirstName)} ${escapeHtml(data.patientLastName)}`;
+
+  let detailsHtml = '';
+  if (data.patientEmail) {
+    detailsHtml += `<tr><td style="padding: 6px 12px; color: #64748b; font-size: 14px;">Email</td><td style="padding: 6px 12px; color: #1e293b; font-size: 14px;">${escapeHtml(data.patientEmail)}</td></tr>`;
+  }
+  if (data.patientPhone) {
+    detailsHtml += `<tr><td style="padding: 6px 12px; color: #64748b; font-size: 14px;">Phone</td><td style="padding: 6px 12px; color: #1e293b; font-size: 14px;">${escapeHtml(data.patientPhone)}</td></tr>`;
+  }
+  detailsHtml += `<tr><td style="padding: 6px 12px; color: #64748b; font-size: 14px;">Insurance Card</td><td style="padding: 6px 12px; color: #1e293b; font-size: 14px;">${data.hasInsuranceCard ? 'Uploaded' : 'Not uploaded'}</td></tr>`;
+  detailsHtml += `<tr><td style="padding: 6px 12px; color: #64748b; font-size: 14px;">Insurance Info</td><td style="padding: 6px 12px; color: #1e293b; font-size: 14px;">${data.hasInsuranceInfo ? 'Provided' : 'Not provided'}</td></tr>`;
+
+  let bodyContent = `
+    ${pText('A new patient intake form has been submitted and is ready for your review.', '#1e293b')}
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin: 0 0 12px 0; color: #1e293b; font-size: 16px;">Patient: ${patientName}</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        ${detailsHtml}
+      </table>
+    </div>`;
+
+  if (data.reviewUrl) {
+    bodyContent += buttonHtml('Review Patient Details', data.reviewUrl);
+  }
+
+  bodyContent += pText('Please review the intake information and verify insurance details at your earliest convenience.');
+
+  const html = wrapHtml(
+    'New Patient Intake Submitted',
+    BRAND_GRADIENT,
+    'New Patient Intake Submitted',
+    bodyContent,
+    footerText([data.practiceName, 'TherapyBill AI']),
+  );
+
+  const text = [
+    'NEW PATIENT INTAKE SUBMITTED',
+    '============================',
+    '',
+    'A new patient intake form has been submitted.',
+    '',
+    `Patient: ${data.patientFirstName} ${data.patientLastName}`,
+    data.patientEmail ? `Email: ${data.patientEmail}` : '',
+    data.patientPhone ? `Phone: ${data.patientPhone}` : '',
+    `Insurance Card: ${data.hasInsuranceCard ? 'Uploaded' : 'Not uploaded'}`,
+    `Insurance Info: ${data.hasInsuranceInfo ? 'Provided' : 'Not provided'}`,
+    '',
+    data.reviewUrl ? `Review: ${data.reviewUrl}` : '',
+    '',
+    'Please review the intake information and verify insurance details.',
+    '',
+    data.practiceName,
+  ].filter(Boolean).join('\n');
+
+  return {
+    subject: `New Patient Intake Submitted: ${data.patientFirstName} ${data.patientLastName}`,
+    html,
+    text,
+  };
+}

@@ -125,6 +125,7 @@ const navigationSections: NavSection[] = [
   {
     labelKey: 'nav.sectionAdmin',
     items: [
+      { nameKey: 'nav.credentialing', href: '/credentialing', icon: ShieldCheck, adminOnly: true },
       { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
       { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
       { nameKey: 'nav.hipaaCompliance', href: '/hipaa-compliance', icon: Shield, adminOnly: true },

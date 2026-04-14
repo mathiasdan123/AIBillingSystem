@@ -5,7 +5,9 @@
  * - /api/claims - Claims CRUD operations
  * - /api/claims/:id/line-items - Claim line items management
  * - /api/claims/batch-submit - Batch claim submission
- * - /api/claims/:id/submit - Claim submission
+ * - /api/claims/:id/submit - Claim submission (with pre-submission scrubbing)
+ * - /api/claims/:id/scrub - Dry-run claim scrub (no submission)
+ * - /api/claims/:id/authorization - Enter authorization number / release hold
  * - /api/claims/:id/check-status - Status verification
  * - /api/claims/:id/paid - Mark claim as paid
  * - /api/claims/:id/deny - Deny claim (with AI appeal generation)
@@ -35,6 +37,7 @@ import {
   bulkUpdateClaimStatus,
   bulkExportClaims,
 } from '../services/bulkOperationsService';
+import { scrubClaim } from '../services/claimScrubber';
 
 const router = Router();
 const claimOptimizer = new AiClaimOptimizer();
@@ -596,8 +599,24 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
         continue;
       }
 
-      if (claim.status !== 'draft') {
-        validationErrors.push({ claimId, error: `Claim is in '${claim.status}' status, only draft claims can be submitted` });
+      if (claim.status !== 'draft' && claim.status !== 'held') {
+        validationErrors.push({ claimId, error: `Claim is in '${claim.status}' status, only draft or held claims can be submitted` });
+        continue;
+      }
+
+      // Run pre-submission claim scrubber
+      const batchScrubResult = await scrubClaim(claimId, practiceId);
+      if (!batchScrubResult.passed) {
+        if (batchScrubResult.holdReason) {
+          await storage.updateClaim(claimId, {
+            status: 'held',
+            holdReason: batchScrubResult.holdReason,
+          } as any);
+        }
+        validationErrors.push({
+          claimId,
+          error: `Scrub failed: ${batchScrubResult.errors.join('; ')}`,
+        });
         continue;
       }
 
@@ -724,6 +743,22 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
           const patientAddr = parseAddress(patient.address);
           const practiceAddr = parseAddress(practice.address);
 
+          // Resolve payer ID via crosswalk for sub-plan routing
+          const batchPayerRouting = await stediService.resolvePayerId(
+            insurance.name || '',
+            patient.insuranceProvider || null,
+            insurance.payerCode || null,
+          );
+
+          logger.info('Batch claim payer routing resolved', {
+            claimId: claim.id,
+            insuranceName: insurance.name,
+            patientPlan: patient.insuranceProvider,
+            resolvedPayerId: batchPayerRouting.tradingPartnerId,
+            matchedSubPlan: batchPayerRouting.matchedSubPlan,
+            routingSource: batchPayerRouting.routingSource,
+          });
+
           const claimSubmission: ClaimSubmission = {
             claimId: claim.claimNumber || `CLM${claim.id}`,
             totalAmount: parseFloat(claim.totalAmount as any) || 0,
@@ -745,7 +780,7 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
               taxonomy: '101YM0800X',
             },
             payer: {
-              id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerCode || '00000',
+              id: batchPayerRouting.tradingPartnerId,
               name: insurance.name || 'Unknown',
             },
             serviceLines,
@@ -830,8 +865,27 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
-    if (claim.status !== 'draft') {
-      return res.status(400).json({ message: 'Only draft claims can be submitted' });
+    if (claim.status !== 'draft' && claim.status !== 'held') {
+      return res.status(400).json({ message: 'Only draft or held claims can be submitted' });
+    }
+
+    // Run pre-submission claim scrubber
+    const practiceId = getAuthorizedPracticeId(req);
+    const scrubResult = await scrubClaim(claimId, practiceId);
+
+    if (!scrubResult.passed) {
+      // If authorization is the issue, place claim on hold
+      if (scrubResult.holdReason) {
+        await storage.updateClaim(claimId, {
+          status: 'held',
+          holdReason: scrubResult.holdReason,
+        } as any);
+      }
+
+      return res.status(422).json({
+        message: 'Claim failed pre-submission scrubbing',
+        scrubResult,
+      });
     }
 
     // Check if the associated SOAP note requires co-signing and is approved
@@ -932,6 +986,22 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
         const patientAddr = parseAddress(patient.address);
         const practiceAddr = parseAddress(practice.address);
 
+        // Resolve payer ID via crosswalk for sub-plan routing
+        const payerRouting = await stediService.resolvePayerId(
+          insurance.name || '',
+          patient.insuranceProvider || null,
+          insurance.payerCode || null,
+        );
+
+        logger.info('Claim payer routing resolved', {
+          claimId,
+          insuranceName: insurance.name,
+          patientPlan: patient.insuranceProvider,
+          resolvedPayerId: payerRouting.tradingPartnerId,
+          matchedSubPlan: payerRouting.matchedSubPlan,
+          routingSource: payerRouting.routingSource,
+        });
+
         const claimSubmission: ClaimSubmission = {
           claimId: claim.claimNumber || `CLM${claim.id}`,
           totalAmount: parseFloat(claim.totalAmount as any) || 0,
@@ -953,7 +1023,7 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
             taxonomy: '101YM0800X',
           },
           payer: {
-            id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerCode || '00000',
+            id: payerRouting.tradingPartnerId,
             name: insurance.name || 'Unknown',
           },
           serviceLines,
@@ -983,11 +1053,12 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       status: 'submitted',
       submittedAt: new Date(),
       submittedAmount: claim.totalAmount,
+      holdReason: null,
       clearinghouseClaimId: clearinghouseResult?.stediClaimId || null,
       clearinghouseStatus: clearinghouseResult?.status || 'pending',
       clearinghouseResponse: clearinghouseResult || null,
       clearinghouseSubmittedAt: new Date(),
-    });
+    } as any);
 
     res.json({
       success: true,
@@ -997,10 +1068,74 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       claim: updatedClaim,
       clearinghouse: clearinghouseResult,
       submissionMethod,
+      scrubResult,
     });
   } catch (error: any) {
     logger.error('Error submitting claim', { error: error instanceof Error ? error.message : String(error) });
     safeErrorResponse(res, 500, 'Failed to submit claim', error);
+  }
+});
+
+// Scrub claim without submitting (dry run)
+router.post('/:id/scrub', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id);
+    const practiceId = getAuthorizedPracticeId(req);
+    const result = await scrubClaim(claimId, practiceId);
+    res.json(result);
+  } catch (error: any) {
+    safeErrorResponse(res, 500, 'Failed to scrub claim', error);
+  }
+});
+
+// Enter authorization number and release hold
+router.patch('/:id/authorization', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id);
+    const { authorizationNumber } = req.body;
+
+    if (!authorizationNumber || typeof authorizationNumber !== 'string' || authorizationNumber.trim().length === 0) {
+      return res.status(400).json({ message: 'Authorization number is required' });
+    }
+
+    const claim = await storage.getClaim(claimId);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    // Security: ensure user has access to this claim's practice
+    const practiceId = getAuthorizedPracticeId(req);
+    if (claim.practiceId !== practiceId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Update authorization and release hold if that was the hold reason
+    const updates: Record<string, any> = {
+      authorizationNumber: authorizationNumber.trim(),
+    };
+
+    if (claim.status === 'held' && claim.holdReason === 'Authorization Pending') {
+      updates.status = 'draft';
+      updates.holdReason = null;
+    }
+
+    const updatedClaim = await storage.updateClaim(claimId, updates as any);
+
+    logger.info('Authorization number entered', {
+      claimId,
+      practiceId,
+      released: updates.status === 'draft',
+    });
+
+    res.json({
+      success: true,
+      message: updates.status === 'draft'
+        ? 'Authorization entered and hold released. Claim is ready for submission.'
+        : 'Authorization number saved.',
+      claim: updatedClaim,
+    });
+  } catch (error: any) {
+    safeErrorResponse(res, 500, 'Failed to update authorization', error);
   }
 });
 
@@ -1050,10 +1185,17 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
       const lineItems = await storage.getClaimLineItems(claimId);
       const dateOfService = lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0];
 
+      // Resolve payer ID via crosswalk for sub-plan routing
+      const statusPayerRouting = await stediService.resolvePayerId(
+        insurance.name || '',
+        patient.insuranceProvider || null,
+        insurance.payerCode || null,
+      );
+
       const statusResult = await stediService.checkClaimStatus({
         claimId: claim.claimNumber || `CLM${claim.id}`,
         payer: {
-          id: stediService.PAYER_IDS[insurance.name?.toLowerCase()] || insurance.payerCode || '00000',
+          id: statusPayerRouting.tradingPartnerId,
         },
         provider: {
           npi: practice?.npi || '',

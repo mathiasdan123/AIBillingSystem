@@ -16,6 +16,8 @@ import { Router } from 'express';
 import { storage } from '../storage';
 import logger from '../services/logger';
 import * as stripeService from '../services/stripeService';
+import { sendEmail } from '../services/emailService';
+import { intakeSubmissionNotification } from '../services/emailTemplates';
 
 const router = Router();
 
@@ -443,6 +445,31 @@ router.post('/patient-portal/intake/submit', async (req, res) => {
 
     // Set intake completed timestamp
     await storage.completePatientIntake(patient.id, updatedIntakeData);
+
+    // Send front desk notification email
+    try {
+      const practiceEmail = practice?.email;
+      if (practiceEmail) {
+        const emailData = intakeSubmissionNotification({
+          patientFirstName: patient.firstName,
+          patientLastName: patient.lastName,
+          patientEmail: patient.email || undefined,
+          patientPhone: patient.phone || undefined,
+          practiceName: practice.name || 'Your Practice',
+          hasInsuranceCard: !!(updatedIntakeData?.insuranceCardFront || updatedIntakeData?.insuranceCardBack),
+          hasInsuranceInfo: !!(patient.insuranceProvider),
+          reviewUrl: `${process.env.APP_URL || 'https://app.therapybillai.com'}/patients?id=${patient.id}`,
+        });
+        sendEmail({
+          to: practiceEmail,
+          ...emailData,
+        }).catch(err => {
+          logger.warn('Failed to send intake notification email', { error: err instanceof Error ? err.message : String(err) });
+        });
+      }
+    } catch (emailError) {
+      logger.warn('Error sending intake notification', { error: emailError instanceof Error ? emailError.message : String(emailError) });
+    }
 
     res.json({
       success: true,

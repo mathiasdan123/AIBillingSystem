@@ -35,6 +35,8 @@ import {
   getMcpAuthRouter,
   mcpOAuthProvider,
   contactRouter,
+  credentialingRouter,
+  payerCrosswalkRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -253,6 +255,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', billingTasksRouter);
   app.use('/api', billingDocumentsRouter);
   app.use('/api', claimCorrectionsRouter);
+
+  // Credentialing routes: /api/credentialing/*
+  app.use('/api/credentialing', credentialingRouter);
+
+  // Payer crosswalk routes: /api/admin/payer-crosswalk/*
+  app.use('/api/admin/payer-crosswalk', payerCrosswalkRouter);
 
   // Public contact form route (no auth required — exempt from MFA)
   app.use('/api', contactRouter);

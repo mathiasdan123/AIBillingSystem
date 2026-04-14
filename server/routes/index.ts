@@ -77,6 +77,8 @@ export { default as claimCorrectionsRouter } from './claim-corrections';
 export { default as mcpApiKeysRouter } from './mcp-api-keys';
 export { default as mcpTransportRouter, getMcpAuthRouter, oauthProvider as mcpOAuthProvider } from './mcp-transport';
 export { default as contactRouter } from './contact';
+export { default as credentialingRouter } from './credentialing';
+export { default as payerCrosswalkRouter } from './payer-crosswalk';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

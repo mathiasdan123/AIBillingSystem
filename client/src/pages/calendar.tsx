@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 
@@ -236,6 +236,36 @@ export default function CalendarPage() {
     },
   });
 
+  // Check-in mutation
+  const checkInMutation = useMutation({
+    mutationFn: async (appointmentId: number) => {
+      const res = await apiRequest("POST", `/api/appointments/${appointmentId}/check-in`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      toast({ title: "Checked In", description: "Patient has been checked in." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Check-in Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Check-out mutation
+  const checkOutMutation = useMutation({
+    mutationFn: async (appointmentId: number) => {
+      const res = await apiRequest("POST", `/api/appointments/${appointmentId}/check-out`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      toast({ title: "Checked Out", description: "Patient has been checked out." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Check-out Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const handleCreateAppointment = async () => {
     let patientId = newAppointment.patientId;
 
@@ -399,16 +429,26 @@ export default function CalendarPage() {
   };
 
   const getStatusColor = (s: string) =>
-    s === "completed" ? "bg-green-100 text-green-800" :
-    s === "scheduled" ? "bg-blue-100 text-blue-800" :
+    s === "completed" ? "bg-slate-200 text-slate-800" :
+    s === "checked_in" ? "bg-green-100 text-green-800" :
+    s === "scheduled" ? "bg-gray-100 text-gray-800" :
     s === "cancelled" ? "bg-red-100 text-red-800" :
     s === "no_show" ? "bg-orange-100 text-orange-800" :
     "bg-gray-100 text-gray-800";
 
-  const getCalendarBlockStyle = (apt: Appointment) =>
-    apt.status === "cancelled" ? "bg-red-200 border-l-4 border-red-600 text-red-900" :
-    apt.status === "completed" ? "bg-green-100 border-l-4 border-green-500" :
-    "bg-blue-100 border-l-4 border-blue-500";
+  const getStatusLabel = (apt: any) => {
+    if (apt.checkedOutAt) return "checked-out";
+    if (apt.checkedInAt) return "checked-in";
+    return apt.status || "scheduled";
+  };
+
+  const getCalendarBlockStyle = (apt: Appointment) => {
+    const a = apt as any;
+    if (apt.status === "cancelled") return "bg-red-200 border-l-4 border-red-600 text-red-900";
+    if (a.checkedOutAt || apt.status === "completed") return "bg-slate-200 border-l-4 border-slate-500";
+    if (a.checkedInAt || apt.status === "checked_in") return "bg-green-100 border-l-4 border-green-500";
+    return "bg-blue-100 border-l-4 border-blue-500";
+  };
 
   const formatTime = (dt: string | Date) => {
     const d = new Date(dt);
@@ -932,25 +972,21 @@ export default function CalendarPage() {
                 }
                 return (
                   <div className="space-y-2">
-                    {sorted.map((apt) => (
+                    {sorted.map((apt) => {
+                      const a = apt as any;
+                      const statusLabel = getStatusLabel(a);
+                      return (
                       <div
                         key={apt.id}
-                        className={`rounded-lg p-3 cursor-pointer active:opacity-80 ${getCalendarBlockStyle(apt)}`}
-                        onClick={() => {
-                          if (apt.status !== "cancelled") {
-                            openCancelDialog(apt);
-                          } else {
-                            toast({ title: apt.title || "Appointment", description: `Cancelled: ${apt.cancellationReason || "N/A"}` });
-                          }
-                        }}
+                        className={`rounded-lg p-3 ${getCalendarBlockStyle(apt)}`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 min-w-0">
-                            {(apt as any).isRecurring && <Repeat className="w-3.5 h-3.5 flex-shrink-0" />}
+                            {a.isRecurring && <Repeat className="w-3.5 h-3.5 flex-shrink-0" />}
                             <span className="font-medium text-sm truncate">{apt.title || "Appointment"}</span>
                           </div>
-                          <Badge className={`${getStatusColor(apt.status || "scheduled")} text-[10px] flex-shrink-0 ml-2`}>
-                            {apt.status}
+                          <Badge className={`${getStatusColor(statusLabel)} text-[10px] flex-shrink-0 ml-2`}>
+                            {statusLabel}
                           </Badge>
                         </div>
                         <div className="text-xs text-slate-600 mt-1">
@@ -960,14 +996,148 @@ export default function CalendarPage() {
                             return therapist ? ` | ${therapist.firstName}` : "";
                           })()}
                         </div>
+                        {a.checkedInAt && (
+                          <div className="text-[10px] text-slate-500 mt-1">
+                            Checked in: {new Date(a.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {a.checkedOutAt && ` | Out: ${new Date(a.checkedOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                          </div>
+                        )}
+                        {apt.status !== "cancelled" && (
+                          <div className="flex items-center gap-2 mt-2">
+                            {!a.checkedInAt && apt.status === "scheduled" && (
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs bg-green-600 hover:bg-green-700"
+                                onClick={(e) => { e.stopPropagation(); checkInMutation.mutate(apt.id); }}
+                                disabled={checkInMutation.isPending}
+                              >
+                                <LogIn className="w-3 h-3 mr-1" />Check In
+                              </Button>
+                            )}
+                            {a.checkedInAt && !a.checkedOutAt && (
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs bg-blue-600 hover:bg-blue-700"
+                                onClick={(e) => { e.stopPropagation(); checkOutMutation.mutate(apt.id); }}
+                                disabled={checkOutMutation.isPending}
+                              >
+                                <LogOut className="w-3 h-3 mr-1" />Check Out
+                              </Button>
+                            )}
+                            {!a.checkedOutAt && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={(e) => { e.stopPropagation(); openCancelDialog(apt); }}
+                              >
+                                <XCircle className="w-3 h-3 mr-1" />Cancel
+                              </Button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })()}
             </div>
           </CardContent>
         </Card>
+
+        {/* Today's Appointments - Quick Check-In/Out Dashboard */}
+        {(() => {
+          const today = new Date();
+          const todayAppts = filteredAppointments
+            .filter(apt => {
+              const s = new Date(apt.startTime);
+              return s.getUTCFullYear() === today.getFullYear() &&
+                     s.getUTCMonth() === today.getMonth() &&
+                     s.getUTCDate() === today.getDate() &&
+                     apt.status !== "cancelled";
+            })
+            .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+          if (todayAppts.length === 0) return null;
+
+          return (
+            <Card className="mt-4 md:mt-6">
+              <CardHeader className="px-4 md:px-6 pb-2">
+                <CardTitle className="text-base md:text-lg flex items-center gap-2">
+                  <CalendarCheck className="w-5 h-5 text-green-600" />
+                  Today's Appointments
+                  <Badge variant="secondary" className="ml-2 text-xs">{todayAppts.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 md:px-6">
+                <div className="space-y-2">
+                  {todayAppts.map((apt) => {
+                    const a = apt as any;
+                    const statusLabel = getStatusLabel(a);
+                    const patient = patients.find((p: any) => p.id === apt.patientId);
+                    const patientName = patient ? `${patient.firstName} ${patient.lastName}` : (apt.title || "Appointment");
+                    return (
+                      <div key={apt.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+                            a.checkedOutAt ? "bg-slate-200" :
+                            a.checkedInAt ? "bg-green-100" :
+                            "bg-blue-100"
+                          }`}>
+                            {a.checkedOutAt ? (
+                              <Check className="w-4 h-4 text-slate-600" />
+                            ) : a.checkedInAt ? (
+                              <LogIn className="w-4 h-4 text-green-600" />
+                            ) : (
+                              <User className="w-4 h-4 text-blue-600" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-medium text-sm">{patientName}</div>
+                            <div className="text-xs text-slate-500">
+                              {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
+                              {apt.title && ` | ${apt.title}`}
+                            </div>
+                            {a.checkedInAt && (
+                              <div className="text-[10px] text-slate-400">
+                                In: {new Date(a.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {a.checkedOutAt && ` | Out: ${new Date(a.checkedOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-12 sm:ml-0">
+                          <Badge className={`${getStatusColor(statusLabel)} text-[10px] md:text-xs`}>{statusLabel}</Badge>
+                          {!a.checkedInAt && (apt.status === "scheduled" || apt.status === "checked_in") && (
+                            <Button
+                              size="sm"
+                              className="h-8 text-xs bg-green-600 hover:bg-green-700"
+                              onClick={() => checkInMutation.mutate(apt.id)}
+                              disabled={checkInMutation.isPending}
+                            >
+                              <LogIn className="w-3.5 h-3.5 mr-1" />Check In
+                            </Button>
+                          )}
+                          {a.checkedInAt && !a.checkedOutAt && (
+                            <Button
+                              size="sm"
+                              className="h-8 text-xs bg-blue-600 hover:bg-blue-700"
+                              onClick={() => checkOutMutation.mutate(apt.id)}
+                              disabled={checkOutMutation.isPending}
+                            >
+                              <LogOut className="w-3.5 h-3.5 mr-1" />Check Out
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Upcoming Appointments */}
         <Card className="mt-4 md:mt-6">
@@ -978,15 +1148,26 @@ export default function CalendarPage() {
                 .filter(a => new Date(a.startTime) >= new Date() && a.status !== "cancelled")
                 .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
                 .slice(0, 5)
-                .map((apt) => (
+                .map((apt) => {
+                  const a = apt as any;
+                  const statusLabel = getStatusLabel(a);
+                  return (
                   <div key={apt.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 md:p-4 bg-slate-50 rounded-lg gap-2 md:gap-4">
                     <div className="flex items-center gap-3 md:gap-4">
-                      <div className="w-9 h-9 md:w-10 md:h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <User className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
+                      <div className={`w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        a.checkedOutAt ? "bg-slate-200" : a.checkedInAt ? "bg-green-100" : "bg-blue-100"
+                      }`}>
+                        {a.checkedOutAt ? (
+                          <Check className="w-4 h-4 md:w-5 md:h-5 text-slate-600" />
+                        ) : a.checkedInAt ? (
+                          <LogIn className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
+                        ) : (
+                          <User className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
+                        )}
                       </div>
                       <div className="min-w-0">
                         <div className="font-medium text-sm md:text-base flex items-center gap-1">
-                          {(apt as any).isRecurring && <Repeat className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
+                          {a.isRecurring && <Repeat className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
                           <span className="truncate">{apt.title || "Appointment"}</span>
                         </div>
                         <div className="text-xs md:text-sm text-slate-600 truncate">
@@ -996,16 +1177,35 @@ export default function CalendarPage() {
                             return therapist ? ` | ${therapist.firstName} ${therapist.lastName}` : "";
                           })()}
                         </div>
+                        {a.checkedInAt && (
+                          <div className="text-[10px] text-slate-400">
+                            In: {new Date(a.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {a.checkedOutAt && ` | Out: ${new Date(a.checkedOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-12 sm:ml-0">
-                      <Badge className={`${getStatusColor(apt.status || "scheduled")} text-[10px] md:text-xs`}>{apt.status}</Badge>
-                      <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => openCancelDialog(apt)}>
-                        <XCircle className="w-4 h-4 mr-1" />Cancel
-                      </Button>
+                      <Badge className={`${getStatusColor(statusLabel)} text-[10px] md:text-xs`}>{statusLabel}</Badge>
+                      {!a.checkedInAt && apt.status === "scheduled" && (
+                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-green-600 hover:bg-green-700" onClick={() => checkInMutation.mutate(apt.id)} disabled={checkInMutation.isPending}>
+                          <LogIn className="w-4 h-4 mr-1" />Check In
+                        </Button>
+                      )}
+                      {a.checkedInAt && !a.checkedOutAt && (
+                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-blue-600 hover:bg-blue-700" onClick={() => checkOutMutation.mutate(apt.id)} disabled={checkOutMutation.isPending}>
+                          <LogOut className="w-4 h-4 mr-1" />Check Out
+                        </Button>
+                      )}
+                      {!a.checkedOutAt && (
+                        <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => openCancelDialog(apt)}>
+                          <XCircle className="w-4 h-4 mr-1" />Cancel
+                        </Button>
+                      )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               {appointments.filter(a => new Date(a.startTime) >= new Date() && a.status !== "cancelled").length === 0 && (
                 <div className="flex flex-col items-center justify-center py-8 md:py-12 text-center">
                   <ClipboardList className="h-10 w-10 md:h-12 md:w-12 text-muted-foreground mb-3 md:mb-4" />

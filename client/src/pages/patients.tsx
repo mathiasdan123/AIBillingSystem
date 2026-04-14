@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink, CreditCard } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -370,6 +370,13 @@ export default function Patients() {
   const { data: planBenefitsData, refetch: refetchPlanBenefits } = useQuery({
     queryKey: [`/api/patients/${selectedPatient?.id}/plan-benefits`],
     enabled: !!selectedPatient?.id && isAdmin,
+    retry: false,
+  }) as any;
+
+  // Fetch insurance card images for selected patient
+  const { data: insuranceCards } = useQuery({
+    queryKey: [`/api/patients/${selectedPatient?.id}/insurance-cards`],
+    enabled: !!selectedPatient?.id,
     retry: false,
   }) as any;
 
@@ -1263,6 +1270,51 @@ export default function Patients() {
                         </div>
                       )}
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Insurance Card Images */}
+              {(insuranceCards?.front || insuranceCards?.back) && (
+                <div className="border-t pt-4">
+                  <h4 className="font-medium text-foreground mb-3 flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-blue-600" />
+                    Insurance Card
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {insuranceCards.front && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Front</label>
+                        <div className="border rounded-lg overflow-hidden bg-muted/30">
+                          <img
+                            src={insuranceCards.front}
+                            alt="Insurance card front"
+                            className="w-full h-auto object-contain max-h-48 cursor-pointer"
+                            onClick={() => window.open(insuranceCards.front, '_blank')}
+                            title="Click to view full size"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {insuranceCards.back && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Back</label>
+                        <div className="border rounded-lg overflow-hidden bg-muted/30">
+                          <img
+                            src={insuranceCards.back}
+                            alt="Insurance card back"
+                            className="w-full h-auto object-contain max-h-48 cursor-pointer"
+                            onClick={() => window.open(insuranceCards.back, '_blank')}
+                            title="Click to view full size"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {insuranceCards.uploadedAt && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Uploaded {new Date(insuranceCards.uploadedAt).toLocaleDateString()}
+                    </p>
                   )}
                 </div>
               )}

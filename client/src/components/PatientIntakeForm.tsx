@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { Upload, FileText, CheckCircle, Loader2, Info, Shield, FileSignature, CreditCard, ChevronDown, ChevronRight } from "lucide-react";
+import { Upload, FileText, CheckCircle, Loader2, Info, Shield, FileSignature, CreditCard, ChevronDown, ChevronRight, Camera, X, ImageIcon } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -83,6 +83,14 @@ const patientSchema = z.object({
   emergencyName: z.string().optional(),
   emergencyPhone: z.string().optional(),
   emergencyRelationship: z.string().optional(),
+
+  // Referral Source
+  referralSource: z.string().optional(),
+  referredByName: z.string().optional(),
+  referringPhysicianName: z.string().optional(),
+  referringPhysicianPhone: z.string().optional(),
+  referringPhysicianFax: z.string().optional(),
+  referringPhysicianNpi: z.string().optional(),
 
   // Reason for Therapy
   mainConcerns: z.string().optional(),
@@ -214,7 +222,11 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
   const [consentGiven, setConsentGiven] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [documentUploaded, setDocumentUploaded] = useState(false);
+  const [insuranceCardFront, setInsuranceCardFront] = useState<string | null>(null);
+  const [insuranceCardBack, setInsuranceCardBack] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const insuranceCardFrontRef = useRef<HTMLInputElement>(null);
+  const insuranceCardBackRef = useRef<HTMLInputElement>(null);
   const totalSteps = 15;
 
   const form = useForm<PatientFormData>({
@@ -285,6 +297,15 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
           name: data.emergencyName,
           phone: data.emergencyPhone,
           relationship: data.emergencyRelationship,
+        },
+        // Referral source
+        referralSource: data.referralSource,
+        referredByName: data.referredByName,
+        referringPhysician: {
+          name: data.referringPhysicianName,
+          phone: data.referringPhysicianPhone,
+          fax: data.referringPhysicianFax,
+          npi: data.referringPhysicianNpi,
         },
         // Therapy reason
         mainConcerns: data.mainConcerns,
@@ -376,6 +397,9 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
           waiver: { signed: data.waiverConsent, signature: data.waiverSignature, date: data.waiverDate },
           financial: { signed: data.financialConsent, signature: data.financialSignature, date: data.financialDate },
         },
+        // Insurance card images (base64)
+        insuranceCardFront: insuranceCardFront || null,
+        insuranceCardBack: insuranceCardBack || null,
       };
 
       const response = await apiRequest("POST", "/api/patients", {
@@ -453,6 +477,8 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
       setPlanDocument(null);
       setConsentGiven(false);
       setDocumentUploaded(false);
+      setInsuranceCardFront(null);
+      setInsuranceCardBack(null);
     },
     onError: (error) => {
       if (isUnauthorizedError(error)) {
@@ -491,6 +517,45 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
     if (file) {
       setPlanDocument(file);
     }
+  };
+
+  const handleInsuranceCardSelect = (
+    event: React.ChangeEvent<HTMLInputElement>,
+    side: "front" | "back"
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Invalid File",
+        description: "Please upload an image file (JPG, PNG, or HEIC).",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File Too Large",
+        description: "Insurance card image must be under 5MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      if (side === "front") {
+        setInsuranceCardFront(base64);
+      } else {
+        setInsuranceCardBack(base64);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Sensory Processing Question Component
@@ -1259,7 +1324,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
           </div>
         )}
 
-        {/* Step 5: Reason for Therapy */}
+        {/* Step 5: Reason for Therapy & Referral Source */}
         {step === 5 && (
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-slate-900">Reason for Seeking Therapy</h3>
@@ -1297,6 +1362,107 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                 </FormItem>
               )}
             />
+
+            <Separator />
+            <h3 className="text-lg font-semibold text-slate-900">Referral Source</h3>
+            <p className="text-sm text-muted-foreground">How did you hear about us?</p>
+
+            <FormField
+              control={form.control}
+              name="referralSource"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Referral Source</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select how you heard about us" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="physician_referral">Physician Referral</SelectItem>
+                      <SelectItem value="school">School</SelectItem>
+                      <SelectItem value="parent_family">Parent / Family</SelectItem>
+                      <SelectItem value="insurance">Insurance</SelectItem>
+                      <SelectItem value="online_search">Online Search</SelectItem>
+                      <SelectItem value="social_media">Social Media</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )}
+            />
+
+            {form.watch("referralSource") && form.watch("referralSource") !== "online_search" && form.watch("referralSource") !== "social_media" && (
+              <FormField
+                control={form.control}
+                name="referredByName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Referred by (name)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Name of person or organization who referred you" {...field} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {form.watch("referralSource") === "physician_referral" && (
+              <div className="space-y-3 p-4 border rounded-lg bg-slate-50">
+                <h4 className="text-sm font-semibold text-slate-700">Referring Physician Details</h4>
+                <FormField
+                  control={form.control}
+                  name="referringPhysicianName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Physician Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Dr. Jane Smith" {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField
+                    control={form.control}
+                    name="referringPhysicianPhone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone</FormLabel>
+                        <FormControl>
+                          <Input placeholder="(555) 123-4567" {...field} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="referringPhysicianFax"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Fax</FormLabel>
+                        <FormControl>
+                          <Input placeholder="(555) 123-4568" {...field} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="referringPhysicianNpi"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>NPI Number (optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="10-digit NPI" maxLength={10} {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
 
             <div className="flex justify-between">
               <Button type="button" variant="outline" onClick={prevStep}>Previous</Button>
@@ -2444,7 +2610,139 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
 
         {/* Step 15: Insurance Documents */}
         {step === 15 && (
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Insurance Card Upload */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-medical-blue-500" />
+                Upload Insurance Card (Optional)
+              </h3>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <Camera className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-blue-800">
+                    <p className="font-medium mb-1">Take a photo or upload an image</p>
+                    <p>Upload the front and back of your insurance card. On mobile, you can use your camera to take a photo directly. Accepted formats: JPG, PNG, HEIC (max 5MB each).</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Front of Card */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Front of Card</Label>
+                  <div
+                    className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors min-h-[160px] flex items-center justify-center ${
+                      insuranceCardFront
+                        ? "border-green-300 bg-green-50"
+                        : "border-slate-300 hover:border-medical-blue-400 hover:bg-slate-50"
+                    }`}
+                    onClick={() => insuranceCardFrontRef.current?.click()}
+                  >
+                    <input
+                      ref={insuranceCardFrontRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => handleInsuranceCardSelect(e, "front")}
+                      className="hidden"
+                    />
+                    {insuranceCardFront ? (
+                      <div className="relative w-full">
+                        <img
+                          src={insuranceCardFront}
+                          alt="Insurance card front"
+                          className="max-h-40 mx-auto rounded object-contain"
+                        />
+                        <button
+                          type="button"
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setInsuranceCardFront(null);
+                            if (insuranceCardFrontRef.current) insuranceCardFrontRef.current.value = '';
+                          }}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <ImageIcon className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                        <p className="text-sm text-slate-600">Front of card</p>
+                        <p className="text-xs text-slate-500 mt-1">Tap to upload or take photo</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Back of Card */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Back of Card</Label>
+                  <div
+                    className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors min-h-[160px] flex items-center justify-center ${
+                      insuranceCardBack
+                        ? "border-green-300 bg-green-50"
+                        : "border-slate-300 hover:border-medical-blue-400 hover:bg-slate-50"
+                    }`}
+                    onClick={() => insuranceCardBackRef.current?.click()}
+                  >
+                    <input
+                      ref={insuranceCardBackRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => handleInsuranceCardSelect(e, "back")}
+                      className="hidden"
+                    />
+                    {insuranceCardBack ? (
+                      <div className="relative w-full">
+                        <img
+                          src={insuranceCardBack}
+                          alt="Insurance card back"
+                          className="max-h-40 mx-auto rounded object-contain"
+                        />
+                        <button
+                          type="button"
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setInsuranceCardBack(null);
+                            if (insuranceCardBackRef.current) insuranceCardBackRef.current.value = '';
+                          }}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <ImageIcon className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                        <p className="text-sm text-slate-600">Back of card</p>
+                        <p className="text-xs text-slate-500 mt-1">Tap to upload or take photo</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {(insuranceCardFront || insuranceCardBack) && (
+                <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 p-2 rounded">
+                  <CheckCircle className="w-4 h-4" />
+                  <span>
+                    {insuranceCardFront && insuranceCardBack
+                      ? "Both sides of insurance card uploaded"
+                      : insuranceCardFront
+                      ? "Front of card uploaded (back is optional)"
+                      : "Back of card uploaded (front is recommended)"}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Existing Plan Document Upload */}
             <h3 className="text-lg font-semibold text-slate-900">Insurance Plan Document (Optional)</h3>
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

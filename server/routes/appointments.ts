@@ -380,6 +380,71 @@ router.post('/:id/cancel', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// ==================== CHECK-IN / CHECK-OUT ====================
+
+// Check in a patient for an appointment
+router.post('/:id/check-in', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    const appointment = await storage.getAppointment(appointmentId);
+
+    if (!appointment) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
+    if (appointment.status === 'cancelled') {
+      return res.status(400).json({ message: 'Cannot check in a cancelled appointment' });
+    }
+
+    if (appointment.checkedInAt) {
+      return res.status(400).json({ message: 'Patient is already checked in' });
+    }
+
+    const userId = req.user?.claims?.sub || req.user?.id || 'unknown';
+
+    const updated = await storage.updateAppointment(appointmentId, {
+      checkedInAt: new Date(),
+      checkedInBy: userId,
+      status: 'checked_in',
+    } as any);
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error checking in appointment', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to check in' });
+  }
+});
+
+// Check out a patient from an appointment
+router.post('/:id/check-out', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    const appointment = await storage.getAppointment(appointmentId);
+
+    if (!appointment) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
+    if (!appointment.checkedInAt) {
+      return res.status(400).json({ message: 'Patient must be checked in before checking out' });
+    }
+
+    if (appointment.checkedOutAt) {
+      return res.status(400).json({ message: 'Patient is already checked out' });
+    }
+
+    const updated = await storage.updateAppointment(appointmentId, {
+      checkedOutAt: new Date(),
+      status: 'completed',
+    } as any);
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error checking out appointment', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to check out' });
+  }
+});
+
 // ==================== ELIGIBILITY ====================
 
 // Run pre-appointment eligibility check for a specific appointment

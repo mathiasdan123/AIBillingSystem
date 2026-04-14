@@ -1,5 +1,5 @@
 import { getDb } from "./db";
-import { practices, cptCodes, icd10Codes, insurances, users } from "@shared/schema";
+import { practices, cptCodes, icd10Codes, insurances, users, payerCrosswalk } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
 
@@ -755,6 +755,183 @@ export async function seedDatabase(options?: { force?: boolean }) {
     ]);
 
     console.log("Reference data seeded successfully (CPT codes, ICD-10 codes, insurances)");
+
+    // Seed payer crosswalk data for sub-plan routing
+    const crosswalkCount = await db.execute(sql`SELECT COUNT(*) as count FROM payer_crosswalk`);
+    if (parseInt(crosswalkCount.rows[0]?.count || '0', 10) === 0) {
+      console.log("Seeding payer crosswalk data...");
+      await db.insert(payerCrosswalk).values([
+        // Aetna sub-plans
+        {
+          parentPayerName: "Aetna",
+          subPlanName: "Aetna Better Health",
+          subPlanKeywords: ["better health", "medicaid", "aetna medicaid"],
+          tradingPartnerId: "AETNABH",
+          stediPayerId: "AETBH01",
+          notes: "Aetna Medicaid managed care plan",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Aetna",
+          subPlanName: "Aetna CVS Health",
+          subPlanKeywords: ["cvs health", "cvs", "aetna cvs"],
+          tradingPartnerId: "60054",
+          stediPayerId: "60054",
+          notes: "Aetna CVS Health commercial plans",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Aetna",
+          subPlanName: "Aetna Student Health",
+          subPlanKeywords: ["student health", "student"],
+          tradingPartnerId: "46299",
+          stediPayerId: "46299",
+          notes: "Aetna Student Health plans",
+          isActive: true,
+        },
+        // BCBS state-specific plans
+        {
+          parentPayerName: "Blue Cross Blue Shield",
+          subPlanName: "Anthem BCBS",
+          subPlanKeywords: ["anthem", "anthem bcbs", "anthem blue cross"],
+          tradingPartnerId: "00805",
+          stediPayerId: "00805",
+          state: "IN",
+          notes: "Anthem BCBS - IN, OH, KY, WI, CT, NH, ME, CO, NV, VA, GA, MO",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Blue Cross Blue Shield",
+          subPlanName: "Premera Blue Cross",
+          subPlanKeywords: ["premera", "premera blue cross"],
+          tradingPartnerId: "00402",
+          stediPayerId: "00402",
+          state: "WA",
+          notes: "Premera Blue Cross - Washington and Alaska",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Blue Cross Blue Shield",
+          subPlanName: "Highmark BCBS",
+          subPlanKeywords: ["highmark", "highmark bcbs"],
+          tradingPartnerId: "65391",
+          stediPayerId: "65391",
+          state: "PA",
+          notes: "Highmark BCBS - Pennsylvania, West Virginia, Delaware",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Blue Cross Blue Shield",
+          subPlanName: "Horizon BCBS New Jersey",
+          subPlanKeywords: ["horizon", "horizon bcbs", "horizon blue cross"],
+          tradingPartnerId: "22099",
+          stediPayerId: "22099",
+          state: "NJ",
+          notes: "Horizon BCBS of New Jersey",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Blue Cross Blue Shield",
+          subPlanName: "Independence Blue Cross",
+          subPlanKeywords: ["independence", "independence blue cross", "ibc"],
+          tradingPartnerId: "23228",
+          stediPayerId: "23228",
+          state: "PA",
+          notes: "Independence Blue Cross - Southeast Pennsylvania",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Blue Cross Blue Shield",
+          subPlanName: "CareFirst BCBS",
+          subPlanKeywords: ["carefirst", "carefirst bcbs"],
+          tradingPartnerId: "47171",
+          stediPayerId: "47171",
+          state: "MD",
+          notes: "CareFirst BCBS - Maryland, DC, Northern Virginia",
+          isActive: true,
+        },
+        // UnitedHealthcare sub-plans
+        {
+          parentPayerName: "UnitedHealth",
+          subPlanName: "UHC Community Plan",
+          subPlanKeywords: ["community plan", "uhc medicaid", "united medicaid", "community"],
+          tradingPartnerId: "87726",
+          stediPayerId: "87726",
+          notes: "UnitedHealthcare Medicaid managed care",
+          isActive: true,
+        },
+        {
+          parentPayerName: "UnitedHealth",
+          subPlanName: "UHC Oxford",
+          subPlanKeywords: ["oxford", "uhc oxford", "oxford health"],
+          tradingPartnerId: "06111",
+          stediPayerId: "06111",
+          notes: "Oxford Health Plans (UHC subsidiary) - NY, NJ, CT",
+          isActive: true,
+        },
+        {
+          parentPayerName: "UnitedHealth",
+          subPlanName: "UHC Optum",
+          subPlanKeywords: ["optum", "optumhealth", "optum behavioral"],
+          tradingPartnerId: "87726",
+          stediPayerId: "87726",
+          notes: "OptumHealth Behavioral Solutions",
+          isActive: true,
+        },
+        // Cigna sub-plans
+        {
+          parentPayerName: "Cigna",
+          subPlanName: "Evernorth (Cigna)",
+          subPlanKeywords: ["evernorth", "cigna evernorth"],
+          tradingPartnerId: "62308",
+          stediPayerId: "62308",
+          notes: "Evernorth Health Services (Cigna subsidiary)",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Cigna",
+          subPlanName: "Cigna Behavioral Health",
+          subPlanKeywords: ["behavioral health", "cigna behavioral"],
+          tradingPartnerId: "62308",
+          stediPayerId: "62308",
+          notes: "Cigna Behavioral Health / EAP",
+          isActive: true,
+        },
+        // Humana sub-plans
+        {
+          parentPayerName: "Humana",
+          subPlanName: "Humana Military (TRICARE)",
+          subPlanKeywords: ["military", "tricare", "humana military"],
+          tradingPartnerId: "99726",
+          stediPayerId: "99726",
+          notes: "Humana Military Healthcare Services (TRICARE)",
+          isActive: true,
+        },
+        // Medicare sub-plans
+        {
+          parentPayerName: "Medicare",
+          subPlanName: "Medicare Advantage (Aetna)",
+          subPlanKeywords: ["medicare advantage", "aetna medicare", "ma aetna"],
+          tradingPartnerId: "60054",
+          stediPayerId: "60054",
+          notes: "Medicare Advantage plans administered by Aetna",
+          isActive: true,
+        },
+        {
+          parentPayerName: "Medicare",
+          subPlanName: "Medicare Advantage (UHC)",
+          subPlanKeywords: ["medicare advantage uhc", "uhc medicare", "ma uhc"],
+          tradingPartnerId: "87726",
+          stediPayerId: "87726",
+          notes: "Medicare Advantage plans administered by UnitedHealthcare",
+          isActive: true,
+        },
+      ]);
+      console.log("Payer crosswalk data seeded successfully");
+    } else {
+      console.log("Payer crosswalk data already exists");
+    }
+
   } catch (error) {
     console.error("Error seeding database:", error);
   }

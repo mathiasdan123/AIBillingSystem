@@ -38,6 +38,9 @@ import {
   Loader2,
   Calendar,
   User,
+  Circle,
+  StopCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 interface TelehealthSession {
@@ -59,6 +62,9 @@ interface TelehealthSession {
   therapistJoinedAt?: string;
   duration?: number;
   waitingRoomEnabled: boolean;
+  recordingEnabled: boolean;
+  recordingUrl?: string;
+  recordingConsent: boolean;
   patientName?: string;
 }
 
@@ -91,6 +97,7 @@ export default function TelehealthPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedSession, setSelectedSession] = useState<TelehealthSession | null>(null);
+  const [recordingSessionId, setRecordingSessionId] = useState<number | null>(null);
 
   // Fetch settings
   const { data: settings } = useQuery<TelehealthSettings>({
@@ -170,6 +177,30 @@ export default function TelehealthPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/telehealth/sessions"] });
       toast({ title: "Session ended" });
+    },
+  });
+
+  // Toggle recording for a session
+  const toggleRecording = useMutation({
+    mutationFn: async ({ sessionId, enabled }: { sessionId: number; enabled: boolean }) => {
+      const res = await fetch(`/api/telehealth/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recordingEnabled: enabled }),
+      });
+      if (!res.ok) throw new Error("Failed to toggle recording");
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/telehealth/sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/telehealth/sessions/today"] });
+      setRecordingSessionId(variables.enabled ? variables.sessionId : null);
+      toast({
+        title: variables.enabled ? "Recording started" : "Recording stopped",
+        description: variables.enabled
+          ? "Session is now being recorded"
+          : "Recording has been stopped",
+      });
     },
   });
 
@@ -341,6 +372,12 @@ export default function TelehealthPage() {
                             ? "In Progress"
                             : session.status.charAt(0).toUpperCase() + session.status.slice(1)}
                         </Badge>
+                        {session.recordingEnabled && session.status === "in_progress" && (
+                          <Badge variant="outline" className="border-red-300 text-red-600">
+                            <Circle className="mr-1 h-2 w-2 fill-red-500 text-red-500 animate-pulse" />
+                            REC
+                          </Badge>
+                        )}
                         {session.status === "waiting" && (
                           <Button
                             size="sm"
@@ -353,6 +390,44 @@ export default function TelehealthPage() {
                         )}
                         {session.status === "in_progress" && (
                           <>
+                            {session.recordingEnabled ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-red-300 text-red-600 hover:bg-red-50"
+                                onClick={() =>
+                                  toggleRecording.mutate({ sessionId: session.id, enabled: false })
+                                }
+                                disabled={toggleRecording.isPending}
+                              >
+                                <StopCircle className="mr-1 h-4 w-4 text-red-500" />
+                                Stop Rec
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  if (
+                                    settings?.requireRecordingConsent &&
+                                    !session.recordingConsent
+                                  ) {
+                                    if (
+                                      !confirm(
+                                        "Recording requires patient consent. Has the patient consented to this session being recorded?"
+                                      )
+                                    ) {
+                                      return;
+                                    }
+                                  }
+                                  toggleRecording.mutate({ sessionId: session.id, enabled: true });
+                                }}
+                                disabled={toggleRecording.isPending}
+                              >
+                                <Circle className="mr-1 h-4 w-4 text-red-500" />
+                                Record
+                              </Button>
+                            )}
                             <Button
                               size="sm"
                               variant="outline"
@@ -503,6 +578,36 @@ export default function TelehealthPage() {
                 />
               </div>
 
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Enable Session Recording</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Allow recording of telehealth sessions
+                  </p>
+                </div>
+                <Switch
+                  checked={settings?.defaultRecordingEnabled ?? false}
+                  onCheckedChange={(checked) =>
+                    saveSettings.mutate({ defaultRecordingEnabled: checked })
+                  }
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Require Recording Consent</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Require patient consent before recording begins
+                  </p>
+                </div>
+                <Switch
+                  checked={settings?.requireRecordingConsent ?? true}
+                  onCheckedChange={(checked) =>
+                    saveSettings.mutate({ requireRecordingConsent: checked })
+                  }
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label>Waiting Room Message</Label>
                 <Textarea
@@ -587,6 +692,13 @@ export default function TelehealthPage() {
                   </Button>
                 </div>
               </div>
+
+              {selectedSession.recordingEnabled && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <Circle className="h-4 w-4 text-red-500 fill-red-500 animate-pulse" />
+                  <span className="text-sm font-medium text-red-700">Recording Active</span>
+                </div>
+              )}
 
               <div className="flex gap-2 pt-4">
                 <Button

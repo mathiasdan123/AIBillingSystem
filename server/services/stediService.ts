@@ -649,10 +649,102 @@ function build837P(claim: ClaimSubmission): any {
   };
 }
 
+/**
+ * Payer Crosswalk Routing
+ *
+ * Resolves the correct trading partner ID for a claim by checking the patient's
+ * insurance plan name against the payer crosswalk table. This handles cases where
+ * insurance companies have subsidiaries (e.g., Aetna Better Health vs Aetna CVS Health)
+ * that require different payer IDs for claim submission.
+ */
+export interface PayerRoutingResult {
+  tradingPartnerId: string;
+  matchedSubPlan: string | null;
+  routingSource: 'crosswalk' | 'static_map' | 'insurance_record' | 'default';
+}
+
+export async function resolvePayerId(
+  insuranceName: string,
+  patientInsuranceProvider: string | null,
+  insurancePayerCode: string | null,
+): Promise<PayerRoutingResult> {
+  const normalizedInsuranceName = insuranceName?.toLowerCase().trim() || '';
+  const normalizedPatientPlan = patientInsuranceProvider?.toLowerCase().trim() || '';
+
+  // 1. Try crosswalk table first — match patient's plan name against sub-plan keywords
+  try {
+    const { getDb } = await import('../db');
+    const { payerCrosswalk } = await import('../../shared/schema');
+    const { eq } = await import('drizzle-orm');
+    const db = await getDb();
+
+    const crosswalkEntries = await db
+      .select()
+      .from(payerCrosswalk)
+      .where(eq(payerCrosswalk.isActive, true));
+
+    // Check patient's insurance provider name against sub-plan keywords
+    const searchText = normalizedPatientPlan || normalizedInsuranceName;
+    for (const entry of crosswalkEntries) {
+      const keywords = (entry.subPlanKeywords as string[]) || [];
+      const subPlanLower = entry.subPlanName.toLowerCase();
+
+      // Exact sub-plan name match
+      if (searchText === subPlanLower || searchText.includes(subPlanLower)) {
+        return {
+          tradingPartnerId: entry.tradingPartnerId,
+          matchedSubPlan: entry.subPlanName,
+          routingSource: 'crosswalk',
+        };
+      }
+
+      // Keyword match
+      for (const keyword of keywords) {
+        if (searchText.includes(keyword.toLowerCase())) {
+          return {
+            tradingPartnerId: entry.tradingPartnerId,
+            matchedSubPlan: entry.subPlanName,
+            routingSource: 'crosswalk',
+          };
+        }
+      }
+    }
+  } catch (error) {
+    // If crosswalk lookup fails, fall through to static map
+    console.error('Payer crosswalk lookup failed, falling back to static map:', error);
+  }
+
+  // 2. Fall back to static PAYER_IDS map
+  if (PAYER_IDS[normalizedInsuranceName]) {
+    return {
+      tradingPartnerId: PAYER_IDS[normalizedInsuranceName],
+      matchedSubPlan: null,
+      routingSource: 'static_map',
+    };
+  }
+
+  // 3. Fall back to insurance record's payerCode
+  if (insurancePayerCode) {
+    return {
+      tradingPartnerId: insurancePayerCode,
+      matchedSubPlan: null,
+      routingSource: 'insurance_record',
+    };
+  }
+
+  // 4. Default fallback
+  return {
+    tradingPartnerId: '00000',
+    matchedSubPlan: null,
+    routingSource: 'default',
+  };
+}
+
 export default {
   isStediConfigured,
   checkEligibility,
   submitClaim,
   checkClaimStatus,
+  resolvePayerId,
   PAYER_IDS,
 };

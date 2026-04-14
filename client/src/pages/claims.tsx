@@ -65,6 +65,8 @@ interface Claim {
   primaryPaidAmount?: string | null;
   primaryAdjustmentAmount?: string | null;
   cobData?: any;
+  authorizationNumber?: string | null;
+  holdReason?: string | null;
   denialPrediction?: {
     riskScore: number;
     riskLevel: "low" | "medium" | "high";
@@ -646,6 +648,14 @@ export default function Claims() {
   const [predictingDenial, setPredictingDenial] = useState(false);
   const [preSubmitClaimId, setPreSubmitClaimId] = useState<number | null>(null); // set when Submit triggers denial check
 
+  // Authorization / scrub state
+  const [showAuthDialog, setShowAuthDialog] = useState(false);
+  const [authClaimId, setAuthClaimId] = useState<number | null>(null);
+  const [authNumber, setAuthNumber] = useState("");
+  const [scrubErrors, setScrubErrors] = useState<string[]>([]);
+  const [scrubWarnings, setScrubWarnings] = useState<string[]>([]);
+  const [showScrubResults, setShowScrubResults] = useState(false);
+
   // Batch submission state
   const [selectedClaimIds, setSelectedClaimIds] = useState<Set<number>>(new Set());
   const [batchSubmitting, setBatchSubmitting] = useState(false);
@@ -888,11 +898,30 @@ export default function Claims() {
 
   const submitClaimMutation = useMutation({
     mutationFn: async (claimId: number) => {
-      const response = await apiRequest("POST", `/api/claims/${claimId}/submit`, {});
-      return response.json();
+      const res = await fetch(`/api/claims/${claimId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // Attach the parsed body to the error so onError can read scrub results
+        const err: any = new Error(data.message || "Failed to submit claim");
+        err.status = res.status;
+        err.scrubResult = data.scrubResult;
+        throw err;
+      }
+      return data;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      // Show scrub warnings if present
+      if (data.scrubResult?.warnings?.length > 0) {
+        setScrubWarnings(data.scrubResult.warnings);
+        setScrubErrors([]);
+        setShowScrubResults(true);
+      }
       toast({
         title: data.success ? "Success" : "Error",
         description: data.submissionMethod === 'stedi'
@@ -901,7 +930,7 @@ export default function Claims() {
         variant: data.success ? "default" : "destructive",
       });
     },
-    onError: (error) => {
+    onError: (error: any) => {
       if (isUnauthorizedError(error)) {
         toast({
           title: "Unauthorized",
@@ -913,9 +942,56 @@ export default function Claims() {
         }, 500);
         return;
       }
+      // Handle scrub failure (422)
+      if (error.status === 422 && error.scrubResult) {
+        queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+        setScrubErrors(error.scrubResult.errors || []);
+        setScrubWarnings(error.scrubResult.warnings || []);
+        setShowScrubResults(true);
+
+        // If held for authorization, prompt the user
+        if (error.scrubResult.holdReason === 'Authorization Pending') {
+          toast({
+            title: "Authorization Required",
+            description: "This payer requires prior authorization. Enter the auth number to release the hold.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Claim Scrub Failed",
+            description: `${error.scrubResult.errors?.length || 0} issue(s) must be resolved before submission`,
+            variant: "destructive",
+          });
+        }
+        return;
+      }
       toast({
         title: "Error",
-        description: "Failed to submit claim",
+        description: error.message || "Failed to submit claim",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const enterAuthorizationMutation = useMutation({
+    mutationFn: async ({ claimId, authorizationNumber }: { claimId: number; authorizationNumber: string }) => {
+      const response = await apiRequest("PATCH", `/api/claims/${claimId}/authorization`, { authorizationNumber });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      toast({
+        title: "Authorization Saved",
+        description: data.message,
+      });
+      setShowAuthDialog(false);
+      setAuthNumber("");
+      setAuthClaimId(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to save authorization",
         variant: "destructive",
       });
     },
@@ -1239,6 +1315,8 @@ export default function Claims() {
         return <CheckCircle className="w-4 h-4 text-green-500" />;
       case 'submitted':
         return <Clock className="w-4 h-4 text-yellow-500" />;
+      case 'held':
+        return <ShieldAlert className="w-4 h-4 text-orange-500" />;
       case 'denied':
         return <XCircle className="w-4 h-4 text-red-500" />;
       default:
@@ -1249,6 +1327,7 @@ export default function Claims() {
   const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
       draft: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
+      held: 'bg-orange-100 text-orange-700 hover:bg-orange-100',
       submitted: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-100',
       paid: 'bg-green-100 text-green-700 hover:bg-green-100',
       denied: 'bg-red-100 text-red-700 hover:bg-red-100',
@@ -1954,6 +2033,7 @@ export default function Claims() {
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="draft">Draft ({stats.draft})</SelectItem>
+            <SelectItem value="held">Held ({(claims as Claim[])?.filter((c: Claim) => c.status === 'held').length || 0})</SelectItem>
             <SelectItem value="submitted">Submitted ({stats.submitted})</SelectItem>
             <SelectItem value="paid">Paid ({stats.paid})</SelectItem>
             <SelectItem value="denied">Denied ({stats.denied})</SelectItem>
@@ -2137,9 +2217,31 @@ export default function Claims() {
                       </div>
                     )}
 
+                    {/* Hold reason badge */}
+                    {claim.status === 'held' && claim.holdReason && (
+                      <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-300">
+                        {claim.holdReason}
+                      </Badge>
+                    )}
+
                     {/* Actions */}
                     <div className="flex items-center gap-2">
-                      {claim.status === 'draft' && (
+                      {claim.status === 'held' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                          onClick={() => {
+                            setAuthClaimId(claim.id);
+                            setAuthNumber(claim.authorizationNumber || "");
+                            setShowAuthDialog(true);
+                          }}
+                        >
+                          <ShieldCheck className="w-4 h-4 mr-1" />
+                          Enter Authorization
+                        </Button>
+                      )}
+                      {(claim.status === 'draft' || claim.status === 'held') && (
                         <>
                           <Button
                             size="sm"
@@ -2620,6 +2722,97 @@ export default function Claims() {
               <p className="text-sm text-slate-500">No prediction data available</p>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Authorization Dialog */}
+      <Dialog open={showAuthDialog} onOpenChange={(open) => { if (!open) { setShowAuthDialog(false); setAuthNumber(""); setAuthClaimId(null); } }}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Enter Authorization Number</DialogTitle>
+            <DialogDescription>
+              This payer requires prior authorization. Enter the authorization number to release the hold and allow submission.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label htmlFor="auth-number">Authorization Number</Label>
+              <Input
+                id="auth-number"
+                value={authNumber}
+                onChange={(e) => setAuthNumber(e.target.value)}
+                placeholder="e.g., AUTH-2024-12345"
+                className="mt-1"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setShowAuthDialog(false); setAuthNumber(""); setAuthClaimId(null); }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (authClaimId && authNumber.trim()) {
+                    enterAuthorizationMutation.mutate({ claimId: authClaimId, authorizationNumber: authNumber.trim() });
+                  }
+                }}
+                disabled={!authNumber.trim() || enterAuthorizationMutation.isPending}
+              >
+                {enterAuthorizationMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4 mr-1" />
+                )}
+                Save Authorization
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Scrub Results Dialog */}
+      <Dialog open={showScrubResults} onOpenChange={setShowScrubResults}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {scrubErrors.length > 0 ? (
+                <><XCircle className="w-5 h-5 text-red-500" /> Pre-Submission Scrub Failed</>
+              ) : (
+                <><AlertCircle className="w-5 h-5 text-yellow-500" /> Submission Warnings</>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {scrubErrors.length > 0
+                ? "The following issues must be resolved before this claim can be submitted."
+                : "The claim was submitted, but these warnings should be reviewed."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 max-h-[400px] overflow-y-auto">
+            {scrubErrors.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-red-700 font-semibold text-xs uppercase tracking-wide">Errors</Label>
+                {scrubErrors.map((err, i) => (
+                  <div key={i} className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-md p-2.5">
+                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-red-800">{err}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {scrubWarnings.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-yellow-700 font-semibold text-xs uppercase tracking-wide">Warnings</Label>
+                {scrubWarnings.map((warn, i) => (
+                  <div key={i} className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-md p-2.5">
+                    <AlertCircle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-yellow-800">{warn}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={() => setShowScrubResults(false)}>Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
 

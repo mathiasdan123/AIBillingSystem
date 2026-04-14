@@ -28,7 +28,7 @@ import { createPatientSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import { sendEmail } from '../services/emailService';
-import { portalWelcome } from '../services/emailTemplates';
+import { portalWelcome, intakeSubmissionNotification } from '../services/emailTemplates';
 
 const router = Router();
 
@@ -262,6 +262,39 @@ router.get('/', isAuthenticated, async (req: any, res) => {
 router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any, res) => {
   try {
     const patient = await storage.createPatient(req.body);
+
+    // Send front desk notification if this is an intake form submission
+    if (req.body.intakeCompletedAt || req.body.intakeData) {
+      try {
+        const practice = await storage.getPractice(patient.practiceId);
+        const practiceEmail = practice?.email;
+        if (practiceEmail) {
+          const intakeData = typeof req.body.intakeData === 'string'
+            ? JSON.parse(req.body.intakeData)
+            : req.body.intakeData;
+          const emailData = intakeSubmissionNotification({
+            patientFirstName: patient.firstName,
+            patientLastName: patient.lastName,
+            patientEmail: patient.email || undefined,
+            patientPhone: patient.phone || undefined,
+            practiceName: practice.name || 'Your Practice',
+            hasInsuranceCard: !!(intakeData?.insuranceCardFront || intakeData?.insuranceCardBack),
+            hasInsuranceInfo: !!(patient.insuranceProvider),
+            reviewUrl: `${process.env.APP_URL || 'https://app.therapybillai.com'}/patients?id=${patient.id}`,
+          });
+          sendEmail({
+            to: practiceEmail,
+            ...emailData,
+          }).catch(err => {
+            logger.warn('Failed to send intake notification email', { error: err instanceof Error ? err.message : String(err) });
+          });
+        }
+      } catch (emailError) {
+        // Don't fail patient creation if email fails
+        logger.warn('Error sending intake notification', { error: emailError instanceof Error ? emailError.message : String(emailError) });
+      }
+    }
+
     res.json(patient);
   } catch (error) {
     logger.error('Error creating patient', { error: error instanceof Error ? error.message : String(error) });
@@ -1214,6 +1247,83 @@ router.get('/:id/insurance-data', isAuthenticated, requirePatientConsent, async 
   } catch (error) {
     logger.error('Error fetching insurance data', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch insurance data' });
+  }
+});
+
+// ==================== INSURANCE CARD IMAGES ====================
+
+// Upload insurance card images (front and back) for a patient
+router.post('/:id/insurance-cards', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    const { authorized, error } = await verifyPatientAccess(req, patientId);
+    if (!authorized) {
+      return res.status(error === 'Patient not found' ? 404 : 403).json({ message: error });
+    }
+
+    const { front, back } = req.body;
+
+    if (!front && !back) {
+      return res.status(400).json({ message: 'At least one card image (front or back) is required' });
+    }
+
+    // Validate base64 data URIs
+    const dataUriPattern = /^data:image\/(jpeg|jpg|png|heic|heif|webp);base64,/;
+    if (front && !dataUriPattern.test(front)) {
+      return res.status(400).json({ message: 'Invalid front card image format. Must be a base64-encoded image.' });
+    }
+    if (back && !dataUriPattern.test(back)) {
+      return res.status(400).json({ message: 'Invalid back card image format. Must be a base64-encoded image.' });
+    }
+
+    // Size check: ~5MB base64 is roughly 6.67MB string
+    const MAX_BASE64_SIZE = 7 * 1024 * 1024;
+    if (front && front.length > MAX_BASE64_SIZE) {
+      return res.status(400).json({ message: 'Front card image is too large (max 5MB)' });
+    }
+    if (back && back.length > MAX_BASE64_SIZE) {
+      return res.status(400).json({ message: 'Back card image is too large (max 5MB)' });
+    }
+
+    // Get existing patient data and merge insurance card images into intakeData
+    const patient = await storage.getPatient(patientId);
+    const existingIntakeData = (patient?.intakeData as Record<string, unknown>) || {};
+    const updatedIntakeData = {
+      ...existingIntakeData,
+      ...(front !== undefined && { insuranceCardFront: front }),
+      ...(back !== undefined && { insuranceCardBack: back }),
+      insuranceCardUploadedAt: new Date().toISOString(),
+    };
+
+    await storage.updatePatient(patientId, { intakeData: updatedIntakeData });
+
+    logger.info('Insurance card images uploaded', { patientId, hasFront: !!front, hasBack: !!back });
+    res.json({ success: true, message: 'Insurance card images saved' });
+  } catch (error) {
+    logger.error('Error uploading insurance cards', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to upload insurance card images' });
+  }
+});
+
+// Get insurance card images for a patient
+router.get('/:id/insurance-cards', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    const { authorized, patient, error } = await verifyPatientAccess(req, patientId);
+    if (!authorized) {
+      return res.status(error === 'Patient not found' ? 404 : 403).json({ message: error });
+    }
+
+    const intakeData = (patient?.intakeData as Record<string, unknown>) || {};
+
+    res.json({
+      front: intakeData.insuranceCardFront || null,
+      back: intakeData.insuranceCardBack || null,
+      uploadedAt: intakeData.insuranceCardUploadedAt || null,
+    });
+  } catch (error) {
+    logger.error('Error fetching insurance cards', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch insurance card images' });
   }
 });
 
