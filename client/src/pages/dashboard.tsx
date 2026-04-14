@@ -16,7 +16,7 @@ export default function Dashboard() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
   const { t } = useTranslation();
-  const [practiceId] = useState(1); // Mock practice ID for now
+  const [practiceId] = useState(user?.practiceId || 1);
 
   // Redirect to login if not authenticated
   useEffect(() => {

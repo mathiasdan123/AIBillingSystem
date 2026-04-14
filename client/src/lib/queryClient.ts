@@ -1,4 +1,4 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { QueryClient, QueryCache, QueryFunction } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 
 // API version header — signals to the server which API version the client expects
@@ -84,6 +84,17 @@ function shouldRetry(failureCount: number, error: unknown): boolean {
 }
 
 export const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error, query) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('401') || msg.includes('403')) {
+        // Dispatch a custom event that the Toaster/App can listen for
+        window.dispatchEvent(new CustomEvent('auth-error', {
+          detail: { message: 'Session expired, please log in again', status: msg },
+        }));
+      }
+    },
+  }),
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "returnNull" }),

@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/react";
 import { Switch, Route } from "wouter";
-import { Suspense, lazy, Component } from "react";
+import { Suspense, lazy, Component, useEffect } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 import SimpleNavigation from "@/components/SimpleNavigation";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
@@ -259,12 +260,34 @@ function Router() {
   );
 }
 
+/** Listens for auth-error events from QueryCache and shows a toast */
+function AuthErrorListener() {
+  const { toast } = useToast();
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      toast({
+        title: 'Session expired',
+        description: detail?.message || 'Please log in again',
+        variant: 'destructive',
+      });
+      setTimeout(() => {
+        window.location.href = '/api/login';
+      }, 1500);
+    };
+    window.addEventListener('auth-error', handler);
+    return () => window.removeEventListener('auth-error', handler);
+  }, [toast]);
+  return null;
+}
+
 function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <Toaster />
+          <AuthErrorListener />
           <Router />
           <AiBillingAssistant />
         </TooltipProvider>

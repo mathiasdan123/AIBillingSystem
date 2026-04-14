@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Mic, MicOff, Square, Play, Pause, Loader2, FileText,
@@ -51,7 +52,9 @@ interface ProcessingResult {
 }
 
 export default function SessionRecorder() {
+  const { user } = useAuth();
   const { toast } = useToast();
+  const practiceId = user?.practiceId || 1;
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -78,7 +81,7 @@ export default function SessionRecorder() {
 
   // Fetch patients
   const { data: patients } = useQuery<any[]>({
-    queryKey: ['/api/patients?practiceId=1'],
+    queryKey: [`/api/patients?practiceId=${practiceId}`],
   });
 
   // Fetch recorder status
@@ -185,20 +188,20 @@ export default function SessionRecorder() {
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
           dateOfBirth: "2000-01-01",
-          practiceId: 1,
+          practiceId,
         });
         const newPatient = await res.json();
         patientId = newPatient.id;
         setSelectedPatient(String(patientId));
         setIsNewPatient(false);
         setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
-        queryClient.invalidateQueries({ queryKey: ['/api/patients?practiceId=1'] });
+        queryClient.invalidateQueries({ queryKey: [`/api/patients?practiceId=${practiceId}`] });
       }
 
       // First create a session
       const patient = patients?.find(p => p.id === patientId);
       const sessionResponse = await apiRequest("POST", "/api/sessions", {
-        practiceId: 1,
+        practiceId,
         patientId,
         therapistId: "session-recorder",
         sessionDate: new Date().toISOString().split('T')[0],

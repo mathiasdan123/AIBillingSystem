@@ -25,8 +25,8 @@ if (isProduction) {
 }
 
 export function getSession() {
-  // HIPAA: 30 minute idle timeout in production, 1 week in dev
-  const sessionTtl = isProduction ? 30 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  // 8-hour session timeout in production (matches MFA timeout), 1 week in dev
+  const sessionTtl = isProduction ? 8 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
 
   // Use memory store for development to avoid PostgreSQL session store issues
   if (isLocalDev) {

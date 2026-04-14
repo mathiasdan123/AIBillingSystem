@@ -14,7 +14,7 @@ import ExpenseTracker from "@/components/ExpenseTracker";
 export default function Expenses() {
   const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
   const { toast } = useToast();
-  const [practiceId] = useState(1);
+  const [practiceId] = useState(user?.practiceId || 1);
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [showExpenseDialog, setShowExpenseDialog] = useState(false);

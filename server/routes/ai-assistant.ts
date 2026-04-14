@@ -194,7 +194,7 @@ function getPlanLimit(billingPlan: string | null | undefined): number {
     case 'practice': return Infinity; // Unlimited
     case 'professional': return 300;
     case 'starter': return 100;
-    default: return 50; // Free/trial
+    default: return 500; // Free/trial — generous for demos
   }
 }
 
@@ -2041,20 +2041,47 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       // Add tool results as user message
       messages.push({ role: 'user', content: toolResults });
 
-      // Get next response (may now be upgraded to Sonnet)
-      response = await client.messages.create({
-        model: currentModel,
-        system: SYSTEM_PROMPT,
-        messages,
-        tools: assistantTools,
-        max_tokens: 1500,
-        temperature: 0.4,
-      });
+      // Get next response (may now be upgraded to Sonnet) with timeout and fallback
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('API timeout')), 30000)
+      );
+      try {
+        response = await Promise.race([
+          client.messages.create({
+            model: currentModel,
+            system: SYSTEM_PROMPT,
+            messages,
+            tools: assistantTools,
+            max_tokens: 1500,
+            temperature: 0.4,
+          }),
+          timeoutPromise,
+        ]) as Anthropic.Message;
+      } catch (toolLoopErr: any) {
+        // If Haiku failed, fall back to Sonnet
+        if (currentModel === MODEL_HAIKU) {
+          logger.warn('Tool-loop Haiku failed, falling back to Sonnet', { error: toolLoopErr.message });
+          currentModel = MODEL_SONNET;
+          response = await Promise.race([
+            client.messages.create({
+              model: currentModel,
+              system: SYSTEM_PROMPT,
+              messages,
+              tools: assistantTools,
+              max_tokens: 1500,
+              temperature: 0.4,
+            }),
+            timeoutPromise,
+          ]) as Anthropic.Message;
+        } else {
+          throw toolLoopErr;
+        }
+      }
     }
 
     // Extract text content from response
-    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === 'text');
-    const content = textBlocks.map(b => b.text).join('\n') || 'I apologize, but I was unable to generate a response. Please try again.';
+    const textBlocks = response.content.filter((b: any): b is Anthropic.TextBlock => b.type === 'text');
+    const content = textBlocks.map((b: Anthropic.TextBlock) => b.text).join('\n') || 'I apologize, but I was unable to generate a response. Please try again.';
 
     // Parse for suggested actions (look for patterns like "[Action: ...]")
     const actionPattern = /\[Action:\s*([^\]]+)\]/g;

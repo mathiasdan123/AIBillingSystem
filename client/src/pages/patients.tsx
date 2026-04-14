@@ -333,7 +333,7 @@ export default function Patients() {
   const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [practiceId] = useState(1);
+  const [practiceId] = useState(user?.practiceId || 1);
   const [searchTerm, setSearchTerm] = useState("");
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);

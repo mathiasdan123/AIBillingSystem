@@ -14,7 +14,7 @@ import { Progress } from "@/components/ui/progress";
 export default function Analytics() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
-  const [practiceId] = useState(1);
+  const [practiceId] = useState(user?.practiceId || 1);
   const [timeRange, setTimeRange] = useState("12months");
 
   // Redirect to login if not authenticated
