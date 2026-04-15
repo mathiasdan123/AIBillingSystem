@@ -722,7 +722,12 @@ router.get('/underpayments/detect', isAuthenticated, async (req: any, res) => {
       ));
 
     if (contracts.length === 0) {
-      return res.json({ underpayments: [], message: 'No active contracts found' });
+      return res.json({
+        underpayments: [],
+        totalUnderpaymentAmount: 0,
+        underpaidClaimCount: 0,
+        message: 'No active contracts found',
+      });
     }
 
     // Build a map of payerName -> { cptCode -> contractedRate }

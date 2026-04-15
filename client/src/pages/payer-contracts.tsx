@@ -566,8 +566,8 @@ export default function PayerContractsPage() {
                             <TableRow key={rate.id}>
                               <TableCell className="font-mono font-medium">{rate.cptCode}</TableCell>
                               <TableCell className="text-sm text-muted-foreground">{rate.description || "-"}</TableCell>
-                              <TableCell className="text-right font-medium">${contracted.toFixed(2)}</TableCell>
-                              <TableCell className="text-right">{medicare != null ? `$${medicare.toFixed(2)}` : "-"}</TableCell>
+                              <TableCell className="text-right font-medium">${(isFinite(contracted) ? contracted : 0).toFixed(2)}</TableCell>
+                              <TableCell className="text-right">{medicare != null && isFinite(medicare) ? `$${medicare.toFixed(2)}` : "-"}</TableCell>
                               <TableCell className="text-right">
                                 {pctMedicare != null ? (
                                   <span className={pctMedicare >= 100 ? "text-green-600" : "text-red-600"}>
@@ -757,7 +757,7 @@ export default function PayerContractsPage() {
                         <TableRow key={row.id}>
                           <TableCell className="font-mono font-medium">{row.cptCode}</TableCell>
                           <TableCell className="text-sm text-muted-foreground">{row.description || "-"}</TableCell>
-                          <TableCell className="text-right font-medium">${row.contractedRate.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-medium">${(row.contractedRate ?? 0).toFixed(2)}</TableCell>
                           <TableCell className="text-right">
                             {row.medicareRate != null ? `$${row.medicareRate.toFixed(2)}` : "-"}
                           </TableCell>
@@ -812,14 +812,14 @@ export default function PayerContractsPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="p-4 text-center">
-                    <p className="text-2xl font-bold text-red-600">{underpayments.underpaidClaimCount}</p>
+                    <p className="text-2xl font-bold text-red-600">{underpayments.underpaidClaimCount ?? 0}</p>
                     <p className="text-xs text-muted-foreground">Underpaid Claims</p>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-2xl font-bold text-red-600">
-                      ${underpayments.totalUnderpaymentAmount.toFixed(2)}
+                      ${(underpayments.totalUnderpaymentAmount ?? 0).toFixed(2)}
                     </p>
                     <p className="text-xs text-muted-foreground">Total Underpayment</p>
                   </CardContent>
@@ -827,8 +827,8 @@ export default function PayerContractsPage() {
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-2xl font-bold">
-                      {underpayments.underpaidClaimCount > 0
-                        ? `$${(underpayments.totalUnderpaymentAmount / underpayments.underpaidClaimCount).toFixed(2)}`
+                      {(underpayments.underpaidClaimCount ?? 0) > 0
+                        ? `$${((underpayments.totalUnderpaymentAmount ?? 0) / (underpayments.underpaidClaimCount ?? 1)).toFixed(2)}`
                         : "$0.00"}
                     </p>
                     <p className="text-xs text-muted-foreground">Avg Underpayment</p>
@@ -871,10 +871,10 @@ export default function PayerContractsPage() {
                           <TableRow key={up.claimId}>
                             <TableCell className="font-mono">{up.claimNumber || `#${up.claimId}`}</TableCell>
                             <TableCell>{up.payerName}</TableCell>
-                            <TableCell className="text-right">${up.paidAmount.toFixed(2)}</TableCell>
-                            <TableCell className="text-right">${up.expectedAmount.toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${(up.paidAmount ?? 0).toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${(up.expectedAmount ?? 0).toFixed(2)}</TableCell>
                             <TableCell className="text-right font-medium text-red-600">
-                              -${up.underpaymentAmount.toFixed(2)}
+                              -${(up.underpaymentAmount ?? 0).toFixed(2)}
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">
                               {up.paidAt ? new Date(up.paidAt).toLocaleDateString() : "-"}
