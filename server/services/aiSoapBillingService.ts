@@ -1,20 +1,19 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 
-// Lazy initialization of OpenAI client (only when API key is present)
-let openai: OpenAI | null = null;
+// Lazy initialization of Anthropic client (only when API key is present)
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAIClient(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn("OPENAI_API_KEY not set - AI features will use fallback rule-based generation");
+function getAnthropicClient(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    console.warn("ANTHROPIC_API_KEY not set - AI features will use fallback rule-based generation");
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
 }
 
 // Default rate per 15-minute unit (can be overridden per session)
@@ -98,7 +97,7 @@ export interface AiSoapBillingResponse {
 
 /**
  * AI-powered SOAP note and billing code generation
- * Uses OpenAI to analyze activities and ensure billing accuracy based on:
+ * Uses Claude (Anthropic) to analyze activities and ensure billing accuracy based on:
  * - Activities performed
  * - Patient's insurance contract (when available)
  * - Medical necessity requirements
@@ -148,8 +147,8 @@ export async function generateSoapNoteAndBilling(
   // Calculate available billing units
   const billingUnits = Math.floor(request.duration / 15);
 
-  // Check if OpenAI is available
-  const client = getOpenAIClient();
+  // Check if Anthropic is available
+  const client = getAnthropicClient();
   if (!client) {
     // Use fallback generation when AI is not available
     console.log("Using fallback rule-based SOAP generation (no API key)");
@@ -161,23 +160,30 @@ export async function generateSoapNoteAndBilling(
   const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals);
 
   try {
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o", // Use GPT-4 for best reasoning
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.5, // Balanced temperature for detailed clinical writing
-      max_tokens: 6000, // Ensure enough tokens for comprehensive SOAP sections
+    const completion = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 6000,
+      temperature: 0.5,
+      system:
+        systemPrompt +
+        "\n\nRespond with ONLY a valid JSON object, no markdown fencing or commentary.",
+      messages: [{ role: "user", content: userPrompt }],
     });
 
-    const responseText = completion.choices[0]?.message?.content;
+    const textBlock = completion.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text"
+    );
+    const responseText = textBlock?.text;
     if (!responseText) {
       throw new Error("No response from AI");
     }
 
-    const aiResponse = JSON.parse(responseText);
+    // Strip markdown fencing if Claude added any, then parse
+    const jsonMatch =
+      responseText.match(/```json\n?([\s\S]*?)\n?```/) ||
+      responseText.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
+    const aiResponse = JSON.parse(jsonStr);
 
     // Validate and enhance the response
     return validateAndEnhanceResponse(aiResponse, request, billingUnits);
