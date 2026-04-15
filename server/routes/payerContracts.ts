@@ -10,8 +10,11 @@
  */
 
 import { Router, type Response, type NextFunction } from 'express';
+import multer from 'multer';
 import { isAuthenticated } from '../replitAuth';
 import { db } from '../db';
+import { parseInsuranceContract } from '../services/insuranceCostEstimator';
+import { uploadLimiter } from '../middleware/rate-limiter';
 import {
   payerContracts,
   payerRates,
@@ -28,6 +31,22 @@ import { eq, and, desc, sql } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
+
+// Multer config for contract PDF upload (in-memory, 10MB cap)
+const contractUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      'application/pdf',
+      'text/plain',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Invalid file type. Only PDF, TXT, DOC, DOCX allowed.'));
+  },
+});
 
 // Helper to get practiceId from request
 const getAuthorizedPracticeId = (req: any): number => {
@@ -560,6 +579,132 @@ router.post('/:id/rates/import', isAuthenticated, isAdminOrBilling, async (req: 
   }
 });
 
+// ==================== AI PDF CONTRACT PARSING ====================
+
+/**
+ * POST /api/payer-contracts/:id/parse-pdf
+ * Upload a payer contract PDF (or DOCX/TXT), run Claude to extract rates,
+ * and either preview or commit them to the contract's rate table.
+ *
+ * Body (multipart/form-data):
+ *   - file: the contract file
+ *   - commit: "true" to write rates, "false" (default) to preview only
+ */
+router.post(
+  '/:id/parse-pdf',
+  uploadLimiter,
+  isAuthenticated,
+  isAdminOrBilling,
+  contractUpload.single('file'),
+  async (req: any, res) => {
+    try {
+      const contractId = parseInt(req.params.id);
+      if (isNaN(contractId)) {
+        return res.status(400).json({ message: 'Invalid contract ID' });
+      }
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      const practiceId = getAuthorizedPracticeId(req);
+
+      // Verify ownership
+      const [contract] = await db
+        .select()
+        .from(payerContracts)
+        .where(
+          and(eq(payerContracts.id, contractId), eq(payerContracts.practiceId, practiceId))
+        );
+      if (!contract) {
+        return res.status(404).json({ message: 'Contract not found' });
+      }
+
+      // Extract text from the uploaded file
+      let text = '';
+      const mimeType = req.file.mimetype;
+      if (mimeType === 'application/pdf') {
+        const pdfParse = await import('pdf-parse');
+        const pdfData = await (pdfParse as any).default(req.file.buffer);
+        text = pdfData.text || '';
+      } else if (mimeType === 'text/plain') {
+        text = req.file.buffer.toString('utf-8');
+      } else {
+        // Best-effort for DOC/DOCX (full docx parsing is out of scope here)
+        text = req.file.buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+      }
+      text = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+
+      if (!text || text.length < 50) {
+        return res.status(400).json({
+          message:
+            'Could not extract enough text from the file. Try a text-based PDF or paste the contract text manually.',
+        });
+      }
+
+      // Run Claude-powered parser
+      const parseResult = await parseInsuranceContract(text, contract.payerName);
+
+      const commit = String(req.body?.commit ?? 'false').toLowerCase() === 'true';
+
+      if (!commit) {
+        // Preview only — return what Claude extracted
+        return res.json({
+          mode: 'preview',
+          contract,
+          parseResult,
+          extractedTextLength: text.length,
+        });
+      }
+
+      // Commit: insert rates into payerRates for this contract
+      const inserted: PayerRate[] = [];
+      const errors: string[] = [];
+
+      for (const r of parseResult.rates) {
+        // Prefer in-network rate; fall back to OON if that's all we have
+        const rateValue = r.inNetworkRate ?? r.outOfNetworkRate;
+        if (!r.cptCode || rateValue == null || isNaN(Number(rateValue))) {
+          errors.push(`Skipped ${r.cptCode || '(no code)'} — no usable rate`);
+          continue;
+        }
+        try {
+          const [row] = await db
+            .insert(payerRates)
+            .values({
+              contractId,
+              cptCode: String(r.cptCode),
+              description: r.notes || null,
+              contractedRate: Number(rateValue).toString(),
+              medicareRate: null,
+            })
+            .returning();
+          inserted.push(row);
+        } catch (e) {
+          errors.push(`Failed to insert rate for ${r.cptCode}`);
+        }
+      }
+
+      logger.info('Parsed payer contract PDF', {
+        contractId,
+        payerName: contract.payerName,
+        ratesExtracted: parseResult.rates.length,
+        ratesInserted: inserted.length,
+      });
+
+      res.json({
+        mode: 'committed',
+        contract,
+        parseResult,
+        imported: inserted.length,
+        errors: errors.length > 0 ? errors : undefined,
+        rates: inserted,
+      });
+    } catch (error) {
+      safeErrorResponse(res, 500, 'Failed to parse contract PDF', error);
+    }
+  }
+);
+
 // ==================== UNDERPAYMENT DETECTION ====================
 
 // GET /api/payer-contracts/underpayments - Detect underpaid claims
@@ -577,7 +722,12 @@ router.get('/underpayments/detect', isAuthenticated, async (req: any, res) => {
       ));
 
     if (contracts.length === 0) {
-      return res.json({ underpayments: [], message: 'No active contracts found' });
+      return res.json({
+        underpayments: [],
+        totalUnderpaymentAmount: 0,
+        underpaidClaimCount: 0,
+        message: 'No active contracts found',
+      });
     }
 
     // Build a map of payerName -> { cptCode -> contractedRate }

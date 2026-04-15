@@ -15,6 +15,7 @@ import { apiRequest } from "@/lib/queryClient";
 import {
   Plus, Trash2, Upload, Edit2, FileText, AlertTriangle,
   DollarSign, ArrowUpDown, ChevronLeft, TrendingDown, TrendingUp,
+  Sparkles,
 } from "lucide-react";
 
 // ==================== TYPES ====================
@@ -129,6 +130,11 @@ export default function PayerContractsPage() {
 
   // CSV import state
   const [csvData, setCsvData] = useState("");
+
+  // AI PDF parse state
+  const [showParsePdfDialog, setShowParsePdfDialog] = useState(false);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<any | null>(null);
 
   // ==================== QUERIES ====================
 
@@ -274,6 +280,56 @@ export default function PayerContractsPage() {
     },
     onError: (error: Error) => {
       toast({ title: "Import failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // AI-powered PDF parse (preview, then optional commit)
+  const parsePdfMutation = useMutation({
+    mutationFn: async ({ file, commit }: { file: File; commit: boolean }) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("commit", commit ? "true" : "false");
+      const res = await fetch(
+        `/api/payer-contracts/${selectedContract?.id}/parse-pdf`,
+        { method: "POST", body: form, credentials: "include" }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Failed to parse PDF");
+      }
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      if (data.mode === "preview") {
+        setPdfPreview(data);
+        toast({
+          title: "Contract parsed",
+          description: `Claude found ${data.parseResult?.rates?.length || 0} rates. Review and confirm to save.`,
+        });
+      } else {
+        queryClient.invalidateQueries({
+          queryKey: [`/api/payer-contracts/${selectedContract?.id}/rates`],
+        });
+        queryClient.invalidateQueries({
+          queryKey: [`/api/payer-contracts/${selectedContract?.id}/rates/compare`],
+        });
+        setShowParsePdfDialog(false);
+        setPdfFile(null);
+        setPdfPreview(null);
+        toast({
+          title: `Saved ${data.imported} rates`,
+          description: data.errors
+            ? `${data.errors.length} rows were skipped`
+            : undefined,
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "PDF parse failed",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -454,6 +510,18 @@ export default function PayerContractsPage() {
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">Contracted Rates</CardTitle>
                     <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setPdfFile(null);
+                          setPdfPreview(null);
+                          setShowParsePdfDialog(true);
+                        }}
+                      >
+                        <Sparkles className="w-4 h-4 mr-1" />
+                        Upload PDF (AI)
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => setShowImportDialog(true)}>
                         <Upload className="w-4 h-4 mr-1" />
                         Import CSV
@@ -498,8 +566,8 @@ export default function PayerContractsPage() {
                             <TableRow key={rate.id}>
                               <TableCell className="font-mono font-medium">{rate.cptCode}</TableCell>
                               <TableCell className="text-sm text-muted-foreground">{rate.description || "-"}</TableCell>
-                              <TableCell className="text-right font-medium">${contracted.toFixed(2)}</TableCell>
-                              <TableCell className="text-right">{medicare != null ? `$${medicare.toFixed(2)}` : "-"}</TableCell>
+                              <TableCell className="text-right font-medium">${(isFinite(contracted) ? contracted : 0).toFixed(2)}</TableCell>
+                              <TableCell className="text-right">{medicare != null && isFinite(medicare) ? `$${medicare.toFixed(2)}` : "-"}</TableCell>
                               <TableCell className="text-right">
                                 {pctMedicare != null ? (
                                   <span className={pctMedicare >= 100 ? "text-green-600" : "text-red-600"}>
@@ -689,7 +757,7 @@ export default function PayerContractsPage() {
                         <TableRow key={row.id}>
                           <TableCell className="font-mono font-medium">{row.cptCode}</TableCell>
                           <TableCell className="text-sm text-muted-foreground">{row.description || "-"}</TableCell>
-                          <TableCell className="text-right font-medium">${row.contractedRate.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-medium">${(row.contractedRate ?? 0).toFixed(2)}</TableCell>
                           <TableCell className="text-right">
                             {row.medicareRate != null ? `$${row.medicareRate.toFixed(2)}` : "-"}
                           </TableCell>
@@ -744,14 +812,14 @@ export default function PayerContractsPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="p-4 text-center">
-                    <p className="text-2xl font-bold text-red-600">{underpayments.underpaidClaimCount}</p>
+                    <p className="text-2xl font-bold text-red-600">{underpayments.underpaidClaimCount ?? 0}</p>
                     <p className="text-xs text-muted-foreground">Underpaid Claims</p>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-2xl font-bold text-red-600">
-                      ${underpayments.totalUnderpaymentAmount.toFixed(2)}
+                      ${(underpayments.totalUnderpaymentAmount ?? 0).toFixed(2)}
                     </p>
                     <p className="text-xs text-muted-foreground">Total Underpayment</p>
                   </CardContent>
@@ -759,8 +827,8 @@ export default function PayerContractsPage() {
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-2xl font-bold">
-                      {underpayments.underpaidClaimCount > 0
-                        ? `$${(underpayments.totalUnderpaymentAmount / underpayments.underpaidClaimCount).toFixed(2)}`
+                      {(underpayments.underpaidClaimCount ?? 0) > 0
+                        ? `$${((underpayments.totalUnderpaymentAmount ?? 0) / (underpayments.underpaidClaimCount ?? 1)).toFixed(2)}`
                         : "$0.00"}
                     </p>
                     <p className="text-xs text-muted-foreground">Avg Underpayment</p>
@@ -803,10 +871,10 @@ export default function PayerContractsPage() {
                           <TableRow key={up.claimId}>
                             <TableCell className="font-mono">{up.claimNumber || `#${up.claimId}`}</TableCell>
                             <TableCell>{up.payerName}</TableCell>
-                            <TableCell className="text-right">${up.paidAmount.toFixed(2)}</TableCell>
-                            <TableCell className="text-right">${up.expectedAmount.toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${(up.paidAmount ?? 0).toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${(up.expectedAmount ?? 0).toFixed(2)}</TableCell>
                             <TableCell className="text-right font-medium text-red-600">
-                              -${up.underpaymentAmount.toFixed(2)}
+                              -${(up.underpaymentAmount ?? 0).toFixed(2)}
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">
                               {up.paidAt ? new Date(up.paidAt).toLocaleDateString() : "-"}
@@ -1045,6 +1113,163 @@ export default function PayerContractsPage() {
                 {importRatesMutation.isPending ? "Importing..." : "Import Rates"}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==================== AI PDF PARSE DIALOG ==================== */}
+      <Dialog
+        open={showParsePdfDialog}
+        onOpenChange={(open) => {
+          setShowParsePdfDialog(open);
+          if (!open) {
+            setPdfFile(null);
+            setPdfPreview(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-500" />
+              AI Contract Parser
+            </DialogTitle>
+            <DialogDescription>
+              Upload a payer contract or fee schedule PDF. Claude will extract the
+              contracted rates so you can review them before saving to{" "}
+              {selectedContract?.contractName || "this contract"}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!pdfPreview && (
+              <>
+                <div>
+                  <Label htmlFor="contractPdf">Contract file (PDF, DOCX, or TXT)</Label>
+                  <Input
+                    id="contractPdf"
+                    type="file"
+                    accept=".pdf,.txt,.doc,.docx,application/pdf,text/plain"
+                    onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                  />
+                  {pdfFile && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Selected: {pdfFile.name} ({Math.round(pdfFile.size / 1024)} KB)
+                    </p>
+                  )}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setShowParsePdfDialog(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      pdfFile && parsePdfMutation.mutate({ file: pdfFile, commit: false })
+                    }
+                    disabled={!pdfFile || parsePdfMutation.isPending}
+                  >
+                    {parsePdfMutation.isPending ? "Parsing..." : "Parse with Claude"}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {pdfPreview && (
+              <>
+                <div className="rounded-md border p-3 bg-muted/40 text-sm space-y-1">
+                  <div>
+                    <span className="font-medium">Payer:</span>{" "}
+                    {pdfPreview.contract?.payerName}
+                  </div>
+                  <div>
+                    <span className="font-medium">Rates found:</span>{" "}
+                    {pdfPreview.parseResult?.rates?.length || 0}
+                  </div>
+                  {pdfPreview.parseResult?.generalTerms && (
+                    <div className="text-xs text-muted-foreground">
+                      Coinsurance:{" "}
+                      {pdfPreview.parseResult.generalTerms.typicalCoinsurance ?? "—"}% ·
+                      Prior auth:{" "}
+                      {pdfPreview.parseResult.generalTerms.priorAuthRequired ? "yes" : "no"} ·
+                      Visit limits:{" "}
+                      {pdfPreview.parseResult.generalTerms.visitLimits || "none"}
+                    </div>
+                  )}
+                </div>
+
+                <div className="max-h-72 overflow-auto border rounded-md">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>CPT</TableHead>
+                        <TableHead className="text-right">In-Network</TableHead>
+                        <TableHead className="text-right">Out-of-Network</TableHead>
+                        <TableHead>Notes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(pdfPreview.parseResult?.rates || []).map((r: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell className="font-mono">{r.cptCode}</TableCell>
+                          <TableCell className="text-right">
+                            {r.inNetworkRate != null ? `$${r.inNetworkRate}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {r.outOfNetworkRate != null ? `$${r.outOfNetworkRate}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {r.notes}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {(!pdfPreview.parseResult?.rates ||
+                        pdfPreview.parseResult.rates.length === 0) && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
+                            Claude didn't find any rates. Try a different PDF or enter rates manually.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {pdfPreview.parseResult?.parsingNotes?.length > 0 && (
+                  <div className="text-xs text-muted-foreground border-l-2 border-amber-400 pl-3">
+                    <div className="font-medium mb-1">Parser notes:</div>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {pdfPreview.parseResult.parsingNotes.map((n: string, i: number) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setPdfPreview(null);
+                      setPdfFile(null);
+                    }}
+                  >
+                    Start over
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      pdfFile && parsePdfMutation.mutate({ file: pdfFile, commit: true })
+                    }
+                    disabled={
+                      parsePdfMutation.isPending ||
+                      !(pdfPreview.parseResult?.rates?.length > 0)
+                    }
+                  >
+                    {parsePdfMutation.isPending
+                      ? "Saving..."
+                      : `Save ${pdfPreview.parseResult?.rates?.length || 0} rates`}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

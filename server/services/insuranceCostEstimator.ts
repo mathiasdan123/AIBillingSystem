@@ -1,17 +1,18 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 
-let openai: OpenAI | null = null;
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set - insurance cost estimation AI disabled');
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    console.warn('ANTHROPIC_API_KEY not set - insurance contract parsing AI disabled');
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
 }
 
 // Your standard session rate
@@ -225,29 +226,32 @@ RESPOND WITH THIS JSON STRUCTURE:
 If a rate is not specified, use null. Be precise with the numbers found in the document.`;
 
   try {
-    const client = getOpenAI();
+    const client = getAnthropic();
     if (!client) {
-      throw new Error("OpenAI not configured");
+      throw new Error("Anthropic API key not configured");
     }
-    const response = await client.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert at parsing healthcare insurance contracts. Extract accurate rate information. Return only valid JSON."
-        },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.2,
-      response_format: { type: "json_object" }
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      temperature: 0.1,
+      system:
+        "You are an expert at parsing healthcare insurance contracts. Extract accurate rate information. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content;
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text"
+    );
+    const content = textBlock?.text;
     if (!content) {
-      throw new Error("No response from AI");
+      throw new Error("No response from Claude");
     }
 
-    const parsed = JSON.parse(content);
+    // Strip markdown fencing if present, then parse
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+    const parsed = JSON.parse(jsonStr);
 
     return {
       insuranceProvider,
