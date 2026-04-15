@@ -8,21 +8,57 @@
  * rather than relying on estimates.
  */
 
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { InsertPatientPlanBenefits } from '../../shared/schema';
 
-// Lazy initialize OpenAI client
-let openai: OpenAI | null = null;
+// Lazy initialize Anthropic client
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set - plan document parsing AI disabled');
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    console.warn('ANTHROPIC_API_KEY not set - plan document parsing AI disabled');
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
+}
+
+// Shared helper: call Claude with a text prompt and parse JSON out of the response.
+async function callClaudeForJson(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<any> {
+  const client = getAnthropic();
+  if (!client) {
+    throw new Error('Anthropic API key not configured');
+  }
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    temperature: 0.1,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+
+  const textBlock = response.content.find(
+    (b): b is Anthropic.TextBlock => b.type === 'text'
+  );
+  const content = textBlock?.text;
+  if (!content) {
+    throw new Error('No response from Claude');
+  }
+
+  const jsonMatch =
+    content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('Could not extract JSON from Claude response');
+  }
+  const jsonStr = jsonMatch[1] || jsonMatch[0];
+  return JSON.parse(jsonStr);
 }
 
 export interface ParsedBenefits {
@@ -85,39 +121,10 @@ export async function parsePlanDocument(
   const startTime = Date.now();
 
   try {
-    const client = getOpenAI();
-    if (!client) {
-      throw new Error('OpenAI not configured');
-    }
     const systemPrompt = getSystemPrompt(documentType);
     const userPrompt = getUserPrompt(documentContent, documentType);
 
-    const response = await client.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.1,
-      max_tokens: 4096,
-    });
-
-    // Extract the JSON response
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response from OpenAI');
-    }
-
-    // Parse the JSON from the response
-    const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/) ||
-                      content.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      throw new Error('Could not extract JSON from response');
-    }
-
-    const jsonStr = jsonMatch[1] || jsonMatch[0];
-    const parsedData = JSON.parse(jsonStr);
+    const parsedData = await callClaudeForJson(systemPrompt, userPrompt);
 
     // Transform to our schema format
     const benefits: ParsedBenefits = transformParsedData(parsedData);
@@ -150,47 +157,49 @@ export async function parsePlanDocumentFromPDF(
   const startTime = Date.now();
 
   try {
-    const client = getOpenAI();
+    const client = getAnthropic();
     if (!client) {
-      throw new Error('OpenAI not configured');
+      throw new Error('Anthropic API key not configured');
     }
     const systemPrompt = getSystemPrompt(documentType);
 
-    // Use GPT-4 Vision to analyze the PDF (as image)
-    const response = await client.chat.completions.create({
-      model: 'gpt-4o',
+    // Claude supports native PDF input via the document content block.
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      temperature: 0.1,
+      system: systemPrompt,
       messages: [
-        { role: 'system', content: systemPrompt },
         {
           role: 'user',
           content: [
             {
-              type: 'image_url',
-              image_url: {
-                url: `data:application/pdf;base64,${base64Content}`,
-                detail: 'high'
-              }
-            },
+              type: 'document',
+              source: {
+                type: 'base64',
+                media_type: 'application/pdf',
+                data: base64Content,
+              },
+            } as any,
             {
               type: 'text',
-              text: getExtractionPrompt(documentType)
-            }
-          ]
-        }
+              text: getExtractionPrompt(documentType),
+            },
+          ],
+        },
       ],
-      temperature: 0.1,
-      max_tokens: 4096,
     });
 
-    // Extract and parse the response
-    const content = response.choices[0]?.message?.content;
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === 'text'
+    );
+    const content = textBlock?.text;
     if (!content) {
-      throw new Error('No response from OpenAI');
+      throw new Error('No response from Claude');
     }
 
-    const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/) ||
-                      content.match(/\{[\s\S]*\}/);
-
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('Could not extract JSON from response');
     }
