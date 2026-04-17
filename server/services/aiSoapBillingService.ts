@@ -103,8 +103,18 @@ export interface AiSoapBillingResponse {
  * - Medical necessity requirements
  * - Audit defensibility
  */
+export interface GenerateSoapOptions {
+  /**
+   * Optional callback invoked each time Claude streams a text chunk. The server
+   * uses this to flush keepalive bytes to the HTTP response so the ALB idle
+   * timeout doesn't fire on long generations. Safe to ignore.
+   */
+  onProgress?: () => void;
+}
+
 export async function generateSoapNoteAndBilling(
-  request: AiSoapBillingRequest
+  request: AiSoapBillingRequest,
+  options: GenerateSoapOptions = {}
 ): Promise<AiSoapBillingResponse> {
 
   // Get patient and insurance information
@@ -160,7 +170,12 @@ export async function generateSoapNoteAndBilling(
   const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals);
 
   try {
-    const completion = await client.messages.create({
+    // Use streaming so we don't hit a long hang on a single request. The SDK
+    // auto-retries non-streaming calls on certain errors with a default 10-min
+    // timeout, which can push a single "create" call past the ALB's idle
+    // timeout. Streaming gives us continuous progress signals and faster
+    // failure on real errors.
+    const stream = client.messages.stream({
       model: "claude-sonnet-4-20250514",
       max_tokens: 6000,
       temperature: 0.5,
@@ -170,7 +185,13 @@ export async function generateSoapNoteAndBilling(
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    const textBlock = completion.content.find(
+    if (options.onProgress) {
+      stream.on("text", () => options.onProgress!());
+    }
+
+    const finalMessage = await stream.finalMessage();
+
+    const textBlock = finalMessage.content.find(
       (b): b is Anthropic.TextBlock => b.type === "text"
     );
     const responseText = textBlock?.text;
