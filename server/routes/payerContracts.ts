@@ -13,7 +13,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import multer from 'multer';
 import { isAuthenticated } from '../replitAuth';
 import { db } from '../db';
-import { parseInsuranceContract } from '../services/insuranceCostEstimator';
+import { parseInsuranceContract, parseInsuranceContractFromPDF } from '../services/insuranceCostEstimator';
 import { uploadLimiter } from '../middleware/rate-limiter';
 import {
   payerContracts,
@@ -619,30 +619,35 @@ router.post(
         return res.status(404).json({ message: 'Contract not found' });
       }
 
-      // Extract text from the uploaded file
-      let text = '';
       const mimeType = req.file.mimetype;
+      let parseResult;
+
       if (mimeType === 'application/pdf') {
-        const pdfParse = await import('pdf-parse');
-        const pdfData = await (pdfParse as any).default(req.file.buffer);
-        text = pdfData.text || '';
-      } else if (mimeType === 'text/plain') {
-        text = req.file.buffer.toString('utf-8');
+        // Send the PDF directly to Claude's native document support — avoids
+        // pdf-parse / pdfjs-dist DOMMatrix issues in Node and handles scanned
+        // PDFs too.
+        const pdfBase64 = req.file.buffer.toString('base64');
+        parseResult = await parseInsuranceContractFromPDF(pdfBase64, contract.payerName);
       } else {
-        // Best-effort for DOC/DOCX (full docx parsing is out of scope here)
-        text = req.file.buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
-      }
-      text = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        // Text-based formats: extract text and send to the text parser.
+        let text = '';
+        if (mimeType === 'text/plain') {
+          text = req.file.buffer.toString('utf-8');
+        } else {
+          // Best-effort for DOC/DOCX (full docx parsing is out of scope here)
+          text = req.file.buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+        }
+        text = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 
-      if (!text || text.length < 50) {
-        return res.status(400).json({
-          message:
-            'Could not extract enough text from the file. Try a text-based PDF or paste the contract text manually.',
-        });
-      }
+        if (!text || text.length < 50) {
+          return res.status(400).json({
+            message:
+              'Could not extract enough text from the file. Try a PDF or paste the contract text manually.',
+          });
+        }
 
-      // Run Claude-powered parser
-      const parseResult = await parseInsuranceContract(text, contract.payerName);
+        parseResult = await parseInsuranceContract(text, contract.payerName);
+      }
 
       const commit = String(req.body?.commit ?? 'false').toLowerCase() === 'true';
 
@@ -652,7 +657,7 @@ router.post(
           mode: 'preview',
           contract,
           parseResult,
-          extractedTextLength: text.length,
+          fileSize: req.file.size,
         });
       }
 

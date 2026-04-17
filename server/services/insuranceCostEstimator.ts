@@ -284,6 +284,119 @@ If a rate is not specified, use null. Be precise with the numbers found in the d
 }
 
 /**
+ * Parse an insurance contract PDF directly via Claude's native document support.
+ * Skips server-side PDF text extraction (which depends on pdfjs-dist and
+ * requires browser APIs that aren't available in Node). Claude reads the PDF
+ * natively, including scanned/image-based PDFs.
+ */
+export async function parseInsuranceContractFromPDF(
+  pdfBase64: string,
+  insuranceProvider: string
+): Promise<ContractParseResult> {
+  const extractionPrompt = `You are an expert at parsing healthcare insurance contracts and fee schedules.
+
+Analyze the attached insurance contract / fee schedule PDF and extract reimbursement rates for therapy CPT codes.
+
+INSURANCE PROVIDER: ${insuranceProvider}
+
+Extract:
+1. Reimbursement rates for each CPT code mentioned (especially 97110, 97112, 97140, 97530, 97533, 97535)
+2. Whether deductible applies
+3. Typical coinsurance percentage
+4. Any copay amounts
+5. Prior authorization requirements
+6. Visit limits
+
+RESPOND WITH THIS JSON STRUCTURE (and nothing else):
+{
+  "rates": [
+    { "cptCode": "97110", "inNetworkRate": 85.50, "outOfNetworkRate": 60.00, "notes": "Per 15-minute unit" }
+  ],
+  "generalTerms": {
+    "deductibleApplies": true,
+    "typicalCoinsurance": 20,
+    "copayAmount": null,
+    "priorAuthRequired": false,
+    "visitLimits": "30 visits per year"
+  },
+  "parsingNotes": ["Note about anything unclear or assumptions made"]
+}
+
+If a rate is not specified, use null. Be precise with the numbers found in the document.`;
+
+  try {
+    const client = getAnthropic();
+    if (!client) {
+      throw new Error("Anthropic API key not configured");
+    }
+
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      temperature: 0.1,
+      system:
+        "You are an expert at parsing healthcare insurance contracts. Extract accurate rate information. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: pdfBase64,
+              },
+            } as any,
+            { type: "text", text: extractionPrompt },
+          ],
+        },
+      ],
+    });
+
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text"
+    );
+    const content = textBlock?.text;
+    if (!content) {
+      throw new Error("No response from Claude");
+    }
+
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+    const parsed = JSON.parse(jsonStr);
+
+    return {
+      insuranceProvider,
+      rates: parsed.rates || [],
+      generalTerms: parsed.generalTerms || {
+        deductibleApplies: true,
+        typicalCoinsurance: 20,
+        copayAmount: null,
+        priorAuthRequired: false,
+        visitLimits: null,
+      },
+      parsingNotes: parsed.parsingNotes || [],
+    };
+  } catch (error) {
+    console.error("Contract PDF parsing error:", error);
+    return {
+      insuranceProvider,
+      rates: [],
+      generalTerms: {
+        deductibleApplies: true,
+        typicalCoinsurance: 20,
+        copayAmount: null,
+        priorAuthRequired: false,
+        visitLimits: null,
+      },
+      parsingNotes: ["Failed to parse contract PDF - please paste the contract text or enter rates manually"],
+    };
+  }
+}
+
+/**
  * Save parsed contract rates to the database
  */
 export async function saveContractRates(
