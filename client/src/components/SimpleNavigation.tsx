@@ -15,132 +15,29 @@ import {
   Home,
   Users,
   FileText,
-  TrendingUp,
-  Receipt,
-  Settings,
   LogOut,
-  UserPlus,
-  ClipboardList,
   Calendar,
-  DollarSign,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Scale,
-  Clock,
-  Star,
-  CalendarCheck,
-  CalendarClock,
-  Video,
-  MessageSquare,
-  BarChart3,
-  Mic,
-  CreditCard,
   Sun,
   Moon,
   Monitor,
-  Handshake,
-  Target,
   MoreHorizontal,
   Building2,
-  Brain,
-  UserCheck,
-  Download,
-  Upload,
   ChevronDown,
 } from "lucide-react";
+import { Search } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
-
-// Navigation item type
-interface NavItem {
-  nameKey: string;
-  href: string;
-  icon: any;
-  adminOnly: boolean;
-}
-
-// Grouped navigation sections
-interface NavSection {
-  labelKey: string;
-  items: NavItem[];
-}
-
-const navigationSections: NavSection[] = [
-  {
-    labelKey: 'nav.sectionGeneral',
-    items: [
-      { nameKey: 'nav.dashboard', href: '/', icon: Home, adminOnly: false },
-      { nameKey: 'nav.messages', href: '/messages', icon: MessageSquare, adminOnly: false },
-      { nameKey: 'nav.aiInsights', href: '/ai-insights', icon: Brain, adminOnly: false },
-    ],
-  },
-  {
-    labelKey: 'nav.sectionClinical',
-    items: [
-      { nameKey: 'nav.patients', href: '/patients', icon: Users, adminOnly: false },
-      { nameKey: 'nav.patientIntake', href: '/intake', icon: UserPlus, adminOnly: false },
-      { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar, adminOnly: false },
-      { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
-      { nameKey: 'nav.sessionRecorder', href: '/session-recorder', icon: Mic, adminOnly: false },
-      { nameKey: 'nav.treatmentPlans', href: '/treatment-plans', icon: Target, adminOnly: false },
-      { nameKey: 'nav.outcomeMeasures', href: '/outcome-measures', icon: BarChart3, adminOnly: false },
-      { nameKey: 'nav.surveys', href: '/surveys', icon: ClipboardList, adminOnly: false },
-      { nameKey: 'nav.telehealth', href: '/telehealth', icon: Video, adminOnly: false },
-    ],
-  },
-  {
-    labelKey: 'nav.sectionScheduling',
-    items: [
-      { nameKey: 'nav.schedulingInsights', href: '/scheduling-insights', icon: CalendarClock, adminOnly: false },
-      { nameKey: 'nav.waitlist', href: '/waitlist', icon: Clock, adminOnly: false },
-      { nameKey: 'nav.onlineBooking', href: '/online-booking', icon: CalendarCheck, adminOnly: false },
-      { nameKey: 'nav.reviews', href: '/reviews', icon: Star, adminOnly: false },
-    ],
-  },
-  {
-    labelKey: 'nav.sectionBilling',
-    items: [
-      { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
-      { nameKey: 'nav.insuranceRates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
-      { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
-      { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
-      { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
-      { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
-      { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
-      { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
-    ],
-  },
-  {
-    labelKey: 'nav.sectionReports',
-    items: [
-      { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
-      { nameKey: 'nav.benchmarking', href: '/benchmarking', icon: BarChart3, adminOnly: true },
-      { nameKey: 'nav.therapistProductivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false },
-      { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
-      { nameKey: 'nav.dailyReport', href: '/daily-report', icon: BarChart3, adminOnly: true },
-    ],
-  },
-  {
-    labelKey: 'nav.sectionAdmin',
-    items: [
-      { nameKey: 'nav.credentialing', href: '/credentialing', icon: ShieldCheck, adminOnly: true },
-      { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
-      { nameKey: 'nav.compliance', href: '/compliance', icon: ShieldCheck, adminOnly: true },
-      { nameKey: 'nav.hipaaCompliance', href: '/hipaa-compliance', icon: Shield, adminOnly: true },
-      { nameKey: 'nav.breachIncidents', href: '/breach-incidents', icon: ShieldAlert, adminOnly: true },
-      { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
-      { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
-      { nameKey: 'nav.dataImport', href: '/data-import', icon: Upload, adminOnly: true },
-      { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
-      { nameKey: 'nav.settings', href: '/settings', icon: Settings, adminOnly: false },
-    ],
-  },
-];
-
-// Flat list for mobile "More" sheet and filtering
-const allNavigationItems = navigationSections.flatMap(section => section.items);
+import { openCommandPalette } from "@/components/CommandPalette";
+import {
+  topLevelItems,
+  navigationSections,
+  sectionLabelFallbacks as mobileSectionLabels,
+  flattenNavItems,
+  itemVisibleToUser,
+  type NavItem,
+  type NavSection,
+} from "@/lib/nav-config";
 
 // Bottom tab bar items (the 4 primary + More)
 const bottomTabItems = [
@@ -149,16 +46,6 @@ const bottomTabItems = [
   { nameKey: 'nav.claims', href: '/claims', icon: FileText },
   { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar },
 ];
-
-// Section labels for mobile "More" sheet grouping
-const mobileSectionLabels: Record<string, string> = {
-  'nav.sectionGeneral': 'General',
-  'nav.sectionClinical': 'Clinical',
-  'nav.sectionScheduling': 'Scheduling',
-  'nav.sectionBilling': 'Billing',
-  'nav.sectionReports': 'Reports',
-  'nav.sectionAdmin': 'Admin',
-};
 
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
@@ -177,6 +64,21 @@ export default function SimpleNavigation() {
         next.delete(labelKey);
       } else {
         next.add(labelKey);
+      }
+      return next;
+    });
+  };
+
+  // Track which nested parent rows are expanded (desktop). Key is the parent's nameKey.
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+
+  const toggleParent = (nameKey: string) => {
+    setExpandedParents(prev => {
+      const next = new Set(prev);
+      if (next.has(nameKey)) {
+        next.delete(nameKey);
+      } else {
+        next.add(nameKey);
       }
       return next;
     });
@@ -218,24 +120,63 @@ export default function SimpleNavigation() {
     return () => { document.body.style.overflow = ''; };
   }, [moreSheetOpen]);
 
-  // Filter navigation sections based on role
+  // Filter navigation sections based on role. For parent items with children,
+  // we filter children in-place and keep the parent only if at least one
+  // child survives.
   const filteredSections = navigationSections
     .map(section => ({
       ...section,
-      items: section.items.filter(item => !item.adminOnly || isAdmin),
+      items: section.items
+        .map((item): NavItem | null => {
+          if (!itemVisibleToUser(item, isAdmin)) return null;
+          if (item.children && item.children.length > 0) {
+            return {
+              ...item,
+              children: item.children.filter(c => itemVisibleToUser(c, isAdmin)),
+            };
+          }
+          return item;
+        })
+        .filter((item): item is NavItem => item !== null),
     }))
     .filter(section => section.items.length > 0);
 
-  // Items for the "More" sheet (everything not in bottom tabs)
+  const filteredTopLevelItems = topLevelItems.filter(item => itemVisibleToUser(item, isAdmin));
+
+  // Items for the "More" sheet (everything not in bottom tabs). We flatten
+  // children here because the mobile sheet is a flat grid, not nested.
   const bottomTabHrefs = new Set(bottomTabItems.map(item => item.href));
   const moreNavSections = filteredSections
     .map(section => ({
       ...section,
-      items: section.items.filter(item => !bottomTabHrefs.has(item.href)),
+      items: flattenNavItems(section.items, isAdmin).filter(
+        item => !item.href || !bottomTabHrefs.has(item.href)
+      ),
     }))
     .filter(section => section.items.length > 0);
 
   const moreNavItems = moreNavSections.flatMap(s => s.items);
+
+  // Auto-expand parents whose child matches the current route, so the user
+  // lands on a highlighted item even on first render.
+  useEffect(() => {
+    const shouldExpand: string[] = [];
+    for (const section of filteredSections) {
+      for (const item of section.items) {
+        if (item.children && item.children.some(c => c.href === location)) {
+          shouldExpand.push(item.nameKey);
+        }
+      }
+    }
+    if (shouldExpand.length > 0) {
+      setExpandedParents(prev => {
+        const next = new Set(prev);
+        shouldExpand.forEach(k => next.add(k));
+        return next;
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   const getUserInitials = () => {
     const typedUser = user as any;
@@ -257,16 +198,24 @@ export default function SimpleNavigation() {
 
   // Check if current location matches any "more" item
   const isMoreActive = moreNavItems.some(item => {
+    if (!item.href) return false;
     if (item.href === '/') return location === '/';
     return location.startsWith(item.href);
   });
 
-  // Check if any item in a section is active
+  // Check if any item (including nested children) in a section is active
   const isSectionActive = (section: NavSection) => {
-    return section.items.some(item => {
+    const matches = (item: NavItem): boolean => {
       if (item.href === '/') return location === '/';
-      return location === item.href;
-    });
+      if (item.href && location === item.href) return true;
+      return Boolean(item.children?.some(matches));
+    };
+    return section.items.some(matches);
+  };
+
+  // True if any child of this parent item is the current route.
+  const isParentActive = (parent: NavItem): boolean => {
+    return Boolean(parent.children?.some(c => c.href === location));
   };
 
   return (
@@ -292,6 +241,21 @@ export default function SimpleNavigation() {
           <span className="text-xl font-bold text-foreground">TherapyBill AI</span>
         </div>
 
+        {/* Command palette trigger */}
+        <div className="px-3 py-3 border-b border-border">
+          <button
+            onClick={openCommandPalette}
+            className="flex items-center w-full px-3 py-1.5 rounded-md text-sm text-muted-foreground bg-accent/30 hover:bg-accent transition-colors"
+            aria-label={t('commandPalette.trigger', 'Search… (⌘K)')}
+          >
+            <Search className="w-4 h-4 mr-2 flex-shrink-0" aria-hidden="true" />
+            <span className="flex-1 text-left truncate">{t('commandPalette.trigger', 'Search…')}</span>
+            <kbd className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded border border-border bg-background text-muted-foreground">
+              ⌘K
+            </kbd>
+          </button>
+        </div>
+
         {practiceLocations.length > 0 && (
           <div className="px-6 py-3 border-b border-border">
             <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
@@ -310,6 +274,36 @@ export default function SimpleNavigation() {
         )}
 
         <div className="flex-1 px-3 py-3 overflow-y-auto">
+          {/* Top-level items (Dashboard) — no section wrapper */}
+          {filteredTopLevelItems.length > 0 && (
+            <ul className="mb-3 space-y-0.5" role="list">
+              {filteredTopLevelItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.href === '/' ? location === '/' : location === item.href;
+                return (
+                  <li key={item.nameKey}>
+                    <a
+                      href={item.href}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (item.href) handleNavClick(item.href);
+                      }}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        isActive
+                          ? 'bg-primary/10 text-primary'
+                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4 mr-3 flex-shrink-0" aria-hidden="true" />
+                      {t(item.nameKey)}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
           {filteredSections.map((section) => {
             const isCollapsed = collapsedSections.has(section.labelKey);
             const sectionActive = isSectionActive(section);
@@ -333,6 +327,63 @@ export default function SimpleNavigation() {
                   <ul className="mt-0.5 space-y-0.5" role="list">
                     {section.items.map((item) => {
                       const Icon = item.icon;
+                      const hasChildren = Boolean(item.children && item.children.length > 0);
+
+                      // Parent-with-children row: toggles expansion, highlights if a child is active
+                      if (hasChildren) {
+                        const expanded = expandedParents.has(item.nameKey);
+                        const parentActive = isParentActive(item);
+                        return (
+                          <li key={item.nameKey}>
+                            <button
+                              onClick={() => toggleParent(item.nameKey)}
+                              aria-expanded={expanded}
+                              className={`flex items-center w-full px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                                parentActive
+                                  ? 'text-primary'
+                                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                              }`}
+                            >
+                              <Icon className="w-4 h-4 mr-3 flex-shrink-0" aria-hidden="true" />
+                              <span className="flex-1 text-left">{t(item.nameKey)}</span>
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? '' : '-rotate-90'}`}
+                                aria-hidden="true"
+                              />
+                            </button>
+                            {expanded && item.children && (
+                              <ul className="mt-0.5 ml-6 space-y-0.5 border-l border-border pl-2" role="list">
+                                {item.children.map((child) => {
+                                  const ChildIcon = child.icon;
+                                  const isActive = location === child.href;
+                                  return (
+                                    <li key={child.nameKey}>
+                                      <a
+                                        href={child.href}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          if (child.href) handleNavClick(child.href);
+                                        }}
+                                        aria-current={isActive ? 'page' : undefined}
+                                        className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                                          isActive
+                                            ? 'bg-primary/10 text-primary'
+                                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                                        }`}
+                                      >
+                                        <ChildIcon className="w-4 h-4 mr-3 flex-shrink-0" aria-hidden="true" />
+                                        {t(child.nameKey)}
+                                      </a>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      }
+
+                      // Leaf row
                       const isActive = location === item.href;
                       return (
                         <li key={item.nameKey}>
@@ -340,7 +391,7 @@ export default function SimpleNavigation() {
                             href={item.href}
                             onClick={(e) => {
                               e.preventDefault();
-                              handleNavClick(item.href);
+                              if (item.href) handleNavClick(item.href);
                             }}
                             aria-current={isActive ? 'page' : undefined}
                             className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -411,6 +462,16 @@ export default function SimpleNavigation() {
             <span className="text-lg font-bold text-foreground">TherapyBill AI</span>
           </div>
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={t('commandPalette.trigger', 'Search')}
+              title={t('commandPalette.trigger', 'Search')}
+              onClick={openCommandPalette}
+              className="h-10 w-10 min-h-[44px] min-w-[44px]"
+            >
+              <Search className="w-4 h-4" aria-hidden="true" />
+            </Button>
             <LanguageSwitcher compact />
             <Button
               variant="ghost"
@@ -527,11 +588,13 @@ export default function SimpleNavigation() {
                       return (
                         <li key={item.nameKey}>
                           <a
-                            href={item.href}
+                            href={item.href ?? '#'}
                             onClick={(e) => {
                               e.preventDefault();
-                              handleNavClick(item.href);
-                              setMoreSheetOpen(false);
+                              if (item.href) {
+                                handleNavClick(item.href);
+                                setMoreSheetOpen(false);
+                              }
                             }}
                             aria-current={isActive ? 'page' : undefined}
                             className={`flex flex-col items-center justify-center p-3 rounded-xl min-h-[72px] text-center transition-colors ${

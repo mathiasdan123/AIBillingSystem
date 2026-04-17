@@ -42,7 +42,18 @@
     "dataExport": "Exportar Datos",
     "surveys": "Encuestas",
     "benchmarking": "Benchmarking",
-    "dailyReport": "Reporte Diario"
+    "dailyReport": "Reporte Diario",
+    "credentialing": "Credenciales",
+    "sectionInbox": "Bandeja",
+    "sectionSettings": "Ajustes",
+    "inbox": "Bandeja",
+    "practice": "Consulta",
+    "complianceGroup": "Cumplimiento",
+    "data": "Datos",
+    "preferences": "Preferencias",
+    "productivity": "Productividad",
+    "insights": "Información",
+    "rates": "Tarifas"
   },
   "therapistProductivity": {
     "title": "Productividad del Terapeuta",
@@ -752,5 +763,12 @@
     "saved": "Preferencias Guardadas",
     "savedDesc": "Tus preferencias de notificacion han sido actualizadas.",
     "saveFailed": "Error al Guardar"
+  },
+  "commandPalette": {
+    "trigger": "Buscar… (⌘K)",
+    "title": "Paleta de Comandos",
+    "search": "Buscar páginas, pacientes, reclamaciones…",
+    "noResults": "Sin resultados.",
+    "pages": "Páginas"
   }
 }

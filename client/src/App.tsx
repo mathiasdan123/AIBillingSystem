@@ -10,6 +10,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import SimpleNavigation from "@/components/SimpleNavigation";
+import { CommandPalette } from "@/components/CommandPalette";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import NotFound from "@/pages/not-found";
 import AiBillingAssistant from "@/components/AiBillingAssistant";
@@ -198,6 +199,7 @@ function Router() {
   return (
     <>
       <SimpleNavigation />
+      <CommandPalette />
       <IdleTimeoutWarning />
       <main id="main-content">
         <ErrorBoundary>

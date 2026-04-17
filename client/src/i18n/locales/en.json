@@ -43,7 +43,18 @@
     "surveys": "Surveys",
     "schedulingInsights": "Scheduling Insights",
     "benchmarking": "Benchmarking",
-    "dailyReport": "Daily Report"
+    "dailyReport": "Daily Report",
+    "credentialing": "Credentialing",
+    "sectionInbox": "Inbox",
+    "sectionSettings": "Settings",
+    "inbox": "Inbox",
+    "practice": "Practice",
+    "complianceGroup": "Compliance",
+    "data": "Data",
+    "preferences": "Preferences",
+    "productivity": "Productivity",
+    "insights": "Insights",
+    "rates": "Rates"
   },
   "schedulingInsights": {
     "title": "Scheduling Insights",
@@ -785,5 +796,12 @@
     "saved": "Preferences Saved",
     "savedDesc": "Your notification preferences have been updated.",
     "saveFailed": "Save Failed"
+  },
+  "commandPalette": {
+    "trigger": "Search… (⌘K)",
+    "title": "Command Palette",
+    "search": "Search pages, patients, claims…",
+    "noResults": "No results found.",
+    "pages": "Pages"
   }
 }
