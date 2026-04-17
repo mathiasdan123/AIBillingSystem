@@ -245,6 +245,16 @@ export default function SoapNotes() {
     totalReimbursement?: number;
   } | null>(null);
 
+  // Post-save state: tracks the just-saved note so we can show a confirmation
+  // banner with "View saved note" + "Start new note" actions instead of
+  // auto-clearing. Cleared when the user starts a new note.
+  const [savedNoteInfo, setSavedNoteInfo] = useState<{
+    soapNoteId: number | null;
+    claimNumber: string | null;
+    claimAmount: string | null;
+    patientName: string | null;
+  } | null>(null);
+
   // Persist form data to localStorage
   const STORAGE_KEY = "soap-notes-draft";
 
@@ -782,11 +792,11 @@ export default function SoapNotes() {
       try {
         const claimResponse = await apiRequest("POST", `/api/sessions/${session.id}/generate-claim`, {});
         const claim = await claimResponse.json();
-        return { session, claim };
+        return { session, claim, savedSoapNote };
       } catch (claimError) {
         // Claim generation failed but SOAP note saved - return session only
         console.error("Auto-claim generation failed:", claimError);
-        return { session, claim: null };
+        return { session, claim: null, savedSoapNote };
       }
     },
     onSuccess: (result) => {
@@ -800,20 +810,18 @@ export default function SoapNotes() {
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/claims"] });
-      // Clear saved draft
+      // Clear saved draft so a future refresh doesn't re-populate old data.
       localStorage.removeItem(STORAGE_KEY);
-      // Reset form
-      setSelectedPatient(null);
-      setMood("");
-      setCaregiverReport("");
-      setSelectedActivities([]);
-      setSelectedTherapies([]);
-      setAssessment({ performance: "", assistance: "", strength: "", motorPlanning: "", sensoryRegulation: "" });
-      setPlanNextSteps("");
-      setNextSessionFocus("");
-      setHomeProgram("");
-      setGoalProgressEntries([]);
-      setGeneratedNote(null);
+      // Record the saved-note info so the confirmation banner can render.
+      // Form state is intentionally kept populated so the therapist can
+      // review what they just saved; "Start new note" explicitly clears it.
+      const patientName = patients?.find(p => p.id === selectedPatient);
+      setSavedNoteInfo({
+        soapNoteId: result?.savedSoapNote?.id ?? null,
+        claimNumber: hasClaim ? result.claim.claimNumber : null,
+        claimAmount: hasClaim ? result.claim.totalAmount : null,
+        patientName: patientName ? `${patientName.firstName} ${patientName.lastName}` : null,
+      });
     },
     onError: () => {
       toast({
@@ -881,6 +889,67 @@ export default function SoapNotes() {
         </div>
 
         <AiDisclaimerBanner />
+
+        {/* Post-save confirmation banner */}
+        {savedNoteInfo && (
+          <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-4">
+            <div className="flex items-start gap-3 flex-wrap">
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-[220px]">
+                <div className="text-sm font-semibold text-green-800">
+                  SOAP Note Saved
+                  {savedNoteInfo.patientName ? ` — ${savedNoteInfo.patientName}` : ""}
+                </div>
+                <div className="text-xs text-green-700 mt-0.5">
+                  {savedNoteInfo.claimNumber
+                    ? `Claim ${savedNoteInfo.claimNumber} created for $${savedNoteInfo.claimAmount}. Ready for submission.`
+                    : "Session documented. Claim can be generated from the Claims page."}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    document
+                      .getElementById("generated-note-section")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  data-testid="button-view-saved-note"
+                >
+                  View saved note
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setSelectedPatient(null);
+                    setMood("");
+                    setCaregiverReport("");
+                    setSelectedActivities([]);
+                    setSelectedTherapies([]);
+                    setAssessment({
+                      performance: "",
+                      assistance: "",
+                      strength: "",
+                      motorPlanning: "",
+                      sensoryRegulation: "",
+                    });
+                    setPlanNextSteps("");
+                    setNextSessionFocus("");
+                    setHomeProgram("");
+                    setGoalProgressEntries([]);
+                    setGeneratedNote(null);
+                    setSavedNoteInfo(null);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  data-testid="button-start-new-note"
+                >
+                  Start new note
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Voice Input Section */}
         {showVoiceInput && (
@@ -1744,7 +1813,7 @@ export default function SoapNotes() {
           </div>
 
           {/* Right Column - Generated Output */}
-          <div className="space-y-4">
+          <div className="space-y-4" id="generated-note-section">
             {generatedNote ? (
               <>
                 {/* CPT Codes Card */}
@@ -1986,13 +2055,18 @@ export default function SoapNotes() {
                 {/* Save Button */}
                 <Button
                   onClick={() => createSoapNoteMutation.mutate()}
-                  disabled={createSoapNoteMutation.isPending}
+                  disabled={createSoapNoteMutation.isPending || savedNoteInfo !== null}
                   className="w-full h-12 text-base"
                 >
                   {createSoapNoteMutation.isPending ? (
                     <>
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                       Saving...
+                    </>
+                  ) : savedNoteInfo ? (
+                    <>
+                      <CheckCircle className="w-5 h-5 mr-2" />
+                      Saved
                     </>
                   ) : (
                     <>
