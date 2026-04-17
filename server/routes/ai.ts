@@ -368,48 +368,93 @@ router.get('/claim-outcomes', isAuthenticated, isAdminOrBilling, async (req: any
 });
 
 // AI SOAP Note and Billing Generation
+// Uses chunked transfer + periodic keepalive bytes so the ALB idle timeout
+// doesn't fire during long generations. JSON.parse ignores leading whitespace,
+// so the client calls response.json() as normal.
 router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) => {
-  try {
-    const {
-      patientId, activities, mood, caregiverReport, duration,
-      location, assessment, planNextSteps, nextSessionFocus,
-      homeProgram, ratePerUnit
-    } = req.body;
+  const startedAt = Date.now();
+  logger.info('SOAP generation request received', {
+    userId: req.user?.id,
+    patientId: req.body?.patientId,
+  });
 
-    if (!patientId || !activities || !Array.isArray(activities) || activities.length === 0) {
-      return res.status(400).json({
-        error: 'Missing required fields: patientId and activities array required'
-      });
-    }
+  const {
+    patientId, activities, mood, caregiverReport, duration,
+    location, assessment, planNextSteps, nextSessionFocus,
+    homeProgram, ratePerUnit
+  } = req.body;
 
-    if (!duration || duration < 15) {
-      return res.status(400).json({ error: 'Duration must be at least 15 minutes' });
-    }
-
-    const result = await generateSoapNoteAndBilling({
-      patientId,
-      activities,
-      mood: mood || 'Cooperative',
-      caregiverReport,
-      duration,
-      location: location || 'Clinic',
-      assessment: assessment || {
-        performance: 'Stable',
-        assistance: 'Minimal Assist',
-        strength: 'Adequate',
-        motorPlanning: 'Mild Difficulty',
-        sensoryRegulation: 'Needed Minimal Supports'
-      },
-      planNextSteps: planNextSteps || 'Continue Current Goals',
-      nextSessionFocus,
-      homeProgram,
-      ratePerUnit
+  if (!patientId || !activities || !Array.isArray(activities) || activities.length === 0) {
+    return res.status(400).json({
+      error: 'Missing required fields: patientId and activities array required'
     });
+  }
 
-    res.json(result);
+  if (!duration || duration < 15) {
+    return res.status(400).json({ error: 'Duration must be at least 15 minutes' });
+  }
+
+  // Start a chunked response and flush headers immediately so the ALB sees
+  // an open pipe. JSON.parse accepts leading whitespace, so we can write
+  // space bytes as keepalives and then the real JSON at the end.
+  res.status(200);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.flushHeaders();
+  res.write(' ');
+
+  const writeKeepalive = () => {
+    if (!res.writableEnded && !res.destroyed) {
+      try { res.write(' '); } catch { /* socket closed */ }
+    }
+  };
+
+  // Safety-net heartbeat in case Claude stalls before streaming any tokens.
+  const heartbeat = setInterval(writeKeepalive, 5000);
+
+  try {
+    const result = await generateSoapNoteAndBilling(
+      {
+        patientId,
+        activities,
+        mood: mood || 'Cooperative',
+        caregiverReport,
+        duration,
+        location: location || 'Clinic',
+        assessment: assessment || {
+          performance: 'Stable',
+          assistance: 'Minimal Assist',
+          strength: 'Adequate',
+          motorPlanning: 'Mild Difficulty',
+          sensoryRegulation: 'Needed Minimal Supports'
+        },
+        planNextSteps: planNextSteps || 'Continue Current Goals',
+        nextSessionFocus,
+        homeProgram,
+        ratePerUnit
+      },
+      { onProgress: writeKeepalive }
+    );
+
+    clearInterval(heartbeat);
+    res.write(JSON.stringify(result));
+    res.end();
+    logger.info('SOAP generation completed', {
+      patientId,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (error) {
-    logger.error('Error generating AI SOAP note', { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ error: 'Failed to generate SOAP note and billing' });
+    clearInterval(heartbeat);
+    logger.error('Error generating AI SOAP note', {
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAt,
+    });
+    // Headers already flushed, so we can't change the status. Emit an error
+    // payload the client can still parse.
+    try {
+      res.write(JSON.stringify({ error: 'Failed to generate SOAP note and billing' }));
+    } catch { /* ignore */ }
+    res.end();
   }
 });
 
