@@ -5,7 +5,7 @@
  * Identifies gaps, suggests optimal slots, and generates natural language insights.
  */
 
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { storage } from '../storage';
 import logger from './logger';
 
@@ -539,7 +539,7 @@ function findAvailableSlots(
 
 /**
  * Generates AI-powered natural language insights about scheduling patterns.
- * Falls back to rule-based insights when OpenAI is not configured.
+ * Falls back to rule-based insights when Claude is not configured.
  */
 export async function generateScheduleInsights(
   practiceId: number,
@@ -572,14 +572,14 @@ export async function generateScheduleInsights(
   // Generate rule-based insights first
   const insights = generateRuleBasedInsights(analyses, allAppointments);
 
-  // Try AI-powered insights via OpenAI
+  // Try AI-powered insights via Claude
   try {
     const aiInsights = await generateAIInsights(analyses, allAppointments);
     if (aiInsights.length > 0) {
       insights.push(...aiInsights);
     }
   } catch (err) {
-    logger.info('OpenAI not available for scheduling insights, using rule-based only');
+    logger.info('Claude not available for scheduling insights, using rule-based only');
   }
 
   return insights;
@@ -720,11 +720,12 @@ async function generateAIInsights(
   analyses: ScheduleAnalysis[],
   allAppointments: any[]
 ): Promise<ScheduleInsight[]> {
-  if (!process.env.OPENAI_API_KEY) {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
     return [];
   }
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const anthropic = new Anthropic({ apiKey });
 
   // Build a summary for the AI
   const summaryData = analyses.map((a) => ({
@@ -768,14 +769,17 @@ Respond with a JSON array of objects, each with:
 Return ONLY the JSON array, no markdown or other text.`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1000,
+      temperature: 0.7,
+      messages: [{ role: 'user', content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content?.trim();
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === 'text'
+    );
+    const content = textBlock?.text?.trim();
     if (!content) return [];
 
     // Parse JSON, handle potential markdown wrapping

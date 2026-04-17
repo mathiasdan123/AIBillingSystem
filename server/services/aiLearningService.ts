@@ -1,19 +1,20 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { aiLearningData, aiModelInsights, claims, claimLineItems, cptCodes, icd10Codes, insurances } from "@shared/schema";
 import { eq, and, sql, desc, count, avg, isNull } from "drizzle-orm";
 import logger from "./logger";
 
-let openai: OpenAI | null = null;
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
 }
 
 interface ClaimOutcomeInput {
@@ -165,7 +166,7 @@ interface PayerTrendRow {
 
 /**
  * Analyze historical claim outcome data and generate actionable insights.
- * Uses SQL aggregations for data analysis plus OpenAI for natural language generation.
+ * Uses SQL aggregations for data analysis plus Claude for natural language generation.
  */
 export async function generateInsights(practiceId: number): Promise<{ generated: number; openAiAvailable: boolean }> {
   try {
@@ -351,8 +352,8 @@ export async function generateInsights(practiceId: number): Promise<{ generated:
       }
     }
 
-    // Use OpenAI to generate additional natural language insights if available
-    const client = getOpenAI();
+    // Use Claude to generate additional natural language insights if available
+    const client = getAnthropic();
     if (client && (denialPatterns.length > 0 || underpaymentPatterns.length > 0)) {
       try {
         const summaryData = {
@@ -361,26 +362,29 @@ export async function generateInsights(practiceId: number): Promise<{ generated:
           payerTrends: payerTrends.slice(0, 10),
         };
 
-        const response = await client.chat.completions.create({
-          model: "gpt-4o-mini",
+        const response = await client.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1000,
+          temperature: 0.3,
+          system:
+            "You are a medical billing analyst. Generate 1-3 actionable optimization tips based on the claim outcome data. Return ONLY a valid JSON object with an 'insights' array of objects containing: title, description, insightType (optimization_tip), confidence (0-1), payerName (nullable), cptCode (nullable). No markdown fencing.",
           messages: [
-            {
-              role: "system",
-              content: "You are a medical billing analyst. Generate 1-3 actionable optimization tips based on the claim outcome data. Return JSON array with objects containing: title, description, insightType (optimization_tip), confidence (0-1), payerName (nullable), cptCode (nullable).",
-            },
             {
               role: "user",
               content: `Analyze these claim outcome patterns and suggest optimization tips:\n${JSON.stringify(summaryData, null, 2)}`,
             },
           ],
-          response_format: { type: "json_object" },
-          temperature: 0.3,
-          max_tokens: 1000,
         });
 
-        const content = response.choices[0]?.message?.content;
+        const textBlock = response.content.find(
+          (b): b is Anthropic.TextBlock => b.type === "text"
+        );
+        const content = textBlock?.text;
         if (content) {
-          const parsed = JSON.parse(content);
+          const jsonMatch =
+            content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+          const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+          const parsed = JSON.parse(jsonStr);
           const tips = Array.isArray(parsed.insights) ? parsed.insights : Array.isArray(parsed) ? parsed : [];
           for (const tip of tips.slice(0, 3)) {
             newInsights.push({
@@ -397,7 +401,7 @@ export async function generateInsights(practiceId: number): Promise<{ generated:
           }
         }
       } catch (aiError) {
-        logger.warn("AI Learning: OpenAI insight generation failed, using data-only insights", {
+        logger.warn("AI Learning: Claude insight generation failed, using data-only insights", {
           error: aiError instanceof Error ? aiError.message : String(aiError),
         });
       }
@@ -419,7 +423,7 @@ export async function generateInsights(practiceId: number): Promise<{ generated:
       practiceId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { generated: 0, openAiAvailable: getOpenAI() !== null };
+    return { generated: 0, openAiAvailable: getAnthropic() !== null };
   }
 }
 

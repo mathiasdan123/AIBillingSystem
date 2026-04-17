@@ -1,18 +1,19 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { transcribeAudioBase64 } from "./voiceService";
 import { optimizeBillingCodes } from "./aiBillingOptimizer";
 
-let openai: OpenAI | null = null;
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set - session recording AI disabled');
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    console.warn('ANTHROPIC_API_KEY not set - session recording AI disabled');
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
 }
 
 export interface SessionRecordingData {
@@ -136,29 +137,31 @@ IMPORTANT DOCUMENTATION GUIDELINES:
 - If information is not mentioned in the transcription, make reasonable clinical inferences based on the session type and activities`;
 
   try {
-    const client = getOpenAI();
+    const client = getAnthropic();
     if (!client) {
-      throw new Error("OpenAI not configured");
+      throw new Error("Anthropic not configured");
     }
-    const response = await client.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert therapy documentation specialist. Extract accurate clinical documentation from therapy session transcriptions. Always respond with valid JSON."
-        },
-        { role: "user", content: prompt }
-      ],
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
       temperature: 0.3,
-      response_format: { type: "json_object" }
+      system:
+        "You are an expert therapy documentation specialist. Extract accurate clinical documentation from therapy session transcriptions. Respond with ONLY a valid JSON object, no markdown fencing or commentary.",
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content;
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text"
+    );
+    const content = textBlock?.text;
     if (!content) {
       throw new Error("No response from AI");
     }
 
-    const extracted = JSON.parse(content);
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+    const extracted = JSON.parse(jsonStr);
 
     // Now get billing recommendations based on the extracted data
     let billingRecommendation = undefined;
@@ -270,29 +273,31 @@ RESPOND WITH JSON:
   "notes": "Overall billing strategy explanation"
 }`;
 
-  const client = getOpenAI();
+  const client = getAnthropic();
   if (!client) {
-    throw new Error("OpenAI not configured");
+    throw new Error("Anthropic not configured");
   }
-  const response = await client.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      {
-        role: "system",
-        content: "You are a medical billing compliance expert. Recommend accurate, defensible billing codes. Return only valid JSON."
-      },
-      { role: "user", content: prompt }
-    ],
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
     temperature: 0.3,
-    response_format: { type: "json_object" }
+    system:
+      "You are a medical billing compliance expert. Recommend accurate, defensible billing codes. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+    messages: [{ role: "user", content: prompt }],
   });
 
-  const content = response.choices[0]?.message?.content;
+  const textBlock = response.content.find(
+    (b): b is Anthropic.TextBlock => b.type === "text"
+  );
+  const content = textBlock?.text;
   if (!content) {
     throw new Error("No billing response");
   }
 
-  return JSON.parse(content);
+  const jsonMatch =
+    content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+  const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+  return JSON.parse(jsonStr);
 }
 
 /**

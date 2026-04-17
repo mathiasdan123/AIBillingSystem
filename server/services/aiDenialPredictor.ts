@@ -1,18 +1,19 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import logger from "./logger";
 import { getRecommendationsForClaim } from "./aiLearningService";
 
-let openai: OpenAI | null = null;
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    logger.warn("OPENAI_API_KEY not set - AI denial prediction disabled");
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    logger.warn("ANTHROPIC_API_KEY not set - AI denial prediction disabled");
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
 }
 
 export interface DenialPredictionIssue {
@@ -227,7 +228,7 @@ function runRuleBasedChecks(
 
 /**
  * Calculate a risk score from rule-based issues.
- * Used as a fallback when OpenAI is not available.
+ * Used as a fallback when Claude is not available.
  */
 function calculateRuleBasedScore(issues: DenialPredictionIssue[]): number {
   let score = 0;
@@ -258,7 +259,7 @@ function getRiskLevel(score: number): "low" | "medium" | "high" {
 
 /**
  * Predict whether a claim will be denied before submission.
- * Uses rule-based checks plus OpenAI analysis when available.
+ * Uses rule-based checks plus Claude analysis when available.
  */
 export async function predictDenial(
   claim: ClaimInput,
@@ -270,7 +271,7 @@ export async function predictDenial(
   const ruleIssues = runRuleBasedChecks(claim, lineItems, soapNote, patient);
 
   // Step 2: Try AI-enhanced analysis
-  const client = getOpenAI();
+  const client = getAnthropic();
 
   if (!client) {
     // Fallback to rule-based only
@@ -371,27 +372,27 @@ Return a JSON object with this exact structure:
 Only include ADDITIONAL issues not already in the rule-based list. Set riskScore considering BOTH rule-based and your additional findings.`;
 
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a medical billing denial prediction system. Respond only with valid JSON. Be specific and actionable in your suggestions.",
-        },
-        { role: "user", content: prompt },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.3,
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
+      temperature: 0.3,
+      system:
+        "You are a medical billing denial prediction system. Respond with ONLY a valid JSON object, no markdown fencing or commentary. Be specific and actionable in your suggestions.",
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content;
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text"
+    );
+    const content = textBlock?.text;
     if (!content) {
-      throw new Error("No response from OpenAI");
+      throw new Error("No response from Claude");
     }
 
-    const aiResult = JSON.parse(content);
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+    const aiResult = JSON.parse(jsonStr);
 
     // Merge rule-based issues with AI-detected additional issues
     const allIssues: DenialPredictionIssue[] = [
