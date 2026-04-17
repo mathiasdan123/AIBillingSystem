@@ -3,19 +3,24 @@
  * Uses AI to generate professional responses to Google reviews
  */
 
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 
-let openai: OpenAI | null = null;
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set - review response AI disabled');
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    console.warn('ANTHROPIC_API_KEY not set - review response AI disabled');
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
+}
+
+function hasAnthropicKey(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
 }
 
 interface ReviewResponseOptions {
@@ -43,8 +48,8 @@ export async function generateReviewResponse(options: ReviewResponseOptions): Pr
   response?: string;
   error?: string;
 }> {
-  if (!process.env.OPENAI_API_KEY) {
-    return { success: false, error: 'OpenAI API key not configured' };
+  if (!hasAnthropicKey()) {
+    return { success: false, error: 'Anthropic API key not configured' };
   }
 
   const { reviewerName, rating, reviewText, practiceName, practicePhone, tone = 'professional', includeCallToAction = true } = options;
@@ -82,21 +87,22 @@ ${isNegative ? 'This is a negative review - be apologetic and solution-focused.'
 ${isPositive ? 'This is a positive review - express genuine gratitude.' : ''}`;
 
   try {
-    const client = getOpenAI();
+    const client = getAnthropic();
     if (!client) {
-      return { success: false, error: 'OpenAI not configured' };
+      return { success: false, error: 'Anthropic not configured' };
     }
-    const completion = await client.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
+    const completion = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 300,
       temperature: 0.7,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
     });
 
-    const response = completion.choices[0]?.message?.content?.trim();
+    const textBlock = completion.content.find(
+      (b): b is Anthropic.TextBlock => b.type === 'text'
+    );
+    const response = textBlock?.text?.trim();
 
     if (!response) {
       return { success: false, error: 'No response generated' };
@@ -117,7 +123,7 @@ export async function analyzeReview(reviewText: string, rating: number): Promise
   analysis?: AnalyzedReview;
   error?: string;
 }> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasAnthropicKey()) {
     // Return basic analysis without AI
     const sentiment = rating >= 4 ? 'positive' : rating <= 2 ? 'negative' : 'neutral';
     return {
@@ -132,40 +138,43 @@ export async function analyzeReview(reviewText: string, rating: number): Promise
   }
 
   try {
-    const client = getOpenAI();
+    const client = getAnthropic();
     if (!client) {
-      throw new Error('OpenAI not configured');
+      throw new Error('Anthropic not configured');
     }
-    const completion = await client.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: `Analyze this review and return a JSON object with:
+    const completion = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      temperature: 0.3,
+      system: `Analyze this review and return a JSON object with:
 - sentiment: "positive", "neutral", or "negative"
 - tags: array of relevant topics (e.g., "staff", "wait_time", "communication", "treatment", "billing", "atmosphere", "scheduling")
 - keyPoints: array of 1-3 key points mentioned
 - suggestedPriority: "low", "medium", or "high" based on urgency to respond
 
-Return ONLY valid JSON, no other text.`,
-        },
+Return ONLY a valid JSON object, no markdown fencing or commentary.`,
+      messages: [
         {
           role: 'user',
           content: `Rating: ${rating} stars\nReview: "${reviewText}"`,
         },
       ],
-      max_tokens: 200,
-      temperature: 0.3,
     });
 
-    const content = completion.choices[0]?.message?.content?.trim();
+    const textBlock = completion.content.find(
+      (b): b is Anthropic.TextBlock => b.type === 'text'
+    );
+    const content = textBlock?.text?.trim();
 
     if (!content) {
       throw new Error('No analysis generated');
     }
 
-    // Parse the JSON response
-    const analysis = JSON.parse(content) as AnalyzedReview;
+    // Parse the JSON response (strip markdown fencing if any)
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+    const analysis = JSON.parse(jsonStr) as AnalyzedReview;
 
     return { success: true, analysis };
   } catch (error) {
@@ -362,8 +371,8 @@ export async function generateNegativeFeedbackResponse(options: {
 }): Promise<{ subject: string; body: string }> {
   const { patientFirstName, practiceName, practicePhone, practiceEmail, rating, feedbackText } = options;
 
-  // If OpenAI is configured, generate a personalized response
-  if (process.env.OPENAI_API_KEY) {
+  // If Anthropic is configured, generate a personalized response
+  if (hasAnthropicKey()) {
     try {
       const systemPrompt = `You are writing a follow-up email on behalf of ${practiceName}, a therapy/healthcare practice.
 A patient has submitted negative feedback (${rating} out of 5 stars).
@@ -385,21 +394,22 @@ ${feedbackText ? `Their feedback: "${feedbackText}"` : 'No written feedback prov
 ${practicePhone ? `Practice phone: ${practicePhone}` : ''}
 ${practiceEmail ? `Practice email: ${practiceEmail}` : ''}`;
 
-      const client = getOpenAI();
+      const client = getAnthropic();
       if (!client) {
-        throw new Error('OpenAI not configured');
+        throw new Error('Anthropic not configured');
       }
-      const completion = await client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
+      const completion = await client.messages.create({
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 400,
         temperature: 0.7,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
       });
 
-      const aiBody = completion.choices[0]?.message?.content?.trim() || '';
+      const textBlock = completion.content.find(
+        (b): b is Anthropic.TextBlock => b.type === 'text'
+      );
+      const aiBody = textBlock?.text?.trim() || '';
 
       if (aiBody) {
         return {

@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 import {
   OT_INTERVENTION_CATEGORIES,
@@ -7,17 +7,18 @@ import {
   getPayerRatesSummary
 } from "./reimbursementOptimizer";
 
-let openai: OpenAI | null = null;
+let anthropicClient: Anthropic | null = null;
 
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set - AI billing accuracy review disabled');
+function getAnthropic(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    console.warn('ANTHROPIC_API_KEY not set - AI billing accuracy review disabled');
     return null;
   }
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!anthropicClient) {
+    anthropicClient = new Anthropic({ apiKey });
   }
-  return openai;
+  return anthropicClient;
 }
 
 interface SessionDetails {
@@ -166,29 +167,31 @@ Based on the session documentation, recommend the optimal billing codes. Return 
 Focus on accuracy and compliance. When multiple codes are clinically valid for the documented service, choose the one that reimburses better.`;
 
   try {
-    const client = getOpenAI();
+    const client = getAnthropic();
     if (!client) {
-      throw new Error("OpenAI not configured");
+      throw new Error("Anthropic API key not configured");
     }
-    const response = await client.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "You are a medical billing compliance expert. Always recommend billing that is accurate, defensible, and follows payer guidelines. Return only valid JSON."
-        },
-        { role: "user", content: prompt }
-      ],
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
       temperature: 0.3,
-      response_format: { type: "json_object" }
+      system:
+        "You are a medical billing compliance expert. Always recommend billing that is accurate, defensible, and follows payer guidelines. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content;
+    const textBlock = response.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text"
+    );
+    const content = textBlock?.text;
     if (!content) {
       throw new Error("No response from AI");
     }
 
-    const aiResult = JSON.parse(content);
+    const jsonMatch =
+      content.match(/```json\n?([\s\S]*?)\n?```/) || content.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+    const aiResult = JSON.parse(jsonStr);
 
     // Map AI recommendations to our format with full details and actual reimbursement rates
     const lineItemsPromises = aiResult.lineItems.map(async (item: any) => {
