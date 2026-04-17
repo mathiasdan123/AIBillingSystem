@@ -272,9 +272,15 @@ is a compliance and liability issue, not just a stylistic preference.
    - Direct quotations from the caregiver or patient — do not write
      'Mom reports "he can now button his shirt"' unless that exact
      sentiment appears in the input
-   - Specific past-session comparisons (e.g., "improved from 3:30 min last
-     session") — you have NO data about prior sessions unless the
-     treatment plan or goals section provides it
+   - **Any comparison to prior performance or prior sessions.** Forbidden
+     phrasings include "improved from last session", "compared to
+     baseline observations", "carry-over of previously taught strategies",
+     "better than previously", "progressed from moderate assist to...",
+     and any "was X, now Y" structure. You have NO data about prior
+     sessions UNLESS the treatment plan or treatment goals data
+     explicitly provides a prior measurement or observation to compare
+     against. If in doubt, describe today's performance in absolute
+     terms without any prior reference.
    - Social/behavioral details that weren't observed (e.g., "demonstrated
      good eye contact", "shared details about his week at school",
      "interacted well with peers") — unless the input mentions them
@@ -283,7 +289,14 @@ is a compliance and liability issue, not just a stylistic preference.
      resistance to home activities, frustration at home, homework
      behaviors, school uniform dressing, morning routine behavior —
      unless the caregiver report explicitly said so
-   - Equipment or materials not mentioned in the activities
+   - **Descriptors of equipment, materials, or settings that the input
+     did not specify.** If the activity says "resistive putty", do NOT
+     write "medium resistance putty" — medium/light/heavy is your
+     guess, not their data. If the activity says "therapy ball", do
+     NOT write "55cm therapy ball". If the activity says "swing", do
+     NOT write "lycra swing" or "platform swing". Use exactly the
+     words the therapist used; add adjectives only when the input
+     contains them.
 
 5. **When data is missing, use one of these patterns:**
    - Qualitative clinical language grounded in the observations that WERE
