@@ -117,20 +117,20 @@ function NavLink({ item, isActive, onNavigate, indent = false }: NavLinkProps) {
         indent ? 'pl-9 pr-2' : 'px-2',
         'py-[5px]',
         isActive
-          ? 'bg-primary/[0.06] font-semibold text-foreground before:absolute before:left-0 before:top-1 before:bottom-1 before:w-[2px] before:rounded-r-full before:bg-primary'
-          : 'font-medium text-foreground/80 hover:bg-accent/50 hover:text-foreground',
+          ? 'bg-[hsl(207_90%_54%_/_0.06)] font-semibold text-foreground before:absolute before:left-0 before:top-1 before:bottom-1 before:w-[2px] before:rounded-r-full before:bg-primary'
+          : 'font-medium text-[hsl(20_14.3%_4.1%_/_0.8)] hover:bg-[hsl(60_4.8%_95.9%_/_0.5)] hover:text-foreground',
       ].join(' ')}
     >
       {!indent && (
         <Icon
-          className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-primary' : 'text-foreground/60'}`}
+          className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-primary' : 'text-[hsl(20_14.3%_4.1%_/_0.6)]'}`}
           strokeWidth={ICON_STROKE}
           aria-hidden="true"
         />
       )}
       {indent && (
         <Icon
-          className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? 'text-primary' : 'text-foreground/50'}`}
+          className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? 'text-primary' : 'text-[hsl(20_14.3%_4.1%_/_0.5)]'}`}
           strokeWidth={ICON_STROKE}
           aria-hidden="true"
         />
@@ -164,17 +164,17 @@ function NavParentRow({ item, isParentActive, expanded, onToggle, activeHref, on
           'group flex items-center w-full rounded-md text-[13px] leading-5 px-2 py-[5px] gap-2.5',
           isParentActive
             ? 'font-semibold text-foreground'
-            : 'font-medium text-foreground/80 hover:bg-accent/50 hover:text-foreground',
+            : 'font-medium text-[hsl(20_14.3%_4.1%_/_0.8)] hover:bg-[hsl(60_4.8%_95.9%_/_0.5)] hover:text-foreground',
         ].join(' ')}
       >
         <Icon
-          className={`w-4 h-4 flex-shrink-0 ${isParentActive ? 'text-primary' : 'text-foreground/60'}`}
+          className={`w-4 h-4 flex-shrink-0 ${isParentActive ? 'text-primary' : 'text-[hsl(20_14.3%_4.1%_/_0.6)]'}`}
           strokeWidth={ICON_STROKE}
           aria-hidden="true"
         />
         <span className="flex-1 text-left truncate">{t(item.nameKey)}</span>
         <ChevronDown
-          className={`w-3.5 h-3.5 flex-shrink-0 text-foreground/40 transition-transform duration-150 ease-out ${expanded ? '' : '-rotate-90'}`}
+          className={`w-3.5 h-3.5 flex-shrink-0 text-[hsl(20_14.3%_4.1%_/_0.4)] transition-transform duration-150 ease-out ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={ICON_STROKE}
           aria-hidden="true"
         />
@@ -247,14 +247,14 @@ function NavSectionBlock({
       <button
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex items-center justify-between w-full px-2 py-1 text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70 hover:text-muted-foreground transition-colors"
+        className="flex items-center justify-between w-full px-2 py-1 text-[10.5px] font-medium uppercase tracking-[0.08em] text-[hsl(25_5.3%_44.7%_/_0.7)] hover:text-muted-foreground transition-colors"
       >
         <span>
           {t(section.labelKey, mobileSectionLabels[section.labelKey] || section.labelKey)}
         </span>
         {/* Chevron hidden until the section row is hovered — Notion-style reveal */}
         <ChevronDown
-          className={`w-3 h-3 text-muted-foreground/50 opacity-0 group-hover:opacity-100 transition-all duration-150 ease-out ${expanded ? '' : '-rotate-90'}`}
+          className={`w-3 h-3 text-[hsl(25_5.3%_44.7%_/_0.5)] opacity-0 group-hover:opacity-100 transition-all duration-150 ease-out ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={ICON_STROKE}
           aria-hidden="true"
         />
@@ -493,12 +493,12 @@ export default function SimpleNavigation() {
         <div className="px-3 pt-3 pb-1">
           <button
             onClick={openCommandPalette}
-            className="group flex items-center w-full px-2 py-[5px] rounded-md text-[13px] text-foreground/70 hover:bg-accent/50 hover:text-foreground transition-colors"
+            className="group flex items-center w-full px-2 py-[5px] rounded-md text-[13px] text-[hsl(20_14.3%_4.1%_/_0.7)] hover:bg-[hsl(60_4.8%_95.9%_/_0.5)] hover:text-foreground transition-colors"
             aria-label={t('commandPalette.trigger', 'Search… (⌘K)')}
           >
-            <Search className="w-4 h-4 mr-2.5 flex-shrink-0 text-foreground/50" strokeWidth={ICON_STROKE} aria-hidden="true" />
+            <Search className="w-4 h-4 mr-2.5 flex-shrink-0 text-[hsl(20_14.3%_4.1%_/_0.5)]" strokeWidth={ICON_STROKE} aria-hidden="true" />
             <span className="flex-1 text-left truncate">{t('commandPalette.trigger', 'Search…')}</span>
-            <kbd className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded border border-border bg-background text-muted-foreground/80 opacity-60 group-hover:opacity-100 transition-opacity">
+            <kbd className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded border border-border bg-background text-[hsl(25_5.3%_44.7%_/_0.8)] opacity-60 group-hover:opacity-100 transition-opacity">
               ⌘K
             </kbd>
           </button>
@@ -508,7 +508,7 @@ export default function SimpleNavigation() {
         {practiceLocations.length > 0 && (
           <div className="px-3 pt-1 pb-2">
             <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
-              <SelectTrigger className="w-full h-8 text-[13px] border-border/70">
+              <SelectTrigger className="w-full h-8 text-[13px] border-[hsl(20_5.9%_90%_/_0.7)]">
                 <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" strokeWidth={ICON_STROKE} aria-hidden="true" />
                 <SelectValue placeholder={t('locations.allLocations')} />
               </SelectTrigger>
@@ -561,7 +561,7 @@ export default function SimpleNavigation() {
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-border/60 space-y-2">
+        <div className="p-3 border-t border-[hsl(20_5.9%_90%_/_0.6)] space-y-2">
           <div className="flex items-center justify-center">
             <LanguageSwitcher compact />
           </div>
@@ -689,7 +689,7 @@ export default function SimpleNavigation() {
           />
           <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-background rounded-t-2xl border-t border-border max-h-[75vh] flex flex-col animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 bg-muted-foreground/30 rounded-full" />
+              <div className="w-10 h-1 bg-[hsl(25_5.3%_44.7%_/_0.3)] rounded-full" />
             </div>
             <div className="flex items-center gap-3 px-5 py-3 border-b border-border">
               <Avatar className="h-9 w-9">
@@ -718,7 +718,7 @@ export default function SimpleNavigation() {
             <div className="flex-1 overflow-y-auto px-4 py-3 pb-20">
               {moreNavSections.map((section) => (
                 <div key={section.labelKey} className="mb-4">
-                  <h3 className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70 px-1 mb-2">
+                  <h3 className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-[hsl(25_5.3%_44.7%_/_0.7)] px-1 mb-2">
                     {t(section.labelKey, mobileSectionLabels[section.labelKey] || section.labelKey)}
                   </h3>
                   <ul className="grid grid-cols-3 gap-2" role="list">
@@ -739,12 +739,12 @@ export default function SimpleNavigation() {
                             aria-current={isActive ? 'page' : undefined}
                             className={`flex flex-col items-center justify-center p-3 rounded-xl min-h-[72px] text-center transition-colors ${
                               isActive
-                                ? 'bg-primary/[0.06] text-foreground before:content-[""]'
-                                : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                                ? 'bg-[hsl(207_90%_54%_/_0.06)] text-foreground before:content-[""]'
+                                : 'text-[hsl(20_14.3%_4.1%_/_0.8)] hover:bg-[hsl(60_4.8%_95.9%_/_0.5)] hover:text-foreground'
                             }`}
                           >
                             <Icon
-                              className={`w-5 h-5 mb-1.5 ${isActive ? 'text-primary' : 'text-foreground/60'}`}
+                              className={`w-5 h-5 mb-1.5 ${isActive ? 'text-primary' : 'text-[hsl(20_14.3%_4.1%_/_0.6)]'}`}
                               strokeWidth={ICON_STROKE}
                               aria-hidden="true"
                             />
