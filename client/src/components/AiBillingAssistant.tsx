@@ -183,8 +183,11 @@ export default function AiBillingAssistant() {
     };
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const trimmed = input.trim();
+  const handleSend = useCallback(async (overrideText?: string) => {
+    // Allow callers (e.g., welcome suggestion buttons) to send a specific
+    // message without first setting input state — avoids the async-setState
+    // race where reading `input` right after `setInput()` sees the old value.
+    const trimmed = (overrideText ?? input).trim();
     if (!trimmed || isLoading) return;
 
     const userMsg: ChatMessage = {
@@ -541,11 +544,9 @@ export default function AiBillingAssistant() {
                     ].map((suggestion) => (
                       <button
                         key={suggestion}
-                        onClick={() => {
-                          setInput(suggestion);
-                          setTimeout(() => inputRef.current?.focus(), 50);
-                        }}
-                        className="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                        onClick={() => handleSend(suggestion)}
+                        disabled={isLoading}
+                        className="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {suggestion}
                       </button>
@@ -663,7 +664,7 @@ export default function AiBillingAssistant() {
                     </svg>
                   </button>
                   <button
-                    onClick={handleSend}
+                    onClick={() => handleSend()}
                     disabled={!input.trim() || isLoading || (statusChecked && status !== null && !status.available)}
                     className="flex-shrink-0 p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
                     aria-label="Send message"
