@@ -359,6 +359,11 @@ export const claims = pgTable("claims", {
   clearinghouseStatus: varchar("clearinghouse_status"), // accepted, rejected, pending
   clearinghouseResponse: jsonb("clearinghouse_response"), // Raw response from clearinghouse
   clearinghouseSubmittedAt: timestamp("clearinghouse_submitted_at"),
+  // 277CA category code + human-readable value, denormalized from the latest
+  // claim status check so the claims list/detail can render specific pill
+  // variants ("Rejected for invalid data" vs "Rejected for relational error")
+  // without joining back to claim_status_checks on every query.
+  clearinghouseStatusValue: text("clearinghouse_status_value"),
   // Secondary insurance billing
   billingOrder: varchar("billing_order").default("primary"), // primary, secondary
   primaryClaimId: integer("primary_claim_id"), // links secondary claim to its primary claim
@@ -3669,6 +3674,11 @@ export const claimStatusChecks = pgTable("claim_status_checks", {
   newStatus: varchar("new_status"),
   stediResponse: jsonb("stedi_response"),
   statusCode: varchar("status_code"),
+  // 277CA X12 category code + human-readable value from the Stedi response.
+  // statusCategoryCode is the two-char code (A1/A7/A8/P2/F1 etc).
+  // statusCategoryValue is the label (e.g. "Acknowledgement / Rejected for invalid data").
+  statusCategoryCode: varchar("status_category_code"),
+  statusCategoryValue: text("status_category_value"),
   denialReason: text("denial_reason"),
   paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
   paidDate: timestamp("paid_date"),

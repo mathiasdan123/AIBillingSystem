@@ -60,6 +60,7 @@ interface Claim {
   paidAt: string | null;
   clearinghouseClaimId?: string | null;
   clearinghouseStatus?: string | null;
+  clearinghouseStatusValue?: string | null;
   billingOrder?: string | null;
   primaryClaimId?: number | null;
   primaryPaidAmount?: string | null;
@@ -458,7 +459,17 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                 <div className="flex justify-between"><span className="text-slate-500">Claim ID:</span><span className="font-mono">{claim.clearinghouseClaimId}</span></div>
               )}
               {claim.clearinghouseStatus && (
-                <div className="flex justify-between"><span className="text-slate-500">Status:</span><Badge variant="outline">{claim.clearinghouseStatus}</Badge></div>
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500">Status:</span>
+                    <Badge variant="outline" className="font-mono">{claim.clearinghouseStatus}</Badge>
+                  </div>
+                  {(claim as any).clearinghouseStatusValue && (
+                    <div className="text-xs text-slate-600 italic pl-[1px]">
+                      {(claim as any).clearinghouseStatusValue}
+                    </div>
+                  )}
+                </div>
               )}
               {claim.clearinghouseSubmittedAt && (
                 <div className="flex justify-between"><span className="text-slate-500">Submitted:</span><span>{new Date(claim.clearinghouseSubmittedAt).toLocaleString()}</span></div>
@@ -1331,9 +1342,23 @@ export default function Claims() {
       submitted: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-100',
       paid: 'bg-green-100 text-green-700 hover:bg-green-100',
       denied: 'bg-red-100 text-red-700 hover:bg-red-100',
+      rejected: 'bg-amber-100 text-amber-800 hover:bg-amber-100',
     };
     return styles[status] || styles.draft;
   };
+
+  // 277CA category codes we treat as "front desk must fix before resubmission."
+  // A7 = Rejected for invalid data, A8 = Rejected for relational field error,
+  // A3 = Returned as unprocessable, E3 = Relational data error (our submission).
+  const FIXABLE_REJECTION_CODES = new Set(['A7', 'A8', 'A3', 'E3']);
+  const isFixableRejection = (claim: any): boolean => {
+    const code = claim.clearinghouseStatus;
+    return FIXABLE_REJECTION_CODES.has(code);
+  };
+  // Human-readable detail pulled from the payer response (falls back to our
+  // label table via statusCategoryValue, then to the raw denial reason).
+  const clearinghouseDetail = (claim: any): string | null =>
+    claim.clearinghouseStatusValue || claim.denialReason || null;
 
   const getAiScoreColor = (score: number) => {
     if (score >= 80) return 'text-green-600 bg-green-50';
@@ -2152,11 +2177,20 @@ export default function Claims() {
                       {getClaimStatusIcon(claim.status)}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold text-foreground">{claim.claimNumber}</h3>
                         <Badge variant="secondary" className={getStatusBadge(claim.status)}>
                           {claim.status.charAt(0).toUpperCase() + claim.status.slice(1)}
                         </Badge>
+                        {isFixableRejection(claim) && (
+                          <Badge
+                            variant="outline"
+                            className="bg-amber-50 text-amber-800 border-amber-300"
+                            title={clearinghouseDetail(claim) || 'Claim rejected — review data and resubmit'}
+                          >
+                            ⚠ Fix Required
+                          </Badge>
+                        )}
                         {claim.billingOrder === 'secondary' && (
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
                             Secondary

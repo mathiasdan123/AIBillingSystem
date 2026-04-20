@@ -247,20 +247,27 @@ async function processClaimStatusCheck(
 }
 
 /**
- * Maps Stedi status response to claim status
+ * Maps the finer-grained Stedi bucket to the coarse claim.status string that
+ * the rest of the app reasons about. The specific subcategory is preserved
+ * on claims.clearinghouseStatus + clearinghouseStatusValue for the UI.
  */
 function mapStediStatusToClaim(stediStatus: ClaimStatusResponse['status']): string {
   switch (stediStatus) {
     case 'paid':
       return 'paid';
-    case 'denied':
+    case 'finalized_denied':
       return 'denied';
     case 'rejected':
+    case 'rejected_invalid_data':
+    case 'rejected_relational_error':
+    case 'returned_for_correction':
+    case 'error_submission':
       return 'rejected';
+    case 'received':
     case 'pending':
     case 'unknown':
     default:
-      return 'submitted'; // Keep as submitted if still pending or unknown
+      return 'submitted'; // Keep as submitted if still acknowledged or unknown
   }
 }
 
@@ -274,13 +281,14 @@ async function updateClaimStatus(
 ): Promise<void> {
   const updateData: any = {
     status: newStatus,
-    clearinghouseStatus: statusResponse.statusCode || statusResponse.status,
+    clearinghouseStatus: statusResponse.statusCategoryCode || statusResponse.statusCode || statusResponse.status,
+    clearinghouseStatusValue: statusResponse.statusCategoryValue ?? null,
     clearinghouseResponse: statusResponse.raw,
     updatedAt: new Date(),
   };
 
   // Add status-specific fields
-  if (newStatus === 'denied' && statusResponse.denialReason) {
+  if ((newStatus === 'denied' || newStatus === 'rejected') && statusResponse.denialReason) {
     updateData.denialReason = statusResponse.denialReason;
   }
 
@@ -315,6 +323,8 @@ async function createStatusCheckRecord(
     newStatus,
     stediResponse: statusResponse.raw,
     statusCode: statusResponse.statusCode,
+    statusCategoryCode: statusResponse.statusCategoryCode ?? null,
+    statusCategoryValue: statusResponse.statusCategoryValue ?? null,
     denialReason: statusResponse.denialReason || null,
     paidAmount: statusResponse.paidAmount ? statusResponse.paidAmount.toString() : null,
     paidDate: statusResponse.paidDate ? new Date(statusResponse.paidDate) : null,

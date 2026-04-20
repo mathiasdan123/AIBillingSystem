@@ -364,11 +364,33 @@ export interface ClaimStatusRequest {
   claimAmount?: number;
 }
 
+/**
+ * Narrow internal status buckets used by downstream workflows (claim update,
+ * notifications, analytics). A finer-grained `statusCategoryCode` is also
+ * surfaced alongside so the UI can distinguish "rejected for invalid data"
+ * from "rejected for relational error" — both bucket to 'rejected' here.
+ */
+export type ClaimStatusBucket =
+  | 'received'                    // A0/A1/A2 — acknowledged, not yet acted on
+  | 'pending'                     // P0-P5 — payer still working it
+  | 'returned_for_correction'     // A3 — needs resubmission
+  | 'rejected_invalid_data'       // A7 — fixable data problem
+  | 'rejected_relational_error'   // A8 — fixable relational problem
+  | 'rejected'                    // A4/A6/R/generic rejection
+  | 'paid'                        // F1/F2
+  | 'finalized_denied'            // F4/D0/D1
+  | 'error_submission'            // E0-E4 — our submission, not payer's decision
+  | 'unknown';
+
 export interface ClaimStatusResponse {
   claimId: string;
-  status: 'pending' | 'paid' | 'denied' | 'rejected' | 'unknown';
+  status: ClaimStatusBucket;
   statusCode?: string;
   statusDescription?: string;
+  /** X12 277CA category code (e.g. "A1", "A7", "F1"). */
+  statusCategoryCode?: string;
+  /** Human-readable label corresponding to statusCategoryCode. */
+  statusCategoryValue?: string;
   paidAmount?: number;
   paidDate?: string;
   checkNumber?: string;
@@ -527,6 +549,57 @@ function parseEligibilityResponse(data: any): EligibilityResponse {
   return response;
 }
 
+/**
+ * X12 277CA health care claim status category codes. Every code practices
+ * actually see from Stedi is represented here — no more fall-through to
+ * "unknown" for common rejection codes.
+ *
+ * Source: ASC X12 277 CAT03 / HL7 v2 Claim Status Category values.
+ */
+const STATUS_CATEGORY_MAP: Record<
+  string,
+  { bucket: ClaimStatusBucket; label: string }
+> = {
+  // Acknowledgement
+  A0: { bucket: 'received', label: 'Acknowledgement / Forwarded' },
+  A1: { bucket: 'received', label: 'Acknowledgement / Receipt' },
+  A2: { bucket: 'received', label: 'Acknowledgement / Accepted for processing' },
+  A3: { bucket: 'returned_for_correction', label: 'Acknowledgement / Returned as unprocessable' },
+  A4: { bucket: 'rejected', label: 'Acknowledgement / Not found' },
+  A5: { bucket: 'rejected', label: 'Acknowledgement / Split claim' },
+  A6: { bucket: 'rejected', label: 'Acknowledgement / Rejected for missing information' },
+  A7: { bucket: 'rejected_invalid_data', label: 'Acknowledgement / Rejected for invalid data' },
+  A8: { bucket: 'rejected_relational_error', label: 'Acknowledgement / Rejected for relational field in error' },
+
+  // Pending
+  P0: { bucket: 'pending', label: 'Pending / Adjudication' },
+  P1: { bucket: 'pending', label: 'Pending / In Process' },
+  P2: { bucket: 'pending', label: 'Pending / Payer Review' },
+  P3: { bucket: 'pending', label: 'Pending / Provider Requested Information' },
+  P4: { bucket: 'pending', label: 'Pending / Patient Requested Information' },
+  P5: { bucket: 'pending', label: 'Pending / Medical Review' },
+
+  // Finalized
+  F0: { bucket: 'finalized_denied', label: 'Finalized / Forwarded' },
+  F1: { bucket: 'paid', label: 'Finalized / Payment complete' },
+  F2: { bucket: 'paid', label: 'Finalized / Partial payment' },
+  F3: { bucket: 'paid', label: 'Finalized / Revised' },
+  F3F: { bucket: 'paid', label: 'Finalized / Adjudication complete' },
+  F4: { bucket: 'finalized_denied', label: 'Finalized / Denied' },
+
+  // Errors (our submission had a problem, not the payer's coverage decision)
+  E0: { bucket: 'error_submission', label: 'Response not possible — system status' },
+  E1: { bucket: 'error_submission', label: 'Response not possible — payer status' },
+  E2: { bucket: 'error_submission', label: 'Information holder is not a payer' },
+  E3: { bucket: 'error_submission', label: 'Correction required — relational data error' },
+  E4: { bucket: 'error_submission', label: 'Trading partner agreement specific' },
+
+  // Legacy codes that may still appear from older Stedi responses
+  R: { bucket: 'rejected', label: 'Rejected' },
+  D0: { bucket: 'finalized_denied', label: 'Denied' },
+  D1: { bucket: 'finalized_denied', label: 'Denied / Post-adjudication' },
+};
+
 function parseClaimStatusResponse(claimId: string, data: any): ClaimStatusResponse {
   const response: ClaimStatusResponse = {
     claimId,
@@ -536,24 +609,32 @@ function parseClaimStatusResponse(claimId: string, data: any): ClaimStatusRespon
 
   try {
     const statusInfo = data.claimStatus || data;
-    const statusCode = statusInfo.statusCategoryCode || statusInfo.code;
 
-    // Map status codes
-    const statusMap: Record<string, ClaimStatusResponse['status']> = {
-      'F1': 'paid',
-      'F2': 'paid', // Partial payment
-      'A0': 'pending',
-      'A1': 'pending',
-      'A2': 'pending',
-      'A3': 'pending',
-      'A4': 'pending',
-      'R': 'rejected',
-      'D0': 'denied',
-    };
+    // Read the X12 277CA field names explicitly. Stedi's normalized response
+    // may put these under `healthCareClaimStatusCategoryCode` +
+    // `...CategoryCodeValue` (the X12 spec names) or fall back to the older
+    // generic fields that earlier versions of this code used.
+    const statusCategoryCode: string | undefined =
+      statusInfo.healthCareClaimStatusCategoryCode
+      ?? statusInfo.statusCategoryCode
+      ?? statusInfo.categoryCode
+      ?? statusInfo.code;
 
-    response.status = statusMap[statusCode] || 'unknown';
-    response.statusCode = statusCode;
-    response.statusDescription = statusInfo.statusDescription || statusInfo.message;
+    const statusCategoryValue: string | undefined =
+      statusInfo.healthCareClaimStatusCategoryCodeValue
+      ?? statusInfo.statusCategoryCodeValue
+      ?? statusInfo.categoryCodeValue;
+
+    const mapped = statusCategoryCode ? STATUS_CATEGORY_MAP[statusCategoryCode] : undefined;
+
+    response.status = mapped?.bucket ?? 'unknown';
+    response.statusCode = statusCategoryCode;
+    response.statusCategoryCode = statusCategoryCode;
+    // Prefer the payer-returned value, then our label table, then finally the
+    // raw description — whichever is most informative to the receptionist.
+    response.statusCategoryValue = statusCategoryValue ?? mapped?.label;
+    response.statusDescription =
+      statusInfo.statusDescription ?? statusInfo.message ?? response.statusCategoryValue;
 
     if (response.status === 'paid') {
       response.paidAmount = statusInfo.paidAmount || statusInfo.amount;
@@ -561,10 +642,19 @@ function parseClaimStatusResponse(claimId: string, data: any): ClaimStatusRespon
       response.checkNumber = statusInfo.checkNumber || statusInfo.referenceNumber;
     }
 
-    if (response.status === 'denied') {
-      response.denialReason = statusInfo.denialReason || statusInfo.message;
+    if (response.status === 'finalized_denied') {
+      response.denialReason = statusInfo.denialReason || statusInfo.message || response.statusCategoryValue;
     }
 
+    if (
+      response.status === 'rejected' ||
+      response.status === 'rejected_invalid_data' ||
+      response.status === 'rejected_relational_error' ||
+      response.status === 'returned_for_correction'
+    ) {
+      // Surface rejection reason (fixable) so the UI can show a "Fix Required" badge.
+      response.denialReason = statusInfo.denialReason || statusInfo.message || response.statusCategoryValue;
+    }
   } catch (error) {
     console.error('Error parsing claim status response:', error);
   }
