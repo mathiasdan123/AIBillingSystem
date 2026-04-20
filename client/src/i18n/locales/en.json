@@ -831,5 +831,28 @@
     "inSessionForMin": "In session {{minutes}}m",
     "arrivingInMin": "Arrives in {{minutes}}m",
     "overdueByMin": "{{minutes}}m late"
+  },
+  "copay": {
+    "title": "Collect Copay",
+    "titleNone": "Check In",
+    "expectedLabel": "Expected copay",
+    "noCopay": "No copay expected for this visit.",
+    "noEligibility": "No eligibility data on file. Run an eligibility check from the patient page to populate the expected copay.",
+    "stale": "Eligibility data is more than 30 days old.",
+    "telehealth": "Telehealth visit — front desk copay collection does not apply.",
+    "alreadyCollected": "Copay already collected ({{amount}}).",
+    "alreadySkipped": "Copay was marked as \"collect later\" earlier.",
+    "savedCardsHeader": "Cards on file",
+    "noSavedCards": "No cards on file for this patient.",
+    "cardRowSuffix": "exp {{mm}}/{{yy}}",
+    "skipAndCheckIn": "Skip & check in",
+    "skipNoteOptional": "Note (optional)",
+    "skipNotePlaceholder": "e.g. paid cash, will mail a check, waived this visit",
+    "checkInOnly": "Check in",
+    "cancel": "Cancel",
+    "chargeDisabledTooltip": "Charging cards from check-in will ship in the next update.",
+    "checkedInCopayPending": "Owes {{amount}}",
+    "checkedInCopayCollected": "{{amount}} collected",
+    "checkedInCopaySkipped": "Copay skipped"
   }
 }
