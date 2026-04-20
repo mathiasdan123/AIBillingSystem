@@ -38,6 +38,7 @@ const BreachIncidents = lazy(() => import("@/pages/breach-incidents"));
 const ComplianceDashboard = lazy(() => import("@/pages/compliance"));
 const HipaaCompliance = lazy(() => import("@/pages/hipaa-compliance"));
 const Waitlist = lazy(() => import("@/pages/waitlist"));
+const FrontDesk = lazy(() => import("@/pages/front-desk"));
 const Reviews = lazy(() => import("@/pages/reviews"));
 const PublicBooking = lazy(() => import("@/pages/public-booking"));
 const BookingSettings = lazy(() => import("@/pages/booking-settings"));
@@ -210,6 +211,7 @@ function Router() {
               <Route path="/appeals" component={Appeals} />
               <Route path="/billing-tasks" component={BillingTasks} />
               <Route path="/waitlist" component={Waitlist} />
+              <Route path="/front-desk" component={FrontDesk} />
               <Route path="/reviews" component={Reviews} />
               <Route path="/online-booking" component={BookingSettings} />
               <Route path="/telehealth" component={Telehealth} />

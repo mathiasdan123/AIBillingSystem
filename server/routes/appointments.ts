@@ -445,6 +445,87 @@ router.post('/:id/check-out', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// Start a session for a checked-in patient
+router.post('/:id/session-start', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    const appointment = await storage.getAppointment(appointmentId);
+
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      if (appointment.practiceId && appointment.practiceId !== practiceId) {
+        return res.status(404).json({ error: 'Appointment not found' });
+      }
+    } catch (e) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    if (appointment.status === 'cancelled') {
+      return res.status(400).json({ error: 'Cannot start a session on a cancelled appointment' });
+    }
+
+    if (!appointment.checkedInAt) {
+      return res.status(400).json({ error: 'Patient must be checked in before starting the session' });
+    }
+
+    if (appointment.sessionStartedAt) {
+      return res.status(400).json({ error: 'Session already started' });
+    }
+
+    const updated = await storage.updateAppointment(appointmentId, {
+      sessionStartedAt: new Date(),
+      status: 'in_progress',
+    } as any);
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error starting session', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to start session' });
+  }
+});
+
+// End a session
+router.post('/:id/session-end', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    const appointment = await storage.getAppointment(appointmentId);
+
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      if (appointment.practiceId && appointment.practiceId !== practiceId) {
+        return res.status(404).json({ error: 'Appointment not found' });
+      }
+    } catch (e) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    if (!appointment.sessionStartedAt) {
+      return res.status(400).json({ error: 'Session has not been started' });
+    }
+
+    if (appointment.sessionEndedAt) {
+      return res.status(400).json({ error: 'Session already ended' });
+    }
+
+    const updated = await storage.updateAppointment(appointmentId, {
+      sessionEndedAt: new Date(),
+    } as any);
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error ending session', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to end session' });
+  }
+});
+
 // ==================== ELIGIBILITY ====================
 
 // Run pre-appointment eligibility check for a specific appointment

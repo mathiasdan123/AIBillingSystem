@@ -53,7 +53,8 @@
     "preferences": "Preferencias",
     "productivity": "Productividad",
     "insights": "Información",
-    "rates": "Tarifas"
+    "rates": "Tarifas",
+    "frontDesk": "Recepción"
   },
   "therapistProductivity": {
     "title": "Productividad del Terapeuta",
@@ -770,5 +771,32 @@
     "search": "Buscar páginas, pacientes, reclamaciones…",
     "noResults": "Sin resultados.",
     "pages": "Páginas"
+  },
+  "frontDesk": {
+    "title": "Recepción",
+    "subtitle": "Llegadas de hoy, en espera, en sesión y altas",
+    "columnArriving": "Llegando",
+    "columnWaiting": "En espera",
+    "columnInSession": "En sesión",
+    "columnReadyToCheckOut": "Listo para salir",
+    "empty": "Nada aquí",
+    "emptyArriving": "Nadie llega en la próxima hora",
+    "emptyWaiting": "Ningún paciente en espera",
+    "emptyInSession": "Ninguna sesión en curso",
+    "emptyReadyToCheckOut": "Nadie listo para salir",
+    "checkIn": "Registrar llegada",
+    "startSession": "Iniciar sesión",
+    "endSession": "Finalizar sesión",
+    "checkOut": "Registrar salida",
+    "summary": {
+      "total": "Hoy",
+      "waiting": "En espera",
+      "inSession": "En sesión",
+      "completed": "Completadas"
+    },
+    "waitedForMin": "{{minutes}}m esperando",
+    "inSessionForMin": "En sesión {{minutes}}m",
+    "arrivingInMin": "Llega en {{minutes}}m",
+    "overdueByMin": "{{minutes}}m de retraso"
   }
 }
