@@ -42,7 +42,7 @@ export function registerEligibilityTools(
         payer: {
           id: input.payerId || (patient as any).payerId || '',
         },
-        serviceTypeCodes: input.serviceTypeCodes || ['30'],
+        ...(input.serviceTypeCodes ? { serviceTypeCodes: input.serviceTypeCodes } : {}),
         dateOfService:
           input.dateOfService || new Date().toISOString().split('T')[0],
       };

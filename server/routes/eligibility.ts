@@ -273,7 +273,7 @@ router.post('/batch-check', isAuthenticated, async (req: any, res: Response) => 
               lastName: patient.lastName,
               dateOfBirth: patient.dateOfBirth || '',
             },
-            serviceTypeCodes: ['30'],
+            // serviceTypeCodes omitted — resolved from practice.specialty by stediService.checkEligibility
           },
           practiceId
         );
@@ -300,7 +300,10 @@ router.post('/batch-check', isAuthenticated, async (req: any, res: Response) => 
             deductible: eligResult.deductible?.individual?.toString() || null,
             coinsurance: eligResult.coinsurance != null ? Math.round(eligResult.coinsurance) : null,
             rawResponse: eligResult.raw,
-          });
+            serviceTypeCodes: eligResult.sentServiceTypeCodes ?? null,
+            returnedServiceTypeCodes: eligResult.returnedServiceTypeCodes ?? null,
+            stcDowngraded: eligResult.stcDowngraded ?? false,
+          } as any);
         } catch (storeErr) {
           logger.warn('Failed to store eligibility check result', {
             patientId,

@@ -120,6 +120,11 @@ export const practices = pgTable("practices", {
   // Onboarding fields
   onboardingCompleted: boolean("onboarding_completed").default(false),
   onboardingStep: integer("onboarding_step").default(0),
+  // Practice therapy specialty — drives Service Type Codes sent on Stedi 270
+  // eligibility requests. One of 'OT' | 'PT' | 'ST' | 'MH' | 'MIXED'.
+  // Null is treated as 'MIXED' (sends all therapy STCs) to keep legacy
+  // behavior safe during rollout.
+  specialty: varchar("specialty"),
   // Front-desk copay collection (Phase 3 · Slice C).
   // Off by default so charging is explicitly opt-in per practice, even if
   // the Stripe integration is wired and keys are live.
@@ -220,6 +225,12 @@ export const cptCodes = pgTable("cpt_codes", {
   code: varchar("code").unique().notNull(),
   description: text("description").notNull(),
   category: varchar("category"), // evaluation, treatment, etc.
+  // Therapy discipline this CPT billsto — enables STC consistency check
+  // between the eligibility request (270) and the claim (837P).
+  // One of 'OT' | 'PT' | 'ST' | 'MH' | 'GENERAL' (usable by any discipline).
+  // Seeded by the migration in the `cptCodes` seed script. Null means
+  // "not categorized" — the scrubber will not flag such codes.
+  therapyCategory: varchar("therapy_category"),
   baseRate: decimal("base_rate", { precision: 10, scale: 2 }),
   cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
   billingUnits: integer("billing_units").default(1), // 15-minute units
@@ -897,6 +908,14 @@ export const eligibilityChecks = pgTable("eligibility_checks", {
   authRequired: boolean("auth_required"),
   rawResponse: jsonb("raw_response"), // store full API response for debugging
   benefitsDetail: jsonb("benefits_detail"), // detailed benefits breakdown (therapy visit limits, family deductibles, plan type, etc.)
+  // STC (Service Type Code) tracking for audit + claim consistency checks.
+  // `serviceTypeCodes` = what we sent on the 270 (driven by practice.specialty).
+  // `returnedServiceTypeCodes` = what the payer answered with. Mismatch
+  // indicates the payer downgraded our request to generic STC 30
+  // (surfaced in the UI + used by the claim scrubber in Phase 3).
+  serviceTypeCodes: jsonb("service_type_codes"), // string[]
+  returnedServiceTypeCodes: jsonb("returned_service_type_codes"), // string[]
+  stcDowngraded: boolean("stc_downgraded").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_eligibility_checks_patient").on(table.patientId),

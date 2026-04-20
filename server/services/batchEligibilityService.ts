@@ -257,7 +257,10 @@ async function processSingleCheck(item: QueuedCheck): Promise<{
         rawResponse: eligibilityResponse.raw,
         status: eligibilityResponse.status,
         processingStatus: 'completed',
-      })
+        serviceTypeCodes: eligibilityResponse.sentServiceTypeCodes ?? null,
+        returnedServiceTypeCodes: eligibilityResponse.returnedServiceTypeCodes ?? null,
+        stcDowngraded: eligibilityResponse.stcDowngraded ?? false,
+      } as any)
       .where(eq(eligibilityChecks.id, pendingRecord.id));
 
     return {

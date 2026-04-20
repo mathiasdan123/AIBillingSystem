@@ -289,12 +289,52 @@ async function seedAiLearningData(db: any, practiceId: number) {
   console.log(`  Seeded ${rows.length} AI learning data entries for insights`);
 }
 
+/**
+ * One-shot backfill: populate cpt_codes.therapy_category based on code.
+ * Idempotent — only writes when the column is NULL. Runs on every boot
+ * so newly-seeded codes in older deployments pick up the mapping too.
+ *
+ * Mapping reference (Stedi remediation plan, Phase 2):
+ *   OT:   97533, 97129, 97130, 97537, 97165–97168
+ *   PT:   97116, 97161–97164
+ *   ST:   92507, 92508, 92521, 92522, 92523, 92524, 92526
+ *   MH:   90791, 90832, 90834, 90837, 90846, 90847
+ *   GEN:  97110, 97112, 97140, 97530, 97535, 97542, 97750 (both OT + PT)
+ */
+async function backfillCptTherapyCategories(db: any) {
+  const mapping: Record<string, string[]> = {
+    OT: ['97533', '97129', '97130', '97537', '97165', '97166', '97167', '97168'],
+    PT: ['97116', '97161', '97162', '97163', '97164'],
+    ST: ['92507', '92508', '92521', '92522', '92523', '92524', '92526'],
+    MH: ['90791', '90832', '90834', '90837', '90846', '90847'],
+    GENERAL: ['97110', '97112', '97140', '97530', '97535', '97542', '97750'],
+  };
+
+  for (const [category, codes] of Object.entries(mapping)) {
+    if (codes.length === 0) continue;
+    await db.execute(sql`
+      UPDATE cpt_codes
+         SET therapy_category = ${category}
+       WHERE code IN (${sql.raw(codes.map(c => `'${c}'`).join(','))})
+         AND (therapy_category IS NULL OR therapy_category = '')
+    `);
+  }
+}
+
 export async function seedDatabase(options?: { force?: boolean }) {
   const isProduction = process.env.NODE_ENV === 'production';
 
   try {
     // Wait for database to be ready
     const db = await getDb();
+
+    // Always run — idempotent, just backfills therapy_category on CPT codes
+    // that don't have one yet. Fast (<10 rows).
+    try {
+      await backfillCptTherapyCategories(db);
+    } catch (err) {
+      console.warn('  CPT therapy-category backfill skipped:', err instanceof Error ? err.message : err);
+    }
 
     // Run schema migrations for new columns (safe to run multiple times)
     console.log("Running schema migrations...");

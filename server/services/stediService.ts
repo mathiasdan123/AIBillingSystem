@@ -118,6 +118,29 @@ export interface EligibilityRequest {
   dateOfService?: string;
 }
 
+// Practice specialty → Service Type Codes sent on the Stedi 270.
+// '30' is always included as a fallback so payers that don't recognize
+// the specialty-specific STC still return something useful.
+export type PracticeSpecialty = 'OT' | 'PT' | 'ST' | 'MH' | 'MIXED';
+
+export const SPECIALTY_TO_STC: Record<PracticeSpecialty, string[]> = {
+  OT: ['AE', '30'],    // AE = Occupational Therapy (X12 STC)
+  PT: ['AD', '30'],    // AD = Physical Therapy
+  ST: ['AF', '30'],    // AF = Speech Therapy
+  MH: ['MH', '30'],    // MH = Mental Health
+  MIXED: ['AE', 'AD', 'AF', 'MH', '30'],
+};
+
+/**
+ * Resolve the STCs to send for a given practice specialty. Null/undefined
+ * specialty falls back to MIXED (safe default — payers tolerate multiple
+ * STCs on a 270 request).
+ */
+export function stcsForSpecialty(specialty: string | null | undefined): string[] {
+  const key = (specialty || 'MIXED').toUpperCase() as PracticeSpecialty;
+  return SPECIALTY_TO_STC[key] ?? SPECIALTY_TO_STC.MIXED;
+}
+
 export interface EligibilityResponse {
   status: 'active' | 'inactive' | 'unknown';
   raw: any;
@@ -149,11 +172,41 @@ export interface EligibilityResponse {
     inNetwork: boolean;
     limitations?: string;
   }>;
+  // Phase 2 — STC audit fields
+  /** STCs we actually sent on the 270 for this check (resolved from the
+   *  practice specialty unless the caller overrode). */
+  sentServiceTypeCodes?: string[];
+  /** STCs the payer returned on the 271. */
+  returnedServiceTypeCodes?: string[];
+  /** True if we asked for a therapy-specific STC (AE/AD/AF/MH) and the
+   *  payer only answered with generic 30. Surfaced in the UI so the
+   *  receptionist knows benefits are generic, not therapy-specific. */
+  stcDowngraded?: boolean;
   errors?: string[];
 }
 
 export async function checkEligibility(request: EligibilityRequest, practiceId?: number): Promise<EligibilityResponse> {
   const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
+
+  // Resolve STCs: explicit request.serviceTypeCodes wins, else derive from
+  // the practice's specialty (Phase 2). Falls back to generic '30' if neither
+  // is available — keeps legacy call sites working until they're migrated.
+  let resolvedStcs: string[] = request.serviceTypeCodes ?? [];
+  if (resolvedStcs.length === 0 && practiceId) {
+    try {
+      const { storage } = await import('../storage');
+      const practice = await (storage as any).getPractice?.(practiceId);
+      if (practice?.specialty) {
+        resolvedStcs = stcsForSpecialty(practice.specialty);
+      }
+    } catch {
+      // storage unavailable during tests — silently fall through
+    }
+  }
+  if (resolvedStcs.length === 0) {
+    resolvedStcs = ['30'];
+  }
+
   const payload = {
     controlNumber: generateControlNumber(),
     tradingPartnerServiceId: request.payer.id,
@@ -180,7 +233,7 @@ export async function checkEligibility(request: EligibilityRequest, practiceId?:
       },
     }),
     encounter: {
-      serviceTypeCodes: request.serviceTypeCodes || ['30'], // 30 = Health Benefit Plan Coverage
+      serviceTypeCodes: resolvedStcs,
       dateOfService: request.dateOfService || new Date().toISOString().split('T')[0],
     },
   };
@@ -203,7 +256,27 @@ export async function checkEligibility(request: EligibilityRequest, practiceId?:
     }
 
     const data = await response.json();
-    return parseEligibilityResponse(data);
+    const parsed = parseEligibilityResponse(data);
+
+    // Phase 2: attach STC audit metadata. We use the coverageDetails[].serviceType
+    // values the payer returned as the canonical answer, because Stedi
+    // normalizes each benefit entry to its STC.
+    const returnedStcs = Array.from(
+      new Set(
+        (parsed.coverageDetails ?? [])
+          .map((d: any) => d?.serviceType)
+          .filter((s: any): s is string => typeof s === 'string' && s.length > 0)
+      )
+    );
+    const therapySpecificRequested = resolvedStcs.some((c) => c !== '30');
+    const onlyGenericReturned =
+      therapySpecificRequested &&
+      (returnedStcs.length === 0 || returnedStcs.every((c) => c === '30'));
+
+    parsed.sentServiceTypeCodes = resolvedStcs;
+    parsed.returnedServiceTypeCodes = returnedStcs;
+    parsed.stcDowngraded = onlyGenericReturned;
+    return parsed;
   } catch (error: any) {
     console.error('Stedi eligibility error:', error);
     return {

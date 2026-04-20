@@ -442,6 +442,9 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
         const practice = await storage.getPractice(patient.practiceId);
         const adapter = new StediAdapter(stediApiKey);
 
+        const { stcsForSpecialty } = await import('../services/stediService');
+        const sentStcs = stcsForSpecialty(practice?.specialty ?? null);
+
         const result = await adapter.checkEligibility({
           providerNpi: practice?.npi || '1234567890',
           providerName: practice?.name || 'Practice',
@@ -451,7 +454,23 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
           memberId: patient.insuranceId || '',
           groupNumber: patient.groupNumber || undefined,
           payerName: insurance?.name || 'Unknown',
+          practiceSpecialty: practice?.specialty ?? null,
         });
+
+        // Infer returned STCs from the normalized benefits shape (the adapter
+        // already filters to in-network benefits keyed by service type).
+        const returnedStcs: string[] = Array.from(
+          new Set(
+            Object.keys(result.benefits || {}).filter(
+              (k) => ['ot', 'pt', 'st', 'mh', 'ae', 'ad', 'af'].includes(k.toLowerCase())
+            )
+          )
+        );
+        const therapySpecificRequested = sentStcs.some((c) => c !== '30');
+        const onlyGenericReturned =
+          therapySpecificRequested &&
+          (returnedStcs.length === 0 ||
+            returnedStcs.every((c) => c === '30'));
 
         eligibilityResult = {
           status: result.eligibility.isEligible ? 'active' : 'inactive',
@@ -470,6 +489,9 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
           planName: result.eligibility.planName,
           groupNumber: result.eligibility.groupNumber,
           source: 'stedi',
+          sentServiceTypeCodes: sentStcs,
+          returnedServiceTypeCodes: returnedStcs,
+          stcDowngraded: onlyGenericReturned,
           raw: result.raw,
         };
       } catch (stediError: any) {
@@ -500,7 +522,10 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
       visitsUsed: eligibilityResult.visitsUsed,
       authRequired: eligibilityResult.authRequired,
       rawResponse: eligibilityResult,
-    });
+      serviceTypeCodes: (eligibilityResult as any).sentServiceTypeCodes ?? null,
+      returnedServiceTypeCodes: (eligibilityResult as any).returnedServiceTypeCodes ?? null,
+      stcDowngraded: (eligibilityResult as any).stcDowngraded ?? false,
+    } as any);
 
     res.json({
       success: true,
