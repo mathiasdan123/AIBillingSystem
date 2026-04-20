@@ -312,7 +312,11 @@ describe('stediService', () => {
       const { checkClaimStatus } = await import('../services/stediService');
       const result = await checkClaimStatus(statusRequest);
 
-      expect(result.status).toBe('denied');
+      // After Phase 1 of the Stedi remediation plan, the internal status
+      // bucket distinguishes 'finalized_denied' from the coarse 'denied' the
+      // claims table sees. The bucket is what stediService returns; the
+      // mapping to claim.status happens downstream.
+      expect(result.status).toBe('finalized_denied');
       expect(result.denialReason).toBe('Not medically necessary');
     });
   });

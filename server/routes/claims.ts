@@ -1220,9 +1220,19 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
         updateData.status = 'paid';
         updateData.paidAmount = statusResult.paidAmount;
         updateData.paidAt = statusResult.paidDate ? new Date(statusResult.paidDate) : new Date();
-      } else if (statusResult.status === 'denied') {
+      } else if (statusResult.status === 'finalized_denied') {
         updateData.status = 'denied';
         updateData.denialReason = statusResult.denialReason || 'Claim denied by payer';
+      } else if (
+        statusResult.status === 'rejected' ||
+        statusResult.status === 'rejected_invalid_data' ||
+        statusResult.status === 'rejected_relational_error' ||
+        statusResult.status === 'returned_for_correction' ||
+        statusResult.status === 'error_submission'
+      ) {
+        updateData.status = 'rejected';
+        updateData.denialReason = statusResult.denialReason || statusResult.statusCategoryValue || 'Claim rejected';
+        updateData.clearinghouseStatusValue = statusResult.statusCategoryValue ?? null;
       }
 
       const updatedClaim = await storage.updateClaim(claimId, updateData);
