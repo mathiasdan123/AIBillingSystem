@@ -170,10 +170,70 @@ router.get('/', isAuthenticated, async (req: any, res) => {
       usePagination ? storage.countClaims(practiceId) : Promise.resolve(0),
     ]);
 
+    // Phase 5 — attach STC-aware rejection hints to every rejected/denied
+    // claim so billers see the actionable context inline in the list view,
+    // not just when they open the detail. Skip the work entirely for healthy
+    // claims to keep the list endpoint cheap.
+    let enrichedClaims: any[] = claims as any[];
+    try {
+      const { buildRejectionHints, isClaimInRejectionState } = await import(
+        '../services/rejectionHints'
+      );
+      const rejectedClaims = (claims as any[]).filter((c) => isClaimInRejectionState(c));
+      if (rejectedClaims.length > 0) {
+        // One-time lookups — shared across all rejected claims in this list.
+        const [cptCodes] = await Promise.all([storage.getCptCodes()]);
+        const hintsByClaimId = new Map<number, string[]>();
+        for (const c of rejectedClaims) {
+          try {
+            const [lineItems, eligibility] = await Promise.all([
+              storage.getClaimLineItems(c.id),
+              storage.getPatientEligibility(c.patientId),
+            ]);
+            const enrichedItems = (lineItems || []).map((li: any) => {
+              const cpt = cptCodes.find((x: any) => x.id === li.cptCodeId);
+              return {
+                ...li,
+                cptCode: cpt
+                  ? {
+                      code: cpt.code,
+                      description: cpt.description,
+                      therapyCategory: (cpt as any).therapyCategory ?? null,
+                    }
+                  : null,
+              };
+            });
+            const hints = buildRejectionHints({
+              claim: c,
+              lineItems: enrichedItems as any,
+              eligibility: eligibility ?? null,
+            });
+            if (hints.length > 0) hintsByClaimId.set(c.id, hints);
+          } catch (innerErr) {
+            logger.warn('Per-claim hint build failed (list)', {
+              claimId: c.id,
+              error: innerErr instanceof Error ? innerErr.message : String(innerErr),
+            });
+          }
+        }
+        if (hintsByClaimId.size > 0) {
+          enrichedClaims = (claims as any[]).map((c) =>
+            hintsByClaimId.has(c.id) ? { ...c, rejectionHints: hintsByClaimId.get(c.id) } : c
+          );
+        }
+      }
+    } catch (err) {
+      // Hint enrichment is strictly additive — any failure falls back to
+      // returning the claims list as-is.
+      logger.warn('Rejection hint enrichment failed for list', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     if (!usePagination) {
-      res.json(claims);
+      res.json(enrichedClaims);
     } else {
-      res.json(paginatedResponse(claims, total, page, limit));
+      res.json(paginatedResponse(enrichedClaims, total, page, limit));
     }
   } catch (error) {
     logger.error('Error fetching claims', { error: error instanceof Error ? error.message : String(error) });
@@ -247,10 +307,41 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
       const icd10Code = icd10Codes.find((i: any) => i.id === item.icd10CodeId);
       return {
         ...item,
-        cptCode: cptCode ? { code: cptCode.code, description: cptCode.description } : null,
+        cptCode: cptCode
+          ? {
+              code: cptCode.code,
+              description: cptCode.description,
+              therapyCategory: (cptCode as any).therapyCategory ?? null,
+            }
+          : null,
         icd10Code: icd10Code ? { code: icd10Code.code, description: icd10Code.description } : null,
       };
     });
+
+    // Phase 5 — STC-aware rejection hints. Builds actionable guidance for
+    // the biller when a claim is denied/rejected and we have enough context
+    // (eligibility + cpt.therapyCategory) to explain the likely root cause.
+    let rejectionHints: string[] = [];
+    try {
+      const { buildRejectionHints, isClaimInRejectionState } = await import(
+        '../services/rejectionHints'
+      );
+      if (isClaimInRejectionState(claim as any)) {
+        const eligibility = await storage.getPatientEligibility(claim.patientId);
+        rejectionHints = buildRejectionHints({
+          claim: claim as any,
+          lineItems: enrichedLineItems as any,
+          eligibility: eligibility ?? null,
+        });
+      }
+    } catch (err) {
+      // Non-fatal — if the hint builder throws, we just return the claim
+      // without hints. The denial banner still shows the raw reason.
+      logger.warn('Rejection hint build failed', {
+        claimId: claim.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // If this is a secondary claim, include primary claim info
     let primaryClaimInfo = null;
@@ -289,6 +380,7 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
       lineItems: enrichedLineItems,
       primaryClaimInfo,
       secondaryClaimInfo,
+      rejectionHints,
     });
   } catch (error) {
     logger.error('Error fetching claim', { error: error instanceof Error ? error.message : String(error) });
