@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { apiRequest } from '@/lib/queryClient';
 import {
@@ -11,9 +11,11 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
 import { CreditCard, AlertTriangle, CheckCircle2, Loader2, Info } from 'lucide-react';
 
 interface CopayInfo {
@@ -35,6 +37,8 @@ interface CopayInfo {
     expYear: number | null;
     isDefault: boolean;
   }>;
+  chargingEnabled: boolean;
+  maxAmountCents: number;
 }
 
 interface CopayModalProps {
@@ -62,11 +66,21 @@ export default function CopayModal({
   onProceed,
 }: CopayModalProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [note, setNote] = useState('');
+  // Amount override (in dollars, string for easier input binding). Null =
+  // use whatever /copay-info returns as expectedCents.
+  const [amountOverride, setAmountOverride] = useState<string>('');
+  const [selectedPM, setSelectedPM] = useState<string | null>(null);
 
   // Reset local state when modal closes.
   useEffect(() => {
-    if (!open) setNote('');
+    if (!open) {
+      setNote('');
+      setAmountOverride('');
+      setSelectedPM(null);
+    }
   }, [open]);
 
   // Fetch copay info only while the modal is open and we have an id.
@@ -97,12 +111,52 @@ export default function CopayModal({
     },
   });
 
+  const chargeMutation = useMutation({
+    mutationFn: async (paymentMethodId: string) => {
+      if (!appointmentId) throw new Error('No appointment selected');
+      const amountOverrideCents = amountOverride
+        ? Math.round(parseFloat(amountOverride) * 100)
+        : undefined;
+      const res = await apiRequest('POST', `/api/appointments/${appointmentId}/copay/charge`, {
+        paymentMethodId,
+        amountCents: amountOverrideCents,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      // Surface via toast so the user sees it even as modal closes.
+      toast({
+        title: t('copay.chargeSuccessTitle', 'Copay collected'),
+        description: t('copay.chargeSuccessDesc', 'Charge recorded on the appointment.'),
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/appointments'] });
+      onOpenChange(false);
+      onProceed();
+    },
+    onError: (err: any) => {
+      toast({
+        title: t('copay.chargeErrorTitle', 'Charge failed'),
+        description: err?.message ?? 'Unknown error',
+        variant: 'destructive',
+      });
+    },
+  });
+
   // ---- Derived display state ----
   const expected = data?.expectedCents ?? null;
   const hasExpected = expected != null && expected > 0;
   const alreadyResolved = data?.status === 'collected' || data?.status === 'skipped';
   const telehealth = Boolean(data?.isTelehealth);
-  const noCopayCase = telehealth || (data && expected === 0) || (data && data.source === 'none' && !hasExpected);
+  const canCharge = Boolean(data?.chargingEnabled) && hasExpected && !alreadyResolved && !telehealth;
+
+  // Effective amount to charge: override if set and valid, else expected.
+  const overrideParsed = amountOverride ? parseFloat(amountOverride) : NaN;
+  const overrideValid = amountOverride !== '' && Number.isFinite(overrideParsed) && overrideParsed > 0;
+  const effectiveAmountCents = overrideValid
+    ? Math.round(overrideParsed * 100)
+    : (expected ?? 0);
+  const maxCents = data?.maxAmountCents ?? 50000;
+  const overCap = effectiveAmountCents > maxCents;
 
   const title = hasExpected ? t('copay.title', 'Collect Copay') : t('copay.titleNone', 'Check In');
 
@@ -134,16 +188,50 @@ export default function CopayModal({
           {/* Amount block */}
           {!isLoading && hasExpected && (
             <div className="rounded-md border border-border/70 bg-muted/30 px-4 py-3">
-              <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-                {t('copay.expectedLabel', 'Expected copay')}
-              </div>
-              <div className="text-2xl font-semibold tabular-nums text-foreground mt-0.5">
-                {data?.expectedFormatted ?? formatCents(expected)}
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                    {t('copay.expectedLabel', 'Expected copay')}
+                  </div>
+                  <div className="text-2xl font-semibold tabular-nums text-foreground mt-0.5">
+                    {formatCents(effectiveAmountCents)}
+                  </div>
+                </div>
+                {canCharge && (
+                  <div className="flex-shrink-0">
+                    <Label htmlFor="copay-amount-override" className="text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground">
+                      {t('copay.amountOverrideLabel', 'Adjust')}
+                    </Label>
+                    <div className="relative mt-1">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[12px] text-muted-foreground">$</span>
+                      <Input
+                        id="copay-amount-override"
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        value={amountOverride}
+                        onChange={(e) => setAmountOverride(e.target.value)}
+                        placeholder={(expected! / 100).toFixed(2)}
+                        className="h-8 w-24 pl-5 text-right text-[13px] tabular-nums"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               {data?.stale && (
                 <div className="flex items-center gap-1.5 mt-2 text-[12px] text-amber-700">
                   <AlertTriangle className="w-3.5 h-3.5" strokeWidth={1.5} />
                   {t('copay.stale')}
+                </div>
+              )}
+              {canCharge && overCap && (
+                <div className="flex items-center gap-1.5 mt-2 text-[12px] text-red-700">
+                  <AlertTriangle className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  {t('copay.overCapWarn', {
+                    amount: `$${(maxCents / 100).toFixed(2)}`,
+                    defaultValue: `Amount exceeds practice cap of $${(maxCents / 100).toFixed(2)}.`,
+                  })}
                 </div>
               )}
             </div>
@@ -169,7 +257,7 @@ export default function CopayModal({
             </div>
           )}
 
-          {/* Saved payment methods (read-only until Slice C) */}
+          {/* Saved payment methods */}
           {!isLoading && hasExpected && !alreadyResolved && !telehealth && (
             <div>
               <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground mb-1.5">
@@ -181,14 +269,24 @@ export default function CopayModal({
                 </div>
               ) : (
                 <ul className="space-y-1.5">
-                  {data?.paymentMethods.map((pm) => (
+                  {data?.paymentMethods.map((pm) => {
+                    const isSelected = selectedPM === pm.id;
+                    const clickable = canCharge && !overCap && !chargeMutation.isPending;
+                    return (
                     <li
                       key={pm.id}
-                      className="flex items-center justify-between rounded-md border border-border/70 px-3 py-2 text-[13px] bg-background/50"
-                      title={t('copay.chargeDisabledTooltip')}
+                      className={[
+                        'flex items-center justify-between rounded-md border px-3 py-2 text-[13px] transition-colors',
+                        isSelected
+                          ? 'border-primary bg-primary/[0.06]'
+                          : 'border-border/70 bg-background/50',
+                        clickable ? 'cursor-pointer hover:bg-accent/40' : '',
+                      ].join(' ')}
+                      title={canCharge ? undefined : t('copay.chargeDisabledTooltip')}
+                      onClick={() => clickable && setSelectedPM(pm.id)}
                     >
                       <span className="flex items-center gap-2">
-                        <CreditCard className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.5} />
+                        <CreditCard className={`w-3.5 h-3.5 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} strokeWidth={1.5} />
                         <span className="font-medium">
                           {pm.brand ? pm.brand.charAt(0).toUpperCase() + pm.brand.slice(1) : 'Card'}
                         </span>
@@ -208,8 +306,14 @@ export default function CopayModal({
                         </span>
                       )}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
+              )}
+              {canCharge && data?.paymentMethods.length === 0 && (
+                <div className="text-[12px] text-muted-foreground mt-2">
+                  {t('copay.addCardHint', 'Add a card from the patient record to enable charging.')}
+                </div>
               )}
             </div>
           )}
@@ -237,18 +341,38 @@ export default function CopayModal({
           <Button
             variant="ghost"
             onClick={() => onOpenChange(false)}
-            disabled={skipMutation.isPending}
+            disabled={skipMutation.isPending || chargeMutation.isPending}
           >
             {t('copay.cancel', 'Cancel')}
           </Button>
           {hasExpected && !alreadyResolved && !telehealth ? (
-            <Button
-              onClick={() => skipMutation.mutate()}
-              disabled={skipMutation.isPending}
-            >
-              {skipMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-              {t('copay.skipAndCheckIn')}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={() => skipMutation.mutate()}
+                disabled={skipMutation.isPending || chargeMutation.isPending}
+              >
+                {skipMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                {t('copay.skipAndCheckIn')}
+              </Button>
+              {canCharge && (
+                <Button
+                  onClick={() => selectedPM && chargeMutation.mutate(selectedPM)}
+                  disabled={
+                    !selectedPM ||
+                    overCap ||
+                    chargeMutation.isPending ||
+                    skipMutation.isPending
+                  }
+                >
+                  {chargeMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                  {t('copay.chargeAndCheckIn', {
+                    amount: formatCents(effectiveAmountCents),
+                    defaultValue: `Charge ${formatCents(effectiveAmountCents)} & check in`,
+                  })}
+                </Button>
+              )}
+            </>
           ) : (
             // No copay due OR already resolved: offer a single "Check in" button that
             // just proceeds without calling /copay/skip (nothing to skip).

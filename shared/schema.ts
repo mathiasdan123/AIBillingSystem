@@ -120,6 +120,13 @@ export const practices = pgTable("practices", {
   // Onboarding fields
   onboardingCompleted: boolean("onboarding_completed").default(false),
   onboardingStep: integer("onboarding_step").default(0),
+  // Front-desk copay collection (Phase 3 · Slice C).
+  // Off by default so charging is explicitly opt-in per practice, even if
+  // the Stripe integration is wired and keys are live.
+  copayChargingEnabled: boolean("copay_charging_enabled").default(false),
+  // Safety rail — refuse charges above this (in dollars). Protects against a
+  // fat-fingered copay amount. Null falls back to a server-side default.
+  copayMaxAmount: decimal("copay_max_amount", { precision: 10, scale: 2 }).default("500.00"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

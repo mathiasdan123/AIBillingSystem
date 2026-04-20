@@ -226,6 +226,42 @@ export async function chargeMonthlyFee(params: {
 }
 
 /**
+ * Charge a patient's saved card for a copay at check-in.
+ * Uses off_session + confirm so the charge fires immediately without another
+ * patient action (the patient already authorized this card when they saved it).
+ *
+ * Metadata includes appointmentId + type='copay' so the Stripe webhook can
+ * update the appointment row when payment_intent.succeeded arrives.
+ */
+export async function chargeCopay(params: {
+  customerId: string;
+  paymentMethodId: string;
+  amount: number; // cents
+  description: string;
+  practiceId: number;
+  patientId: number;
+  appointmentId: number;
+}): Promise<Stripe.PaymentIntent> {
+  const paymentIntent = await getStripe().paymentIntents.create({
+    amount: params.amount,
+    currency: 'usd',
+    customer: params.customerId,
+    payment_method: params.paymentMethodId,
+    off_session: true,
+    confirm: true,
+    description: params.description,
+    metadata: {
+      practiceId: params.practiceId.toString(),
+      patientId: params.patientId.toString(),
+      appointmentId: params.appointmentId.toString(),
+      type: 'copay',
+    },
+  });
+
+  return paymentIntent;
+}
+
+/**
  * Create a payment intent for patient payment
  */
 export async function createPatientPaymentIntent(params: {

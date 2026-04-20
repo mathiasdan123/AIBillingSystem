@@ -491,6 +491,35 @@ router.post('/webhooks/stripe', async (req: any, res) => {
               paymentIntentId: paymentIntent.id
             });
           }
+
+          // Copay-specific reconciliation: when a PaymentIntent tagged
+          // type='copay' with an appointmentId succeeds, mark that
+          // appointment as collected. The charge endpoint already writes
+          // this synchronously; the webhook is a belt-and-suspenders
+          // reconciliation for the cases where confirm returned `pending`
+          // (e.g. 3DS / manual capture paths that land later).
+          if (metadata.type === 'copay' && metadata.appointmentId) {
+            try {
+              const appointmentId = parseInt(metadata.appointmentId);
+              if (!isNaN(appointmentId)) {
+                await storage.updateAppointment(appointmentId, {
+                  copayStatus: 'collected',
+                  copayCollected: (paymentIntent.amount / 100).toFixed(2),
+                  copayStripeChargeId: paymentIntent.id,
+                  copayUpdatedAt: new Date(),
+                } as any);
+                logger.info('Copay marked collected via webhook', {
+                  appointmentId,
+                  paymentIntentId: paymentIntent.id,
+                });
+              }
+            } catch (err) {
+              logger.error('Failed to reconcile copay via webhook', {
+                error: err instanceof Error ? err.message : String(err),
+                paymentIntentId: paymentIntent.id,
+              });
+            }
+          }
           break;
 
         case 'payment_intent.payment_failed':
@@ -528,6 +557,31 @@ router.post('/webhooks/stripe', async (req: any, res) => {
               paymentIntentId: failedPayment.id,
               failureReason: failedPayment.last_payment_error?.message,
             });
+          }
+
+          // Copay-specific: mark the appointment as failed so the pill
+          // shows "amber / owes" and receptionist knows to follow up.
+          if (failedMetadata.type === 'copay' && failedMetadata.appointmentId) {
+            try {
+              const appointmentId = parseInt(failedMetadata.appointmentId);
+              if (!isNaN(appointmentId)) {
+                await storage.updateAppointment(appointmentId, {
+                  copayStatus: 'failed',
+                  copayStripeChargeId: failedPayment.id,
+                  copayNote: (failedPayment.last_payment_error?.message || 'Charge failed').slice(0, 500),
+                  copayUpdatedAt: new Date(),
+                } as any);
+                logger.info('Copay marked failed via webhook', {
+                  appointmentId,
+                  paymentIntentId: failedPayment.id,
+                });
+              }
+            } catch (err) {
+              logger.error('Failed to reconcile failed copay via webhook', {
+                error: err instanceof Error ? err.message : String(err),
+                paymentIntentId: failedPayment.id,
+              });
+            }
           }
           break;
 
