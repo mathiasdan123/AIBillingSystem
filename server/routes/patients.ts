@@ -302,6 +302,112 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
   }
 });
 
+// ==================== INTAKE INVITE (Slice β) ====================
+// POST /api/patients/:id/send-intake-invite
+// Generates a 15-minute magic link that lands the patient directly in the
+// portal's intake flow, and emails it to them. Reuses the existing
+// patient_portal_access.magicLinkToken infrastructure — no new tables.
+router.post('/:id/send-intake-invite', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id);
+    if (isNaN(patientId)) {
+      return res.status(400).json({ error: 'Invalid patient ID' });
+    }
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    // Practice guard — staff can only invite patients in their own practice.
+    if (req.userPracticeId && patient.practiceId !== req.userPracticeId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!patient.email) {
+      return res.status(400).json({
+        error: 'Patient has no email on file. Add an email on the Details tab first.',
+      });
+    }
+
+    const crypto = await import('crypto');
+    const magicLinkToken = crypto.randomBytes(32).toString('hex');
+    const magicLinkExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+
+    // Attach magic link to existing portal access, or create fresh.
+    const existing = await storage.getPatientPortalAccess(patientId);
+    if (existing) {
+      await storage.updatePatientPortalMagicLink(existing.id, magicLinkToken, magicLinkExpiresAt);
+    } else {
+      const portalToken = crypto.randomBytes(32).toString('hex');
+      const portalTokenExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
+      await storage.createPatientPortalAccess({
+        patientId,
+        practiceId: patient.practiceId,
+        portalToken,
+        portalTokenExpiresAt,
+        magicLinkToken,
+        magicLinkExpiresAt,
+      });
+    }
+
+    const baseUrl = process.env.APP_URL || process.env.BASE_URL || 'https://app.therapybillai.com';
+    const inviteUrl = `${baseUrl}/patient-portal/login/${magicLinkToken}?dest=intake`;
+    const practice = await storage.getPractice(patient.practiceId);
+    const practiceName = practice?.name || 'Your provider';
+
+    // Fire-and-forget email; we still return 200 if the queue accepts it.
+    try {
+      await sendEmail({
+        to: patient.email,
+        subject: `${practiceName} — Please complete your intake forms`,
+        html: `
+          <div style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #0f172a;">
+            <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 12px;">Your intake forms are ready</h2>
+            <p style="font-size: 15px; line-height: 1.55; color: #334155;">
+              Hi ${patient.firstName || 'there'},
+            </p>
+            <p style="font-size: 15px; line-height: 1.55; color: #334155;">
+              ${practiceName} has invited you to complete your intake paperwork before your visit.
+              This takes about 10 minutes and you can fill it out on your phone or computer.
+            </p>
+            <p style="margin: 28px 0;">
+              <a href="${inviteUrl}"
+                 style="display: inline-block; padding: 12px 20px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
+                Start intake forms
+              </a>
+            </p>
+            <p style="font-size: 13px; color: #64748b;">
+              This secure link expires in 15 minutes. Request a new one from ${practiceName} if it expires.
+            </p>
+          </div>
+        `,
+        text: `Hi ${patient.firstName || 'there'},\n\n${practiceName} has invited you to complete your intake forms.\n\nStart here: ${inviteUrl}\n\nThis link expires in 15 minutes.\n\n— ${practiceName}`,
+      });
+    } catch (emailErr) {
+      logger.warn('Intake invite email send failed', {
+        error: emailErr instanceof Error ? emailErr.message : String(emailErr),
+        patientId,
+      });
+      return res.status(502).json({ error: 'Could not send intake invite email. Try again shortly.' });
+    }
+
+    logger.info('Intake invite sent', {
+      patientId,
+      practiceId: patient.practiceId,
+      sentBy: req.user?.id,
+    });
+
+    res.json({
+      ok: true,
+      sentTo: patient.email,
+      expiresAt: magicLinkExpiresAt.toISOString(),
+    });
+  } catch (error) {
+    logger.error('Error sending intake invite', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to send intake invite' });
+  }
+});
+
 // ==================== PATIENT CONSENTS ====================
 
 // Get patient consents
