@@ -360,6 +360,14 @@ export interface ClaimSubmission {
 
   // Prior authorization number (if applicable)
   priorAuthNumber?: string;
+
+  // Phase 3 — when set AND the practice has strictStcValidation enabled,
+  // the 837P envelope will include these STCs on the encounter/claim
+  // information block so payers can match the service type to the
+  // eligibility check that preceded this claim. Pull these from the
+  // patient's most-recent eligibility check before calling submitClaim.
+  serviceTypeCodes?: string[];
+  strictStcValidation?: boolean;
 }
 
 export interface ClaimSubmissionResponse {
@@ -735,7 +743,7 @@ function parseClaimStatusResponse(claimId: string, data: any): ClaimStatusRespon
   return response;
 }
 
-function build837P(claim: ClaimSubmission): any {
+export function build837P(claim: ClaimSubmission): any {
   // Build the 837P claim payload for Stedi
   // This is a simplified version - real implementation would be more comprehensive
 
@@ -798,6 +806,15 @@ function build837P(claim: ClaimSubmission): any {
       ...(claim.priorAuthNumber && {
         priorAuthorizationNumber: claim.priorAuthNumber,
       }),
+      // Phase 3 — only include STCs on the envelope when the practice
+      // has explicitly opted into strict STC validation. Off by default
+      // so the payload shape stays unchanged for practices that haven't
+      // tested the envelope field yet.
+      ...(claim.strictStcValidation &&
+          Array.isArray(claim.serviceTypeCodes) &&
+          claim.serviceTypeCodes.length > 0 && {
+            serviceTypeCodes: claim.serviceTypeCodes,
+          }),
     },
     serviceLines: claim.serviceLines.map((line, index) => ({
       serviceLineNumber: index + 1,

@@ -52,6 +52,7 @@ const practiceSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
   specialty: z.enum(["OT", "PT", "ST", "MH", "MIXED"]).optional(),
+  strictStcValidation: z.boolean().optional(),
 
   // Branding
   brandLogoUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
@@ -1317,6 +1318,7 @@ export default function Settings() {
         phone: practice.phone || "",
         email: practice.email || "",
         specialty: practice.specialty || undefined,
+        strictStcValidation: Boolean(practice.strictStcValidation),
         brandLogoUrl: practice.brandLogoUrl || "",
         brandPrimaryColor: practice.brandPrimaryColor || "#2563eb",
         brandWebsiteUrl: practice.brandWebsiteUrl || "",
@@ -1485,6 +1487,28 @@ export default function Settings() {
                             Determines which Service Type Codes are sent on eligibility checks (270) to Stedi. Leave as Mixed if unsure — payers tolerate multiple STCs.
                           </p>
                           <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="strictStcValidation"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5 pr-4">
+                            <FormLabel className="text-base">Strict STC Validation</FormLabel>
+                            <p className="text-xs text-muted-foreground">
+                              When ON: claim scrubber <strong>blocks</strong> submission if a line-item's CPT therapy category doesn't match the STCs returned by the patient's most recent eligibility check (within 60 days), and the verified STCs are included in the 837P claim envelope. When OFF (default): scrubber only surfaces a <strong>warning</strong> and claims submit as today. Turn this on once you've confirmed Stedi returns the categories you bill for — leaving it off is safer during rollout.
+                            </p>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={Boolean(field.value)}
+                              onCheckedChange={field.onChange}
+                              data-testid="switch-strict-stc-validation"
+                            />
+                          </FormControl>
                         </FormItem>
                       )}
                     />
