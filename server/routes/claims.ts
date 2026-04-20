@@ -759,6 +759,14 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
             routingSource: batchPayerRouting.routingSource,
           });
 
+          // Phase 3 — pull STCs from the patient's most-recent eligibility
+          // check so the 837P envelope can include them when strict STC
+          // validation is enabled on this practice.
+          const eligForStc = await storage.getPatientEligibility(claim.patientId).catch(() => null);
+          const stcsForClaim = Array.isArray((eligForStc as any)?.serviceTypeCodes)
+            ? ((eligForStc as any).serviceTypeCodes as string[])
+            : undefined;
+
           const claimSubmission: ClaimSubmission = {
             claimId: claim.claimNumber || `CLM${claim.id}`,
             totalAmount: parseFloat(claim.totalAmount as any) || 0,
@@ -785,6 +793,8 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
             },
             serviceLines,
             diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+            serviceTypeCodes: stcsForClaim,
+            strictStcValidation: Boolean((practice as any)?.strictStcValidation),
           };
 
           clearinghouseResult = await stediService.submitClaim(claimSubmission);
@@ -794,6 +804,7 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
             claimId: claim.id,
             stediClaimId: clearinghouseResult.stediClaimId,
             status: clearinghouseResult.status,
+            stcInEnvelope: Boolean((practice as any)?.strictStcValidation && stcsForClaim?.length),
           });
         } catch (stediError: any) {
           logger.error('Batch Stedi claim submission failed', { claimId: claim.id, error: stediError.message });
@@ -852,6 +863,124 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
   } catch (error: any) {
     logger.error('Error in batch claim submission', { error: error instanceof Error ? error.message : String(error) });
     safeErrorResponse(res, 500, 'Failed to process batch claim submission', error);
+  }
+});
+
+/**
+ * GET /api/claims/:id/preview-payload
+ * Phase 3 — build the exact 837P payload that would be sent to Stedi
+ * (including the Phase 3 STC additions if the practice has
+ * strictStcValidation enabled), log it, and return it in the response.
+ * Does NOT call Stedi. Safe to hit any number of times.
+ * Lets you eyeball the envelope shape before flipping the flag.
+ */
+router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id);
+    const claim = await storage.getClaim(claimId);
+    if (!claim) return res.status(404).json({ message: 'Claim not found' });
+
+    const [patient, practice, lineItemsRaw, insurance] = await Promise.all([
+      storage.getPatient(claim.patientId),
+      storage.getPractice(claim.practiceId),
+      storage.getClaimLineItems(claimId),
+      claim.insuranceId ? storage.getInsurance(claim.insuranceId) : Promise.resolve(null),
+    ]);
+    if (!patient || !practice || !insurance) {
+      return res.status(400).json({ message: 'Claim missing patient, practice, or insurance' });
+    }
+
+    const lineItems = lineItemsRaw ?? [];
+    const cptCodes = await storage.getCptCodes();
+    const icd10Codes = await storage.getIcd10Codes();
+
+    const patientAddr = {
+      line1: patient.address || '',
+      city: (patient as any).city || '',
+      state: (patient as any).state || '',
+      zip: (patient as any).zipCode || '',
+    };
+    const practiceAddr = {
+      line1: practice.address || '',
+      city: (practice as any).city || '',
+      state: (practice as any).state || '',
+      zip: (practice as any).zipCode || '',
+    };
+
+    const serviceLines = lineItems.map((item: any) => {
+      const cpt = cptCodes.find((c: any) => c.id === item.cptCodeId);
+      const icd = item.icd10CodeId ? icd10Codes.find((c: any) => c.id === item.icd10CodeId) : null;
+      return {
+        procedureCode: cpt?.code || '',
+        modifiers: item.modifier ? [item.modifier] : [],
+        diagnosisCodes: icd ? [icd.code] : [],
+        amount: parseFloat(item.amount) || 0,
+        units: item.units || 1,
+        dateOfService: item.dateOfService || new Date().toISOString().split('T')[0],
+        description: cpt?.description || '',
+      };
+    });
+
+    const diagnosisCodes = Array.from(
+      new Set(
+        lineItems
+          .map((li: any) => icd10Codes.find((c: any) => c.id === li.icd10CodeId)?.code)
+          .filter((c: any): c is string => Boolean(c))
+      )
+    );
+
+    const eligForStc = await storage.getPatientEligibility(claim.patientId).catch(() => null);
+    const stcsForClaim = Array.isArray((eligForStc as any)?.serviceTypeCodes)
+      ? ((eligForStc as any).serviceTypeCodes as string[])
+      : undefined;
+
+    const submission = {
+      claimId: claim.claimNumber || `CLM${claim.id}`,
+      totalAmount: parseFloat(claim.totalAmount as any) || 0,
+      placeOfService: '11',
+      dateOfService: lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0],
+      patient: {
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        dateOfBirth: patient.dateOfBirth || '',
+        gender: 'U' as const,
+        address: patientAddr,
+        memberId: patient.insuranceId || '',
+      },
+      provider: {
+        npi: practice.npi || '',
+        taxId: practice.taxId || '',
+        organizationName: practice.name,
+        address: practiceAddr,
+        taxonomy: '101YM0800X',
+      },
+      payer: {
+        id: (insurance as any).payerId || (insurance as any).payerCode || '',
+        name: insurance.name || 'Unknown',
+      },
+      serviceLines,
+      diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+      serviceTypeCodes: stcsForClaim,
+      strictStcValidation: Boolean((practice as any)?.strictStcValidation),
+    };
+
+    // Call the actual build fn via dynamic import so we don't export it.
+    const stediModule = await import('../services/stediService');
+    const buildFn = (stediModule as any).build837P as undefined | ((c: any) => any);
+    const payload = buildFn ? buildFn(submission) : submission;
+
+    res.json({
+      previewOnly: true,
+      strictStcValidationFlag: Boolean((practice as any)?.strictStcValidation),
+      serviceTypeCodesFromEligibility: stcsForClaim ?? null,
+      submissionInput: submission,
+      stediPayload: payload,
+    });
+  } catch (error) {
+    logger.error('Error previewing claim payload', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to build preview payload' });
   }
 });
 
@@ -1002,6 +1131,12 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           routingSource: payerRouting.routingSource,
         });
 
+        // Phase 3 — same STC threading as the batch path.
+        const eligForStcSingle = await storage.getPatientEligibility(claim.patientId).catch(() => null);
+        const stcsForSingle = Array.isArray((eligForStcSingle as any)?.serviceTypeCodes)
+          ? ((eligForStcSingle as any).serviceTypeCodes as string[])
+          : undefined;
+
         const claimSubmission: ClaimSubmission = {
           claimId: claim.claimNumber || `CLM${claim.id}`,
           totalAmount: parseFloat(claim.totalAmount as any) || 0,
@@ -1028,6 +1163,8 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           },
           serviceLines,
           diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+          serviceTypeCodes: stcsForSingle,
+          strictStcValidation: Boolean((practice as any)?.strictStcValidation),
         };
 
         clearinghouseResult = await stediService.submitClaim(claimSubmission);
@@ -1037,6 +1174,7 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           claimId,
           stediClaimId: clearinghouseResult.stediClaimId,
           status: clearinghouseResult.status,
+          stcInEnvelope: Boolean((practice as any)?.strictStcValidation && stcsForSingle?.length),
         });
       } catch (stediError: any) {
         logger.error('Stedi claim submission failed', { error: stediError.message });

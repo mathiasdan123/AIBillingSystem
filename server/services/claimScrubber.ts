@@ -142,6 +142,71 @@ export async function scrubClaim(claimId: number, practiceId: number): Promise<S
           );
         }
       }
+
+      // Phase 3 — STC consistency check. Fetch the patient's most-recent
+      // eligibility check (ignore anything older than 60 days — stale
+      // eligibility isn't a reliable signal of what STCs apply today)
+      // and verify each line item's cpt.therapyCategory is present in
+      // the eligibility's serviceTypeCodes. Mismatch = soft-deny risk.
+      try {
+        const eligibility = await storage.getPatientEligibility(claim.patientId);
+        const eligAgeMs = eligibility?.checkedAt
+          ? Date.now() - new Date(eligibility.checkedAt as any).getTime()
+          : Number.MAX_SAFE_INTEGER;
+        const freshEnough = eligAgeMs < 60 * 24 * 60 * 60 * 1000; // 60 days
+
+        if (eligibility && freshEnough) {
+          const sentStcs = (eligibility as any).serviceTypeCodes as string[] | null;
+          if (Array.isArray(sentStcs) && sentStcs.length > 0) {
+            // Map STC → therapyCategory for comparison.
+            const stcToCategory: Record<string, string> = {
+              AE: 'OT',
+              A7: 'OT',     // legacy/alternate
+              AD: 'PT',
+              A8: 'PT',     // legacy/alternate
+              AF: 'ST',
+              A9: 'ST',
+              MH: 'MH',
+              '30': 'GENERAL', // generic — matches everything
+            };
+            const coveredCategories = new Set<string>(
+              sentStcs.map((s) => stcToCategory[s]).filter(Boolean)
+            );
+            const allowsAnything = coveredCategories.has('GENERAL');
+
+            for (const item of lineItems) {
+              const cpt = cptCodes.find((c) => c.id === item.cptCodeId);
+              const cptCategory = (cpt as any)?.therapyCategory as string | null;
+              // Skip uncategorized CPTs (therapy_category backfill only
+              // covers ~29 common codes) and GENERAL codes that both OT
+              // and PT bill — neither is a mismatch signal.
+              if (!cptCategory || cptCategory === 'GENERAL') continue;
+              if (allowsAnything) continue;
+              if (coveredCategories.has(cptCategory)) continue;
+
+              const msg =
+                `Line item ${cpt?.code} is ${cptCategory} but eligibility only verified ` +
+                `${Array.from(coveredCategories).join('/') || '(none)'}. ` +
+                `Payer may soft-deny — consider running a fresh eligibility check with an ` +
+                `${cptCategory}-specific STC before resubmitting.`;
+
+              if (practice?.strictStcValidation) {
+                errors.push(msg);
+                holdReason = holdReason || 'STC/CPT mismatch';
+              } else {
+                warnings.push(msg);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Non-fatal — if storage lookup fails, skip the check and let
+        // the existing validations carry the claim through.
+        logger.warn('Scrubber: STC consistency check failed', {
+          claimId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // ---- Total amount validation ----

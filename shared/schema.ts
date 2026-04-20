@@ -125,6 +125,12 @@ export const practices = pgTable("practices", {
   // Null is treated as 'MIXED' (sends all therapy STCs) to keep legacy
   // behavior safe during rollout.
   specialty: varchar("specialty"),
+  // Phase 3 — when true: claim scrubber BLOCKS submission on STC/CPT
+  // category mismatch, AND the 837P envelope includes the resolved STC.
+  // When false (default): scrubber emits warnings only and the 837P
+  // envelope is unchanged from pre-Phase-3 behavior. Flip per practice
+  // once you've tested the envelope shape with one known-good claim.
+  strictStcValidation: boolean("strict_stc_validation").default(false),
   // Front-desk copay collection (Phase 3 · Slice C).
   // Off by default so charging is explicitly opt-in per practice, even if
   // the Stripe integration is wired and keys are live.
