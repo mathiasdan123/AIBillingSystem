@@ -526,6 +526,153 @@ router.post('/:id/session-end', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// ==================== COPAY (Phase 3 — Slice A) ====================
+//
+// GET /api/appointments/:id/copay-info
+//   Returns the expected copay for an appointment (from the patient's latest
+//   eligibility check) plus payment methods on file. No side effects; safe
+//   to call as many times as the UI needs.
+//
+// POST /api/appointments/:id/copay/skip
+//   Records that the front desk chose not to collect the copay at check-in
+//   (patient paid cash, they'll mail a check, etc). No charge is made.
+//
+// Charging is a separate endpoint that will land in Slice C.
+router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    if (isNaN(appointmentId)) {
+      return res.status(400).json({ error: 'Invalid appointment ID' });
+    }
+
+    const practiceId = getAuthorizedPracticeId(req);
+    const appointment = await storage.getAppointment(appointmentId);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    if (appointment.practiceId !== practiceId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // If we've already resolved copay for this appointment, return that.
+    const existingStatus = (appointment as any).copayStatus as string | null;
+    const existingExpected = (appointment as any).copayExpected as string | null;
+    const existingCollected = (appointment as any).copayCollected as string | null;
+
+    // Telehealth appointments have no front-desk copay collection.
+    // (Derived: telehealth appointments typically have locationId null or a
+    // matching telehealthSessions row. For this slice we use locationId.)
+    const isTelehealth = appointment.locationId == null;
+
+    let expectedCents: number | null = null;
+    let source: 'eligibility' | 'cache' | 'none' | 'recorded' = 'none';
+    let stale = false;
+    let lastCheckedAt: string | null = null;
+    let eligibilityId: number | null = null;
+
+    if (existingExpected) {
+      expectedCents = Math.round(parseFloat(existingExpected) * 100);
+      source = 'recorded';
+    } else if (appointment.patientId && !isTelehealth) {
+      const elig = await storage.getPatientEligibility(appointment.patientId).catch(() => null);
+      if (elig && (elig as any).copay) {
+        expectedCents = Math.round(parseFloat((elig as any).copay) * 100);
+        source = 'eligibility';
+        eligibilityId = (elig as any).id ?? null;
+        lastCheckedAt = ((elig as any).checkedAt ?? (elig as any).createdAt)?.toISOString?.() ?? null;
+        // Consider eligibility data stale if older than 30 days.
+        if (lastCheckedAt) {
+          const ageMs = Date.now() - new Date(lastCheckedAt).getTime();
+          stale = ageMs > 30 * 24 * 60 * 60 * 1000;
+        }
+      }
+    }
+
+    // Payment methods on file (read-only).
+    let paymentMethods: Array<{
+      id: string;
+      brand: string | null;
+      last4: string | null;
+      expMonth: number | null;
+      expYear: number | null;
+      isDefault: boolean;
+    }> = [];
+    if (appointment.patientId && !isTelehealth) {
+      try {
+        const rows = (await (storage as any).getPatientPaymentMethods?.(appointment.patientId)) ?? [];
+        paymentMethods = rows.map((pm: any) => ({
+          id: pm.stripePaymentMethodId,
+          brand: pm.cardBrand ?? null,
+          last4: pm.cardLast4 ?? null,
+          expMonth: pm.cardExpMonth ?? null,
+          expYear: pm.cardExpYear ?? null,
+          isDefault: Boolean(pm.isDefault),
+        }));
+      } catch {
+        // storage method may not exist yet on the patient side; fail open
+        paymentMethods = [];
+      }
+    }
+
+    res.json({
+      appointmentId,
+      isTelehealth,
+      expectedCents,
+      expectedFormatted: expectedCents != null ? `$${(expectedCents / 100).toFixed(2)}` : null,
+      source,
+      stale,
+      lastCheckedAt,
+      eligibilityId,
+      status: existingStatus ?? null,
+      collectedCents: existingCollected ? Math.round(parseFloat(existingCollected) * 100) : null,
+      paymentMethods,
+    });
+  } catch (error) {
+    logger.error('Error fetching copay info', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to fetch copay info' });
+  }
+});
+
+router.post('/:id/copay/skip', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    if (isNaN(appointmentId)) {
+      return res.status(400).json({ error: 'Invalid appointment ID' });
+    }
+    const practiceId = getAuthorizedPracticeId(req);
+    const appointment = await storage.getAppointment(appointmentId);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    if (appointment.practiceId !== practiceId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // If already collected, don't let a skip overwrite the real record.
+    const current = (appointment as any).copayStatus as string | null;
+    if (current === 'collected') {
+      return res.status(400).json({ error: 'Copay already collected for this appointment' });
+    }
+
+    const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 500) : null;
+
+    const updated = await storage.updateAppointment(appointmentId, {
+      copayStatus: 'skipped',
+      copayNote: note,
+      copayUpdatedAt: new Date(),
+    } as any);
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error skipping copay', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to skip copay' });
+  }
+});
+
 // ==================== ELIGIBILITY ====================
 
 // Run pre-appointment eligibility check for a specific appointment

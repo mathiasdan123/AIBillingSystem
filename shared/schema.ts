@@ -505,6 +505,20 @@ export const appointments = pgTable("appointments", {
   checkedInBy: varchar("checked_in_by"), // user ID of front desk staff who checked patient in
   sessionStartedAt: timestamp("session_started_at"),
   sessionEndedAt: timestamp("session_ended_at"),
+  // Copay collection at check-in (Phase 3).
+  // copayStatus: 'pending' | 'collected' | 'skipped' | 'failed' | 'not_applicable'
+  //   - not_applicable: no insurance, telehealth, or eligibility says $0
+  //   - pending: expected copay is known, not yet resolved
+  //   - collected: charge succeeded
+  //   - skipped: front desk chose to collect later (cash, post-visit, etc.)
+  //   - failed: Stripe returned an error on the attempted charge
+  copayStatus: varchar("copay_status"),
+  copayExpected: decimal("copay_expected", { precision: 10, scale: 2 }),
+  copayCollected: decimal("copay_collected", { precision: 10, scale: 2 }),
+  copayPaymentMethodId: varchar("copay_payment_method_id"), // Stripe PM id used for the charge
+  copayStripeChargeId: varchar("copay_stripe_charge_id"), // Stripe PaymentIntent id
+  copayNote: text("copay_note"), // free-text "skipped because…" or error detail
+  copayUpdatedAt: timestamp("copay_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
