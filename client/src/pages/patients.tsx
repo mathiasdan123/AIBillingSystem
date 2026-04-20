@@ -50,20 +50,43 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
     ? JSON.parse(patient.intakeData)
     : patient.intakeData;
 
-  // Slice β will replace this with a real "send magic-link email" mutation.
+  // Slice β — send magic-link email to patient with a direct intake URL.
+  const inviteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', `/api/patients/${patient.id}/send-intake-invite`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: 'Intake invite sent',
+        description: `Sent to ${data.sentTo}. Link expires in 15 minutes.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Could not send invite',
+        description: err?.message ?? 'Please try again shortly.',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const handleSendPortalInvite = () => {
-    toast({
-      title: 'Portal invite coming soon',
-      description:
-        'Email-based intake invite ships in the next update. For now, complete the intake in-office.',
-    });
+    if (!patient.email) {
+      toast({
+        title: 'No email on file',
+        description: 'Add an email to this patient (Details tab) before sending an invite.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    inviteMutation.mutate();
   };
 
   const handleStartIntake = () => {
     // Opens the full-page wizard. Currently this creates a NEW patient
-    // record — Slice α is discoverability only. A follow-up will add
-    // `?patientId=<id>` pre-fill + PATCH semantics for editing existing
-    // patients without creating duplicates.
+    // record — a follow-up slice will add `?patientId=<id>` pre-fill +
+    // PATCH semantics for editing existing patients without duplicates.
     window.open('/intake', '_blank', 'noopener,noreferrer');
   };
 
@@ -78,9 +101,18 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
           </p>
         </div>
         <div className="flex items-center justify-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={handleSendPortalInvite} disabled>
-            <Mail className="w-4 h-4 mr-2" />
-            Invite via Portal (coming soon)
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSendPortalInvite}
+            disabled={inviteMutation.isPending}
+          >
+            {inviteMutation.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Mail className="w-4 h-4 mr-2" />
+            )}
+            Invite via Portal
           </Button>
           <Button size="sm" onClick={handleStartIntake}>
             <ClipboardCheck className="w-4 h-4 mr-2" />
@@ -145,8 +177,17 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleSendPortalInvite} disabled>
-            <Mail className="w-4 h-4 mr-2" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSendPortalInvite}
+            disabled={inviteMutation.isPending}
+          >
+            {inviteMutation.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Mail className="w-4 h-4 mr-2" />
+            )}
             Re-invite via Portal
           </Button>
           <Button variant="outline" size="sm" onClick={handleStartIntake}>
