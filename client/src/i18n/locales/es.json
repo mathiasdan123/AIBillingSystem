@@ -798,5 +798,28 @@
     "inSessionForMin": "En sesión {{minutes}}m",
     "arrivingInMin": "Llega en {{minutes}}m",
     "overdueByMin": "{{minutes}}m de retraso"
+  },
+  "copay": {
+    "title": "Cobrar Copago",
+    "titleNone": "Registrar Llegada",
+    "expectedLabel": "Copago esperado",
+    "noCopay": "No se espera copago para esta visita.",
+    "noEligibility": "No hay datos de elegibilidad. Ejecute una verificación desde la página del paciente.",
+    "stale": "Los datos de elegibilidad tienen más de 30 días.",
+    "telehealth": "Visita por telemedicina — no aplica el cobro en recepción.",
+    "alreadyCollected": "Copago ya cobrado ({{amount}}).",
+    "alreadySkipped": "El copago se marcó como \"cobrar después\".",
+    "savedCardsHeader": "Tarjetas guardadas",
+    "noSavedCards": "No hay tarjetas guardadas para este paciente.",
+    "cardRowSuffix": "vto {{mm}}/{{yy}}",
+    "skipAndCheckIn": "Omitir y registrar",
+    "skipNoteOptional": "Nota (opcional)",
+    "skipNotePlaceholder": "ej. pagó en efectivo, enviará cheque, exento",
+    "checkInOnly": "Registrar llegada",
+    "cancel": "Cancelar",
+    "chargeDisabledTooltip": "El cobro de tarjetas en recepción llegará en la próxima actualización.",
+    "checkedInCopayPending": "Debe {{amount}}",
+    "checkedInCopayCollected": "{{amount}} cobrado",
+    "checkedInCopaySkipped": "Copago omitido"
   }
 }

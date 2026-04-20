@@ -5,6 +5,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import CopayModal from "@/components/CopayModal";
 import {
   LogIn,
   LogOut,
@@ -193,6 +195,23 @@ export default function FrontDeskPage() {
     },
   });
 
+  // ---------- Copay modal wiring ----------
+  // When the user clicks "Check in" for an arriving appointment, we first
+  // open the copay modal. The modal fetches expected copay + payment methods,
+  // then (on confirm) calls /copay/skip if the user chose "skip", and always
+  // calls us back via onProceed to actually fire the check-in mutation.
+  const [copayModalFor, setCopayModalFor] = useState<number | null>(null);
+
+  const handleColumnAction = (id: number, action: "check-in" | "session-start" | "session-end" | "check-out") => {
+    if (action === "check-in") {
+      // Route through the copay modal. The modal renders instantly and the
+      // fetch happens inside it — no blocking flicker on the card.
+      setCopayModalFor(id);
+      return;
+    }
+    stateMutation.mutate({ id, action });
+  };
+
   // ---------- Bucket + summary ----------
   const { buckets, summary } = useMemo(() => {
     const b: Record<ColumnKey, Appointment[]> = {
@@ -270,11 +289,23 @@ export default function FrontDeskPage() {
             now={nowTick}
             patientName={patientName}
             therapistName={therapistName}
-            onAction={(id, action) => stateMutation.mutate({ id, action })}
+            onAction={handleColumnAction}
             isPending={stateMutation.isPending}
           />
         ))}
       </div>
+
+      <CopayModal
+        appointmentId={copayModalFor}
+        open={copayModalFor != null}
+        onOpenChange={(o) => !o && setCopayModalFor(null)}
+        onProceed={() => {
+          if (copayModalFor != null) {
+            stateMutation.mutate({ id: copayModalFor, action: "check-in" });
+          }
+          setCopayModalFor(null);
+        }}
+      />
     </div>
   );
 }
@@ -401,6 +432,18 @@ function AppointmentCard({ apt, column, accentBg, now, patientName, therapistNam
     apt.checkedInAt &&
     minutesBetween(apt.checkedInAt, now) >= 15;
 
+  // Copay status pill — only meaningful after check-in and only when the
+  // patient actually has a copay expected on the appointment row.
+  const copayStatus = (apt as any).copayStatus as string | null;
+  const copayExpected = (apt as any).copayExpected as string | null;
+  const copayCollected = (apt as any).copayCollected as string | null;
+  const copayAmount = copayCollected ?? copayExpected;
+  const showCopayPill =
+    apt.checkedInAt &&
+    copayStatus &&
+    copayStatus !== "not_applicable" &&
+    (copayAmount || copayStatus === "skipped");
+
   return (
     <Card className="relative overflow-hidden border border-border/70 shadow-sm">
       {/* Left-edge accent bar */}
@@ -429,6 +472,12 @@ function AppointmentCard({ apt, column, accentBg, now, patientName, therapistNam
           )}
         </div>
 
+        {showCopayPill && (
+          <div className="mt-1.5">
+            <CopayPill status={copayStatus!} amount={copayAmount ?? "0"} />
+          </div>
+        )}
+
         {primaryAction && (
           <div className="mt-2 flex justify-end">
             <Button
@@ -445,5 +494,33 @@ function AppointmentCard({ apt, column, accentBg, now, patientName, therapistNam
         )}
       </div>
     </Card>
+  );
+}
+
+// Small status indicator for the copay state on waiting-room cards.
+function CopayPill({ status, amount }: { status: string; amount: string }) {
+  const { t } = useTranslation();
+  const formatted = amount ? `$${parseFloat(amount).toFixed(2)}` : '—';
+  let label = '';
+  let tone = '';
+  if (status === 'collected') {
+    label = t('copay.checkedInCopayCollected', { amount: formatted });
+    tone = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  } else if (status === 'skipped') {
+    label = t('copay.checkedInCopaySkipped');
+    tone = 'bg-slate-100 text-slate-700 border-slate-200';
+  } else if (status === 'pending' || status === 'failed') {
+    label = t('copay.checkedInCopayPending', { amount: formatted });
+    tone = 'bg-amber-100 text-amber-800 border-amber-200';
+  } else {
+    return null;
+  }
+  return (
+    <Badge
+      variant="outline"
+      className={`text-[10.5px] font-medium h-5 px-1.5 border ${tone}`}
+    >
+      {label}
+    </Badge>
   );
 }

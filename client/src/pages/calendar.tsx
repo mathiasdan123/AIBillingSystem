@@ -16,6 +16,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
+import CopayModal from "@/components/CopayModal";
 
 interface AvailabilitySlot {
   dayOfWeek: number;
@@ -250,6 +251,12 @@ export default function CalendarPage() {
       toast({ title: "Check-in Failed", description: err.message, variant: "destructive" });
     },
   });
+
+  // Copay modal: intercept check-in clicks. The modal fetches expected copay
+  // + payment methods, lets the user skip (with optional note) or proceed
+  // without collecting, then calls back to fire the real check-in mutation.
+  const [copayModalFor, setCopayModalFor] = useState<number | null>(null);
+  const startCheckIn = (appointmentId: number) => setCopayModalFor(appointmentId);
 
   // Check-out mutation
   const checkOutMutation = useMutation({
@@ -1008,7 +1015,7 @@ export default function CalendarPage() {
                               <Button
                                 size="sm"
                                 className="h-7 text-xs bg-green-600 hover:bg-green-700"
-                                onClick={(e) => { e.stopPropagation(); checkInMutation.mutate(apt.id); }}
+                                onClick={(e) => { e.stopPropagation(); startCheckIn(apt.id); }}
                                 disabled={checkInMutation.isPending}
                               >
                                 <LogIn className="w-3 h-3 mr-1" />Check In
@@ -1113,7 +1120,7 @@ export default function CalendarPage() {
                             <Button
                               size="sm"
                               className="h-8 text-xs bg-green-600 hover:bg-green-700"
-                              onClick={() => checkInMutation.mutate(apt.id)}
+                              onClick={() => startCheckIn(apt.id)}
                               disabled={checkInMutation.isPending}
                             >
                               <LogIn className="w-3.5 h-3.5 mr-1" />Check In
@@ -1188,7 +1195,7 @@ export default function CalendarPage() {
                     <div className="flex items-center gap-2 ml-12 sm:ml-0">
                       <Badge className={`${getStatusColor(statusLabel)} text-[10px] md:text-xs`}>{statusLabel}</Badge>
                       {!a.checkedInAt && apt.status === "scheduled" && (
-                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-green-600 hover:bg-green-700" onClick={() => checkInMutation.mutate(apt.id)} disabled={checkInMutation.isPending}>
+                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-green-600 hover:bg-green-700" onClick={() => startCheckIn(apt.id)} disabled={checkInMutation.isPending}>
                           <LogIn className="w-4 h-4 mr-1" />Check In
                         </Button>
                       )}
@@ -1360,6 +1367,18 @@ export default function CalendarPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <CopayModal
+          appointmentId={copayModalFor}
+          open={copayModalFor != null}
+          onOpenChange={(o) => !o && setCopayModalFor(null)}
+          onProceed={() => {
+            if (copayModalFor != null) {
+              checkInMutation.mutate(copayModalFor);
+            }
+            setCopayModalFor(null);
+          }}
+        />
       </div>
     </div>
   );
