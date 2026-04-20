@@ -167,6 +167,53 @@ const planDocUpload = multer({
   }
 });
 
+// ==================== INSURANCE CARD SCAN ====================
+// POST /api/insurance-cards/scan — OCR an insurance card image with Claude
+// vision. Pure extraction, no storage, no patient binding. Used by the
+// intake form (where the patient doesn't yet exist) and anywhere else that
+// wants quick card data extraction.
+router.post('/insurance-cards/scan', isAuthenticated, async (req: any, res) => {
+  try {
+    const { front, back } = req.body || {};
+    if (!front || typeof front !== 'string') {
+      return res.status(400).json({ error: 'front (base64 or data URL) is required' });
+    }
+    const imageRe = /^data:image\/(jpeg|jpg|png|heic|heif|webp);base64,/i;
+    if (!imageRe.test(front)) {
+      return res.status(400).json({ error: 'front must be a JPEG/PNG/HEIC/HEIF/WEBP data URL' });
+    }
+    if (back && typeof back === 'string' && !imageRe.test(back)) {
+      return res.status(400).json({ error: 'back must be a JPEG/PNG/HEIC/HEIF/WEBP data URL' });
+    }
+    if (front.length > 7 * 1024 * 1024) {
+      return res.status(413).json({ error: 'front image too large (max ~5 MB)' });
+    }
+    if (back && back.length > 7 * 1024 * 1024) {
+      return res.status(413).json({ error: 'back image too large (max ~5 MB)' });
+    }
+
+    const { parseInsuranceCardFromImage } = await import('../services/insuranceCardParser');
+    const result = await parseInsuranceCardFromImage(front, back || null);
+    if (!result.success) {
+      return res.status(502).json({
+        error: result.error || 'OCR failed',
+        processingTimeMs: result.processingTimeMs,
+      });
+    }
+    logger.info('Insurance card scanned (non-scoped)', {
+      userId: req.user?.id,
+      confidence: result.confidence,
+      processingTimeMs: result.processingTimeMs,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error('Error scanning insurance card', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to scan insurance card' });
+  }
+});
+
 // ==================== INSURANCES ====================
 
 router.get('/insurances', isAuthenticated, async (req: any, res) => {

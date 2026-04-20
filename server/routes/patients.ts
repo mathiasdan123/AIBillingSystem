@@ -1411,6 +1411,66 @@ router.post('/:id/insurance-cards', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// POST /api/patients/:id/insurance-cards/scan — OCR a card image via
+// Claude vision. Pure extraction; does NOT save anything. Frontend shows
+// the extracted fields in a confirmation step, user edits if needed,
+// then saves via the normal PATCH /patients/:id flow.
+router.post('/:id/insurance-cards/scan', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    const { authorized, error } = await verifyPatientAccess(req, patientId);
+    if (!authorized) {
+      return res.status(error === 'Patient not found' ? 404 : 403).json({ error });
+    }
+    const { front, back } = req.body || {};
+    if (!front || typeof front !== 'string') {
+      return res.status(400).json({ error: 'front (base64 or data URL) is required' });
+    }
+    // Reuse the same validation we use for upload: images only, reasonable size.
+    const imageRe = /^data:image\/(jpeg|jpg|png|heic|heif|webp);base64,/i;
+    if (!imageRe.test(front)) {
+      return res.status(400).json({
+        error: 'front must be a JPEG/PNG/HEIC/HEIF/WEBP data URL',
+      });
+    }
+    if (back && typeof back === 'string' && !imageRe.test(back)) {
+      return res.status(400).json({
+        error: 'back must be a JPEG/PNG/HEIC/HEIF/WEBP data URL',
+      });
+    }
+    // 7 MB per image (roughly 5MB decoded) — same cap as the upload path.
+    if (front.length > 7 * 1024 * 1024) {
+      return res.status(413).json({ error: 'front image too large (max ~5 MB)' });
+    }
+    if (back && back.length > 7 * 1024 * 1024) {
+      return res.status(413).json({ error: 'back image too large (max ~5 MB)' });
+    }
+
+    const { parseInsuranceCardFromImage } = await import('../services/insuranceCardParser');
+    const result = await parseInsuranceCardFromImage(front, back || null);
+    if (!result.success) {
+      return res.status(502).json({
+        error: result.error || 'OCR failed',
+        processingTimeMs: result.processingTimeMs,
+      });
+    }
+
+    logger.info('Insurance card scanned', {
+      patientId,
+      confidence: result.confidence,
+      processingTimeMs: result.processingTimeMs,
+      hasBack: !!back,
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Error scanning insurance card', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to scan insurance card' });
+  }
+});
+
 // Get insurance card images for a patient
 router.get('/:id/insurance-cards', isAuthenticated, async (req: any, res) => {
   try {
