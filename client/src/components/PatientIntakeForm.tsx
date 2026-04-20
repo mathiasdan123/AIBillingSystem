@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { Upload, FileText, CheckCircle, Loader2, Info, Shield, FileSignature, CreditCard, ChevronDown, ChevronRight, Camera, X, ImageIcon } from "lucide-react";
+import { Upload, FileText, CheckCircle, Loader2, Info, Shield, FileSignature, CreditCard, ChevronDown, ChevronRight, Camera, X, ImageIcon, Sparkles } from "lucide-react";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -224,6 +225,11 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
   const [documentUploaded, setDocumentUploaded] = useState(false);
   const [insuranceCardFront, setInsuranceCardFront] = useState<string | null>(null);
   const [insuranceCardBack, setInsuranceCardBack] = useState<string | null>(null);
+
+  // Slice γ — insurance card OCR state
+  const [scanDialogOpen, setScanDialogOpen] = useState(false);
+  const [scanResult, setScanResult] = useState<any | null>(null);
+  const [scanEdits, setScanEdits] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const insuranceCardFrontRef = useRef<HTMLInputElement>(null);
   const insuranceCardBackRef = useRef<HTMLInputElement>(null);
@@ -261,6 +267,57 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
       parent1TextReminders: true,
     },
   });
+
+  // Slice γ — run Claude vision on the uploaded card images.
+  const scanCardMutation = useMutation({
+    mutationFn: async () => {
+      if (!insuranceCardFront) throw new Error('Upload the front of the card first');
+      const res = await apiRequest('POST', '/api/insurance-cards/scan', {
+        front: insuranceCardFront,
+        back: insuranceCardBack,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setScanResult(data);
+      // Seed editable state with Claude's extracted values so users can
+      // tweak anything that looks off before applying.
+      setScanEdits({
+        payerName: data.payerName ?? '',
+        memberId: data.memberId ?? '',
+        groupNumber: data.groupNumber ?? '',
+        subscriberFirstName: data.subscriberFirstName ?? '',
+        subscriberLastName: data.subscriberLastName ?? '',
+        subscriberDateOfBirth: data.subscriberDateOfBirth ?? '',
+      });
+      setScanDialogOpen(true);
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Card scan failed',
+        description: err?.message ?? 'Please try a clearer photo.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Apply scanned fields to the react-hook-form state, then close.
+  const applyScanToForm = () => {
+    if (scanEdits.payerName) form.setValue('insuranceProvider', scanEdits.payerName);
+    if (scanEdits.memberId) {
+      form.setValue('insuranceId', scanEdits.memberId);
+      // Many plans use member ID as the policy number too; only set if blank
+      if (!form.getValues('policyNumber')) {
+        form.setValue('policyNumber', scanEdits.memberId);
+      }
+    }
+    if (scanEdits.groupNumber) form.setValue('groupNumber', scanEdits.groupNumber);
+    toast({
+      title: 'Applied to form',
+      description: 'Double-check the insurance section below.',
+    });
+    setScanDialogOpen(false);
+  };
 
   const createPatientMutation = useMutation({
     mutationFn: async (data: PatientFormData) => {
@@ -612,6 +669,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
   );
 
   return (
+    <>
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         {/* Progress Indicator with clickable section navigation */}
@@ -2727,15 +2785,33 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
               </div>
 
               {(insuranceCardFront || insuranceCardBack) && (
-                <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 p-2 rounded">
-                  <CheckCircle className="w-4 h-4" />
-                  <span>
-                    {insuranceCardFront && insuranceCardBack
-                      ? "Both sides of insurance card uploaded"
-                      : insuranceCardFront
-                      ? "Front of card uploaded (back is optional)"
-                      : "Back of card uploaded (front is recommended)"}
-                  </span>
+                <div className="flex items-center justify-between gap-2 text-sm bg-green-50 p-2 rounded flex-wrap">
+                  <div className="flex items-center gap-2 text-green-700">
+                    <CheckCircle className="w-4 h-4" />
+                    <span>
+                      {insuranceCardFront && insuranceCardBack
+                        ? "Both sides of insurance card uploaded"
+                        : insuranceCardFront
+                        ? "Front of card uploaded (back is optional)"
+                        : "Back of card uploaded (front is recommended)"}
+                    </span>
+                  </div>
+                  {insuranceCardFront && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => scanCardMutation.mutate()}
+                      disabled={scanCardMutation.isPending}
+                    >
+                      {scanCardMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4 mr-2" />
+                      )}
+                      {scanCardMutation.isPending ? "Scanning…" : "Scan with AI"}
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -2854,5 +2930,84 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
         )}
       </form>
     </Form>
+
+    {/* Slice γ — insurance card scan confirmation */}
+    <Dialog open={scanDialogOpen} onOpenChange={setScanDialogOpen}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-600" />
+            Confirm scanned card details
+          </DialogTitle>
+          <DialogDescription>
+            Review what we pulled off the card. Edit anything that looks off, then apply.
+          </DialogDescription>
+        </DialogHeader>
+        {scanResult && (
+          <div className="space-y-3 text-sm">
+            {scanResult.confidence < 0.6 && (
+              <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800 text-[13px]">
+                <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div>Lower confidence scan — please double-check everything before applying.</div>
+              </div>
+            )}
+            {Array.isArray(scanResult.notes) && scanResult.notes.length > 0 && (
+              <ul className="text-[12px] text-muted-foreground list-disc pl-5 space-y-0.5">
+                {scanResult.notes.map((n: string, i: number) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Payer</Label>
+                <Input
+                  value={scanEdits.payerName || ''}
+                  onChange={(e) => setScanEdits(prev => ({ ...prev, payerName: e.target.value }))}
+                  placeholder="Aetna"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Member ID</Label>
+                <Input
+                  value={scanEdits.memberId || ''}
+                  onChange={(e) => setScanEdits(prev => ({ ...prev, memberId: e.target.value }))}
+                  placeholder="W123456789"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Group #</Label>
+                <Input
+                  value={scanEdits.groupNumber || ''}
+                  onChange={(e) => setScanEdits(prev => ({ ...prev, groupNumber: e.target.value }))}
+                  placeholder="Group number"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Plan</Label>
+                <Input
+                  value={scanResult.planName || '—'}
+                  readOnly
+                  className="bg-muted/50"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Subscriber (read-only — apply manually if needed)</Label>
+                <Input
+                  value={[scanResult.subscriberFirstName, scanResult.subscriberLastName].filter(Boolean).join(' ') || '—'}
+                  readOnly
+                  className="bg-muted/50"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={() => setScanDialogOpen(false)}>Cancel</Button>
+          <Button onClick={applyScanToForm}>Apply to form</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
