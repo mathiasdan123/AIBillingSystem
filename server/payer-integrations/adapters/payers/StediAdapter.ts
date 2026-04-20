@@ -3,6 +3,21 @@ import type { NormalizedEligibility, NormalizedBenefits } from '@shared/schema';
 
 const STEDI_API_URL = 'https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/eligibility/v3';
 
+// Local mirror of stediService.stcsForSpecialty — inlined to avoid a
+// circular dependency (stediService imports adapter types indirectly).
+// Keep in sync with SPECIALTY_TO_STC in server/services/stediService.ts.
+function stcsForSpecialtyLocal(specialty: string | null | undefined): string[] {
+  const key = (specialty || 'MIXED').toUpperCase();
+  const map: Record<string, string[]> = {
+    OT: ['AE', '30'],
+    PT: ['AD', '30'],
+    ST: ['AF', '30'],
+    MH: ['MH', '30'],
+    MIXED: ['AE', 'AD', 'AF', 'MH', '30'],
+  };
+  return map[key] ?? map.MIXED;
+}
+
 // Trading partner service IDs for major payers
 const TRADING_PARTNER_MAP: Record<string, string> = {
   'aetna': '60054',
@@ -70,6 +85,12 @@ export class StediAdapter {
     groupNumber?: string;
     payerName: string;
     tradingPartnerServiceId?: string;
+    /**
+     * Practice therapy specialty (OT / PT / ST / MH / MIXED). Drives the
+     * Service Type Codes we send on the 270. Falls back to MIXED (all
+     * therapy STCs + generic 30) when not provided — legacy-safe.
+     */
+    practiceSpecialty?: string | null;
   }): Promise<{ eligibility: NormalizedEligibility; benefits: NormalizedBenefits; raw: any }> {
     const tradingPartnerId = params.tradingPartnerServiceId ||
       this.resolveTradingPartnerId(params.payerName);
@@ -96,7 +117,10 @@ export class StediAdapter {
         groupNumber: params.groupNumber,
       },
       encounter: {
-        serviceTypeCodes: ['30'], // Health Benefit Plan Coverage (OT-relevant)
+        // Resolved from practice specialty — see stediService.stcsForSpecialty.
+        // Inline here to avoid circular import; kept in sync via a small map
+        // of the same shape. '30' always included as fallback.
+        serviceTypeCodes: stcsForSpecialtyLocal(params.practiceSpecialty),
       },
     };
 

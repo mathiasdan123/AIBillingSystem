@@ -51,6 +51,7 @@ const practiceSchema = z.object({
   address: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
+  specialty: z.enum(["OT", "PT", "ST", "MH", "MIXED"]).optional(),
 
   // Branding
   brandLogoUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
@@ -1315,6 +1316,7 @@ export default function Settings() {
         address: practice.address || "",
         phone: practice.phone || "",
         email: practice.email || "",
+        specialty: practice.specialty || undefined,
         brandLogoUrl: practice.brandLogoUrl || "",
         brandPrimaryColor: practice.brandPrimaryColor || "#2563eb",
         brandWebsiteUrl: practice.brandWebsiteUrl || "",
@@ -1455,6 +1457,37 @@ export default function Settings() {
                         )}
                       />
                     </div>
+
+                    <FormField
+                      control={form.control}
+                      name="specialty"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Therapy Specialty</FormLabel>
+                          <FormControl>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value ?? ""}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select specialty (drives Stedi eligibility STCs)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="OT">Occupational Therapy (OT)</SelectItem>
+                                <SelectItem value="PT">Physical Therapy (PT)</SelectItem>
+                                <SelectItem value="ST">Speech Therapy (ST)</SelectItem>
+                                <SelectItem value="MH">Mental Health (MH)</SelectItem>
+                                <SelectItem value="MIXED">Mixed / Multi-discipline</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Determines which Service Type Codes are sent on eligibility checks (270) to Stedi. Leave as Mixed if unsure — payers tolerate multiple STCs.
+                          </p>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
                     <FormField
                       control={form.control}

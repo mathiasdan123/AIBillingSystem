@@ -978,7 +978,7 @@ async function executeTool(
             lastName: patient.lastName,
             dateOfBirth: patient.dateOfBirth || '',
           },
-          serviceTypeCodes: ['30'],
+          // serviceTypeCodes omitted — resolved from practice.specialty by stediService.checkEligibility
         }, practiceId);
 
         return JSON.stringify({
@@ -1568,7 +1568,7 @@ async function executeTool(
               payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
               provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
               subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
-              serviceTypeCodes: ['30'],
+              // serviceTypeCodes omitted — resolved from practice.specialty by stediService.checkEligibility
             }, practiceId);
 
             const isElig = eligRes.status === 'active';
