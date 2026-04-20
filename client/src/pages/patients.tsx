@@ -45,18 +45,48 @@ interface EligibilityCheck {
 
 // Helper component to display intake data from the patient portal
 function PatientIntakeDataView({ patient }: { patient: any }) {
+  const { toast } = useToast();
   const intakeData = typeof patient.intakeData === 'string'
     ? JSON.parse(patient.intakeData)
     : patient.intakeData;
 
+  // Slice β will replace this with a real "send magic-link email" mutation.
+  const handleSendPortalInvite = () => {
+    toast({
+      title: 'Portal invite coming soon',
+      description:
+        'Email-based intake invite ships in the next update. For now, complete the intake in-office.',
+    });
+  };
+
+  const handleStartIntake = () => {
+    // Opens the full-page wizard. Currently this creates a NEW patient
+    // record — Slice α is discoverability only. A follow-up will add
+    // `?patientId=<id>` pre-fill + PATCH semantics for editing existing
+    // patients without creating duplicates.
+    window.open('/intake', '_blank', 'noopener,noreferrer');
+  };
+
   if (!intakeData && !patient.intakeCompletedAt) {
     return (
-      <div className="text-center py-8">
-        <ClipboardCheck className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-        <h3 className="text-lg font-semibold text-foreground mb-2">No Intake Data Yet</h3>
-        <p className="text-muted-foreground text-sm">
-          This patient has not completed their intake forms through the patient portal.
-        </p>
+      <div className="text-center py-10 space-y-4">
+        <ClipboardCheck className="w-12 h-12 text-muted-foreground mx-auto" />
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-1">No Intake Data Yet</h3>
+          <p className="text-sm text-muted-foreground max-w-md mx-auto">
+            Send the patient a portal link to complete it themselves, or start the intake in-office.
+          </p>
+        </div>
+        <div className="flex items-center justify-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={handleSendPortalInvite} disabled>
+            <Mail className="w-4 h-4 mr-2" />
+            Invite via Portal (coming soon)
+          </Button>
+          <Button size="sm" onClick={handleStartIntake}>
+            <ClipboardCheck className="w-4 h-4 mr-2" />
+            Start Intake In-Office
+          </Button>
+        </div>
       </div>
     );
   }
@@ -94,8 +124,8 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
 
   return (
     <div className="space-y-4">
-      {/* Intake Status */}
-      <div className="flex items-center justify-between">
+      {/* Intake Status + actions */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           {completedAt ? (
             <Badge className="bg-green-100 text-green-700">
@@ -108,12 +138,22 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
               Intake In Progress
             </Badge>
           )}
+          {completedAt && (
+            <span className="text-xs text-muted-foreground">
+              Completed {new Date(completedAt).toLocaleDateString()}
+            </span>
+          )}
         </div>
-        {completedAt && (
-          <span className="text-xs text-muted-foreground">
-            Completed {new Date(completedAt).toLocaleDateString()}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleSendPortalInvite} disabled>
+            <Mail className="w-4 h-4 mr-2" />
+            Re-invite via Portal
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleStartIntake}>
+            <ExternalLink className="w-4 h-4 mr-2" />
+            Open Intake Wizard
+          </Button>
+        </div>
       </div>
 
       {/* Patient Info Section */}
