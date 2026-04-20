@@ -2402,6 +2402,24 @@ export default function Claims() {
                     </p>
                   </div>
                 )}
+
+                {/* Phase 5 — STC-aware rejection hints (actionable next steps) */}
+                {Array.isArray((claim as any).rejectionHints) &&
+                  (claim as any).rejectionHints.length > 0 && (
+                    <div
+                      className="mt-2 p-3 bg-amber-50 rounded-lg border border-amber-200"
+                      data-testid={`banner-rejection-hints-${claim.id}`}
+                    >
+                      <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-1.5">
+                        Suggested next steps
+                      </p>
+                      <ul className="text-sm text-amber-900 space-y-1.5 list-disc pl-5">
+                        {((claim as any).rejectionHints as string[]).map((hint, i) => (
+                          <li key={i}>{hint}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
               </CardContent>
             </Card>
           ))
