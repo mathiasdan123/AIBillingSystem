@@ -853,6 +853,13 @@
     "chargeDisabledTooltip": "Charging cards from check-in will ship in the next update.",
     "checkedInCopayPending": "Owes {{amount}}",
     "checkedInCopayCollected": "{{amount}} collected",
-    "checkedInCopaySkipped": "Copay skipped"
+    "checkedInCopaySkipped": "Copay skipped",
+    "chargeSuccessTitle": "Copay collected",
+    "chargeSuccessDesc": "Charge recorded on the appointment.",
+    "chargeErrorTitle": "Charge failed",
+    "chargeAndCheckIn": "Charge {{amount}} & check in",
+    "amountOverrideLabel": "Adjust",
+    "addCardHint": "Add a card from the patient record to enable charging.",
+    "overCapWarn": "Amount exceeds practice cap of {{amount}}."
   }
 }

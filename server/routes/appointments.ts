@@ -17,6 +17,7 @@ import { validate } from '../middleware/validate';
 import { createAppointmentSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
+import { chargeCopay } from '../services/stripeService';
 
 const router = Router();
 
@@ -614,6 +615,14 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
       }
     }
 
+    // Pull practice-level copay settings so the UI knows whether the
+    // charge buttons should be enabled.
+    const practice = await (storage as any).getPractice?.(practiceId);
+    const chargingEnabled = Boolean(practice?.copayChargingEnabled);
+    const maxAmountCents = practice?.copayMaxAmount
+      ? Math.round(parseFloat(practice.copayMaxAmount) * 100)
+      : 50000; // $500 default
+
     res.json({
       appointmentId,
       isTelehealth,
@@ -626,12 +635,154 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
       status: existingStatus ?? null,
       collectedCents: existingCollected ? Math.round(parseFloat(existingCollected) * 100) : null,
       paymentMethods,
+      chargingEnabled,
+      maxAmountCents,
     });
   } catch (error) {
     logger.error('Error fetching copay info', {
       error: error instanceof Error ? error.message : String(error),
     });
     res.status(500).json({ error: 'Failed to fetch copay info' });
+  }
+});
+
+router.post('/:id/copay/charge', isAuthenticated, async (req: any, res) => {
+  try {
+    const appointmentId = parseInt(req.params.id);
+    if (isNaN(appointmentId)) {
+      return res.status(400).json({ error: 'Invalid appointment ID' });
+    }
+    const practiceId = getAuthorizedPracticeId(req);
+    const appointment = await storage.getAppointment(appointmentId);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    if (appointment.practiceId !== practiceId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!appointment.patientId) {
+      return res.status(400).json({ error: 'Appointment has no patient attached' });
+    }
+    if ((appointment as any).copayStatus === 'collected') {
+      return res.status(400).json({ error: 'Copay already collected for this appointment' });
+    }
+
+    // Practice-level feature flag. Must be true to charge.
+    const practice = await (storage as any).getPractice?.(practiceId);
+    if (!practice?.copayChargingEnabled) {
+      return res.status(403).json({ error: 'Copay charging is not enabled for this practice' });
+    }
+
+    // Load patient + their Stripe customer.
+    const patient = await storage.getPatient(appointment.patientId);
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    if (!(patient as any).stripeCustomerId) {
+      return res.status(400).json({
+        error: 'Patient has no Stripe customer on file. Add a payment method first.',
+      });
+    }
+
+    // Amount: body override OR appointment.copayExpected.
+    const overrideCents = Number(req.body?.amountCents);
+    const expectedDollars = (appointment as any).copayExpected
+      ? parseFloat((appointment as any).copayExpected)
+      : 0;
+    const expectedCents = Math.round(expectedDollars * 100);
+    const amountCents = Number.isFinite(overrideCents) && overrideCents > 0
+      ? Math.floor(overrideCents)
+      : expectedCents;
+
+    if (!amountCents || amountCents <= 0) {
+      return res.status(400).json({ error: 'Copay amount must be greater than $0' });
+    }
+
+    // Safety rail — practice-configurable max.
+    const maxDollars = (practice as any).copayMaxAmount
+      ? parseFloat((practice as any).copayMaxAmount)
+      : 500;
+    if (amountCents > Math.round(maxDollars * 100)) {
+      return res.status(400).json({
+        error: `Amount exceeds the practice copay cap of $${maxDollars.toFixed(2)}`,
+      });
+    }
+
+    // Payment method: required. Must be a saved PM on this patient.
+    const paymentMethodId = String(req.body?.paymentMethodId || '').trim();
+    if (!paymentMethodId) {
+      return res.status(400).json({ error: 'paymentMethodId is required' });
+    }
+    const pms = await (storage as any).getPatientPaymentMethods?.(patient.id) ?? [];
+    const ownedPM = pms.find((pm: any) => pm.stripePaymentMethodId === paymentMethodId);
+    if (!ownedPM) {
+      return res.status(400).json({ error: 'Payment method does not belong to this patient' });
+    }
+
+    // Fire the charge. off_session + confirm means Stripe will either succeed
+    // or throw — we catch both and record the outcome on the appointment.
+    let paymentIntent;
+    try {
+      paymentIntent = await chargeCopay({
+        customerId: (patient as any).stripeCustomerId,
+        paymentMethodId,
+        amount: amountCents,
+        description: `Copay · Appointment #${appointmentId}`,
+        practiceId,
+        patientId: patient.id,
+        appointmentId,
+      });
+    } catch (err: any) {
+      // Record failed attempt so the pill shows "amber / failed" instead of
+      // silent nothing. The note captures the Stripe decline reason.
+      const declineMsg = err?.raw?.message || err?.message || 'Unknown Stripe error';
+      await storage.updateAppointment(appointmentId, {
+        copayStatus: 'failed',
+        copayPaymentMethodId: paymentMethodId,
+        copayNote: declineMsg.slice(0, 500),
+        copayUpdatedAt: new Date(),
+      } as any);
+      logger.warn('Copay charge failed', {
+        appointmentId,
+        patientId: patient.id,
+        error: declineMsg,
+      });
+      return res.status(402).json({ error: `Charge failed: ${declineMsg}` });
+    }
+
+    // If confirm returned `succeeded`, record it immediately. The webhook
+    // will also fire and be idempotent via copayStripeChargeId match.
+    const isSucceeded = paymentIntent.status === 'succeeded';
+    const updated = await storage.updateAppointment(appointmentId, {
+      copayStatus: isSucceeded ? 'collected' : 'pending',
+      copayExpected: (appointment as any).copayExpected ?? (amountCents / 100).toFixed(2),
+      copayCollected: isSucceeded ? (amountCents / 100).toFixed(2) : null,
+      copayPaymentMethodId: paymentMethodId,
+      copayStripeChargeId: paymentIntent.id,
+      copayUpdatedAt: new Date(),
+    } as any);
+
+    logger.info('Copay charge initiated', {
+      appointmentId,
+      patientId: patient.id,
+      amountCents,
+      stripeIntent: paymentIntent.id,
+      status: paymentIntent.status,
+    });
+
+    res.json({
+      appointment: updated,
+      paymentIntent: {
+        id: paymentIntent.id,
+        status: paymentIntent.status,
+        amount: paymentIntent.amount,
+      },
+    });
+  } catch (error) {
+    logger.error('Error charging copay', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to charge copay' });
   }
 });
 

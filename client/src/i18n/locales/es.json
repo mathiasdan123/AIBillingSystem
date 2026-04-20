@@ -820,6 +820,13 @@
     "chargeDisabledTooltip": "El cobro de tarjetas en recepción llegará en la próxima actualización.",
     "checkedInCopayPending": "Debe {{amount}}",
     "checkedInCopayCollected": "{{amount}} cobrado",
-    "checkedInCopaySkipped": "Copago omitido"
+    "checkedInCopaySkipped": "Copago omitido",
+    "chargeSuccessTitle": "Copago cobrado",
+    "chargeSuccessDesc": "Cobro registrado en la cita.",
+    "chargeErrorTitle": "Cobro fallido",
+    "chargeAndCheckIn": "Cobrar {{amount}} y registrar",
+    "amountOverrideLabel": "Ajustar",
+    "addCardHint": "Añada una tarjeta desde el registro del paciente para habilitar el cobro.",
+    "overCapWarn": "El monto supera el límite de la consulta ({{amount}})."
   }
 }
