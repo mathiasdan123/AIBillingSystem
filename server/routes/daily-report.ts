@@ -76,6 +76,14 @@ export interface DailyReportData {
     denialRate30Day: number;
     cleanClaimRate30Day: number;
   };
+  frontDesk: {
+    // Avg minutes between check-in and session-start for today's
+    // appointments that have both timestamps set. 0 with 0 appointments
+    // if the day has no eligible data.
+    avgWaitMinutes: number;
+    maxWaitMinutes: number;
+    appointments: number;
+  };
 }
 
 /**
@@ -394,6 +402,10 @@ async function buildDailyReport(practiceId: number, reportDate: Date): Promise<D
     ? Math.round((cleanClaims30 / totalSubmitted30) * 10000) / 100
     : 0;
 
+  // Front-desk wait time: avg minutes from check-in → session-start for
+  // today's eligible appointments.
+  const waitTimes = await storage.getWaitTimes(practiceId, dayStart, dayEnd);
+
   return {
     reportDate: dayStartStr,
     practiceName,
@@ -417,6 +429,11 @@ async function buildDailyReport(practiceId: number, reportDate: Date): Promise<D
       collectionRate30Day,
       denialRate30Day,
       cleanClaimRate30Day,
+    },
+    frontDesk: {
+      avgWaitMinutes: waitTimes.summary.avgMinutes,
+      maxWaitMinutes: waitTimes.summary.maxMinutes,
+      appointments: waitTimes.summary.appointments,
     },
   };
 }
@@ -500,6 +517,14 @@ function generateEmailHtml(report: DailyReportData): string {
       <tr style="background: #f9fafb;"><td style="padding: 6px 0; color: #374151;">Clean Claim Rate</td><td style="text-align: right; font-weight: 600;">${pct(report.keyMetrics.cleanClaimRate30Day)}</td></tr>
     </table>
 
+    <!-- Section E: Front Desk -->
+    <h2 style="font-size: 16px; color: #1e40af; border-bottom: 2px solid #dbeafe; padding-bottom: 8px;">Front Desk</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 24px;">
+      <tr><td style="padding: 6px 0; color: #374151;">Avg Wait (check-in → session start)</td><td style="text-align: right; font-weight: 600;">${report.frontDesk.appointments > 0 ? `${report.frontDesk.avgWaitMinutes} min` : '—'}</td></tr>
+      <tr style="background: #f9fafb;"><td style="padding: 6px 0; color: #374151;">Longest Wait Today</td><td style="text-align: right; font-weight: 600;">${report.frontDesk.appointments > 0 ? `${report.frontDesk.maxWaitMinutes} min` : '—'}</td></tr>
+      <tr><td style="padding: 6px 0; color: #374151;">Appointments Measured</td><td style="text-align: right; font-weight: 600;">${report.frontDesk.appointments}</td></tr>
+    </table>
+
     <div style="text-align: center; margin-top: 16px;">
       <a href="${appUrl}/daily-report" style="display: inline-block; background: #2563eb; color: #fff; padding: 10px 24px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 600;">View Full Report</a>
     </div>
@@ -552,6 +577,11 @@ KEY METRICS (30-Day Trailing)
 - Collection Rate: ${pct(report.keyMetrics.collectionRate30Day)}
 - Denial Rate: ${pct(report.keyMetrics.denialRate30Day)}
 - Clean Claim Rate: ${pct(report.keyMetrics.cleanClaimRate30Day)}
+
+FRONT DESK
+- Avg Wait (check-in → session start): ${report.frontDesk.appointments > 0 ? `${report.frontDesk.avgWaitMinutes} min` : '—'}
+- Longest Wait Today: ${report.frontDesk.appointments > 0 ? `${report.frontDesk.maxWaitMinutes} min` : '—'}
+- Appointments Measured: ${report.frontDesk.appointments}
 `;
 }
 

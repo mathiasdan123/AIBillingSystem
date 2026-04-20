@@ -95,6 +95,25 @@ router.get('/dashboard', isAuthenticated, async (req: any, res) => {
 // ==================== REVENUE ANALYTICS ====================
 
 // Revenue analytics
+// Wait time analytics (checked-in → session-started, in minutes)
+router.get('/wait-times', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const timeRange = (req.query.timeRange as string) || '30days';
+    const days = { '7days': 7, '14days': 14, '30days': 30, '90days': 90 }[timeRange] || 30;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+    const data = await storage.getWaitTimes(practiceId, startDate, endDate);
+    res.json(data);
+  } catch (error) {
+    logger.error('Error fetching wait-time analytics', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch wait-time analytics' });
+  }
+});
+
 router.get('/revenue', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);

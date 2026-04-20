@@ -375,6 +375,44 @@ export default function DailyReport() {
         </div>
       </div>
 
+      {/* Section E: Front Desk */}
+      <div>
+        <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+          <Clock className="w-5 h-5 text-amber-600" />
+          Front Desk
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <MetricCard
+            title="Avg Wait Today"
+            value={(report?.frontDesk?.appointments || 0) > 0
+              ? `${report?.frontDesk?.avgWaitMinutes || 0} min`
+              : '—'}
+            subtitle={`${report?.frontDesk?.appointments || 0} appointments measured`}
+            icon={<Clock className="w-5 h-5" />}
+            trend={(report?.frontDesk?.appointments || 0) === 0
+              ? 'neutral'
+              : (report?.frontDesk?.avgWaitMinutes || 0) <= 10 ? 'good' : 'bad'}
+          />
+          <MetricCard
+            title="Longest Wait Today"
+            value={(report?.frontDesk?.appointments || 0) > 0
+              ? `${report?.frontDesk?.maxWaitMinutes || 0} min`
+              : '—'}
+            icon={<AlertTriangle className="w-5 h-5" />}
+            trend={(report?.frontDesk?.appointments || 0) === 0
+              ? 'neutral'
+              : (report?.frontDesk?.maxWaitMinutes || 0) <= 20 ? 'good' : 'bad'}
+          />
+          <MetricCard
+            title="Appointments Measured"
+            value={String(report?.frontDesk?.appointments || 0)}
+            subtitle="Check-in → session start"
+            icon={<CheckCircle className="w-5 h-5" />}
+            trend="neutral"
+          />
+        </div>
+      </div>
+
       {/* Email Subscription (admin only) */}
       {isAdmin && (
         <Card className="print:hidden">
