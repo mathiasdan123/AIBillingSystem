@@ -5,6 +5,7 @@ import {
   patients,
   insurances,
   users,
+  appointments,
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, or } from "drizzle-orm";
@@ -652,5 +653,74 @@ export async function getRevenueByLocationAndTherapist(practiceId: number, start
     byTherapist,
     byLocation,
     byTherapistAndLocation,
+  };
+}
+
+// ==================== WAIT TIMES ====================
+
+/**
+ * Wait-time metrics. Wait = minutes between the front desk checking a
+ * patient in and the session actually starting. Only counts appointments
+ * that have BOTH checkedInAt and sessionStartedAt populated.
+ *
+ * Returns:
+ *   - summary: total qualifying appointments + overall avg/max (minutes)
+ *   - byDay: avg + max wait grouped by calendar day (YYYY-MM-DD string)
+ */
+export async function getWaitTimes(
+  practiceId: number,
+  startDate: Date,
+  endDate: Date
+): Promise<{
+  summary: { appointments: number; avgMinutes: number; maxMinutes: number };
+  byDay: { day: string; appointments: number; avgMinutes: number; maxMinutes: number }[];
+}> {
+  // Wait in minutes, computed via epoch-diff. Drizzle `sql` escapes the
+  // column references; we cast the result to numeric for aggregation.
+  const waitMinExpr = sql<number>`EXTRACT(EPOCH FROM (${appointments.sessionStartedAt} - ${appointments.checkedInAt})) / 60.0`;
+
+  const whereClause = and(
+    eq(appointments.practiceId, practiceId),
+    gte(appointments.checkedInAt, startDate),
+    lte(appointments.checkedInAt, endDate),
+    sql`${appointments.checkedInAt} IS NOT NULL`,
+    sql`${appointments.sessionStartedAt} IS NOT NULL`,
+  );
+
+  // Per-day rollup.
+  const byDayRows = await db
+    .select({
+      day: sql<string>`TO_CHAR(${appointments.checkedInAt}, 'YYYY-MM-DD')`,
+      appointments: count(),
+      avgMinutes: sql<number>`AVG(${waitMinExpr})`,
+      maxMinutes: sql<number>`MAX(${waitMinExpr})`,
+    })
+    .from(appointments)
+    .where(whereClause)
+    .groupBy(sql`TO_CHAR(${appointments.checkedInAt}, 'YYYY-MM-DD')`)
+    .orderBy(sql`TO_CHAR(${appointments.checkedInAt}, 'YYYY-MM-DD')`);
+
+  // Summary across the whole window.
+  const [summaryRow] = await db
+    .select({
+      appointments: count(),
+      avgMinutes: sql<number>`AVG(${waitMinExpr})`,
+      maxMinutes: sql<number>`MAX(${waitMinExpr})`,
+    })
+    .from(appointments)
+    .where(whereClause);
+
+  return {
+    summary: {
+      appointments: Number(summaryRow?.appointments) || 0,
+      avgMinutes: Math.round(Number(summaryRow?.avgMinutes) || 0),
+      maxMinutes: Math.round(Number(summaryRow?.maxMinutes) || 0),
+    },
+    byDay: byDayRows.map((row: any) => ({
+      day: row.day,
+      appointments: Number(row.appointments) || 0,
+      avgMinutes: Math.round(Number(row.avgMinutes) || 0),
+      maxMinutes: Math.round(Number(row.maxMinutes) || 0),
+    })),
   };
 }

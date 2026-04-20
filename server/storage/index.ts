@@ -461,6 +461,7 @@ export const storage = {
   getRevenueForecast: analyticsFns.getRevenueForecast,
   getTopReferringProviders: analyticsFns.getTopReferringProviders,
   getRevenueByLocationAndTherapist: analyticsFns.getRevenueByLocationAndTherapist,
+  getWaitTimes: analyticsFns.getWaitTimes,
 
   // ==================== AUDIT / COMPLIANCE / PORTAL / MESSAGING ====================
   createAuditLog: auditFns.createAuditLog,

@@ -44,6 +44,12 @@ export default function Analytics() {
     retry: false,
   }) as any;
 
+  const { data: waitTimeData } = useQuery({
+    queryKey: [`/api/analytics/wait-times?timeRange=30days`],
+    enabled: isAuthenticated,
+    retry: false,
+  }) as any;
+
   const { data: claimsByStatus, isLoading: claimsStatusLoading } = useQuery({
     queryKey: ['/api/analytics/claims-by-status'],
     enabled: isAuthenticated,
@@ -1008,6 +1014,66 @@ export default function Analytics() {
               )}
             </CardContent>
           </Card>
+
+          {/* Wait Time Trend */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Wait (30d)</CardTitle>
+                <Clock className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {waitTimeData?.summary?.appointments > 0 ? `${waitTimeData.summary.avgMinutes}m` : '—'}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {waitTimeData?.summary?.appointments || 0} appointments measured
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Longest Wait (30d)</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {waitTimeData?.summary?.appointments > 0 ? `${waitTimeData.summary.maxMinutes}m` : '—'}
+                </div>
+                <p className="text-xs text-muted-foreground">Check-in → session start</p>
+              </CardContent>
+            </Card>
+            <Card className="md:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Wait Time Trend</CardTitle>
+                <CardDescription className="text-xs">Avg minutes per day</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {waitTimeData?.byDay?.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={140}>
+                    <LineChart data={waitTimeData.byDay}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="day"
+                        tickFormatter={(v) => new Date(v).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        tick={{ fontSize: 11 }}
+                      />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        formatter={(v: number) => [`${v} min`, 'Avg wait']}
+                        labelFormatter={(v) => new Date(v as string).toLocaleDateString()}
+                      />
+                      <Line type="monotone" dataKey="avgMinutes" stroke="hsl(207, 90%, 54%)" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-[140px] flex items-center justify-center text-xs text-slate-500">
+                    No wait time data yet
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* ==================== AR AGING TAB ==================== */}
