@@ -338,4 +338,63 @@ describe('stediService', () => {
       expect(result.errors![0]).toContain('STEDI_API_KEY');
     });
   });
+
+  // Phase 4 — STC audit helpers used by the pre-appointment eligibility cron
+  // and consumed in the BenefitsVerificationCard UI banner.
+  describe('extractReturnedStcsFromRawStediResponse', () => {
+    it('returns empty array for null/undefined/empty input', async () => {
+      const { extractReturnedStcsFromRawStediResponse } = await import('../services/stediService');
+      expect(extractReturnedStcsFromRawStediResponse(null)).toEqual([]);
+      expect(extractReturnedStcsFromRawStediResponse(undefined)).toEqual([]);
+      expect(extractReturnedStcsFromRawStediResponse({})).toEqual([]);
+    });
+
+    it('extracts + dedupes STCs from benefitsInformation[].serviceTypeCodes', async () => {
+      const { extractReturnedStcsFromRawStediResponse } = await import('../services/stediService');
+      const raw = {
+        benefitsInformation: [
+          { code: '1', serviceTypeCodes: ['30', 'AE'] },
+          { code: '1', serviceTypeCodes: ['AE'] },
+          { code: '6', serviceTypeCodes: ['AD'] },
+        ],
+      };
+      const out = extractReturnedStcsFromRawStediResponse(raw).sort();
+      expect(out).toEqual(['30', 'AD', 'AE']);
+    });
+
+    it('also picks up coverageDetails[].serviceType for the stediService parser path', async () => {
+      const { extractReturnedStcsFromRawStediResponse } = await import('../services/stediService');
+      const raw = {
+        coverageDetails: [
+          { serviceType: 'AE', coverage: 'active', inNetwork: true },
+          { serviceType: '30', coverage: 'active', inNetwork: true },
+        ],
+      };
+      expect(extractReturnedStcsFromRawStediResponse(raw).sort()).toEqual(['30', 'AE']);
+    });
+  });
+
+  describe('isStcDowngrade', () => {
+    it('returns false when only generic (30) was requested', async () => {
+      const { isStcDowngrade } = await import('../services/stediService');
+      expect(isStcDowngrade(['30'], [])).toBe(false);
+      expect(isStcDowngrade(['30'], ['30'])).toBe(false);
+    });
+
+    it('returns true when therapy-specific asked but payer returned nothing', async () => {
+      const { isStcDowngrade } = await import('../services/stediService');
+      expect(isStcDowngrade(['AE', '30'], [])).toBe(true);
+    });
+
+    it('returns true when therapy-specific asked but payer answered only 30', async () => {
+      const { isStcDowngrade } = await import('../services/stediService');
+      expect(isStcDowngrade(['AE', '30'], ['30'])).toBe(true);
+    });
+
+    it('returns false when payer returned the specific STC we asked for', async () => {
+      const { isStcDowngrade } = await import('../services/stediService');
+      expect(isStcDowngrade(['AE', '30'], ['AE', '30'])).toBe(false);
+      expect(isStcDowngrade(['AD'], ['AD'])).toBe(false);
+    });
+  });
 });

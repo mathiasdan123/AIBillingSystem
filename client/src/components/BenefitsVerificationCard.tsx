@@ -220,6 +220,18 @@ export default function BenefitsVerificationCard({
   const effectiveDate = benefits?.effectiveDate || storedEligibility?.effectiveDate;
   const terminationDate = benefits?.terminationDate || storedEligibility?.terminationDate;
 
+  // Phase 4 — STC downgrade indicator. When the payer answered our
+  // therapy-specific STCs (AE/AD/AF/MH) with only generic (30), benefits
+  // shown here may not reflect therapy-specific limits. Surface this so the
+  // user knows to call the payer before relying on visit/copay numbers.
+  const stcDowngraded = Boolean(storedEligibility?.stcDowngraded);
+  const sentStcs: string[] = Array.isArray(storedEligibility?.serviceTypeCodes)
+    ? storedEligibility.serviceTypeCodes
+    : [];
+  const returnedStcs: string[] = Array.isArray(storedEligibility?.returnedServiceTypeCodes)
+    ? storedEligibility.returnedServiceTypeCodes
+    : [];
+
   if (!insuranceProvider) {
     return (
       <Card className="border-dashed">
@@ -308,6 +320,38 @@ export default function BenefitsVerificationCard({
           </div>
         ) : (
           <>
+            {/* Phase 4 — STC Downgrade Warning */}
+            {stcDowngraded && (
+              <div
+                className="p-3 bg-amber-50 rounded-lg border border-amber-200 flex items-start gap-2"
+                data-testid="banner-stc-downgrade"
+              >
+                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium text-amber-800">
+                      Generic coverage only
+                    </p>
+                    <Badge variant="outline" className="bg-white text-amber-700 border-amber-300 text-xs">
+                      STC downgraded
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-amber-700 mt-1">
+                    We asked the payer about{' '}
+                    <span className="font-mono font-medium">
+                      {sentStcs.filter((c) => c !== '30').join(', ') || 'therapy-specific'}
+                    </span>{' '}
+                    coverage, but they only answered with{' '}
+                    <span className="font-mono font-medium">
+                      {returnedStcs.length > 0 ? returnedStcs.join(', ') : 'generic (30)'}
+                    </span>
+                    . Visit limits and copays shown may not be therapy-specific — call the
+                    payer to confirm before relying on these numbers.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Authorization Required Banner */}
             {authRequired && (
               <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 flex items-start gap-2">
