@@ -33,6 +33,7 @@ import {
   Download,
   Upload,
   ClipboardList,
+  LogIn,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -77,6 +78,7 @@ export const navigationSections: NavSection[] = [
   {
     labelKey: 'nav.sectionScheduling',
     items: [
+      { nameKey: 'nav.frontDesk', href: '/front-desk', icon: LogIn, adminOnly: false },
       { nameKey: 'nav.waitlist', href: '/waitlist', icon: Clock, adminOnly: false },
       { nameKey: 'nav.onlineBooking', href: '/online-booking', icon: CalendarCheck, adminOnly: false },
       { nameKey: 'nav.insights', href: '/scheduling-insights', icon: CalendarClock, adminOnly: false },

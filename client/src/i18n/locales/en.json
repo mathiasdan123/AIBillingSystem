@@ -54,7 +54,8 @@
     "preferences": "Preferences",
     "productivity": "Productivity",
     "insights": "Insights",
-    "rates": "Rates"
+    "rates": "Rates",
+    "frontDesk": "Front Desk"
   },
   "schedulingInsights": {
     "title": "Scheduling Insights",
@@ -803,5 +804,32 @@
     "search": "Search pages, patients, claims…",
     "noResults": "No results found.",
     "pages": "Pages"
+  },
+  "frontDesk": {
+    "title": "Front Desk",
+    "subtitle": "Today's arrivals, waiting, in session, and checkouts",
+    "columnArriving": "Arriving",
+    "columnWaiting": "Waiting",
+    "columnInSession": "In Session",
+    "columnReadyToCheckOut": "Ready to Check Out",
+    "empty": "Nothing here",
+    "emptyArriving": "No one arriving in the next hour",
+    "emptyWaiting": "No patients waiting",
+    "emptyInSession": "No sessions in progress",
+    "emptyReadyToCheckOut": "No one ready to check out",
+    "checkIn": "Check in",
+    "startSession": "Start session",
+    "endSession": "End session",
+    "checkOut": "Check out",
+    "summary": {
+      "total": "Today",
+      "waiting": "Waiting",
+      "inSession": "In session",
+      "completed": "Completed"
+    },
+    "waitedForMin": "Waited {{minutes}}m",
+    "inSessionForMin": "In session {{minutes}}m",
+    "arrivingInMin": "Arrives in {{minutes}}m",
+    "overdueByMin": "{{minutes}}m late"
   }
 }
