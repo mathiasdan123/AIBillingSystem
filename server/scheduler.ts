@@ -704,6 +704,11 @@ export function startScheduler() {
                 const practice = await storage.getPractice(practiceId);
                 if (practice) {
                   const { StediAdapter } = await import('./payer-integrations/adapters/payers/StediAdapter');
+                  const {
+                    stcsForSpecialty,
+                    extractReturnedStcsFromRawStediResponse,
+                    isStcDowngrade,
+                  } = await import('./services/stediService');
                   const adapter = new StediAdapter(apiKey);
                   const result = await adapter.checkEligibility({
                     providerNpi: practice.npi || '',
@@ -714,9 +719,16 @@ export function startScheduler() {
                     memberId: patient.insuranceId || '',
                     groupNumber: patient.groupNumber || undefined,
                     payerName: insurance?.name || patient.insuranceProvider || '',
+                    practiceSpecialty: practice.specialty,
                   });
 
-                  // Save the eligibility check
+                  // Phase 4 — compute STC audit metadata so BenefitsSummary + the
+                  // claim scrubber can reason about coverage fidelity.
+                  const sentStcs = stcsForSpecialty(practice.specialty);
+                  const returnedStcs = extractReturnedStcsFromRawStediResponse(result.raw);
+                  const stcDowngraded = isStcDowngrade(sentStcs, returnedStcs);
+
+                  // Save the eligibility check (including STC audit fields)
                   await storage.createEligibilityCheck({
                     patientId: patient.id,
                     insuranceId: insurance?.id || null,
@@ -725,6 +737,9 @@ export function startScheduler() {
                     effectiveDate: result.eligibility.effectiveDate,
                     terminationDate: result.eligibility.terminationDate,
                     rawResponse: result.raw,
+                    serviceTypeCodes: sentStcs as any,
+                    returnedServiceTypeCodes: returnedStcs as any,
+                    stcDowngraded,
                   });
 
                   // Create alert if coverage is inactive
@@ -741,10 +756,30 @@ export function startScheduler() {
                     });
                   }
 
+                  // Phase 4 — alert on STC downgrade. Coverage is active but
+                  // the payer answered our therapy-specific question with
+                  // generic benefits. Receptionist should call the payer to
+                  // confirm therapy visit limits / copays before the session.
+                  if (result.eligibility.isEligible && stcDowngraded) {
+                    alertsToCreate.push({
+                      patientId: patient.id,
+                      practiceId,
+                      appointmentId: appointment.id ?? undefined,
+                      alertType: 'stc_downgraded',
+                      severity: 'warning',
+                      title: 'Generic coverage only — therapy STCs not verified',
+                      message: `${patient.firstName} ${patient.lastName}'s payer returned only generic benefits in response to ${practice.specialty || 'therapy-specific'} service type codes. Visit limits and copays shown may not reflect therapy-specific coverage. Consider calling the payer before the ${new Date(appointment.startTime).toLocaleString()} appointment.`,
+                      currentStatus: { sentStcs, returnedStcs },
+                    });
+                  }
+
                   logger.info('Pre-appointment eligibility checked', {
                     patientId: patient.id,
                     appointmentId: appointment.id,
                     eligible: result.eligibility.isEligible,
+                    sentStcs,
+                    returnedStcs,
+                    stcDowngraded,
                   });
                 }
               }

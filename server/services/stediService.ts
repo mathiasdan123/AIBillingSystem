@@ -141,6 +141,48 @@ export function stcsForSpecialty(specialty: string | null | undefined): string[]
   return SPECIALTY_TO_STC[key] ?? SPECIALTY_TO_STC.MIXED;
 }
 
+/**
+ * Phase 4 — extract the Service Type Codes the payer actually answered with
+ * from a raw Stedi 271 response. Stedi normalizes each benefit entry with a
+ * `serviceTypeCodes: string[]` field; we flatten + dedupe across all entries.
+ * Returns an empty array if nothing parseable is found (safe for callers).
+ */
+export function extractReturnedStcsFromRawStediResponse(raw: any): string[] {
+  if (!raw) return [];
+  const benefits: any[] = Array.isArray(raw.benefitsInformation)
+    ? raw.benefitsInformation
+    : [];
+  const set = new Set<string>();
+  for (const b of benefits) {
+    const codes = Array.isArray(b?.serviceTypeCodes) ? b.serviceTypeCodes : [];
+    for (const c of codes) {
+      if (typeof c === 'string' && c.length > 0) set.add(c);
+    }
+  }
+  // Fallback for clients that use the coverageDetails shape (stediService's
+  // own parser path) — also handle the `serviceType` singular field.
+  const coverage: any[] = Array.isArray(raw.coverageDetails) ? raw.coverageDetails : [];
+  for (const d of coverage) {
+    if (typeof d?.serviceType === 'string' && d.serviceType.length > 0) {
+      set.add(d.serviceType);
+    }
+  }
+  return Array.from(set);
+}
+
+/**
+ * Phase 4 — detect an STC "downgrade". We asked for therapy-specific STCs
+ * (e.g. [AE]=OT) but the payer only answered with generic [30]. Signals
+ * that benefits returned are generic, not therapy-specific, and the
+ * receptionist/biller should treat visit limits + copays with caution.
+ */
+export function isStcDowngrade(sent: string[], returned: string[]): boolean {
+  const therapySpecificRequested = sent.some((c) => c !== '30');
+  if (!therapySpecificRequested) return false;
+  if (returned.length === 0) return true;
+  return returned.every((c) => c === '30');
+}
+
 export interface EligibilityResponse {
   status: 'active' | 'inactive' | 'unknown';
   raw: any;
