@@ -18,7 +18,25 @@ interface AssistantStatus {
 const STORAGE_KEY = "ai-assistant-chat-history";
 const DISMISSED_KEY = "ai-assistant-dismissed";
 const GREETED_KEY = "ai-assistant-greeted";
-const GREETED_VERSION_KEY = "ai-assistant-greeted-version";
+// Per-user greeting tracking. Base key is namespaced with the user's id
+// at read/write time so every staff member on a shared browser gets
+// their own first-time greeting — critical for reception desks where
+// multiple people log in on the same computer.
+const GREETED_VERSION_KEY_BASE = "ai-assistant-greeted-version";
+
+/**
+ * Returns the localStorage key for tracking whether a specific user has
+ * seen the current greeting. Scoping by userId ensures a fresh hire logs
+ * in and gets greeted even if a previous user already dismissed Blanche
+ * on that same browser.
+ *
+ * Unauthenticated visitors fall back to the shared "anonymous" bucket so
+ * the pre-login pricing/features greeting still shows on first visit.
+ */
+function greetedKey(userId: string | undefined | null): string {
+  if (!userId) return `${GREETED_VERSION_KEY_BASE}:anonymous`;
+  return `${GREETED_VERSION_KEY_BASE}:${userId}`;
+}
 
 /**
  * Bump this whenever we want every user to see Blanche again (e.g. after
@@ -28,7 +46,9 @@ const GREETED_VERSION_KEY = "ai-assistant-greeted-version";
  * Convention: YYYY.MM.N where N increments per release in that month.
  * Keep the history in comments so we know what each bump corresponded to.
  *
- * 2026.04.1 — Stedi remediation Phases 1-5 + Help sidebar
+ * 2026.04.1 — Stedi remediation Phases 1-5 + Help sidebar + per-user
+ *             greeting tracking (every new staff member now gets greeted
+ *             on their first login, regardless of browser history).
  */
 const GREETING_VERSION = "2026.04.1";
 
@@ -56,7 +76,8 @@ function saveHistory(messages: ChatMessage[]) {
 }
 
 export default function AiBillingAssistant() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const userId = (user as any)?.id ?? null;
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -125,29 +146,32 @@ export default function AiBillingAssistant() {
   }, []);
 
   // Auto-show greeting popup. Shows when:
-  //   (a) user has never seen a greeting, OR
+  //   (a) this user has never seen a greeting on this browser, OR
   //   (b) the last greeting they saw was for an older GREETING_VERSION
   //       (bumped after feature launches worth announcing).
-  // Legacy GREETED_KEY + DISMISSED_KEY are ignored for new version bumps —
-  // once we're on versioning, they're effectively "<initial-release>".
+  // Key is scoped per-user so a new hire on a shared reception computer
+  // still sees the welcome even if a coworker already dismissed it.
+  // Legacy boolean GREETED_KEY/DISMISSED_KEY are ignored — users on those
+  // will see 2026.04.1 on their next load, which is the intended behavior.
   useEffect(() => {
-    const lastSeenVersion = localStorage.getItem(GREETED_VERSION_KEY);
+    const key = greetedKey(userId);
+    const lastSeenVersion = localStorage.getItem(key);
     if (lastSeenVersion !== GREETING_VERSION && !isOpen) {
       const timer = setTimeout(() => setShowGreeting(true), 1500);
       return () => clearTimeout(timer);
     }
-  }, [isAuthenticated, isOpen]);
+  }, [isAuthenticated, isOpen, userId]);
 
   const handleDismissGreeting = () => {
     setShowGreeting(false);
-    // Mark this version as seen so we don't pester them again until we
-    // bump GREETING_VERSION for the next announcement.
-    localStorage.setItem(GREETED_VERSION_KEY, GREETING_VERSION);
+    // Mark this version as seen for THIS user so we don't pester them again
+    // until we bump GREETING_VERSION for the next announcement.
+    localStorage.setItem(greetedKey(userId), GREETING_VERSION);
   };
 
   const handleAcceptGreeting = () => {
     setShowGreeting(false);
-    localStorage.setItem(GREETED_VERSION_KEY, GREETING_VERSION);
+    localStorage.setItem(greetedKey(userId), GREETING_VERSION);
     setIsOpen(true);
   };
 
@@ -379,7 +403,7 @@ export default function AiBillingAssistant() {
         <button
           onClick={() => {
             setShowGreeting(false);
-            localStorage.setItem(GREETED_VERSION_KEY, GREETING_VERSION);
+            localStorage.setItem(greetedKey(userId), GREETING_VERSION);
             setIsOpen(true);
           }}
           className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
