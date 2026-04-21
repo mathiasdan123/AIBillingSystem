@@ -39,6 +39,39 @@ const REJECTION_STATUSES = new Set(['denied', 'rejected']);
 const REJECTION_CLEARINGHOUSE_CODES = new Set(['A7', 'A8', 'F4', 'D0', 'D1']);
 
 /**
+ * Heuristic: does the denialReason string look like a missing-prior-auth
+ * rejection? Checks X12 CARC/RARC adjustment codes that specifically mean
+ * "auth missing" as well as common plain-text phrasings payers use in 277
+ * free-text fields. Case-insensitive. Deliberately conservative — a false
+ * positive is a mildly-misleading hint; better than a false negative that
+ * leaves the biller without guidance.
+ *
+ * CARC codes:
+ *   CO-62  — Payment adjusted for absence of precertification/authorization
+ *   CO-197 — Precertification/authorization absent
+ *   CO-198 — Precertification/authorization exceeded (less common as a
+ *            denial, often a warning, but still a prior-auth root cause)
+ */
+export function isLikelyPriorAuthDenial(denialReason: string | null | undefined): boolean {
+  if (!denialReason) return false;
+  const s = denialReason.toLowerCase();
+  // CARC code matches — accept "CO-197", "CO197", and "CO 197". Use word
+  // boundaries so "CO-62" doesn't match "CO-620".
+  if (/\bco[-\s]?0?62\b/.test(s)) return true;
+  if (/\bco[-\s]?197\b/.test(s)) return true;
+  if (/\bco[-\s]?198\b/.test(s)) return true;
+  // Plain-text phrasings — cover abbreviations + spacing variants.
+  if (/prior\s*auth/i.test(denialReason)) return true;
+  if (/pre[-\s]?cert/i.test(denialReason)) return true;
+  if (/pre[-\s]?auth/i.test(denialReason)) return true;
+  if (/authorization\s+(required|missing|absent|not\s+obtained)/i.test(denialReason)) {
+    return true;
+  }
+  if (/precertification/i.test(denialReason)) return true;
+  return false;
+}
+
+/**
  * Whether a claim is in a state where rejection hints are useful. Stays
  * conservative — we only build hints for clearly-terminal or clearly-rejected
  * states, not `held` or `pending`.
@@ -63,7 +96,10 @@ export function isClaimInRejectionState(claim: {
  * value into the response payload.
  */
 export function buildRejectionHints(args: {
-  claim: Pick<Claim, 'status' | 'clearinghouseStatus' | 'denialReason'>;
+  claim: Pick<
+    Claim,
+    'status' | 'clearinghouseStatus' | 'denialReason' | 'authorizationNumber'
+  >;
   lineItems: LineItemForHints[];
   eligibility: EligibilityCheck | null | undefined;
 }): string[] {
@@ -72,6 +108,22 @@ export function buildRejectionHints(args: {
   if (!isClaimInRejectionState(claim)) return [];
 
   const hints: string[] = [];
+
+  // ----- Hint: missing prior authorization -----
+  // Detects denials that smell like prior-auth problems (CO-62/197/198, or
+  // text patterns like "precert", "pre-auth", "prior authorization"). We
+  // only fire this when the claim itself has no authorizationNumber on
+  // file — if auth was already provided, a different root cause is more
+  // likely and this hint would be misleading.
+  if (isLikelyPriorAuthDenial(claim.denialReason) && !claim.authorizationNumber) {
+    hints.push(
+      `This denial looks like a missing prior-authorization issue. Most ` +
+        `payers allow a retroactive auth request within 30-90 days of the ` +
+        `date of service — call the payer to request one, add the auth ` +
+        `number to this claim, and resubmit. If retro auth is denied, the ` +
+        `next step is to file an appeal (the appeals tab can draft one for you).`
+    );
+  }
 
   // ----- Hint: STC downgrade mismatch -----
   // Eligibility told us the payer only verified generic benefits (STC 30),
