@@ -18,6 +18,19 @@ interface AssistantStatus {
 const STORAGE_KEY = "ai-assistant-chat-history";
 const DISMISSED_KEY = "ai-assistant-dismissed";
 const GREETED_KEY = "ai-assistant-greeted";
+const GREETED_VERSION_KEY = "ai-assistant-greeted-version";
+
+/**
+ * Bump this whenever we want every user to see Blanche again (e.g. after
+ * a feature launch worth announcing). Users who already dismissed a
+ * previous version will see the fresh greeting on their next page load.
+ *
+ * Convention: YYYY.MM.N where N increments per release in that month.
+ * Keep the history in comments so we know what each bump corresponded to.
+ *
+ * 2026.04.1 — Stedi remediation Phases 1-5 + Help sidebar
+ */
+const GREETING_VERSION = "2026.04.1";
 
 function loadHistory(): ChatMessage[] {
   try {
@@ -111,12 +124,15 @@ export default function AiBillingAssistant() {
     setPosition({ x: 0, y: 0 });
   }, []);
 
-  // Auto-show greeting popup on first visit (not the full chat — just a small intro)
+  // Auto-show greeting popup. Shows when:
+  //   (a) user has never seen a greeting, OR
+  //   (b) the last greeting they saw was for an older GREETING_VERSION
+  //       (bumped after feature launches worth announcing).
+  // Legacy GREETED_KEY + DISMISSED_KEY are ignored for new version bumps —
+  // once we're on versioning, they're effectively "<initial-release>".
   useEffect(() => {
-    const dismissed = localStorage.getItem(DISMISSED_KEY);
-    const greeted = localStorage.getItem(GREETED_KEY);
-    if (!dismissed && !greeted && !isOpen) {
-      // Show greeting after a short delay so the page loads first
+    const lastSeenVersion = localStorage.getItem(GREETED_VERSION_KEY);
+    if (lastSeenVersion !== GREETING_VERSION && !isOpen) {
       const timer = setTimeout(() => setShowGreeting(true), 1500);
       return () => clearTimeout(timer);
     }
@@ -124,12 +140,14 @@ export default function AiBillingAssistant() {
 
   const handleDismissGreeting = () => {
     setShowGreeting(false);
-    localStorage.setItem(DISMISSED_KEY, "true");
+    // Mark this version as seen so we don't pester them again until we
+    // bump GREETING_VERSION for the next announcement.
+    localStorage.setItem(GREETED_VERSION_KEY, GREETING_VERSION);
   };
 
   const handleAcceptGreeting = () => {
     setShowGreeting(false);
-    localStorage.setItem(GREETED_KEY, "true");
+    localStorage.setItem(GREETED_VERSION_KEY, GREETING_VERSION);
     setIsOpen(true);
   };
 
@@ -327,6 +345,9 @@ export default function AiBillingAssistant() {
                   : "I can answer questions about TherapyBill AI. Want to know about pricing, features, or how we handle HIPAA compliance?"
                 }
               </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-500 mt-2 italic">
+                You can always find me here in the bottom-right whenever you need me — just click my bubble.
+              </p>
               <div className="flex gap-2 mt-3">
                 <button
                   onClick={handleAcceptGreeting}
@@ -358,7 +379,7 @@ export default function AiBillingAssistant() {
         <button
           onClick={() => {
             setShowGreeting(false);
-            localStorage.setItem(GREETED_KEY, "true");
+            localStorage.setItem(GREETED_VERSION_KEY, GREETING_VERSION);
             setIsOpen(true);
           }}
           className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
