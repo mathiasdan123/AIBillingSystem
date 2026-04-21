@@ -33,6 +33,7 @@
     "openMenu": "Abrir menu",
     "closeMenu": "Cerrar menu",
     "logOut": "Cerrar sesion",
+    "help": "Ayuda",
     "locations": "Ubicaciones",
     "reportBuilder": "Constructor de Reportes",
     "aiInsights": "Perspectivas IA",
@@ -56,6 +57,14 @@
     "insights": "Información",
     "rates": "Tarifas",
     "frontDesk": "Recepción"
+  },
+  "help": {
+    "title": "Centro de Ayuda",
+    "description": "Respuestas rápidas a preguntas frecuentes. Busque o navegue por tema.",
+    "searchPlaceholder": "Buscar ayuda…",
+    "noResults": "Sin resultados. Intente otra búsqueda.",
+    "resultCount": "{{count}} resultado(s)",
+    "stillStuck": "¿Sigue atascado? Escriba a nuestro equipo:"
   },
   "therapistProductivity": {
     "title": "Productividad del Terapeuta",

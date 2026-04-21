@@ -29,6 +29,7 @@ import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { openCommandPalette } from "@/components/CommandPalette";
+import HelpSidebar from "@/components/HelpSidebar";
 import {
   topLevelItems,
   navigationSections,
@@ -589,6 +590,7 @@ export default function SimpleNavigation() {
             >
               {(() => { const ThemeIcon = themeIcon; return <ThemeIcon className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />; })()}
             </Button>
+            <HelpSidebar />
             <Button
               variant="ghost"
               size="sm"
