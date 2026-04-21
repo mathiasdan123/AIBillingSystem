@@ -33,6 +33,7 @@
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
     "logOut": "Log out",
+    "help": "Help",
     "locations": "Locations",
     "reportBuilder": "Report Builder",
     "aiInsights": "AI Insights",
@@ -57,6 +58,14 @@
     "insights": "Insights",
     "rates": "Rates",
     "frontDesk": "Front Desk"
+  },
+  "help": {
+    "title": "Help Center",
+    "description": "Quick answers to common questions. Search or browse by topic.",
+    "searchPlaceholder": "Search help…",
+    "noResults": "No results. Try a different search.",
+    "resultCount": "{{count}} result(s)",
+    "stillStuck": "Still stuck? Email our team:"
   },
   "schedulingInsights": {
     "title": "Scheduling Insights",
