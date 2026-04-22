@@ -40,6 +40,13 @@ export const users = pgTable("users", {
   credentials: varchar("credentials"), // e.g., "OTR/L", "PT, DPT", "MS, CCC-SLP"
   licenseNumber: varchar("license_number"),
   npiNumber: varchar("npi_number"),
+  // Phase 6 Slice 2 — NUCC taxonomy override per provider. Wins over
+  // practice.taxonomyCode on 837P claims rendered by this user. Leave
+  // null to inherit the practice-level default (derived from
+  // practice.specialty if practice.taxonomyCode is also null).
+  // Use case: mixed-discipline practices where therapists file under
+  // different taxonomies (OT + PT + SLP on same practice).
+  taxonomyCode: varchar("taxonomy_code", { length: 20 }),
   digitalSignature: text("digital_signature"), // Base64 encoded signature image
   signatureUploadedAt: timestamp("signature_uploaded_at"),
   // Supervision fields (for supervised therapist co-signing workflow)

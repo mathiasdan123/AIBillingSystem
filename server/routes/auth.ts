@@ -469,6 +469,7 @@ router.get('/therapists', isAuthenticated, async (req: any, res) => {
       credentials: t.credentials,
       licenseNumber: t.licenseNumber,
       npiNumber: t.npiNumber,
+      taxonomyCode: (t as any).taxonomyCode ?? null,
       hasSignature: !!t.digitalSignature,
       signatureUploadedAt: t.signatureUploadedAt,
       role: t.role,
@@ -492,12 +493,13 @@ router.patch('/therapists/:id', isAuthenticated, async (req: any, res) => {
       return res.status(403).json({ message: "Can only edit your own profile" });
     }
 
-    const { credentials, licenseNumber, npiNumber, digitalSignature } = req.body;
+    const { credentials, licenseNumber, npiNumber, taxonomyCode, digitalSignature } = req.body;
 
     const updates: any = {};
     if (credentials !== undefined) updates.credentials = credentials;
     if (licenseNumber !== undefined) updates.licenseNumber = licenseNumber;
     if (npiNumber !== undefined) updates.npiNumber = npiNumber;
+    if (taxonomyCode !== undefined) updates.taxonomyCode = taxonomyCode || null;
     if (digitalSignature !== undefined) {
       updates.digitalSignature = digitalSignature;
       updates.signatureUploadedAt = new Date();

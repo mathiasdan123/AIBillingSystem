@@ -28,6 +28,30 @@ import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
+
+/**
+ * Phase 6 Slice 2 — resolve the rendering therapist's taxonomy for a claim.
+ * Looks up the treatment session tied to the claim (if any), then the
+ * therapist user on that session, then returns their `taxonomyCode` or
+ * null. The null case lets the downstream resolver fall through to the
+ * practice-level default.
+ *
+ * Swallows errors so a missing session/therapist never blocks claim
+ * submission — we just default to practice-level taxonomy.
+ */
+async function resolveRenderingTherapistTaxonomy(
+  claim: { sessionId?: number | null }
+): Promise<string | null> {
+  try {
+    if (!claim.sessionId) return null;
+    const session: any = await storage.getTreatmentSession?.(claim.sessionId);
+    if (!session?.therapistId) return null;
+    const therapist: any = await storage.getUser?.(session.therapistId);
+    return therapist?.taxonomyCode ?? null;
+  } catch {
+    return null;
+  }
+}
 import { predictDenial } from '../services/aiDenialPredictor';
 import { recordClaimOutcome } from '../services/aiLearningService';
 import { sendEmail } from '../services/emailService';
@@ -879,9 +903,12 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
               address: practiceAddr,
               // Phase 6 — let build837P resolve from practice. Was hardcoded
               // 101YM0800X (Mental Health Counselor) for every claim regardless
-              // of discipline — soft-deny risk on therapy CPTs.
+              // of discipline — soft-deny risk on therapy CPTs. Slice 2 adds
+              // renderingProviderTaxonomy which overrides the practice default
+              // for the rendering block only (supports mixed-discipline staff).
               practiceTaxonomy: (practice as any)?.taxonomyCode ?? null,
               practiceSpecialty: (practice as any)?.specialty ?? null,
+              renderingProviderTaxonomy: await resolveRenderingTherapistTaxonomy(claim),
             },
             payer: {
               id: batchPayerRouting.tradingPartnerId,
@@ -1051,8 +1078,11 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
         // Phase 6 — resolver falls back to practice.taxonomyCode or a
         // specialty-based default (e.g. OT → 225X00000X). No regression
         // for unconfigured practices (keeps 101YM0800X as final fallback).
+        // Slice 2 — renderingProviderTaxonomy overrides practice for the
+        // rendering block only (from treatment session's therapist).
         practiceTaxonomy: (practice as any)?.taxonomyCode ?? null,
         practiceSpecialty: (practice as any)?.specialty ?? null,
+        renderingProviderTaxonomy: await resolveRenderingTherapistTaxonomy(claim),
       },
       payer: {
         id: (insurance as any).payerId || (insurance as any).payerCode || '',
@@ -1256,9 +1286,12 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
             organizationName: practice.name,
             address: practiceAddr,
             // Phase 6 — resolver falls back to practice.taxonomyCode or a
-            // specialty-based default. See routes/claims.ts first provider block.
+            // specialty-based default. Slice 2 — renderingProviderTaxonomy
+            // from the claim's session therapist takes precedence on the
+            // rendering block only. See routes/claims.ts first provider block.
             practiceTaxonomy: (practice as any)?.taxonomyCode ?? null,
             practiceSpecialty: (practice as any)?.specialty ?? null,
+            renderingProviderTaxonomy: await resolveRenderingTherapistTaxonomy(claim),
           },
           payer: {
             id: payerRouting.tradingPartnerId,
