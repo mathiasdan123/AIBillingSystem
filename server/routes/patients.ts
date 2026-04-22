@@ -1305,7 +1305,7 @@ router.post('/:id/insurance-data/refresh', isAuthenticated, requirePatientConsen
 
     const creds = await storage.getPayerCredentials(patient.practiceId, 'stedi');
     if (!creds) {
-      return res.status(400).json({ message: 'Stedi not configured' });
+      return res.status(400).json({ message: 'Clearinghouse not configured' });
     }
 
     const { StediAdapter } = await import('../payer-integrations/adapters/payers/StediAdapter');

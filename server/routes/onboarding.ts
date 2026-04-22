@@ -213,8 +213,8 @@ router.get('/checklist', isAuthenticated, async (req: any, res: Response) => {
       },
       {
         id: 'stedi',
-        label: 'Stedi API key configured',
-        description: 'Connect to Stedi for electronic claims',
+        label: 'Clearinghouse connected',
+        description: 'Electronic claim submission is ready',
         completed: hasStediKey,
         required: false,
       },

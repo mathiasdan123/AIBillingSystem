@@ -132,7 +132,7 @@ function ClearinghouseTab() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Connection successful", description: "Stedi API key is valid" });
+      toast({ title: "Connection successful", description: "Clearinghouse API key is valid" });
     },
     onError: () => {
       toast({ title: "Connection failed", description: "Could not verify the API key", variant: "destructive" });
@@ -159,8 +159,8 @@ function ClearinghouseTab() {
               </h3>
               <p className={`text-sm mt-1 ${isSandbox ? "text-amber-700" : "text-green-700"}`}>
                 {isSandbox
-                  ? "Claims are sent to the Stedi test environment. No real submissions to insurance companies."
-                  : "Claims are sent to real insurance companies via Stedi production API."}
+                  ? "Claims are sent to a test environment. No real submissions to insurance companies."
+                  : "Claims are sent to real insurance companies through our clearinghouse."}
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -176,34 +176,38 @@ function ClearinghouseTab() {
         </CardContent>
       </Card>
 
-      {/* Stedi API Key */}
+      {/* Advanced: Custom Clearinghouse Credentials — only relevant for
+          practices that already have a clearinghouse account elsewhere and
+          want to bring their own credentials. Most practices should leave
+          this blank and use the platform's managed clearinghouse. */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center">
             <Key className="w-5 h-5 mr-2" />
-            Stedi Clearinghouse Credentials
+            Advanced: Custom Clearinghouse Credentials
           </CardTitle>
           <CardDescription>
-            Enter your Stedi production API key to submit real claims. Get your key at{" "}
-            <a href="https://www.stedi.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">stedi.com</a>
+            Optional — only fill these in if you already have your own clearinghouse account and
+            want to use those credentials instead of our managed integration. Most practices should
+            leave these blank.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label>Stedi API Key</Label>
+            <Label>Clearinghouse API Key</Label>
             <div className="flex gap-2 mt-1">
               <Input
                 type="password"
-                placeholder={practice?.stediApiKey ? "Key saved (enter new to replace)" : "Enter your Stedi API key"}
+                placeholder={practice?.stediApiKey ? "Key saved (enter new to replace)" : "Leave blank to use our managed clearinghouse"}
                 value={stediKey}
                 onChange={(e) => setStediKey(e.target.value)}
               />
             </div>
           </div>
           <div>
-            <Label>Stedi Partner ID (optional)</Label>
+            <Label>Clearinghouse Partner ID (optional)</Label>
             <Input
-              placeholder="Your Stedi partner ID"
+              placeholder="Only needed if you're bringing your own credentials"
               value={partnerId}
               onChange={(e) => setPartnerId(e.target.value)}
             />
@@ -235,7 +239,7 @@ function ClearinghouseTab() {
             <div className="text-sm text-slate-600 space-y-2">
               <p><strong>New practices start in sandbox mode.</strong> All eligibility checks and claim submissions go to a test environment — nothing is sent to real insurance companies.</p>
               <p>When you're ready to submit real claims, toggle the switch above to <strong>Live Mode</strong>. Your claims will be processed through our clearinghouse.</p>
-              <p><strong>Advanced:</strong> If you have your own Stedi account, you can enter your API key above to use your own clearinghouse credentials instead of ours.</p>
+              <p><strong>Advanced:</strong> If you have your own clearinghouse account elsewhere, you can enter those credentials above to use them instead of our managed integration.</p>
             </div>
           </div>
         </CardContent>
@@ -1513,7 +1517,7 @@ export default function Settings() {
                               value={field.value ?? ""}
                             >
                               <SelectTrigger>
-                                <SelectValue placeholder="Select specialty (drives Stedi eligibility STCs)" />
+                                <SelectValue placeholder="Select specialty (drives eligibility checks)" />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="OT">Occupational Therapy (OT)</SelectItem>
@@ -1525,7 +1529,7 @@ export default function Settings() {
                             </Select>
                           </FormControl>
                           <p className="text-xs text-muted-foreground mt-1">
-                            Determines which Service Type Codes are sent on eligibility checks (270) to Stedi. Leave as Mixed if unsure — payers tolerate multiple STCs.
+                            Determines which Service Type Codes are sent on eligibility checks (270) to payers. Leave as Mixed if unsure — payers tolerate multiple STCs.
                           </p>
                           <FormMessage />
                         </FormItem>
@@ -1566,7 +1570,7 @@ export default function Settings() {
                           <div className="space-y-0.5 pr-4">
                             <FormLabel className="text-base">Strict STC Validation</FormLabel>
                             <p className="text-xs text-muted-foreground">
-                              When ON: claim scrubber <strong>blocks</strong> submission if a line-item's CPT therapy category doesn't match the STCs returned by the patient's most recent eligibility check (within 60 days), and the verified STCs are included in the 837P claim envelope. When OFF (default): scrubber only surfaces a <strong>warning</strong> and claims submit as today. Turn this on once you've confirmed Stedi returns the categories you bill for — leaving it off is safer during rollout.
+                              When ON: claim scrubber <strong>blocks</strong> submission if a line-item's CPT therapy category doesn't match the STCs returned by the patient's most recent eligibility check (within 60 days), and the verified STCs are included in the 837P claim envelope. When OFF (default): scrubber only surfaces a <strong>warning</strong> and claims submit as today. Turn this on once you've confirmed payers return the categories you bill for — leaving it off is safer during rollout.
                             </p>
                           </div>
                           <FormControl>

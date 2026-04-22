@@ -31,7 +31,7 @@ export const helpSections: HelpSection[] = [
       {
         question: 'What do I do first?',
         answer:
-          'Settings → Practice Details → fill out practice name, NPI, Tax ID, and therapy specialty. Then Settings → Clearinghouse for your Stedi API key. Then import patients.',
+          'Settings → Practice Details → fill out practice name, NPI, Tax ID, and therapy specialty. Then start adding patients. Claim submission is already wired up through our managed clearinghouse — no extra setup needed.',
       },
       {
         question: 'Is my data HIPAA-compliant?',
@@ -86,7 +86,7 @@ export const helpSections: HelpSection[] = [
       {
         question: 'Eligibility is timing out. What do I do?',
         answer:
-          'Usually a Stedi or payer hiccup. Wait 5-10 minutes and retry. If a specific payer is consistently slow, let us know and we\'ll investigate.',
+          'Usually a clearinghouse or payer hiccup. Wait 5-10 minutes and retry. If a specific payer is consistently slow, let us know and we\'ll investigate.',
       },
     ],
   },
@@ -183,7 +183,7 @@ export const helpSections: HelpSection[] = [
       {
         question: 'How do payments come in?',
         answer:
-          'ERAs (835s) auto-post when Stedi receives them. Patient payments via Stripe auto-post to the patient balance.',
+          'ERAs (835s) auto-post when our clearinghouse receives them. Patient payments via Stripe auto-post to the patient balance.',
       },
       {
         question: 'How do I post a check I received in the mail?',
@@ -316,9 +316,9 @@ export const helpSections: HelpSection[] = [
         answer: 'Per-provider/month flat fee. No per-claim charges. Contact sales for specifics.',
       },
       {
-        question: 'Is Stedi included?',
+        question: 'Is clearinghouse access included?',
         answer:
-          'Eligibility checks are included up to a fair-use limit. Claims submission and ERA retrieval have per-transaction pass-through costs (typically $0.10-0.50).',
+          'Yes — eligibility checks, claim submission, and ERA retrieval are all handled through our managed clearinghouse. Eligibility is included up to a fair-use limit; claims + ERAs may have small per-transaction pass-through costs (typically $0.10-0.50).',
       },
       {
         question: 'What\'s the contract length?',
