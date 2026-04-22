@@ -1053,13 +1053,17 @@ export async function getDetailedBenefits(
   const insuranceName = (patient.insuranceProvider || '').toLowerCase();
   const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
 
-  // Run eligibility check with multiple service type codes for therapy-specific data
-  // 30 = Health Benefit Plan Coverage
-  // A7 = Occupational Therapy
-  // A8 = Physical Therapy
-  // A9 = Speech Therapy
-  // MH = Mental Health
-  const serviceTypeCodes = ['30', 'A7', 'A8', 'A9', 'MH'];
+  // Run eligibility check with multiple service type codes for therapy-specific data.
+  // Uses the X12-spec therapy STCs — prior to this fix the list used A7/A8/A9
+  // (which aren't standard codes), so payers silently ignored them and returned
+  // only generic coverage. With AE/AD/AF the payer actually answers about OT/PT/ST.
+  //
+  //   30 = Health Benefit Plan Coverage (generic fallback)
+  //   AE = Occupational Therapy
+  //   AD = Physical Therapy
+  //   AF = Speech Therapy
+  //   MH = Mental Health
+  const serviceTypeCodes = ['30', 'AE', 'AD', 'AF', 'MH'];
 
   let stediKey;
   try {
@@ -1168,11 +1172,14 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
     result.effectiveDate = data.planDateInformation?.planBegin;
     result.terminationDate = data.planDateInformation?.planEnd;
 
-    // Service type code to therapy type mapping
+    // Service type code to therapy type mapping.
+    // Canonical X12 codes: AE=OT, AD=PT, AF=ST, MH=Mental Health.
+    // Legacy A7/A8/A9 aliases kept so we still parse responses from any payer
+    // that happens to echo back the non-standard codes we used to send.
     const serviceTypeToTherapy: Record<string, keyof NonNullable<DetailedBenefits['therapyVisits']>> = {
-      'A7': 'ot', 'OT': 'ot',
-      'A8': 'pt', 'PT': 'pt',
-      'A9': 'st', 'ST': 'st',
+      'AE': 'ot', 'A7': 'ot', 'OT': 'ot',
+      'AD': 'pt', 'A8': 'pt', 'PT': 'pt',
+      'AF': 'st', 'A9': 'st', 'ST': 'st',
       'MH': 'mentalHealth',
     };
 
