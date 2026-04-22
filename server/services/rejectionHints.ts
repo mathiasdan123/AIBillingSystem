@@ -24,13 +24,16 @@ export interface LineItemForHints {
 
 // STC → therapy category (mirror of the scrubber's map — kept in sync by
 // hand because these two values are the only place this map shows up).
+// Only X12-spec codes appear here. The legacy A7/A8/A9 aliases were
+// removed after the Phase 6 audit — we never send them anymore (fixed
+// in getDetailedBenefits) so a returned STC in those shapes would never
+// originate from us. The stediService response parser still accepts
+// them as a defense-in-depth alias in case a specific payer happens to
+// echo back the old codes.
 const STC_TO_CATEGORY: Record<string, string> = {
   AE: 'OT',
-  A7: 'OT',
   AD: 'PT',
-  A8: 'PT',
   AF: 'ST',
-  A9: 'ST',
   MH: 'MH',
   '30': 'GENERAL',
 };
