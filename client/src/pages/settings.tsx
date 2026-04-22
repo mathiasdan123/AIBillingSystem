@@ -1419,6 +1419,44 @@ export default function Settings() {
               <CardContent>
                 <Form {...form}>
                   <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                    {/* Sticky save bar — appears when the form is dirty so
+                        users don't have to scroll to the bottom of a long
+                        form to save. Pins to the bottom of the viewport
+                        inside the scroll container. */}
+                    {form.formState.isDirty && (
+                      <div
+                        className="sticky top-2 z-30 flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 shadow-sm"
+                        data-testid="sticky-save-bar"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" aria-hidden="true" />
+                          <p className="text-sm text-amber-900 dark:text-amber-100">
+                            You have unsaved changes.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => form.reset()}
+                            disabled={updatePracticeMutation.isPending}
+                            data-testid="button-discard-changes"
+                          >
+                            Discard
+                          </Button>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            disabled={updatePracticeMutation.isPending}
+                            className="bg-medical-blue-500 hover:bg-medical-blue-600"
+                            data-testid="button-sticky-save"
+                          >
+                            {updatePracticeMutation.isPending ? "Saving..." : "Save Changes"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     <FormField
                       control={form.control}
                       name="name"
