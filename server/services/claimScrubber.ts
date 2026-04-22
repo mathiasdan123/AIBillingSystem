@@ -158,14 +158,15 @@ export async function scrubClaim(claimId: number, practiceId: number): Promise<S
         if (eligibility && freshEnough) {
           const sentStcs = (eligibility as any).serviceTypeCodes as string[] | null;
           if (Array.isArray(sentStcs) && sentStcs.length > 0) {
-            // Map STC → therapyCategory for comparison.
+            // Map STC → therapyCategory for comparison. Only X12-spec
+            // codes here — the non-standard A7/A8/A9 aliases were
+            // removed after the Phase 6 audit because we never send
+            // them anymore (the sentStcs array we're reading here
+            // originates from us, not the payer).
             const stcToCategory: Record<string, string> = {
               AE: 'OT',
-              A7: 'OT',     // legacy/alternate
               AD: 'PT',
-              A8: 'PT',     // legacy/alternate
               AF: 'ST',
-              A9: 'ST',
               MH: 'MH',
               '30': 'GENERAL', // generic — matches everything
             };

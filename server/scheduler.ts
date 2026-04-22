@@ -643,8 +643,11 @@ export function startScheduler() {
   });
   scheduledTasks.set('appointmentReminders', appointmentReminderTask);
 
-  // Pre-appointment eligibility check - runs every 6 hours
-  const preAppointmentEligibilityTask = cron.schedule('0 */6 * * *', async () => {
+  // Pre-appointment eligibility check. Runs every 6 hours AND once at
+  // startup (Phase 6 P1 cleanup) so freshly-deployed instances back-check
+  // upcoming appointments instead of waiting up to 6h for the first tick.
+  // Extracted as a local const so cron + setTimeout share the same body.
+  const runPreAppointmentEligibility = async () => {
     try {
       logger.info('Starting pre-appointment eligibility verification');
 
@@ -807,10 +810,24 @@ export function startScheduler() {
     } catch (error: any) {
       logger.error('Pre-appointment eligibility task failed', { error: error.message });
     }
-  }, {
-    timezone: process.env.TIMEZONE || 'America/New_York',
-  });
+  };
+
+  const preAppointmentEligibilityTask = cron.schedule(
+    '0 */6 * * *',
+    runPreAppointmentEligibility,
+    { timezone: process.env.TIMEZONE || 'America/New_York' }
+  );
   scheduledTasks.set('preAppointmentEligibility', preAppointmentEligibilityTask);
+
+  // Startup back-check — fire the same logic once on boot, after a small
+  // delay so DB connections are warm before the fan-out.
+  setTimeout(() => {
+    runPreAppointmentEligibility().catch((err: any) => {
+      logger.error('Startup pre-appointment eligibility check failed', {
+        error: err?.message ?? String(err),
+      });
+    });
+  }, 30_000);
 
   // Automated review requests - runs daily at 10:00 AM
   // Sends review requests to patients 24-48 hours after completed appointments
