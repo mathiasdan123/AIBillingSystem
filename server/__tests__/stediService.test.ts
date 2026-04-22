@@ -374,6 +374,43 @@ describe('stediService', () => {
     });
   });
 
+  describe('resolveTaxonomyCode', () => {
+    it('prefers explicit practice.taxonomyCode over specialty default', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(resolveTaxonomyCode({ taxonomyCode: '225XP0019X', specialty: 'OT' })).toBe('225XP0019X');
+    });
+
+    it('falls back to specialty-based default when taxonomyCode is null', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(resolveTaxonomyCode({ taxonomyCode: null, specialty: 'OT' })).toBe('225X00000X');
+      expect(resolveTaxonomyCode({ taxonomyCode: null, specialty: 'PT' })).toBe('225100000X');
+      expect(resolveTaxonomyCode({ taxonomyCode: null, specialty: 'ST' })).toBe('235Z00000X');
+      expect(resolveTaxonomyCode({ taxonomyCode: null, specialty: 'MH' })).toBe('101YM0800X');
+    });
+
+    it('handles lowercase specialty input', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(resolveTaxonomyCode({ taxonomyCode: null, specialty: 'ot' })).toBe('225X00000X');
+    });
+
+    it('MIXED specialty keeps legacy default to preserve pre-Phase-6 behavior', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(resolveTaxonomyCode({ taxonomyCode: null, specialty: 'MIXED' })).toBe('101YM0800X');
+    });
+
+    it('falls back to legacy default when practice is null/undefined/empty', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(resolveTaxonomyCode(null)).toBe('101YM0800X');
+      expect(resolveTaxonomyCode(undefined)).toBe('101YM0800X');
+      expect(resolveTaxonomyCode({})).toBe('101YM0800X');
+    });
+
+    it('empty taxonomyCode string falls through to specialty default', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(resolveTaxonomyCode({ taxonomyCode: '', specialty: 'PT' })).toBe('225100000X');
+    });
+  });
+
   describe('isStcDowngrade', () => {
     it('returns false when only generic (30) was requested', async () => {
       const { isStcDowngrade } = await import('../services/stediService');

@@ -877,7 +877,11 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
               taxId: practice.taxId || '',
               organizationName: practice.name,
               address: practiceAddr,
-              taxonomy: '101YM0800X',
+              // Phase 6 — let build837P resolve from practice. Was hardcoded
+              // 101YM0800X (Mental Health Counselor) for every claim regardless
+              // of discipline — soft-deny risk on therapy CPTs.
+              practiceTaxonomy: (practice as any)?.taxonomyCode ?? null,
+              practiceSpecialty: (practice as any)?.specialty ?? null,
             },
             payer: {
               id: batchPayerRouting.tradingPartnerId,
@@ -1044,7 +1048,11 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
         taxId: practice.taxId || '',
         organizationName: practice.name,
         address: practiceAddr,
-        taxonomy: '101YM0800X',
+        // Phase 6 — resolver falls back to practice.taxonomyCode or a
+        // specialty-based default (e.g. OT → 225X00000X). No regression
+        // for unconfigured practices (keeps 101YM0800X as final fallback).
+        practiceTaxonomy: (practice as any)?.taxonomyCode ?? null,
+        practiceSpecialty: (practice as any)?.specialty ?? null,
       },
       payer: {
         id: (insurance as any).payerId || (insurance as any).payerCode || '',
@@ -1247,7 +1255,10 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
             taxId: practice.taxId || '',
             organizationName: practice.name,
             address: practiceAddr,
-            taxonomy: '101YM0800X',
+            // Phase 6 — resolver falls back to practice.taxonomyCode or a
+            // specialty-based default. See routes/claims.ts first provider block.
+            practiceTaxonomy: (practice as any)?.taxonomyCode ?? null,
+            practiceSpecialty: (practice as any)?.specialty ?? null,
           },
           payer: {
             id: payerRouting.tradingPartnerId,

@@ -142,6 +142,48 @@ export function stcsForSpecialty(specialty: string | null | undefined): string[]
 }
 
 /**
+ * Phase 6 — NUCC provider taxonomy defaults per therapy specialty.
+ * Used when a practice has not explicitly set `practice.taxonomyCode`.
+ * Codes sourced from the current NUCC Health Care Provider Taxonomy
+ * (non-pediatric-specific so they match any therapist age focus).
+ *
+ *   OT  → 225X00000X (Occupational Therapist)
+ *   PT  → 225100000X (Physical Therapist)
+ *   ST  → 235Z00000X (Speech-Language Pathologist)
+ *   MH  → 101YM0800X (Mental Health Counselor)
+ *   MIXED → 101YM0800X (preserves pre-Phase-6 behavior — practices that
+ *           set specialty=MIXED need to set taxonomyCode explicitly
+ *           because there's no "mixed" NUCC code.)
+ */
+const DEFAULT_TAXONOMY_BY_SPECIALTY: Record<PracticeSpecialty, string> = {
+  OT: '225X00000X',
+  PT: '225100000X',
+  ST: '235Z00000X',
+  MH: '101YM0800X',
+  MIXED: '101YM0800X',
+};
+
+/**
+ * Resolve the NUCC taxonomy code for an outgoing 837P claim. Preference:
+ *   1. Explicit `practice.taxonomyCode` (admin-set override)
+ *   2. Specialty-based default from DEFAULT_TAXONOMY_BY_SPECIALTY
+ *   3. Final fallback '101YM0800X' — matches pre-Phase-6 behavior so a
+ *      misconfigured practice still submits with exactly what it did
+ *      before the change. No regression risk for unconfigured practices.
+ *
+ * Accepts a loose shape so callers can pass plain objects without needing
+ * the full Practice type.
+ */
+export function resolveTaxonomyCode(practice: {
+  taxonomyCode?: string | null;
+  specialty?: string | null;
+} | null | undefined): string {
+  if (practice?.taxonomyCode) return practice.taxonomyCode;
+  const key = ((practice?.specialty || 'MIXED').toUpperCase()) as PracticeSpecialty;
+  return DEFAULT_TAXONOMY_BY_SPECIALTY[key] ?? '101YM0800X';
+}
+
+/**
  * Phase 4 — extract the Service Type Codes the payer actually answered with
  * from a raw Stedi 271 response. Stedi normalizes each benefit entry with a
  * `serviceTypeCodes: string[]` field; we flatten + dedupe across all entries.
@@ -377,7 +419,12 @@ export interface ClaimSubmission {
       state: string;
       zip: string;
     };
+    // Phase 6 — explicit NUCC taxonomy on the claim. If not set,
+    // resolveTaxonomyCode() in build837P falls back to the practice's
+    // configured taxonomyCode or specialty-derived default.
     taxonomy?: string;
+    practiceTaxonomy?: string | null;
+    practiceSpecialty?: string | null;
   };
 
   // Payer info
@@ -821,14 +868,23 @@ export function build837P(claim: ClaimSubmission): any {
     }),
     billing: {
       npi: claim.provider.npi,
-      taxonomyCode: claim.provider.taxonomy || '101YM0800X', // Mental health counselor
+      // Phase 6 — per-claim override wins; otherwise resolve from practice.
+      // Was hardcoded to 101YM0800X (Mental Health Counselor) for every claim
+      // regardless of actual discipline — soft-deny risk on therapy CPTs.
+      taxonomyCode: claim.provider.taxonomy || resolveTaxonomyCode({
+        taxonomyCode: claim.provider.practiceTaxonomy,
+        specialty: claim.provider.practiceSpecialty,
+      }),
       organizationName: claim.provider.organizationName,
       address: claim.provider.address,
       taxId: claim.provider.taxId,
     },
     rendering: {
       npi: claim.provider.npi,
-      taxonomyCode: claim.provider.taxonomy || '101YM0800X',
+      taxonomyCode: claim.provider.taxonomy || resolveTaxonomyCode({
+        taxonomyCode: claim.provider.practiceTaxonomy,
+        specialty: claim.provider.practiceSpecialty,
+      }),
       firstName: claim.provider.firstName,
       lastName: claim.provider.lastName,
     },
