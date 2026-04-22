@@ -35,10 +35,23 @@ router.patch('/:id', isAuthenticated, async (req: any, res) => {
     const practiceId = parseInt(req.params.id);
     const updates = req.body;
 
-    // Remove any undefined or null values
-    const cleanUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([_, v]) => v !== undefined && v !== null)
-    );
+    // Date columns (e.g. practices.license_expiration) that Postgres will
+    // reject if the client sends "". Normalize "" → null on these so the
+    // user leaving a date input blank means "clear the value", not an error.
+    const DATE_FIELDS = new Set(['licenseExpiration']);
+
+    const cleanUpdates: Record<string, any> = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) continue;
+      // Date-typed field with empty string → clear to NULL.
+      if (DATE_FIELDS.has(key) && value === '') {
+        cleanUpdates[key] = null;
+        continue;
+      }
+      // Non-date field with explicit null → drop (preserve original behavior).
+      if (value === null && !DATE_FIELDS.has(key)) continue;
+      cleanUpdates[key] = value;
+    }
 
     const practice = await storage.updatePractice(practiceId, cleanUpdates);
     if (!practice) {
