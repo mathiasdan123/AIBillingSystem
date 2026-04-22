@@ -404,6 +404,13 @@ export const claims = pgTable("claims", {
   // Authorization / hold management
   authorizationNumber: varchar("authorization_number"), // Prior auth number from payer
   holdReason: varchar("hold_reason"), // e.g., "Authorization Pending" — blocks submission
+  // Reopen & resubmit (fix-and-retry for denied claims). When a claim is
+  // denied for a fixable reason — missing prior auth, wrong modifier, wrong
+  // diagnosis, etc. — the biller clicks "Fix & Resubmit", updates the
+  // relevant fields, and we push it back out as a replacement claim (837P
+  // claimFrequencyCode = 7) instead of a new/original (1).
+  resubmissionCount: integer("resubmission_count").default(0),
+  lastResubmissionReason: text("last_resubmission_reason"), // why the biller reopened it
   // AI denial prediction
   denialPrediction: jsonb("denial_prediction"), // { riskScore, riskLevel, issues, overallRecommendation }
   // Automated status checking
