@@ -1449,7 +1449,7 @@ export default function Settings() {
                             type="submit"
                             size="sm"
                             disabled={updatePracticeMutation.isPending}
-                            className="bg-medical-blue-500 hover:bg-medical-blue-600"
+                            className="bg-blue-600 hover:bg-blue-700 text-white"
                             data-testid="button-sticky-save"
                           >
                             {updatePracticeMutation.isPending ? "Saving..." : "Save Changes"}
