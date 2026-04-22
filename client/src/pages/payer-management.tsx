@@ -213,23 +213,25 @@ export default function PayerManagement() {
         </Alert>
       )}
 
-      {/* Configure Stedi */}
+      {/* Advanced: Custom Clearinghouse Credentials — most practices
+          don't need this; we use a managed clearinghouse by default. */}
       <Card>
         <CardHeader>
-          <CardTitle>Stedi Configuration</CardTitle>
+          <CardTitle>Advanced: Custom Clearinghouse Credentials</CardTitle>
           <CardDescription>
-            Configure your Stedi API key for real-time insurance eligibility verification
+            Optional — only fill this in if you already have your own clearinghouse account.
+            Most practices should leave it blank and use our managed integration.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label htmlFor="stediKey">Stedi API Key</Label>
+            <Label htmlFor="stediKey">Clearinghouse API Key</Label>
             <Input
               id="stediKey"
               type="password"
               value={stediApiKey}
               onChange={(e) => setStediApiKey(e.target.value)}
-              placeholder="Enter Stedi API key"
+              placeholder="Leave blank to use our managed clearinghouse"
             />
           </div>
           <div className="flex gap-2">
@@ -348,7 +350,7 @@ export default function PayerManagement() {
                   />
                 </div>
                 <div>
-                  <Label>Stedi Payer ID (optional)</Label>
+                  <Label>Clearinghouse Payer ID (optional)</Label>
                   <Input
                     placeholder="e.g., AETBH01"
                     value={crosswalkForm.stediPayerId}

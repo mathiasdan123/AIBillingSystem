@@ -171,7 +171,7 @@ router.post('/batch-check', isAuthenticated, async (req: any, res: Response) => 
 
     if (!isStediConfigured()) {
       return res.status(400).json({
-        message: 'Stedi API is not configured. Please set the STEDI_API_KEY.',
+        message: 'Clearinghouse is not configured. Please contact support.',
       });
     }
 
