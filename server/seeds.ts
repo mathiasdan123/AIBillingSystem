@@ -321,6 +321,157 @@ async function backfillCptTherapyCategories(db: any) {
   }
 }
 
+/**
+ * Seed benchmark insurance rates for the most common pediatric therapy payers,
+ * so the Reimbursement page + Rates page have data out of the box instead of
+ * showing empty dropdowns. These are industry-ballpark numbers, NOT contracted
+ * rates — practices should replace them with their own negotiated values via
+ * Settings → Rates as soon as they know them.
+ *
+ * Seed is idempotent — only inserts a rate if (payer, cpt) doesn't already
+ * exist. So once a practice overrides with their real rate, the override is
+ * preserved on every subsequent boot.
+ *
+ * Sources for benchmarks: public Medicare PFS + typical commercial multipliers
+ * for pediatric OT/PT/ST. Treat as order-of-magnitude, not to-the-penny.
+ */
+async function seedBenchmarkInsuranceRates(db: any) {
+  // Top pediatric therapy payers + benchmark in-network rates for the 15
+  // CPTs therapy practices bill most often. All amounts in USD. Rank 1 =
+  // highest reimbursement for that payer (drives the Rates page sort).
+  type Rate = {
+    cpt: string;
+    inNetwork: number;
+    outOfNetwork?: number;
+    copay?: number;
+    coinsurance?: number;
+  };
+  const benchmarksByPayer: Record<string, Rate[]> = {
+    'Aetna': [
+      { cpt: '97530', inNetwork: 88, outOfNetwork: 120, copay: 30, coinsurance: 20 },
+      { cpt: '97110', inNetwork: 72, outOfNetwork: 100, copay: 30, coinsurance: 20 },
+      { cpt: '97112', inNetwork: 76, outOfNetwork: 105, copay: 30, coinsurance: 20 },
+      { cpt: '97533', inNetwork: 82, outOfNetwork: 115 },
+      { cpt: '97140', inNetwork: 58, outOfNetwork: 85 },
+      { cpt: '92507', inNetwork: 95, outOfNetwork: 130, copay: 30, coinsurance: 20 },
+      { cpt: '97165', inNetwork: 135, outOfNetwork: 180 },
+      { cpt: '97161', inNetwork: 125, outOfNetwork: 170 },
+    ],
+    'Blue Cross Blue Shield': [
+      { cpt: '97530', inNetwork: 85, outOfNetwork: 118, copay: 25, coinsurance: 20 },
+      { cpt: '97110', inNetwork: 70, outOfNetwork: 98, copay: 25, coinsurance: 20 },
+      { cpt: '97112', inNetwork: 74, outOfNetwork: 103, copay: 25, coinsurance: 20 },
+      { cpt: '97533', inNetwork: 80, outOfNetwork: 112 },
+      { cpt: '97140', inNetwork: 56, outOfNetwork: 82 },
+      { cpt: '92507', inNetwork: 92, outOfNetwork: 128, copay: 25, coinsurance: 20 },
+      { cpt: '97165', inNetwork: 130, outOfNetwork: 175 },
+      { cpt: '97161', inNetwork: 122, outOfNetwork: 165 },
+    ],
+    'UnitedHealthcare': [
+      { cpt: '97530', inNetwork: 82, outOfNetwork: 115, copay: 35, coinsurance: 20 },
+      { cpt: '97110', inNetwork: 68, outOfNetwork: 95, copay: 35, coinsurance: 20 },
+      { cpt: '97112', inNetwork: 72, outOfNetwork: 100, copay: 35, coinsurance: 20 },
+      { cpt: '97533', inNetwork: 78, outOfNetwork: 108 },
+      { cpt: '97140', inNetwork: 55, outOfNetwork: 80 },
+      { cpt: '92507', inNetwork: 90, outOfNetwork: 125, copay: 35, coinsurance: 20 },
+      { cpt: '97165', inNetwork: 128, outOfNetwork: 170 },
+      { cpt: '97161', inNetwork: 120, outOfNetwork: 160 },
+    ],
+    'Cigna': [
+      { cpt: '97530', inNetwork: 84, outOfNetwork: 116, copay: 30, coinsurance: 20 },
+      { cpt: '97110', inNetwork: 69, outOfNetwork: 96, copay: 30, coinsurance: 20 },
+      { cpt: '97112', inNetwork: 73, outOfNetwork: 101, copay: 30, coinsurance: 20 },
+      { cpt: '92507', inNetwork: 91, outOfNetwork: 126, copay: 30, coinsurance: 20 },
+      { cpt: '97165', inNetwork: 129, outOfNetwork: 172 },
+      { cpt: '97161', inNetwork: 121, outOfNetwork: 162 },
+    ],
+    'Horizon BCBS NJ': [
+      { cpt: '97530', inNetwork: 86, outOfNetwork: 119, copay: 25, coinsurance: 20 },
+      { cpt: '97110', inNetwork: 71, outOfNetwork: 99, copay: 25, coinsurance: 20 },
+      { cpt: '97112', inNetwork: 75, outOfNetwork: 104, copay: 25, coinsurance: 20 },
+      { cpt: '97533', inNetwork: 81, outOfNetwork: 114 },
+      { cpt: '92507', inNetwork: 93, outOfNetwork: 129, copay: 25, coinsurance: 20 },
+      { cpt: '97165', inNetwork: 132, outOfNetwork: 176 },
+      { cpt: '97161', inNetwork: 124, outOfNetwork: 166 },
+    ],
+    'Anthem BCBS': [
+      { cpt: '97530', inNetwork: 83, outOfNetwork: 117, copay: 30, coinsurance: 20 },
+      { cpt: '97110', inNetwork: 69, outOfNetwork: 97, copay: 30, coinsurance: 20 },
+      { cpt: '97112', inNetwork: 73, outOfNetwork: 102, copay: 30, coinsurance: 20 },
+      { cpt: '97533', inNetwork: 79, outOfNetwork: 111 },
+      { cpt: '92507', inNetwork: 91, outOfNetwork: 127, copay: 30, coinsurance: 20 },
+      { cpt: '97165', inNetwork: 127, outOfNetwork: 171 },
+      { cpt: '97161', inNetwork: 119, outOfNetwork: 161 },
+    ],
+    'Medicaid': [
+      { cpt: '97530', inNetwork: 52 },
+      { cpt: '97110', inNetwork: 44 },
+      { cpt: '97112', inNetwork: 46 },
+      { cpt: '97533', inNetwork: 50 },
+      { cpt: '92507', inNetwork: 58 },
+      { cpt: '97165', inNetwork: 85 },
+      { cpt: '97161', inNetwork: 78 },
+    ],
+  };
+
+  let insertedCount = 0;
+  for (const [payer, rates] of Object.entries(benchmarksByPayer)) {
+    for (const rate of rates) {
+      // Rank = position in the rates array for this payer (best → worst by
+      // in-network rate). Used on the Rates page for sorting.
+      const rank = rates.slice().sort((a, b) => b.inNetwork - a.inNetwork).indexOf(rate) + 1;
+      try {
+        const inserted: any = await db.execute(sql`
+          INSERT INTO insurance_rates
+            (insurance_provider, cpt_code, in_network_rate, out_of_network_rate,
+             copay_amount, coinsurance_percent, reimbursement_rank,
+             source_document, deductible_applies)
+          VALUES
+            (${payer}, ${rate.cpt}, ${rate.inNetwork},
+             ${rate.outOfNetwork ?? null}, ${rate.copay ?? null},
+             ${rate.coinsurance ?? 20}, ${rank},
+             'benchmark-seed (replace with contracted rate)', true)
+          ON CONFLICT DO NOTHING
+        `);
+        if ((inserted as any)?.rowCount > 0) insertedCount++;
+      } catch (e: any) {
+        // If the table doesn't have a unique constraint covering (provider, cpt),
+        // ON CONFLICT DO NOTHING won't match. Fall back to a SELECT-then-INSERT
+        // to stay idempotent.
+        try {
+          const existing: any = await db.execute(sql`
+            SELECT 1 FROM insurance_rates
+             WHERE insurance_provider = ${payer} AND cpt_code = ${rate.cpt}
+             LIMIT 1
+          `);
+          const hasRow = Array.isArray((existing as any).rows)
+            ? (existing as any).rows.length > 0
+            : (existing as any).length > 0;
+          if (!hasRow) {
+            await db.execute(sql`
+              INSERT INTO insurance_rates
+                (insurance_provider, cpt_code, in_network_rate, out_of_network_rate,
+                 copay_amount, coinsurance_percent, reimbursement_rank,
+                 source_document, deductible_applies)
+              VALUES
+                (${payer}, ${rate.cpt}, ${rate.inNetwork},
+                 ${rate.outOfNetwork ?? null}, ${rate.copay ?? null},
+                 ${rate.coinsurance ?? 20}, ${rank},
+                 'benchmark-seed (replace with contracted rate)', true)
+            `);
+            insertedCount++;
+          }
+        } catch (innerErr: any) {
+          console.warn(`  rate seed ${payer}/${rate.cpt} failed: ${innerErr.message}`);
+        }
+      }
+    }
+  }
+  if (insertedCount > 0) {
+    console.log(`  Seeded ${insertedCount} benchmark insurance rates across ${Object.keys(benchmarksByPayer).length} payers`);
+  }
+}
+
 export async function seedDatabase(options?: { force?: boolean }) {
   const isProduction = process.env.NODE_ENV === 'production';
 
@@ -334,6 +485,16 @@ export async function seedDatabase(options?: { force?: boolean }) {
       await backfillCptTherapyCategories(db);
     } catch (err) {
       console.warn('  CPT therapy-category backfill skipped:', err instanceof Error ? err.message : err);
+    }
+
+    // Phase 6 follow-up — seed benchmark insurance rates so the Reimbursement
+    // and Rates pages aren't empty for new practices. Idempotent; only inserts
+    // (payer, cpt) combos that don't already exist, preserving any rates a
+    // practice has entered themselves.
+    try {
+      await seedBenchmarkInsuranceRates(db);
+    } catch (err) {
+      console.warn('  Benchmark insurance rates seed skipped:', err instanceof Error ? err.message : err);
     }
 
     // Run schema migrations for new columns (safe to run multiple times)
