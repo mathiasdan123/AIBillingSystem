@@ -67,6 +67,7 @@ export const navigationSections: NavSection[] = [
     labelKey: 'nav.sectionClinical',
     items: [
       { nameKey: 'nav.patients', href: '/patients', icon: Users, adminOnly: false },
+      { nameKey: 'nav.patientIntake', href: '/intake', icon: ClipboardList, adminOnly: false },
       { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar, adminOnly: false },
       { nameKey: 'nav.soapNotes', href: '/soap-notes', icon: ClipboardList, adminOnly: false },
       { nameKey: 'nav.treatmentPlans', href: '/treatment-plans', icon: Target, adminOnly: false },
