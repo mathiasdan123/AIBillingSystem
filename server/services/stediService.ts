@@ -165,19 +165,29 @@ const DEFAULT_TAXONOMY_BY_SPECIALTY: Record<PracticeSpecialty, string> = {
 
 /**
  * Resolve the NUCC taxonomy code for an outgoing 837P claim. Preference:
- *   1. Explicit `practice.taxonomyCode` (admin-set override)
- *   2. Specialty-based default from DEFAULT_TAXONOMY_BY_SPECIALTY
- *   3. Final fallback '101YM0800X' — matches pre-Phase-6 behavior so a
+ *   1. `user.taxonomyCode` — rendering therapist's own override (Slice 2).
+ *      Matters for mixed-discipline practices where the OT, PT, and SLP
+ *      on staff each file under different taxonomies.
+ *   2. `practice.taxonomyCode` — admin-set practice-wide override
+ *   3. Specialty-based default from DEFAULT_TAXONOMY_BY_SPECIALTY
+ *   4. Final fallback '101YM0800X' — matches pre-Phase-6 behavior so a
  *      misconfigured practice still submits with exactly what it did
  *      before the change. No regression risk for unconfigured practices.
  *
  * Accepts a loose shape so callers can pass plain objects without needing
- * the full Practice type.
+ * the full Practice/User types.
+ *
+ * Backward-compat: the single-argument form still works if any caller
+ * passes only a practice-like object. The user argument is optional.
  */
-export function resolveTaxonomyCode(practice: {
-  taxonomyCode?: string | null;
-  specialty?: string | null;
-} | null | undefined): string {
+export function resolveTaxonomyCode(
+  practice: {
+    taxonomyCode?: string | null;
+    specialty?: string | null;
+  } | null | undefined,
+  user?: { taxonomyCode?: string | null } | null
+): string {
+  if (user?.taxonomyCode) return user.taxonomyCode;
   if (practice?.taxonomyCode) return practice.taxonomyCode;
   const key = ((practice?.specialty || 'MIXED').toUpperCase()) as PracticeSpecialty;
   return DEFAULT_TAXONOMY_BY_SPECIALTY[key] ?? '101YM0800X';
@@ -420,9 +430,11 @@ export interface ClaimSubmission {
       zip: string;
     };
     // Phase 6 — explicit NUCC taxonomy on the claim. If not set,
-    // resolveTaxonomyCode() in build837P falls back to the practice's
-    // configured taxonomyCode or specialty-derived default.
+    // resolveTaxonomyCode() in build837P falls back in this order:
+    //   user (renderingProviderTaxonomy) → practice (practiceTaxonomy)
+    //   → specialty default → legacy fallback.
     taxonomy?: string;
+    renderingProviderTaxonomy?: string | null;
     practiceTaxonomy?: string | null;
     practiceSpecialty?: string | null;
   };
@@ -868,9 +880,11 @@ export function build837P(claim: ClaimSubmission): any {
     }),
     billing: {
       npi: claim.provider.npi,
-      // Phase 6 — per-claim override wins; otherwise resolve from practice.
+      // Phase 6 — per-claim override wins; otherwise resolve from user → practice.
       // Was hardcoded to 101YM0800X (Mental Health Counselor) for every claim
       // regardless of actual discipline — soft-deny risk on therapy CPTs.
+      // Billing block uses the practice-level default (not the rendering user)
+      // because the billing entity IS the practice, not the provider.
       taxonomyCode: claim.provider.taxonomy || resolveTaxonomyCode({
         taxonomyCode: claim.provider.practiceTaxonomy,
         specialty: claim.provider.practiceSpecialty,
@@ -881,10 +895,15 @@ export function build837P(claim: ClaimSubmission): any {
     },
     rendering: {
       npi: claim.provider.npi,
-      taxonomyCode: claim.provider.taxonomy || resolveTaxonomyCode({
-        taxonomyCode: claim.provider.practiceTaxonomy,
-        specialty: claim.provider.practiceSpecialty,
-      }),
+      // Rendering block is the actual therapist — their own taxonomy wins
+      // if set (Slice 2), then practice-level, then specialty default.
+      taxonomyCode: claim.provider.taxonomy || resolveTaxonomyCode(
+        {
+          taxonomyCode: claim.provider.practiceTaxonomy,
+          specialty: claim.provider.practiceSpecialty,
+        },
+        { taxonomyCode: claim.provider.renderingProviderTaxonomy }
+      ),
       firstName: claim.provider.firstName,
       lastName: claim.provider.lastName,
     },

@@ -1265,6 +1265,7 @@ export default function Settings() {
     credentials: string | null;
     licenseNumber: string | null;
     npiNumber: string | null;
+    taxonomyCode: string | null;
     hasSignature: boolean;
     signatureUploadedAt: string | null;
   }
@@ -1289,7 +1290,7 @@ export default function Settings() {
   });
 
   const [editingTherapist, setEditingTherapist] = useState<string | null>(null);
-  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', npiNumber: '' });
+  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', npiNumber: '', taxonomyCode: '' });
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
 
   const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>, therapistId: string) => {
@@ -2385,6 +2386,20 @@ export default function Settings() {
                                   />
                                 </div>
                               </div>
+                              <div>
+                                <Label>Provider Taxonomy Code (NUCC) — optional override</Label>
+                                <Input
+                                  value={therapistForm.taxonomyCode}
+                                  onChange={(e) => setTherapistForm({ ...therapistForm, taxonomyCode: e.target.value })}
+                                  placeholder="Inherits from practice (e.g., 225X00000X)"
+                                  data-testid="input-therapist-taxonomy"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">
+                                  Only set this if this therapist's discipline differs from the practice-level default.
+                                  Example: a PT working at an OT-registered practice should set <span className="font-mono">225100000X</span>.
+                                  Leave blank to inherit.
+                                </p>
+                              </div>
 
                               <div>
                                 <Label>Digital Signature</Label>
@@ -2444,7 +2459,8 @@ export default function Settings() {
                                   setTherapistForm({
                                     credentials: therapist.credentials || '',
                                     licenseNumber: therapist.licenseNumber || '',
-                                    npiNumber: therapist.npiNumber || ''
+                                    npiNumber: therapist.npiNumber || '',
+                                    taxonomyCode: (therapist as any).taxonomyCode || ''
                                   });
                                 }}
                               >

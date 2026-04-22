@@ -409,6 +409,44 @@ describe('stediService', () => {
       const { resolveTaxonomyCode } = await import('../services/stediService');
       expect(resolveTaxonomyCode({ taxonomyCode: '', specialty: 'PT' })).toBe('225100000X');
     });
+
+    // Slice 2 — per-therapist override wins over practice-level.
+    it('user.taxonomyCode wins over practice.taxonomyCode', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(
+        resolveTaxonomyCode(
+          { taxonomyCode: '225X00000X', specialty: 'OT' },
+          { taxonomyCode: '225100000X' } // PT therapist at an OT-set practice
+        )
+      ).toBe('225100000X');
+    });
+
+    it('user.taxonomyCode wins over specialty default when practice.taxonomyCode is null', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(
+        resolveTaxonomyCode(
+          { taxonomyCode: null, specialty: 'OT' },
+          { taxonomyCode: '235Z00000X' } // SLP at OT practice
+        )
+      ).toBe('235Z00000X');
+    });
+
+    it('null user.taxonomyCode falls through to practice default', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(
+        resolveTaxonomyCode(
+          { taxonomyCode: '225X00000X', specialty: 'OT' },
+          { taxonomyCode: null }
+        )
+      ).toBe('225X00000X');
+    });
+
+    it('undefined user still works (backward compatible single-arg call)', async () => {
+      const { resolveTaxonomyCode } = await import('../services/stediService');
+      expect(
+        resolveTaxonomyCode({ taxonomyCode: null, specialty: 'PT' })
+      ).toBe('225100000X');
+    });
   });
 
   describe('isStcDowngrade', () => {
