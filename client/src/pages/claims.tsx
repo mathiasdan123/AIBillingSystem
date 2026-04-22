@@ -646,6 +646,9 @@ export default function Claims() {
   const [showDenyDialog, setShowDenyDialog] = useState(false);
   const [paidAmount, setPaidAmount] = useState("");
   const [denialReason, setDenialReason] = useState("");
+  // Reopen & Resubmit dialog state
+  const [reopeningClaim, setReopeningClaim] = useState<Claim | null>(null);
+  const [reopenReason, setReopenReason] = useState("");
   const [selectedInsuranceForSession, setSelectedInsuranceForSession] = useState("");
   const [claimAppeals, setClaimAppeals] = useState<any[]>([]);
   const [loadingAppeals, setLoadingAppeals] = useState(false);
@@ -1119,6 +1122,33 @@ export default function Claims() {
       toast({
         title: "Error",
         description: error?.message || "Failed to create secondary claim",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reopen & Resubmit — denied/rejected claim back to draft so the biller can
+  // fix what was wrong (missing PA, bad modifier, etc.). Next submit goes out
+  // as a replacement (837P claimFrequencyCode=7), not a duplicate.
+  const reopenClaimMutation = useMutation({
+    mutationFn: async ({ claimId, reason }: { claimId: number; reason: string }) => {
+      const response = await apiRequest("POST", `/api/claims/${claimId}/reopen`, { reason });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      toast({
+        title: "Claim reopened",
+        description:
+          "Moved back to draft. Update the field you're fixing (e.g. enter the new authorization number), then click Submit. It will go out as a replacement claim.",
+      });
+      setReopeningClaim(null);
+      setReopenReason('');
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Couldn't reopen claim",
+        description: err?.message || "Please try again.",
         variant: "destructive",
       });
     },
@@ -2379,6 +2409,21 @@ export default function Claims() {
                               </DropdownMenuItem>
                             </>
                           )}
+                          {(claim.status === 'denied' || claim.status === 'rejected') && canManageClaims && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setReopeningClaim(claim);
+                                  setReopenReason('');
+                                }}
+                                data-testid={`menu-fix-resubmit-${claim.id}`}
+                              >
+                                <RefreshCw className="w-4 h-4 mr-2 text-blue-600" />
+                                Fix & Resubmit
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -2557,6 +2602,79 @@ export default function Claims() {
                 disabled={denyClaimMutation.isPending || !denialReason}
               >
                 {denyClaimMutation.isPending ? "Saving..." : "Deny Claim"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fix & Resubmit Dialog — reopens a denied/rejected claim to draft
+          with a required reason. After closing, the biller edits the claim
+          (adds auth number, fixes modifier, etc.) and hits Submit normally.
+          Next submission goes out as an 837P replacement (freq 7). */}
+      <Dialog
+        open={reopeningClaim !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReopeningClaim(null);
+            setReopenReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Fix & Resubmit Claim</DialogTitle>
+            <DialogDescription>
+              {reopeningClaim?.claimNumber
+                ? `Move ${reopeningClaim.claimNumber} back to draft so you can fix the issue and resubmit.`
+                : 'Move this claim back to draft so you can fix the issue and resubmit.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-3 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100">
+              After clicking Reopen, this claim goes back to <strong>Draft</strong> status.
+              Update whatever field was wrong (e.g. enter the retroactive authorization number,
+              fix a modifier, correct the diagnosis), then click <strong>Submit</strong>. The
+              next submission will go out as a <strong>replacement claim</strong> so the payer
+              treats it as a correction, not a duplicate.
+            </div>
+            <div>
+              <Label htmlFor="reopen-reason">What are you fixing?</Label>
+              <Input
+                id="reopen-reason"
+                value={reopenReason}
+                onChange={(e) => setReopenReason(e.target.value)}
+                placeholder="e.g. Added retroactive prior authorization from Aetna"
+                data-testid="input-reopen-reason"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                This is saved on the claim for your records — the payer never sees it.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setReopeningClaim(null);
+                  setReopenReason('');
+                }}
+                disabled={reopenClaimMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() =>
+                  reopeningClaim &&
+                  reopenClaimMutation.mutate({
+                    claimId: reopeningClaim.id,
+                    reason: reopenReason,
+                  })
+                }
+                disabled={reopenClaimMutation.isPending || reopenReason.trim().length < 3}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                data-testid="button-confirm-reopen"
+              >
+                {reopenClaimMutation.isPending ? "Reopening..." : "Reopen to Draft"}
               </Button>
             </div>
           </div>

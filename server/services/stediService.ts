@@ -469,6 +469,12 @@ export interface ClaimSubmission {
   // patient's most-recent eligibility check before calling submitClaim.
   serviceTypeCodes?: string[];
   strictStcValidation?: boolean;
+  // True when this claim is being sent as a correction/replacement (i.e. it
+  // was previously denied or rejected, the biller fixed something via the
+  // reopen flow, and we're now resubmitting). Drives claimFrequencyCode
+  // in the 837P envelope: '7' (replacement) instead of '1' (original).
+  // Set this from claims.resubmissionCount > 0 in the calling route.
+  isResubmission?: boolean;
 }
 
 export interface ClaimSubmissionResponse {
@@ -911,7 +917,14 @@ export function build837P(claim: ClaimSubmission): any {
       patientControlNumber: claim.claimId,
       claimChargeAmount: claim.totalAmount.toString(),
       placeOfServiceCode: claim.placeOfService,
-      claimFrequencyCode: '1', // Original claim
+      // 837P claim frequency per X12:
+      //   '1' = original (first submission of this claim)
+      //   '7' = replacement (payer should replace the prior claim with this one)
+      // After a reopen-and-fix cycle we bump to '7' so payers treat it as a
+      // correction, not a duplicate. Determined by the caller via
+      // `claim.isResubmission` (set from claims.resubmissionCount > 0 at the
+      // route layer). Default to '1' for original submissions.
+      claimFrequencyCode: claim.isResubmission ? '7' : '1',
       signatureIndicator: 'Y',
       planParticipationCode: 'A', // Assigned
       releaseOfInformationCode: 'Y',

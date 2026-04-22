@@ -918,6 +918,8 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
             diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
             serviceTypeCodes: stcsForClaim,
             strictStcValidation: Boolean((practice as any)?.strictStcValidation),
+            // Resubmission path — after reopen, send as 837P replacement (freq '7').
+            isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
           };
 
           clearinghouseResult = await stediService.submitClaim(claimSubmission);
@@ -1092,6 +1094,7 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
       diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
       serviceTypeCodes: stcsForClaim,
       strictStcValidation: Boolean((practice as any)?.strictStcValidation),
+      isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
     };
 
     // Call the actual build fn via dynamic import so we don't export it.
@@ -1301,6 +1304,7 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
           serviceTypeCodes: stcsForSingle,
           strictStcValidation: Boolean((practice as any)?.strictStcValidation),
+          isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
         };
 
         clearinghouseResult = await stediService.submitClaim(claimSubmission);
@@ -1410,6 +1414,95 @@ router.patch('/:id/authorization', isAuthenticated, async (req: any, res) => {
     });
   } catch (error: any) {
     safeErrorResponse(res, 500, 'Failed to update authorization', error);
+  }
+});
+
+/**
+ * POST /api/claims/:id/reopen — move a denied or rejected claim back to
+ * draft so the biller can fix what was wrong (most common: missing prior
+ * auth, bad modifier, wrong diagnosis) and resubmit. On the next
+ * submission, build837P sends claimFrequencyCode='7' (replacement)
+ * instead of '1' (original) so the payer understands this is a
+ * correction, not a duplicate.
+ *
+ * Body: { reason: string } — free-text description of what's being fixed.
+ * Logged for audit and shown on the claim detail as "Reopened: <reason>".
+ */
+router.post('/:id/reopen', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id);
+    const reason = String(req.body?.reason ?? '').trim();
+    if (!reason || reason.length < 3) {
+      return res.status(400).json({
+        message: 'A short reason is required (what are you fixing?).',
+      });
+    }
+
+    const claim = await storage.getClaim(claimId);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    const practiceId = getAuthorizedPracticeId(req);
+    if (claim.practiceId !== practiceId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // Only claims the payer has actually rejected/denied are eligible for
+    // reopen. Draft/held claims don't need reopening; paid claims should
+    // never be resubmitted this way.
+    const reopenable = new Set(['denied', 'rejected']);
+    if (!reopenable.has((claim.status || '') as string)) {
+      return res.status(400).json({
+        message: `Only denied or rejected claims can be reopened (current status: ${claim.status}).`,
+      });
+    }
+
+    const prevCount = (claim as any).resubmissionCount ?? 0;
+    const updated = await storage.updateClaim(claimId, {
+      status: 'draft',
+      resubmissionCount: prevCount + 1,
+      lastResubmissionReason: reason,
+      // Clear denial/hold state so the next submit runs through the scrubber
+      // cleanly instead of re-triggering the same hold.
+      denialReason: null,
+      holdReason: null,
+    } as any);
+
+    try {
+      await storage.createAuditLog?.({
+        userId: req.user?.claims?.sub || 'unknown',
+        eventType: 'update',
+        eventCategory: 'claim',
+        resourceType: 'claim',
+        resourceId: String(claimId),
+        details: {
+          action: 'reopen',
+          reason,
+          fromStatus: claim.status,
+          resubmissionCount: prevCount + 1,
+        },
+        ipAddress: req.ip || '0.0.0.0',
+      });
+    } catch {
+      // Audit log is best-effort; never block a reopen on log failure.
+    }
+
+    logger.info('Claim reopened for resubmission', {
+      claimId,
+      practiceId,
+      resubmissionCount: prevCount + 1,
+    });
+
+    res.json({
+      success: true,
+      message:
+        'Claim moved back to draft. Update the field you\'re fixing, then click Submit. ' +
+        'The next submission will go out as a replacement (837P frequency 7), not a new claim.',
+      claim: updated,
+    });
+  } catch (error: any) {
+    safeErrorResponse(res, 500, 'Failed to reopen claim', error);
   }
 });
 
