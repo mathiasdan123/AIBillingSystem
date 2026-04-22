@@ -131,6 +131,13 @@ export const practices = pgTable("practices", {
   // envelope is unchanged from pre-Phase-3 behavior. Flip per practice
   // once you've tested the envelope shape with one known-good claim.
   strictStcValidation: boolean("strict_stc_validation").default(false),
+  // Phase 6 — NUCC provider taxonomy code sent on 837P claims. When set,
+  // overrides the specialty-derived default. Leave null to have the
+  // claim builder pick a default from practice.specialty (e.g. OT →
+  // 225X00000X, PT → 225100000X, ST → 235Z00000X). Prior to this field
+  // every claim went out as 101YM0800X (Mental Health Counselor)
+  // regardless of actual discipline — a soft-deny risk on therapy CPTs.
+  taxonomyCode: varchar("taxonomy_code", { length: 20 }),
   // Front-desk copay collection (Phase 3 · Slice C).
   // Off by default so charging is explicitly opt-in per practice, even if
   // the Stripe integration is wired and keys are live.

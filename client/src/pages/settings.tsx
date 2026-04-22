@@ -53,6 +53,7 @@ const practiceSchema = z.object({
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
   specialty: z.enum(["OT", "PT", "ST", "MH", "MIXED"]).optional(),
   strictStcValidation: z.boolean().optional(),
+  taxonomyCode: z.string().optional(),
 
   // Branding
   brandLogoUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
@@ -1319,6 +1320,7 @@ export default function Settings() {
         email: practice.email || "",
         specialty: practice.specialty || undefined,
         strictStcValidation: Boolean(practice.strictStcValidation),
+        taxonomyCode: practice.taxonomyCode || "",
         brandLogoUrl: practice.brandLogoUrl || "",
         brandPrimaryColor: practice.brandPrimaryColor || "#2563eb",
         brandWebsiteUrl: practice.brandWebsiteUrl || "",
@@ -1485,6 +1487,32 @@ export default function Settings() {
                           </FormControl>
                           <p className="text-xs text-muted-foreground mt-1">
                             Determines which Service Type Codes are sent on eligibility checks (270) to Stedi. Leave as Mixed if unsure — payers tolerate multiple STCs.
+                          </p>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="taxonomyCode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Provider Taxonomy Code (NUCC)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Auto (based on specialty)"
+                              {...field}
+                              data-testid="input-taxonomy-code"
+                            />
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            10-character NUCC taxonomy sent on every 837P claim. Leave blank to auto-select based on your specialty:
+                            OT → <span className="font-mono">225X00000X</span>,
+                            PT → <span className="font-mono">225100000X</span>,
+                            ST → <span className="font-mono">235Z00000X</span>,
+                            MH → <span className="font-mono">101YM0800X</span>.
+                            Set explicitly if your providers are credentialed under a different taxonomy (e.g. pediatric variants).
                           </p>
                           <FormMessage />
                         </FormItem>
