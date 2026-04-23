@@ -1131,6 +1131,56 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'Only draft or held claims can be submitted' });
     }
 
+    // Phase 1 PA tracking — auto-pull an active authorization before the
+    // scrubber runs. If the claim has no authorization number and the
+    // patient has an active auth matching the CPT (or a wildcard auth
+    // with no specific CPT), attach it automatically. Saves the biller
+    // from manually re-entering numbers for recurring therapy sessions.
+    if (!claim.authorizationNumber) {
+      try {
+        const lineItems = await storage.getClaimLineItems(claimId);
+        const cptCodes = await storage.getCptCodes();
+        const claimCpts = (lineItems || [])
+          .map((li: any) => cptCodes.find((c: any) => c.id === li.cptCodeId)?.code)
+          .filter((c: any): c is string => Boolean(c));
+
+        const { getAuthorizations } = await import('../services/authorizationService');
+        const practiceIdForAuth = getAuthorizedPracticeId(req);
+        const candidates = await getAuthorizations(practiceIdForAuth, {
+          patientId: claim.patientId,
+          status: 'active',
+        });
+        const today = new Date().toISOString().split('T')[0];
+        const match = (candidates || []).find((a: any) => {
+          if (!a.authorizationNumber) return false;
+          if (a.startDate > today || a.endDate < today) return false;
+          // Wildcard auth (no specific CPT) OR CPT match OR no CPTs on claim yet.
+          if (!a.cptCode) return true;
+          if (claimCpts.length === 0) return true;
+          return claimCpts.includes(a.cptCode);
+        });
+        if (match) {
+          await storage.updateClaim(claimId, {
+            authorizationNumber: match.authorizationNumber,
+          } as any);
+          logger.info('Claim auto-linked to prior authorization', {
+            claimId,
+            authorizationId: match.id,
+            authorizationNumber: match.authorizationNumber,
+          });
+          // Refresh local claim object so downstream code sees the number.
+          (claim as any).authorizationNumber = match.authorizationNumber;
+        }
+      } catch (err) {
+        // Auto-pull is strictly additive. If anything goes wrong, fall
+        // back to the existing "no auth number" scrubber flow.
+        logger.warn('PA auto-pull skipped', {
+          claimId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Run pre-submission claim scrubber
     const practiceId = getAuthorizedPracticeId(req);
     const scrubResult = await scrubClaim(claimId, practiceId);
