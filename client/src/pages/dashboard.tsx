@@ -10,6 +10,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useMutation } from "@tanstack/react-query";
 import DashboardStats from "@/components/DashboardStats";
 import PatientArAgingSummary from "@/components/PatientArAgingSummary";
+import AtRiskAuthorizationsWidget from "@/components/AtRiskAuthorizationsWidget";
 import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles, Upload, BarChart3, Mail, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
@@ -465,9 +466,10 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Patient AR Aging Summary */}
-      <div className="mt-4 md:mt-6">
+      {/* Patient AR Aging Summary + Auths at Risk (AI forecast) */}
+      <div className="mt-4 md:mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         <PatientArAgingSummary />
+        <AtRiskAuthorizationsWidget />
       </div>
 
       {/* Data Import CTA - Prominent for new practices */}
