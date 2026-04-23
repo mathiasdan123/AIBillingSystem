@@ -282,6 +282,95 @@ export function startScheduler() {
   });
   scheduledTasks.set('baaExpirationCheck', baaExpirationTask);
 
+  // Provider credentialing deadline alert — daily at 9:15 AM.
+  // Flags credentials whose expiration OR re-credentialing deadline falls
+  // within 60 days AND that are still in an active workflow status
+  // (active / in_progress / pending). Emails practice admins with a
+  // grouped summary so they can queue up renewals before lapse.
+  const credentialingAlertTask = cron.schedule('15 9 * * *', async () => {
+    try {
+      const practiceIds = await storage.getAllPracticeIds();
+      const { getAtRiskCredentials } = await import('./routes/credentialing');
+      for (const practiceId of practiceIds) {
+        const atRisk = await getAtRiskCredentials(practiceId, 60);
+        if (atRisk.length === 0) continue;
+
+        const admins = await storage.getAdminsByPractice(practiceId);
+        const emails = admins.map((a: any) => a.email).filter(Boolean);
+        if (emails.length === 0) continue;
+
+        const practice = await storage.getPractice(practiceId);
+        const rowsHtml = atRisk.map((e: any) => {
+          const deadline = e.reason === 'expiring'
+            ? `Credential expires in ${e.daysUntilExpiration}d`
+            : e.reason === 're_credentialing'
+              ? `Re-credentialing due in ${e.daysUntilReCredentialing}d`
+              : `Expires in ${e.daysUntilExpiration}d · Re-credentialing due in ${e.daysUntilReCredentialing}d`;
+          const urgencyColor =
+            e.daysUntilAction <= 7 ? '#dc2626'
+              : e.daysUntilAction <= 14 ? '#f59e0b'
+                : '#64748b';
+          return `
+            <tr>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">${e.credential.providerName}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">${e.credential.payerName}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">${e.credential.enrollmentStatus}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:${urgencyColor};">${deadline}</td>
+            </tr>
+          `;
+        }).join('');
+
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;">
+            <div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:white;padding:24px;border-radius:12px 12px 0 0;">
+              <h2 style="margin:0 0 4px 0;">Credentialing Deadlines Approaching</h2>
+              <p style="margin:0;opacity:.9;">${practice?.name ?? 'Your Practice'}</p>
+            </div>
+            <div style="background:white;padding:24px;border:1px solid #e2e8f0;border-top:none;">
+              <p>The following provider credentials have expiration or re-credentialing deadlines within 60 days. Request renewals now to avoid claim denials from lapsed credentialing.</p>
+              <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                  <tr style="background:#f8fafc;">
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Provider</th>
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Payer</th>
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Status</th>
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Deadline</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>
+            <div style="background:#f1f5f9;padding:16px;border-radius:0 0 12px 12px;text-align:center;font-size:12px;color:#64748b;">
+              Automated alert from TherapyBill AI — see the Credentialing page for details.
+            </div>
+          </div>`;
+
+        const textFallback = atRisk
+          .map((e: any) => `${e.credential.providerName} / ${e.credential.payerName}: ${e.daysUntilAction} days`)
+          .join('\n');
+        for (const email of emails) {
+          await sendEmail({
+            to: email,
+            subject: `${atRisk.length} credentialing deadline${atRisk.length === 1 ? '' : 's'} this quarter — ${practice?.name ?? 'Your Practice'}`,
+            html,
+            text: textFallback,
+            fromName: 'TherapyBill AI Alerts',
+          });
+        }
+        logger.info('Credentialing deadline alert sent', {
+          practiceId,
+          atRiskCount: atRisk.length,
+          recipientCount: emails.length,
+        });
+      }
+    } catch (err: any) {
+      logger.error('Credentialing deadline task failed', { error: err.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('credentialingDeadlines', credentialingAlertTask);
+
   // Automated eligibility refresh - daily at 2:00 AM
   const eligibilityRefreshTask = cron.schedule('0 2 * * *', async () => {
     try {
