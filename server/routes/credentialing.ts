@@ -151,6 +151,104 @@ router.get('/at-risk', isAuthenticated, async (req: any, res: Response) => {
   }
 });
 
+// POST /draft-packet — AI-drafted enrollment packet cover letter + checklist
+router.post('/draft-packet', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const { providerId, payerName, notes } = req.body || {};
+    if (!providerId || !payerName) {
+      return res.status(400).json({ message: 'providerId and payerName are required.' });
+    }
+    const { storage } = await import('../storage');
+    const [provider, practice] = await Promise.all([
+      storage.getUser(providerId),
+      storage.getPractice(practiceId),
+    ]);
+    if (!provider) return res.status(404).json({ message: 'Provider not found' });
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+    const { draftCredentialingPacketLetter } = await import('../services/credentialingAiService');
+    const result = await draftCredentialingPacketLetter({
+      practice: {
+        name: practice.name,
+        npi: (practice as any).npi ?? null,
+        taxId: (practice as any).taxId ?? null,
+        address: (practice as any).address ?? null,
+        phone: (practice as any).phone ?? null,
+        specialty: (practice as any).specialty ?? null,
+        professionalLicense: (practice as any).professionalLicense ?? null,
+        caqhProfileId: (practice as any).caqhProfileId ?? null,
+        ownerName: (practice as any).ownerName ?? null,
+        ownerTitle: (practice as any).ownerTitle ?? null,
+      },
+      provider: {
+        firstName: provider.firstName ?? '',
+        lastName: provider.lastName ?? '',
+        credentials: (provider as any).credentials ?? null,
+        npiNumber: (provider as any).npiNumber ?? null,
+        licenseNumber: (provider as any).licenseNumber ?? null,
+        taxonomyCode: (provider as any).taxonomyCode ?? null,
+      },
+      payer: { name: payerName, contact: null },
+      notes: notes ?? null,
+    });
+    res.json(result);
+  } catch (error: any) {
+    const msg = error?.message ?? 'Failed to draft credentialing packet';
+    const status = msg.includes('ANTHROPIC_API_KEY') ? 503 : 500;
+    safeErrorResponse(res, status, msg, error);
+  }
+});
+
+// POST /draft-application — AI-drafted credentialing application cover + Q&A
+router.post('/draft-application', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const { providerId, payerName, notes } = req.body || {};
+    if (!providerId || !payerName) {
+      return res.status(400).json({ message: 'providerId and payerName are required.' });
+    }
+    const { storage } = await import('../storage');
+    const [provider, practice] = await Promise.all([
+      storage.getUser(providerId),
+      storage.getPractice(practiceId),
+    ]);
+    if (!provider) return res.status(404).json({ message: 'Provider not found' });
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+    const { draftCredentialingApplication } = await import('../services/credentialingAiService');
+    const result = await draftCredentialingApplication({
+      practice: {
+        name: practice.name,
+        npi: (practice as any).npi ?? null,
+        taxId: (practice as any).taxId ?? null,
+        address: (practice as any).address ?? null,
+        phone: (practice as any).phone ?? null,
+        specialty: (practice as any).specialty ?? null,
+        professionalLicense: (practice as any).professionalLicense ?? null,
+        caqhProfileId: (practice as any).caqhProfileId ?? null,
+        ownerName: (practice as any).ownerName ?? null,
+        ownerTitle: (practice as any).ownerTitle ?? null,
+      },
+      provider: {
+        firstName: provider.firstName ?? '',
+        lastName: provider.lastName ?? '',
+        credentials: (provider as any).credentials ?? null,
+        npiNumber: (provider as any).npiNumber ?? null,
+        licenseNumber: (provider as any).licenseNumber ?? null,
+        taxonomyCode: (provider as any).taxonomyCode ?? null,
+      },
+      payer: { name: payerName, contact: null },
+      notes: notes ?? null,
+    });
+    res.json(result);
+  } catch (error: any) {
+    const msg = error?.message ?? 'Failed to draft credentialing application';
+    const status = msg.includes('ANTHROPIC_API_KEY') ? 503 : 500;
+    safeErrorResponse(res, status, msg, error);
+  }
+});
+
 // GET /expiring - Get credentials expiring in next 90 days
 // NOTE: This route must be defined BEFORE /:id to avoid matching "expiring" as an id
 router.get('/expiring', isAuthenticated, async (req: any, res: Response) => {
