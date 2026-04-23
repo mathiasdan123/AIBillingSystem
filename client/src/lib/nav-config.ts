@@ -119,6 +119,7 @@ export const navigationSections: NavSection[] = [
           { nameKey: 'nav.practiceDetails', href: '/settings', icon: Settings, adminOnly: false },
           { nameKey: 'nav.locations', href: '/locations', icon: Building2, adminOnly: false },
           { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
+          { nameKey: 'nav.payerEnrollments', href: '/payer-enrollments', icon: Handshake, adminOnly: false },
           { nameKey: 'nav.credentialing', href: '/credentialing', icon: ShieldCheck, adminOnly: true },
         ],
       },

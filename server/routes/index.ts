@@ -79,6 +79,7 @@ export { default as mcpTransportRouter, getMcpAuthRouter, oauthProvider as mcpOA
 export { default as contactRouter } from './contact';
 export { default as credentialingRouter } from './credentialing';
 export { default as payerCrosswalkRouter } from './payer-crosswalk';
+export { default as payerEnrollmentsRouter } from './payer-enrollments';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';
