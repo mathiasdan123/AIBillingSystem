@@ -304,10 +304,30 @@ export default function CredentialingPage() {
               Track provider enrollment status with each payer
             </p>
           </div>
-          <Button onClick={openAddDialog}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Credential
-          </Button>
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="button-ai-credentialing">
+                  <Sparkles className="w-4 h-4 mr-2 text-purple-600" />
+                  AI Draft
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setDraftMode('packet')} data-testid="menu-draft-packet">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Draft enrollment packet letter
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDraftMode('application')} data-testid="menu-draft-application">
+                  <ClipboardList className="w-4 h-4 mr-2" />
+                  Draft credentialing application
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button onClick={openAddDialog}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Credential
+            </Button>
+          </div>
         </div>
 
         {/* Alert banner for expiring credentials */}
@@ -623,6 +643,216 @@ export default function CredentialingPage() {
                 </Button>
               </div>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* AI Draft Dialog — packet or application */}
+        <Dialog
+          open={draftMode !== null}
+          onOpenChange={(open) => {
+            if (!open) resetDraft();
+          }}
+        >
+          <DialogContent className="sm:max-w-[720px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-600" />
+                {draftMode === 'packet'
+                  ? 'Draft Enrollment Packet Letter'
+                  : 'Draft Credentialing Application'}
+              </DialogTitle>
+              <DialogDescription>
+                {draftMode === 'packet'
+                  ? 'AI generates a cover letter + document checklist for the enrollment packet you submit to this payer.'
+                  : 'AI generates an application cover letter + Q&A prefills you can paste into the payer credentialing portal.'}
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* Step 1: form */}
+            {!draftPacketResult && !draftAppResult && (
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="draft-provider">Provider *</Label>
+                  <Select
+                    value={draftForm.providerId}
+                    onValueChange={(v) => setDraftForm({ ...draftForm, providerId: v })}
+                  >
+                    <SelectTrigger id="draft-provider" data-testid="select-draft-provider">
+                      <SelectValue placeholder="Select a therapist" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {therapists.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.firstName} {t.lastName}
+                          {t.credentials ? `, ${t.credentials}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="draft-payer">Payer *</Label>
+                  <Input
+                    id="draft-payer"
+                    value={draftForm.payerName}
+                    onChange={(e) => setDraftForm({ ...draftForm, payerName: e.target.value })}
+                    placeholder="e.g. Aetna, Blue Cross Blue Shield"
+                    data-testid="input-draft-payer"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="draft-notes">Additional notes (optional)</Label>
+                  <Textarea
+                    id="draft-notes"
+                    value={draftForm.notes}
+                    onChange={(e) => setDraftForm({ ...draftForm, notes: e.target.value })}
+                    placeholder={
+                      draftMode === 'packet'
+                        ? 'Any payer-specific requirements or context you want reflected in the cover letter'
+                        : 'Any provider history, specialties, or context the application should mention'
+                    }
+                    rows={3}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: results — packet */}
+            {draftPacketResult && (
+              <div className="space-y-3">
+                <div className="p-3 rounded-md bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 text-xs text-purple-900 dark:text-purple-100">
+                  <strong>Summary:</strong> {draftPacketResult.summary}
+                </div>
+                <div>
+                  <Label>Cover letter</Label>
+                  <Textarea
+                    value={draftPacketResult.coverLetter}
+                    onChange={(e) =>
+                      setDraftPacketResult({ ...draftPacketResult, coverLetter: e.target.value })
+                    }
+                    rows={16}
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <Label>Document checklist</Label>
+                  <div className="border rounded-md divide-y max-h-60 overflow-y-auto">
+                    {draftPacketResult.documentChecklist?.map((d: any, i: number) => (
+                      <div key={i} className="p-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            defaultChecked={d.alreadyOnFile}
+                            className="mt-0"
+                          />
+                          <span className="font-medium">{d.item}</span>
+                          {d.alreadyOnFile && (
+                            <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700">
+                              On file
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground pl-6 mt-0.5">{d.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: results — application */}
+            {draftAppResult && (
+              <div className="space-y-3">
+                <div className="p-3 rounded-md bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 text-xs text-purple-900 dark:text-purple-100">
+                  <strong>Summary:</strong> {draftAppResult.summary}
+                </div>
+                <div>
+                  <Label>Cover letter</Label>
+                  <Textarea
+                    value={draftAppResult.coverLetter}
+                    onChange={(e) =>
+                      setDraftAppResult({ ...draftAppResult, coverLetter: e.target.value })
+                    }
+                    rows={14}
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <Label>Prefilled application answers</Label>
+                  <div className="border rounded-md divide-y max-h-72 overflow-y-auto">
+                    {draftAppResult.prefilledAnswers?.map((qa: any, i: number) => (
+                      <div key={i} className="p-2 text-sm">
+                        <div className="font-medium text-xs text-muted-foreground">
+                          {qa.question}
+                          <Badge
+                            variant="outline"
+                            className="ml-2 text-[9px] capitalize"
+                          >
+                            {qa.source}
+                          </Badge>
+                        </div>
+                        <div className="text-sm mt-0.5">{qa.answer}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              {!draftPacketResult && !draftAppResult ? (
+                <>
+                  <Button variant="outline" onClick={resetDraft}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleGenerateDraft}
+                    disabled={draftPacketMutation.isPending || draftAppMutation.isPending}
+                    className="bg-purple-600 hover:bg-purple-700 text-white"
+                    data-testid="button-generate-credentialing-draft"
+                  >
+                    {draftPacketMutation.isPending || draftAppMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        Drafting…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-1" />
+                        Generate with AI
+                      </>
+                    )}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={resetDraft}>
+                    Start over
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const text = draftPacketResult
+                        ? `${draftPacketResult.coverLetter}\n\n--- Document checklist ---\n${
+                            draftPacketResult.documentChecklist
+                              ?.map((d: any) => `- [${d.alreadyOnFile ? 'x' : ' '}] ${d.item}: ${d.description}`)
+                              .join('\n') ?? ''
+                          }`
+                        : `${draftAppResult.coverLetter}\n\n--- Application prefills ---\n${
+                            draftAppResult.prefilledAnswers
+                              ?.map((qa: any) => `Q: ${qa.question}\nA: ${qa.answer} [${qa.source}]`)
+                              .join('\n\n') ?? ''
+                          }`;
+                      navigator.clipboard.writeText(text);
+                      toast({ title: 'Copied to clipboard' });
+                    }}
+                  >
+                    <Copy className="w-4 h-4 mr-1" />
+                    Copy all
+                  </Button>
+                </>
+              )}
+            </div>
           </DialogContent>
         </Dialog>
       </div>
