@@ -17,6 +17,7 @@ import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimation
 import BenefitsSummary from "@/components/BenefitsSummary";
 import BenefitsVerificationCard from "@/components/BenefitsVerificationCard";
 import InsuranceDocumentsSection from "@/components/InsuranceDocumentsSection";
+import PriorAuthorizationsSection from "@/components/PriorAuthorizationsSection";
 import { Skeleton, CardGridSkeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -1409,6 +1410,11 @@ export default function Patients() {
                   patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
                   insuranceProvider={selectedPatient.insuranceProvider}
                 />
+              </div>
+
+              {/* Prior Authorizations */}
+              <div className="border-t pt-4">
+                <PriorAuthorizationsSection patientId={selectedPatient.id} />
               </div>
 
               {/* Insurance Documents Upload */}
