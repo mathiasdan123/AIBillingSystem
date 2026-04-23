@@ -141,10 +141,19 @@ export const practices = pgTable("practices", {
   // Phase 6 — NUCC provider taxonomy code sent on 837P claims. When set,
   // overrides the specialty-derived default. Leave null to have the
   // claim builder pick a default from practice.specialty (e.g. OT →
-  // 225X00000X, PT → 225100000X, ST → 235Z00000X). Prior to this field
+  // 225X00000X, PT → 225100000X, ST → 225100000X). Prior to this field
   // every claim went out as 101YM0800X (Mental Health Counselor)
   // regardless of actual discipline — a soft-deny risk on therapy CPTs.
   taxonomyCode: varchar("taxonomy_code", { length: 20 }),
+  // Slice B — practice owner / authorized signer captured at onboarding.
+  // Used to auto-fill payer enrollment forms and as the "signed by" line
+  // on EDI enrollment docs we submit on the practice's behalf. Nullable
+  // so existing practices don't break; new practices fill this in as the
+  // last step of the onboarding wizard before landing in the app.
+  ownerName: varchar("owner_name"),
+  ownerTitle: varchar("owner_title"), // e.g. "Owner", "Practice Administrator"
+  ownerSignature: text("owner_signature"), // typed signature (NUCC forms accept typed + date)
+  enrollmentAuthorizedAt: timestamp("enrollment_authorized_at"),
   // Front-desk copay collection (Phase 3 · Slice C).
   // Off by default so charging is explicitly opt-in per practice, even if
   // the Stripe integration is wired and keys are live.
