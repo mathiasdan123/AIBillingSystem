@@ -371,6 +371,112 @@ export function startScheduler() {
   });
   scheduledTasks.set('credentialingDeadlines', credentialingAlertTask);
 
+  // Provider license expiration alert — daily at 9:30 AM.
+  // Flags therapists whose state license expiration falls within 60 days so
+  // admins can push renewals before the license lapses (which would otherwise
+  // invalidate their claims).
+  const providerLicenseAlertTask = cron.schedule('30 9 * * *', async () => {
+    try {
+      const practiceIds = await storage.getAllPracticeIds();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const horizon = new Date(today);
+      horizon.setDate(horizon.getDate() + 60);
+      const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+      for (const practiceId of practiceIds) {
+        const therapists = await storage.getTherapistsByPractice(practiceId);
+        const expiring = therapists
+          .map((t: any) => {
+            if (!t.licenseExpirationDate) return null;
+            const exp = new Date(t.licenseExpirationDate);
+            if (isNaN(exp.getTime())) return null;
+            exp.setHours(0, 0, 0, 0);
+            if (exp < today || exp > horizon) return null;
+            const daysRemaining = Math.round((exp.getTime() - today.getTime()) / MS_PER_DAY);
+            return { therapist: t, expirationDate: exp, daysRemaining };
+          })
+          .filter((x: any): x is { therapist: any; expirationDate: Date; daysRemaining: number } => x !== null)
+          .sort((a, b) => a.daysRemaining - b.daysRemaining);
+
+        if (expiring.length === 0) continue;
+
+        const admins = await storage.getAdminsByPractice(practiceId);
+        const emails = admins.map((a: any) => a.email).filter(Boolean);
+        if (emails.length === 0) continue;
+
+        const practice = await storage.getPractice(practiceId);
+        const rowsHtml = expiring.map((e) => {
+          const providerName = [e.therapist.firstName, e.therapist.lastName].filter(Boolean).join(' ') || e.therapist.email || 'Unknown';
+          const urgencyColor =
+            e.daysRemaining <= 7 ? '#dc2626'
+              : e.daysRemaining <= 14 ? '#f59e0b'
+                : '#64748b';
+          return `
+            <tr>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">${providerName}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">${e.therapist.licenseNumber ?? '—'}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">${e.expirationDate.toISOString().slice(0, 10)}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:${urgencyColor};">${e.daysRemaining}d</td>
+            </tr>
+          `;
+        }).join('');
+
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;">
+            <div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:white;padding:24px;border-radius:12px 12px 0 0;">
+              <h2 style="margin:0 0 4px 0;">Provider License Expirations Approaching</h2>
+              <p style="margin:0;opacity:.9;">${practice?.name ?? 'Your Practice'}</p>
+            </div>
+            <div style="background:white;padding:24px;border:1px solid #e2e8f0;border-top:none;">
+              <p>The following provider licenses expire within 60 days. Coordinate renewals now to avoid lapses — claims from a provider with an expired license are subject to recoupment.</p>
+              <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                  <tr style="background:#f8fafc;">
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Provider</th>
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">License Number</th>
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Expiration</th>
+                    <th style="padding:12px;text-align:left;font-weight:600;color:#475569;">Days Remaining</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>
+            <div style="background:#f1f5f9;padding:16px;border-radius:0 0 12px 12px;text-align:center;font-size:12px;color:#64748b;">
+              Automated alert from TherapyBill AI — update license expirations in Settings → Therapists.
+            </div>
+          </div>`;
+
+        const textFallback = expiring
+          .map((e) => {
+            const providerName = [e.therapist.firstName, e.therapist.lastName].filter(Boolean).join(' ') || e.therapist.email || 'Unknown';
+            return `${providerName} (${e.therapist.licenseNumber ?? '—'}): expires ${e.expirationDate.toISOString().slice(0, 10)} (${e.daysRemaining}d)`;
+          })
+          .join('\n');
+
+        for (const email of emails) {
+          await sendEmail({
+            to: email,
+            subject: `${expiring.length} provider license${expiring.length === 1 ? '' : 's'} expiring soon — ${practice?.name ?? 'Your Practice'}`,
+            html,
+            text: textFallback,
+            fromName: 'TherapyBill AI Alerts',
+          });
+        }
+        logger.info('Provider license expiration alert sent', {
+          practiceId,
+          expiringCount: expiring.length,
+          recipientCount: emails.length,
+        });
+      }
+    } catch (err: any) {
+      logger.error('Provider license alert task failed', { error: err.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('providerLicenseAlert', providerLicenseAlertTask);
+
   // Automated eligibility refresh - daily at 2:00 AM
   const eligibilityRefreshTask = cron.schedule('0 2 * * *', async () => {
     try {
