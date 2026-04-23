@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,9 @@ import {
   Minus,
   Handshake,
   Info,
+  Users,
 } from 'lucide-react';
+import { Link } from 'wouter';
 
 /**
  * Payer Enrollments page (Slice C).
@@ -97,6 +99,26 @@ export default function PayerEnrollmentsPage() {
       return res.json();
     },
   });
+
+  // Cross-link: pull provider credentials so we can show per-payer
+  // "X providers credentialed" alongside the EDI enrollment grid.
+  const { data: credentials = [] } = useQuery<any[]>({
+    queryKey: ['/api/credentialing'],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/credentialing');
+      return res.json();
+    },
+  });
+  const credsByPayer = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const c of credentials) {
+      if (!c.payerName) continue;
+      const key = c.payerName.toLowerCase();
+      if (!m.has(key)) m.set(key, []);
+      m.get(key)!.push(c);
+    }
+    return m;
+  }, [credentials]);
 
   const upsertMutation = useMutation({
     mutationFn: async (body: {
@@ -203,11 +225,27 @@ export default function PayerEnrollmentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {rows.map((row) => {
+                    const rowCreds = credsByPayer.get(row.name.toLowerCase()) ?? [];
+                    const activeCreds = rowCreds.filter((c: any) => c.enrollmentStatus === 'active');
+                    return (
                     <tr key={row.name} className="border-b last:border-b-0 hover:bg-muted/30">
                       <td className="px-4 py-3">
                         <div className="font-medium">{row.name}</div>
                         <div className="text-xs text-muted-foreground font-mono">{row.payerId}</div>
+                        {rowCreds.length > 0 ? (
+                          <Link
+                            href="/credentialing"
+                            className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:underline mt-1"
+                          >
+                            <Users className="w-2.5 h-2.5" />
+                            {activeCreds.length}/{rowCreds.length} provider{rowCreds.length !== 1 ? 's' : ''} credentialed
+                          </Link>
+                        ) : (
+                          <div className="text-[10px] text-slate-400 mt-1">
+                            No providers credentialed
+                          </div>
+                        )}
                       </td>
                       {row.enrollments.map((cell) => (
                         <td key={cell.transactionType} className="px-4 py-3">
@@ -226,7 +264,8 @@ export default function PayerEnrollmentsPage() {
                         </td>
                       ))}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

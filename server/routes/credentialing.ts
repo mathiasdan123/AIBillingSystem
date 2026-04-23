@@ -10,11 +10,91 @@
  */
 
 import { Router, type Response } from 'express';
-import { eq, and, lte, gte, sql } from 'drizzle-orm';
+import { eq, and, lte, gte, or, sql } from 'drizzle-orm';
 import { isAuthenticated } from '../replitAuth';
 import { db, dbReady } from '../db';
 import { providerCredentials } from '@shared/schema';
 import logger from '../services/logger';
+
+export interface CredentialAtRiskEntry {
+  credential: any;
+  daysUntilExpiration: number | null;
+  daysUntilReCredentialing: number | null;
+  daysUntilAction: number; // min of the two (whichever is sooner)
+  reason: 'expiring' | 're_credentialing' | 'both';
+}
+
+/**
+ * Slice 1 credentialing alert — fetch provider credentials whose
+ * expiration OR re-credentialing deadline falls within `daysAhead`.
+ * Used by both the /at-risk endpoint below AND the daily cron task
+ * that emails admins.
+ */
+export async function getAtRiskCredentials(
+  practiceId: number,
+  daysAhead: number = 60
+): Promise<CredentialAtRiskEntry[]> {
+  const today = new Date();
+  const horizon = new Date();
+  horizon.setDate(today.getDate() + daysAhead);
+  const todayStr = today.toISOString().split('T')[0];
+  const horizonStr = horizon.toISOString().split('T')[0];
+
+  const rows = await db
+    .select()
+    .from(providerCredentials)
+    .where(
+      and(
+        eq(providerCredentials.practiceId, practiceId),
+        // Only flag active / in-progress ones — already expired / denied
+        // are either handled or abandoned.
+        or(
+          eq(providerCredentials.enrollmentStatus, 'active'),
+          eq(providerCredentials.enrollmentStatus, 'in_progress'),
+          eq(providerCredentials.enrollmentStatus, 'pending')
+        ),
+        or(
+          and(
+            gte(providerCredentials.expirationDate, todayStr),
+            lte(providerCredentials.expirationDate, horizonStr)
+          ),
+          and(
+            gte(providerCredentials.reCredentialingDate, todayStr),
+            lte(providerCredentials.reCredentialingDate, horizonStr)
+          )
+        )
+      )
+    );
+
+  const entries: CredentialAtRiskEntry[] = rows.map((c: any) => {
+    const expDays = c.expirationDate
+      ? Math.ceil((new Date(c.expirationDate).getTime() - today.getTime()) / 86400000)
+      : null;
+    const recDays = c.reCredentialingDate
+      ? Math.ceil((new Date(c.reCredentialingDate).getTime() - today.getTime()) / 86400000)
+      : null;
+    const candidates = [expDays, recDays].filter((d): d is number => typeof d === 'number' && d >= 0 && d <= daysAhead);
+    const soonest = candidates.length ? Math.min(...candidates) : daysAhead;
+    let reason: CredentialAtRiskEntry['reason'];
+    if (expDays != null && recDays != null && expDays <= daysAhead && recDays <= daysAhead) {
+      reason = 'both';
+    } else if (expDays != null && expDays <= daysAhead) {
+      reason = 'expiring';
+    } else {
+      reason = 're_credentialing';
+    }
+    return {
+      credential: c,
+      daysUntilExpiration: expDays,
+      daysUntilReCredentialing: recDays,
+      daysUntilAction: soonest,
+      reason,
+    };
+  });
+
+  entries.sort((a, b) => a.daysUntilAction - b.daysUntilAction);
+  return entries;
+}
 
 const router = Router();
 
@@ -56,6 +136,20 @@ const safeErrorResponse = (res: Response, statusCode: number, publicMessage: str
   }
   return res.status(statusCode).json({ message: publicMessage });
 };
+
+// GET /at-risk - Combined expiration + re-credentialing deadline check.
+// Must come before /:id.
+router.get('/at-risk', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const daysAhead = parseInt(req.query.daysAhead as string) || 60;
+    const entries = await getAtRiskCredentials(practiceId, daysAhead);
+    res.json(entries);
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to fetch at-risk credentials', error);
+  }
+});
 
 // GET /expiring - Get credentials expiring in next 90 days
 // NOTE: This route must be defined BEFORE /:id to avoid matching "expiring" as an id
