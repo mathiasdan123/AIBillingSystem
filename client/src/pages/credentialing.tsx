@@ -13,7 +13,9 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Plus, Trash2, Edit2, AlertTriangle, ShieldCheck, Search,
+  Sparkles, FileText, ClipboardList, Loader2, Copy,
 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 // ==================== TYPES ====================
 
@@ -95,6 +97,66 @@ export default function CredentialingPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
+
+  // AI draft state — "Draft packet" or "Draft application"
+  const [draftMode, setDraftMode] = useState<null | 'packet' | 'application'>(null);
+  const [draftForm, setDraftForm] = useState({ providerId: '', payerName: '', notes: '' });
+  const [draftPacketResult, setDraftPacketResult] = useState<any | null>(null);
+  const [draftAppResult, setDraftAppResult] = useState<any | null>(null);
+
+  // Therapists for the draft-mode provider dropdown
+  const { data: therapists = [] } = useQuery<Array<{ id: string; firstName: string; lastName: string; credentials: string | null }>>({
+    queryKey: ["/api/therapists"],
+    queryFn: async () => {
+      const res = await fetch("/api/therapists", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const draftPacketMutation = useMutation({
+    mutationFn: async (body: { providerId: string; payerName: string; notes?: string }) => {
+      const res = await apiRequest("POST", "/api/credentialing/draft-packet", body);
+      return res.json();
+    },
+    onSuccess: (data) => setDraftPacketResult(data),
+    onError: (err: any) => toast({
+      title: "Couldn't draft packet",
+      description: err?.message || 'Please try again.',
+      variant: 'destructive',
+    }),
+  });
+  const draftAppMutation = useMutation({
+    mutationFn: async (body: { providerId: string; payerName: string; notes?: string }) => {
+      const res = await apiRequest("POST", "/api/credentialing/draft-application", body);
+      return res.json();
+    },
+    onSuccess: (data) => setDraftAppResult(data),
+    onError: (err: any) => toast({
+      title: "Couldn't draft application",
+      description: err?.message || 'Please try again.',
+      variant: 'destructive',
+    }),
+  });
+  const resetDraft = () => {
+    setDraftMode(null);
+    setDraftForm({ providerId: '', payerName: '', notes: '' });
+    setDraftPacketResult(null);
+    setDraftAppResult(null);
+  };
+  const handleGenerateDraft = () => {
+    if (!draftForm.providerId || !draftForm.payerName.trim()) {
+      toast({ title: 'Missing info', description: 'Select a provider and enter a payer.', variant: 'destructive' });
+      return;
+    }
+    const body = {
+      providerId: draftForm.providerId,
+      payerName: draftForm.payerName.trim(),
+      notes: draftForm.notes.trim() || undefined,
+    };
+    if (draftMode === 'packet') draftPacketMutation.mutate(body);
+    else if (draftMode === 'application') draftAppMutation.mutate(body);
+  };
 
   // Fetch all credentials
   const { data: credentials = [], isLoading } = useQuery<ProviderCredential[]>({
