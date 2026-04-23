@@ -48,6 +48,16 @@ import {
  *   startDate, endDate, status, cptCode, diagnosisCode, notes.
  */
 
+interface AtRiskEntry {
+  auth: { id: number };
+  patientName: string;
+  predictedEndDate: string;
+  daysUntilPredictedEnd: number;
+  reason: 'expiring' | 'exhausting' | 'both';
+  sessionsPerWeek: number | null;
+  projectedSessionsRemaining: number | null;
+}
+
 interface Authorization {
   id: number;
   practiceId: number;
@@ -116,6 +126,22 @@ export default function PriorAuthorizationsSection({
     },
     enabled: !!patientId,
   });
+
+  // Pace-based at-risk predictions (expiry-date + projected unit exhaustion
+  // based on sessions/week for this patient). Scoped to the practice, so
+  // we filter client-side to entries matching our patient's auths.
+  const { data: atRiskList = [] } = useQuery<AtRiskEntry[]>({
+    queryKey: ['/api/treatment-authorizations/at-risk'],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/treatment-authorizations/at-risk?daysAhead=60');
+      return res.json();
+    },
+  });
+  const atRiskById = useMemo(() => {
+    const m = new Map<number, AtRiskEntry>();
+    for (const e of atRiskList) m.set(e.auth.id, e);
+    return m;
+  }, [atRiskList]);
 
   const draftMutation = useMutation({
     mutationFn: async (body: any) => {
@@ -338,13 +364,13 @@ export default function PriorAuthorizationsSection({
         ) : (
           <div className="space-y-4">
             {grouped.active.length > 0 && (
-              <AuthGroup title="Active" auths={grouped.active} />
+              <AuthGroup title="Active" auths={grouped.active} atRiskById={atRiskById} />
             )}
             {grouped.pending.length > 0 && (
-              <AuthGroup title="Pending" auths={grouped.pending} />
+              <AuthGroup title="Pending" auths={grouped.pending} atRiskById={atRiskById} />
             )}
             {grouped.inactive.length > 0 && (
-              <AuthGroup title="Expired / Exhausted / Denied" auths={grouped.inactive} dim />
+              <AuthGroup title="Expired / Exhausted / Denied" auths={grouped.inactive} dim atRiskById={atRiskById} />
             )}
           </div>
         )}
@@ -659,10 +685,12 @@ export default function PriorAuthorizationsSection({
 function AuthGroup({
   title,
   auths,
+  atRiskById,
   dim = false,
 }: {
   title: string;
   auths: Authorization[];
+  atRiskById: Map<number, AtRiskEntry>;
   dim?: boolean;
 }) {
   return (
@@ -672,14 +700,14 @@ function AuthGroup({
       </h4>
       <div className={`space-y-2 ${dim ? 'opacity-70' : ''}`}>
         {auths.map((a) => (
-          <AuthRow key={a.id} auth={a} />
+          <AuthRow key={a.id} auth={a} atRisk={atRiskById.get(a.id)} />
         ))}
       </div>
     </div>
   );
 }
 
-function AuthRow({ auth }: { auth: Authorization }) {
+function AuthRow({ auth, atRisk }: { auth: Authorization; atRisk?: AtRiskEntry }) {
   const remaining = Math.max(0, auth.authorizedUnits - auth.usedUnits);
   const utilizationPct = auth.authorizedUnits > 0
     ? Math.min(100, Math.round((auth.usedUnits / auth.authorizedUnits) * 100))
@@ -733,6 +761,36 @@ function AuthRow({ auth }: { auth: Authorization }) {
           className={`h-1.5 ${utilizationPct >= 80 ? '[&>div]:bg-amber-500' : ''}`}
         />
       </div>
+
+      {/* AI forecast (session-cadence + expiry-date combined) */}
+      {atRisk && (
+        <div className="mt-2 p-2 rounded bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 flex items-start gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-purple-600 mt-0.5 flex-shrink-0" aria-hidden="true" />
+          <div className="text-xs text-purple-900 dark:text-purple-100 flex-1">
+            <span className="font-medium">AI forecast:</span>{' '}
+            {atRisk.reason === 'exhausting' ? (
+              <>
+                At current pace of{' '}
+                <span className="font-mono">{atRisk.sessionsPerWeek?.toFixed(1)}</span> sessions/week,
+                this auth runs out of units around <strong>{formatDate(atRisk.predictedEndDate)}</strong>{' '}
+                — <strong>{atRisk.daysUntilPredictedEnd} days away</strong>. Request renewal now.
+              </>
+            ) : atRisk.reason === 'expiring' ? (
+              <>
+                Expires on <strong>{formatDate(atRisk.predictedEndDate)}</strong>{' '}
+                ({atRisk.daysUntilPredictedEnd} days). Request renewal before then.
+              </>
+            ) : (
+              <>
+                Expires <strong>{formatDate(atRisk.predictedEndDate)}</strong> AND projected to
+                run out of units at{' '}
+                <span className="font-mono">{atRisk.sessionsPerWeek?.toFixed(1)}</span>/week pace.{' '}
+                <strong>{atRisk.daysUntilPredictedEnd} days</strong>. Request renewal now.
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {auth.notes && (
         <p className="text-xs text-muted-foreground mt-2 italic">{auth.notes}</p>

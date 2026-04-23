@@ -22,6 +22,7 @@ import {
   incrementUsedUnits,
   getExpiringAuthorizations,
   getAuthorizationUtilization,
+  getAtRiskAuthorizations,
 } from '../services/authorizationService';
 
 const router = Router();
@@ -74,6 +75,18 @@ router.get('/expiring', isAuthenticated, async (req: any, res: Response) => {
     res.json(results);
   } catch (error) {
     safeErrorResponse(res, 500, 'Failed to fetch expiring authorizations', error);
+  }
+});
+
+// GET /at-risk - Combined expiry + pace-based exhaustion prediction (must be before /:id)
+router.get('/at-risk', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const daysAhead = req.query.daysAhead ? parseInt(req.query.daysAhead as string) : 30;
+    const results = await getAtRiskAuthorizations(practiceId, daysAhead);
+    res.json(results);
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to fetch at-risk authorizations', error);
   }
 });
 

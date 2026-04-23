@@ -6,9 +6,12 @@
  * and provides utilization summaries.
  */
 
-import { eq, and, sql, desc, gte, lte } from 'drizzle-orm';
+import { eq, and, sql, desc, gte, lte, inArray } from 'drizzle-orm';
 import {
   treatmentAuthorizations,
+  treatmentSessions,
+  patients,
+  cptCodes,
   type InsertTreatmentAuthorization,
   type TreatmentAuthorization,
 } from '@shared/schema';
@@ -260,6 +263,184 @@ export async function getExpiringAuthorizations(
     .orderBy(treatmentAuthorizations.endDate);
 
   return results;
+}
+
+/**
+ * At-risk authorization — the biller should act on these soon to avoid
+ * a session getting scheduled against an exhausted or expired auth.
+ *
+ * Combines two signals:
+ *   - Calendar expiry: authorization's endDate falling within the window
+ *   - Pace-based exhaustion: forecast remaining units / current sessions-per-week
+ *     runs out before endDate
+ *
+ * `predictedEndDate` is the earlier of the two, `reason` explains which
+ * signal fired. If we can't measure cadence (no recent sessions) we fall
+ * back to calendar-only.
+ */
+export interface AtRiskAuthorization {
+  auth: TreatmentAuthorization;
+  patientName: string;
+  predictedEndDate: string; // ISO yyyy-mm-dd
+  daysUntilPredictedEnd: number;
+  reason: 'expiring' | 'exhausting' | 'both';
+  sessionsPerWeek: number | null; // null if no recent sessions
+  projectedSessionsRemaining: number | null;
+}
+
+/**
+ * Returns auths predicted to lapse within `daysAhead` — either by date
+ * expiry OR by running out of units at the patient's current session pace.
+ *
+ * Methodology: count completed sessions for the patient + CPT in the last
+ * 4 weeks (28 days) → sessions per week. Remaining units / sessions-per-week
+ * = weeks of runway. Plus today's date → predicted exhaustion date.
+ *
+ * Pace-based predictions only fire when the patient has had >=2 sessions
+ * in the last 4 weeks (otherwise cadence is too noisy to forecast).
+ */
+export async function getAtRiskAuthorizations(
+  practiceId: number,
+  daysAhead: number = 30,
+): Promise<AtRiskAuthorization[]> {
+  const today = new Date();
+  const horizon = new Date();
+  horizon.setDate(today.getDate() + daysAhead);
+  const horizonStr = horizon.toISOString().split('T')[0];
+  const todayStr = today.toISOString().split('T')[0];
+
+  // All active auths for this practice — we'll filter to at-risk below.
+  const active = await db
+    .select()
+    .from(treatmentAuthorizations)
+    .where(
+      and(
+        eq(treatmentAuthorizations.practiceId, practiceId),
+        eq(treatmentAuthorizations.status, 'active'),
+      ),
+    );
+  if (active.length === 0) return [];
+
+  // Pull patient names + recent sessions in one pass.
+  const patientIds: number[] = Array.from(new Set(active.map((a: TreatmentAuthorization) => a.patientId)));
+  const patientRows = await db
+    .select({
+      id: patients.id,
+      firstName: patients.firstName,
+      lastName: patients.lastName,
+    })
+    .from(patients)
+    .where(inArray(patients.id, patientIds));
+  const patientMap = new Map<number, { id: number; firstName: string; lastName: string }>(
+    patientRows.map((p: any) => [p.id, p])
+  );
+
+  // Recent sessions (last 28 days) — per patient + CPT cadence calculation.
+  const fourWeeksAgo = new Date();
+  fourWeeksAgo.setDate(today.getDate() - 28);
+  const fourWeeksAgoStr = fourWeeksAgo.toISOString().split('T')[0];
+
+  const recentSessions = await db
+    .select({
+      patientId: treatmentSessions.patientId,
+      sessionDate: treatmentSessions.sessionDate,
+      cptCodeId: treatmentSessions.cptCodeId,
+      units: treatmentSessions.units,
+    })
+    .from(treatmentSessions)
+    .where(
+      and(
+        eq(treatmentSessions.practiceId, practiceId),
+        gte(treatmentSessions.sessionDate, fourWeeksAgoStr),
+        inArray(treatmentSessions.patientId, patientIds),
+      ),
+    );
+
+  // Build a patient → CPT code lookup for mapping auth.cptCode (string like
+  // "97530") to sessions (which store cptCodeId). One small query.
+  const cptRows = await db
+    .select({ id: cptCodes.id, code: cptCodes.code })
+    .from(cptCodes);
+  const cptCodeToId = new Map<string, number>(cptRows.map((c: any) => [c.code, c.id]));
+
+  const atRisk: AtRiskAuthorization[] = [];
+  for (const auth of active) {
+    const patient = patientMap.get(auth.patientId);
+    if (!patient) continue;
+
+    // Calendar signal — date-based expiry.
+    const expiryDate = new Date(auth.endDate);
+    const calendarFlag =
+      auth.endDate >= todayStr && auth.endDate <= horizonStr;
+
+    // Pace signal — count recent sessions for this patient, optionally
+    // filtered to the auth's CPT if specified.
+    const authCptId = auth.cptCode ? cptCodeToId.get(auth.cptCode) : null;
+    const relevantSessions = recentSessions.filter((s: any) => {
+      if (s.patientId !== auth.patientId) return false;
+      if (!auth.cptCode) return true; // wildcard auth — count all
+      if (!authCptId) return false;
+      return s.cptCodeId === authCptId;
+    });
+    const unitsUsedLast28Days = relevantSessions.reduce(
+      (sum: number, s: any) => sum + (s.units ?? 1),
+      0,
+    );
+    const sessionsPerWeek = relevantSessions.length >= 2
+      ? unitsUsedLast28Days / 4
+      : null;
+
+    let predictedExhaustionDate: Date | null = null;
+    if (sessionsPerWeek && sessionsPerWeek > 0) {
+      const remaining = Math.max(0, auth.authorizedUnits - auth.usedUnits);
+      const weeksOfRunway = remaining / sessionsPerWeek;
+      predictedExhaustionDate = new Date();
+      predictedExhaustionDate.setDate(
+        today.getDate() + Math.ceil(weeksOfRunway * 7),
+      );
+    }
+
+    // Combine signals — we pick the earlier date and label the reason.
+    const exhaustionWithinHorizon =
+      predictedExhaustionDate && predictedExhaustionDate <= horizon;
+
+    if (!calendarFlag && !exhaustionWithinHorizon) continue;
+
+    let predicted: Date;
+    let reason: AtRiskAuthorization['reason'];
+    if (calendarFlag && exhaustionWithinHorizon && predictedExhaustionDate) {
+      predicted = predictedExhaustionDate < expiryDate
+        ? predictedExhaustionDate
+        : expiryDate;
+      reason = 'both';
+    } else if (exhaustionWithinHorizon && predictedExhaustionDate) {
+      predicted = predictedExhaustionDate;
+      reason = 'exhausting';
+    } else {
+      predicted = expiryDate;
+      reason = 'expiring';
+    }
+
+    const daysUntil = Math.ceil(
+      (predicted.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    atRisk.push({
+      auth,
+      patientName: `${patient.firstName} ${patient.lastName}`,
+      predictedEndDate: predicted.toISOString().split('T')[0],
+      daysUntilPredictedEnd: daysUntil,
+      reason,
+      sessionsPerWeek,
+      projectedSessionsRemaining: sessionsPerWeek
+        ? Math.floor((auth.authorizedUnits - auth.usedUnits) / (sessionsPerWeek / 1))
+        : null,
+    });
+  }
+
+  // Sort by urgency (soonest first).
+  atRisk.sort((a, b) => a.daysUntilPredictedEnd - b.daysUntilPredictedEnd);
+  return atRisk;
 }
 
 /**
