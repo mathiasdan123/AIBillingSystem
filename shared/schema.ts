@@ -39,6 +39,7 @@ export const users = pgTable("users", {
   // Therapist-specific fields
   credentials: varchar("credentials"), // e.g., "OTR/L", "PT, DPT", "MS, CCC-SLP"
   licenseNumber: varchar("license_number"),
+  licenseExpirationDate: date("license_expiration_date"),
   npiNumber: varchar("npi_number"),
   // Phase 6 Slice 2 — NUCC taxonomy override per provider. Wins over
   // practice.taxonomyCode on 837P claims rendered by this user. Leave

@@ -1273,6 +1273,7 @@ export default function Settings() {
     lastName: string;
     credentials: string | null;
     licenseNumber: string | null;
+    licenseExpirationDate: string | null;
     npiNumber: string | null;
     taxonomyCode: string | null;
     hasSignature: boolean;
@@ -1299,7 +1300,7 @@ export default function Settings() {
   });
 
   const [editingTherapist, setEditingTherapist] = useState<string | null>(null);
-  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', npiNumber: '', taxonomyCode: '' });
+  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', licenseExpirationDate: '', npiNumber: '', taxonomyCode: '' });
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
 
   const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>, therapistId: string) => {
@@ -2630,6 +2631,15 @@ export default function Settings() {
                                   />
                                 </div>
                                 <div>
+                                  <Label>License Expiration Date</Label>
+                                  <Input
+                                    type="date"
+                                    value={therapistForm.licenseExpirationDate}
+                                    onChange={(e) => setTherapistForm({ ...therapistForm, licenseExpirationDate: e.target.value })}
+                                    data-testid="input-therapist-license-expiration"
+                                  />
+                                </div>
+                                <div>
                                   <Label>NPI Number</Label>
                                   <Input
                                     value={therapistForm.npiNumber}
@@ -2711,6 +2721,7 @@ export default function Settings() {
                                   setTherapistForm({
                                     credentials: therapist.credentials || '',
                                     licenseNumber: therapist.licenseNumber || '',
+                                    licenseExpirationDate: therapist.licenseExpirationDate || '',
                                     npiNumber: therapist.npiNumber || '',
                                     taxonomyCode: (therapist as any).taxonomyCode || ''
                                   });

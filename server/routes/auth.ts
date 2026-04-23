@@ -468,6 +468,7 @@ router.get('/therapists', isAuthenticated, async (req: any, res) => {
       lastName: t.lastName,
       credentials: t.credentials,
       licenseNumber: t.licenseNumber,
+      licenseExpirationDate: (t as any).licenseExpirationDate ?? null,
       npiNumber: t.npiNumber,
       taxonomyCode: (t as any).taxonomyCode ?? null,
       hasSignature: !!t.digitalSignature,
@@ -493,11 +494,12 @@ router.patch('/therapists/:id', isAuthenticated, async (req: any, res) => {
       return res.status(403).json({ message: "Can only edit your own profile" });
     }
 
-    const { credentials, licenseNumber, npiNumber, taxonomyCode, digitalSignature } = req.body;
+    const { credentials, licenseNumber, licenseExpirationDate, npiNumber, taxonomyCode, digitalSignature } = req.body;
 
     const updates: any = {};
     if (credentials !== undefined) updates.credentials = credentials;
     if (licenseNumber !== undefined) updates.licenseNumber = licenseNumber;
+    if (licenseExpirationDate !== undefined) updates.licenseExpirationDate = licenseExpirationDate || null;
     if (npiNumber !== undefined) updates.npiNumber = npiNumber;
     if (taxonomyCode !== undefined) updates.taxonomyCode = taxonomyCode || null;
     if (digitalSignature !== undefined) {
@@ -517,7 +519,9 @@ router.patch('/therapists/:id', isAuthenticated, async (req: any, res) => {
       lastName: updatedUser.lastName,
       credentials: updatedUser.credentials,
       licenseNumber: updatedUser.licenseNumber,
+      licenseExpirationDate: (updatedUser as any).licenseExpirationDate ?? null,
       npiNumber: updatedUser.npiNumber,
+      taxonomyCode: (updatedUser as any).taxonomyCode ?? null,
       hasSignature: !!updatedUser.digitalSignature,
       signatureUploadedAt: updatedUser.signatureUploadedAt
     });
