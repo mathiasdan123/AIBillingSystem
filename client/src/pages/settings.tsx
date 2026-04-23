@@ -1271,6 +1271,7 @@ export default function Settings() {
     lastName: string;
     credentials: string | null;
     licenseNumber: string | null;
+    licenseExpirationDate: string | null;
     npiNumber: string | null;
     taxonomyCode: string | null;
     hasSignature: boolean;
@@ -1297,7 +1298,7 @@ export default function Settings() {
   });
 
   const [editingTherapist, setEditingTherapist] = useState<string | null>(null);
-  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', npiNumber: '', taxonomyCode: '' });
+  const [therapistForm, setTherapistForm] = useState({ credentials: '', licenseNumber: '', licenseExpirationDate: '', npiNumber: '', taxonomyCode: '' });
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
 
   const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>, therapistId: string) => {
