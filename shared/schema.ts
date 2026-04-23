@@ -1281,6 +1281,43 @@ export const payerCredentials = pgTable("payer_credentials", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Slice C — Payer Enrollment Status.
+// Tracks which payers this practice is enrolled with for each EDI
+// transaction type (270 eligibility, 837P claims, 835 ERAs). Payers
+// require separate enrollments for each transaction type and each
+// enrollment typically takes 2-6 weeks to approve. Without this table,
+// practices have no visibility into which payers they can actually
+// submit to today — they just discover it via silent rejections.
+//
+// Seeded lazily: a practice has no rows until the first enrollment
+// gets requested. The UI renders all known payers (from stediService
+// PAYER_IDS + Stedi's official list) and merges in the per-practice
+// enrollment rows.
+export const payerEnrollments = pgTable("payer_enrollments", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  payerName: varchar("payer_name", { length: 200 }).notNull(),
+  payerId: varchar("payer_id", { length: 50 }), // Stedi tradingPartnerServiceId
+  transactionType: varchar("transaction_type", { length: 20 }).notNull(), // eligibility, claims, era
+  status: varchar("status", { length: 20 }).default("not_enrolled").notNull(), // not_enrolled, pending, enrolled, rejected
+  requestedAt: timestamp("requested_at"),
+  approvedAt: timestamp("approved_at"),
+  rejectedAt: timestamp("rejected_at"),
+  rejectionReason: text("rejection_reason"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_payer_enrollments_practice").on(table.practiceId),
+  index("idx_payer_enrollments_status").on(table.status),
+  // One row per (practice, payer, transaction type). Upsert on this.
+  index("idx_payer_enrollments_unique").on(table.practiceId, table.payerName, table.transactionType),
+]);
+
+export const insertPayerEnrollmentSchema = createInsertSchema(payerEnrollments).omit({ id: true, createdAt: true, updatedAt: true });
+export type PayerEnrollment = typeof payerEnrollments.$inferSelect;
+export type InsertPayerEnrollment = z.infer<typeof insertPayerEnrollmentSchema>;
+
 // Insurance Data Cache (Retrieved insurance data)
 export const insuranceDataCache = pgTable("insurance_data_cache", {
   id: serial("id").primaryKey(),

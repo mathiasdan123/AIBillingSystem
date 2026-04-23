@@ -34,6 +34,7 @@ const PatientIntake = lazy(() => import("@/pages/intake"));
 const SoapNotes = lazy(() => import("@/pages/soap-notes"));
 const InvitePage = lazy(() => import("@/pages/invite"));
 const PayerManagement = lazy(() => import("@/pages/payer-management"));
+const PayerEnrollments = lazy(() => import("@/pages/payer-enrollments"));
 const BreachIncidents = lazy(() => import("@/pages/breach-incidents"));
 const ComplianceDashboard = lazy(() => import("@/pages/compliance"));
 const HipaaCompliance = lazy(() => import("@/pages/hipaa-compliance"));
@@ -235,6 +236,7 @@ function Router() {
               <Route path="/settings" component={Settings} />
               <Route path="/data-upload" component={DataUpload} />
               <Route path="/payer-management" component={PayerManagement} />
+              <Route path="/payer-enrollments" component={PayerEnrollments} />
               <Route path="/insurance-rates" component={InsuranceRates} />
               <Route path="/reimbursement" component={Reimbursement} />
               <Route path="/remittance" component={RemittancePage} />
