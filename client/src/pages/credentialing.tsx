@@ -100,7 +100,17 @@ export default function CredentialingPage() {
 
   // AI draft state — "Draft packet" or "Draft application"
   const [draftMode, setDraftMode] = useState<null | 'packet' | 'application'>(null);
-  const [draftForm, setDraftForm] = useState({ providerId: '', payerName: '', notes: '' });
+  const [draftForm, setDraftForm] = useState({
+    // Pick from dropdown OR type freehand — one or the other, not both.
+    providerSource: 'existing' as 'existing' | 'manual',
+    providerId: '',
+    providerName: '',
+    providerCredentials: '',
+    providerNpi: '',
+    providerLicense: '',
+    payerName: '',
+    notes: '',
+  });
   const [draftPacketResult, setDraftPacketResult] = useState<any | null>(null);
   const [draftAppResult, setDraftAppResult] = useState<any | null>(null);
 
@@ -140,20 +150,46 @@ export default function CredentialingPage() {
   });
   const resetDraft = () => {
     setDraftMode(null);
-    setDraftForm({ providerId: '', payerName: '', notes: '' });
+    setDraftForm({
+      providerSource: 'existing',
+      providerId: '',
+      providerName: '',
+      providerCredentials: '',
+      providerNpi: '',
+      providerLicense: '',
+      payerName: '',
+      notes: '',
+    });
     setDraftPacketResult(null);
     setDraftAppResult(null);
   };
   const handleGenerateDraft = () => {
-    if (!draftForm.providerId || !draftForm.payerName.trim()) {
-      toast({ title: 'Missing info', description: 'Select a provider and enter a payer.', variant: 'destructive' });
+    const isExisting = draftForm.providerSource === 'existing';
+    const hasProvider = isExisting
+      ? Boolean(draftForm.providerId)
+      : Boolean(draftForm.providerName.trim());
+    if (!hasProvider || !draftForm.payerName.trim()) {
+      toast({
+        title: 'Missing info',
+        description: isExisting
+          ? 'Select a provider and enter a payer.'
+          : 'Enter a provider name and a payer.',
+        variant: 'destructive',
+      });
       return;
     }
-    const body = {
-      providerId: draftForm.providerId,
+    const body: any = {
       payerName: draftForm.payerName.trim(),
       notes: draftForm.notes.trim() || undefined,
     };
+    if (isExisting) {
+      body.providerId = draftForm.providerId;
+    } else {
+      body.providerName = draftForm.providerName.trim();
+      if (draftForm.providerCredentials.trim()) body.providerCredentials = draftForm.providerCredentials.trim();
+      if (draftForm.providerNpi.trim()) body.providerNpi = draftForm.providerNpi.trim();
+      if (draftForm.providerLicense.trim()) body.providerLicense = draftForm.providerLicense.trim();
+    }
     if (draftMode === 'packet') draftPacketMutation.mutate(body);
     else if (draftMode === 'application') draftAppMutation.mutate(body);
   };
@@ -671,24 +707,88 @@ export default function CredentialingPage() {
             {/* Step 1: form */}
             {!draftPacketResult && !draftAppResult && (
               <div className="space-y-3">
-                <div>
-                  <Label htmlFor="draft-provider">Provider *</Label>
-                  <Select
-                    value={draftForm.providerId}
-                    onValueChange={(v) => setDraftForm({ ...draftForm, providerId: v })}
-                  >
-                    <SelectTrigger id="draft-provider" data-testid="select-draft-provider">
-                      <SelectValue placeholder="Select a therapist" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {therapists.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.firstName} {t.lastName}
-                          {t.credentials ? `, ${t.credentials}` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="space-y-2">
+                  <Label>Provider *</Label>
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      className={`px-2 py-1 rounded ${
+                        draftForm.providerSource === 'existing'
+                          ? 'bg-purple-100 text-purple-800 font-medium'
+                          : 'text-muted-foreground hover:bg-muted'
+                      }`}
+                      onClick={() => setDraftForm({ ...draftForm, providerSource: 'existing' })}
+                      data-testid="tab-existing-provider"
+                    >
+                      Existing therapist
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-2 py-1 rounded ${
+                        draftForm.providerSource === 'manual'
+                          ? 'bg-purple-100 text-purple-800 font-medium'
+                          : 'text-muted-foreground hover:bg-muted'
+                      }`}
+                      onClick={() => setDraftForm({ ...draftForm, providerSource: 'manual' })}
+                      data-testid="tab-manual-provider"
+                    >
+                      Enter manually
+                    </button>
+                  </div>
+                  {draftForm.providerSource === 'existing' ? (
+                    therapists.length > 0 ? (
+                      <Select
+                        value={draftForm.providerId}
+                        onValueChange={(v) => setDraftForm({ ...draftForm, providerId: v })}
+                      >
+                        <SelectTrigger data-testid="select-draft-provider">
+                          <SelectValue placeholder="Select a therapist" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {therapists.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.firstName} {t.lastName}
+                              {t.credentials ? `, ${t.credentials}` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="p-3 text-xs text-amber-800 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded">
+                        No therapists in the system yet. Switch to <strong>Enter manually</strong> above
+                        to draft credentials for a new hire before they're added to the Therapists tab.
+                      </div>
+                    )
+                  ) : (
+                    <div className="space-y-2">
+                      <Input
+                        value={draftForm.providerName}
+                        onChange={(e) => setDraftForm({ ...draftForm, providerName: e.target.value })}
+                        placeholder="Full name (e.g. Jane Smith, OTR/L)"
+                        data-testid="input-manual-provider-name"
+                      />
+                      <div className="grid grid-cols-3 gap-2">
+                        <Input
+                          value={draftForm.providerCredentials}
+                          onChange={(e) => setDraftForm({ ...draftForm, providerCredentials: e.target.value })}
+                          placeholder="Credentials (OTR/L)"
+                        />
+                        <Input
+                          value={draftForm.providerNpi}
+                          onChange={(e) => setDraftForm({ ...draftForm, providerNpi: e.target.value })}
+                          placeholder="NPI (optional)"
+                        />
+                        <Input
+                          value={draftForm.providerLicense}
+                          onChange={(e) => setDraftForm({ ...draftForm, providerLicense: e.target.value })}
+                          placeholder="License # (optional)"
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        The AI fills missing fields with "To be provided" rather than fabricating.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Label htmlFor="draft-payer">Payer *</Label>

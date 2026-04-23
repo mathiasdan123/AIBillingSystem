@@ -151,22 +151,73 @@ router.get('/at-risk', isAuthenticated, async (req: any, res: Response) => {
   }
 });
 
+/**
+ * Build the provider descriptor for a draft request. Accepts either a
+ * registered therapist (providerId → lookup) OR a freehand write-in
+ * (providerName + optional details). Lets practices draft credentialing
+ * materials for a brand-new hire before that person has been added to
+ * the Therapists tab.
+ */
+async function resolveProviderForDraft(body: any): Promise<{
+  firstName: string;
+  lastName: string;
+  credentials: string | null;
+  npiNumber: string | null;
+  licenseNumber: string | null;
+  taxonomyCode: string | null;
+} | null> {
+  const { storage } = await import('../storage');
+  // Path A — existing therapist by id.
+  if (body?.providerId) {
+    const p = await storage.getUser(body.providerId);
+    if (!p) return null;
+    return {
+      firstName: p.firstName ?? '',
+      lastName: p.lastName ?? '',
+      credentials: (p as any).credentials ?? null,
+      npiNumber: (p as any).npiNumber ?? null,
+      licenseNumber: (p as any).licenseNumber ?? null,
+      taxonomyCode: (p as any).taxonomyCode ?? null,
+    };
+  }
+  // Path B — freehand write-in.
+  if (body?.providerName && typeof body.providerName === 'string') {
+    const [firstName = '', ...rest] = body.providerName.trim().split(/\s+/);
+    const lastName = rest.join(' ');
+    return {
+      firstName,
+      lastName,
+      credentials: body.providerCredentials ?? null,
+      npiNumber: body.providerNpi ?? null,
+      licenseNumber: body.providerLicense ?? null,
+      taxonomyCode: null,
+    };
+  }
+  return null;
+}
+
 // POST /draft-packet — AI-drafted enrollment packet cover letter + checklist
 router.post('/draft-packet', isAuthenticated, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
-    const { providerId, payerName, notes } = req.body || {};
-    if (!providerId || !payerName) {
-      return res.status(400).json({ message: 'providerId and payerName are required.' });
+    const { payerName, notes } = req.body || {};
+    if (!payerName) {
+      return res.status(400).json({ message: 'payerName is required.' });
+    }
+    const provider = await resolveProviderForDraft(req.body);
+    if (!provider) {
+      return res.status(400).json({
+        message: 'Either providerId (existing therapist) or providerName (freehand) is required.',
+      });
+    }
+    if (!provider.firstName && !provider.lastName) {
+      return res.status(400).json({ message: 'Provider name cannot be empty.' });
     }
     const { storage } = await import('../storage');
-    const [provider, practice] = await Promise.all([
-      storage.getUser(providerId),
-      storage.getPractice(practiceId),
-    ]);
-    if (!provider) return res.status(404).json({ message: 'Provider not found' });
+    const practice = await storage.getPractice(practiceId);
     if (!practice) return res.status(404).json({ message: 'Practice not found' });
+
     const { draftCredentialingPacketLetter } = await import('../services/credentialingAiService');
     const result = await draftCredentialingPacketLetter({
       practice: {
@@ -181,14 +232,7 @@ router.post('/draft-packet', isAuthenticated, async (req: any, res: Response) =>
         ownerName: (practice as any).ownerName ?? null,
         ownerTitle: (practice as any).ownerTitle ?? null,
       },
-      provider: {
-        firstName: provider.firstName ?? '',
-        lastName: provider.lastName ?? '',
-        credentials: (provider as any).credentials ?? null,
-        npiNumber: (provider as any).npiNumber ?? null,
-        licenseNumber: (provider as any).licenseNumber ?? null,
-        taxonomyCode: (provider as any).taxonomyCode ?? null,
-      },
+      provider,
       payer: { name: payerName, contact: null },
       notes: notes ?? null,
     });
@@ -205,17 +249,23 @@ router.post('/draft-application', isAuthenticated, async (req: any, res: Respons
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
-    const { providerId, payerName, notes } = req.body || {};
-    if (!providerId || !payerName) {
-      return res.status(400).json({ message: 'providerId and payerName are required.' });
+    const { payerName, notes } = req.body || {};
+    if (!payerName) {
+      return res.status(400).json({ message: 'payerName is required.' });
+    }
+    const provider = await resolveProviderForDraft(req.body);
+    if (!provider) {
+      return res.status(400).json({
+        message: 'Either providerId (existing therapist) or providerName (freehand) is required.',
+      });
+    }
+    if (!provider.firstName && !provider.lastName) {
+      return res.status(400).json({ message: 'Provider name cannot be empty.' });
     }
     const { storage } = await import('../storage');
-    const [provider, practice] = await Promise.all([
-      storage.getUser(providerId),
-      storage.getPractice(practiceId),
-    ]);
-    if (!provider) return res.status(404).json({ message: 'Provider not found' });
+    const practice = await storage.getPractice(practiceId);
     if (!practice) return res.status(404).json({ message: 'Practice not found' });
+
     const { draftCredentialingApplication } = await import('../services/credentialingAiService');
     const result = await draftCredentialingApplication({
       practice: {
@@ -230,14 +280,7 @@ router.post('/draft-application', isAuthenticated, async (req: any, res: Respons
         ownerName: (practice as any).ownerName ?? null,
         ownerTitle: (practice as any).ownerTitle ?? null,
       },
-      provider: {
-        firstName: provider.firstName ?? '',
-        lastName: provider.lastName ?? '',
-        credentials: (provider as any).credentials ?? null,
-        npiNumber: (provider as any).npiNumber ?? null,
-        licenseNumber: (provider as any).licenseNumber ?? null,
-        taxonomyCode: (provider as any).taxonomyCode ?? null,
-      },
+      provider,
       payer: { name: payerName, contact: null },
       notes: notes ?? null,
     });
