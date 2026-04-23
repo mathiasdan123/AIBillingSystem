@@ -69,6 +69,8 @@ const practiceSchema = z.object({
   licenseExpiration: z.string().optional(),
   businessLicense: z.string().optional(),
   caqhProfileId: z.string().optional(),
+  insuranceCertificateStatus: z.enum(["current", "expiring", "expired", "not_on_file"]).optional(),
+  w9FormStatus: z.enum(["on_file", "not_on_file", "needs_update"]).optional(),
 
   // Billing Contact
   billingContactName: z.string().optional(),
@@ -1340,6 +1342,8 @@ export default function Settings() {
         licenseExpiration: practice.licenseExpiration || "",
         businessLicense: practice.businessLicense || "",
         caqhProfileId: practice.caqhProfileId || "",
+        insuranceCertificateStatus: practice.insuranceCertificateStatus || undefined,
+        w9FormStatus: practice.w9FormStatus || undefined,
         billingContactName: practice.billingContactName || "",
         billingContactEmail: practice.billingContactEmail || "",
         billingContactPhone: practice.billingContactPhone || "",
@@ -1640,6 +1644,155 @@ export default function Settings() {
                         )}
                       />
                     </div>
+
+                    {/* Practice Credentialing & Compliance — professional
+                        license, W9 status, insurance certificate, CAQH
+                        profile. All fields already exist on the practices
+                        table; no schema change needed. */}
+                    {(() => {
+                      const expRaw = form.watch("licenseExpiration");
+                      let expWarning: { label: string } | null = null;
+                      if (expRaw) {
+                        const exp = new Date(expRaw);
+                        if (!isNaN(exp.getTime())) {
+                          const now = new Date();
+                          now.setHours(0, 0, 0, 0);
+                          const diffDays = Math.floor((exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                          if (diffDays < 0) {
+                            expWarning = { label: "License expired" };
+                          } else if (diffDays <= 30) {
+                            expWarning = { label: "License expiring soon" };
+                          }
+                        }
+                      }
+                      return (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 dark:bg-slate-900/20 dark:border-slate-700 p-4 space-y-3">
+                          <div>
+                            <h4 className="text-sm font-semibold">Practice Credentialing & Compliance</h4>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Professional license, W9, insurance certificate, and CAQH profile details used during payer credentialing and re-credentialing.
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <FormField
+                              control={form.control}
+                              name="professionalLicense"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Professional License</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="License #" {...field} data-testid="input-professional-license" />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="licenseExpiration"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="flex items-center gap-2">
+                                    License Expiration
+                                    {expWarning && (
+                                      <Badge
+                                        variant="destructive"
+                                        className="gap-1"
+                                        data-testid="badge-license-expiration-warning"
+                                      >
+                                        <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+                                        {expWarning.label}
+                                      </Badge>
+                                    )}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input type="date" {...field} data-testid="input-license-expiration" />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="businessLicense"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Business License</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="Business license #" {...field} data-testid="input-business-license" />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="caqhProfileId"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>CAQH Profile ID</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="CAQH ID" {...field} data-testid="input-caqh-profile-id" />
+                                  </FormControl>
+                                  <p className="text-xs text-muted-foreground">
+                                    Manage your profile at{" "}
+                                    <a
+                                      href="https://proview.caqh.org"
+                                      target="_blank"
+                                      rel="noreferrer noopener"
+                                      className="underline hover:text-primary"
+                                    >
+                                      caqh.org
+                                    </a>
+                                    .
+                                  </p>
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="insuranceCertificateStatus"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Insurance Certificate Status</FormLabel>
+                                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                                    <FormControl>
+                                      <SelectTrigger data-testid="select-insurance-certificate-status">
+                                        <SelectValue placeholder="Select status" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="current">Current</SelectItem>
+                                      <SelectItem value="expiring">Expiring</SelectItem>
+                                      <SelectItem value="expired">Expired</SelectItem>
+                                      <SelectItem value="not_on_file">Not on file</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="w9FormStatus"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>W9 Form Status</FormLabel>
+                                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                                    <FormControl>
+                                      <SelectTrigger data-testid="select-w9-form-status">
+                                        <SelectValue placeholder="Select status" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="on_file">On file</SelectItem>
+                                      <SelectItem value="not_on_file">Not on file</SelectItem>
+                                      <SelectItem value="needs_update">Needs update</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     <FormField
                       control={form.control}
