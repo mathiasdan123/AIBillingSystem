@@ -54,6 +54,9 @@ const practiceSchema = z.object({
   specialty: z.enum(["OT", "PT", "ST", "MH", "MIXED"]).optional(),
   strictStcValidation: z.boolean().optional(),
   taxonomyCode: z.string().optional(),
+  ownerName: z.string().optional(),
+  ownerTitle: z.string().optional(),
+  ownerSignature: z.string().optional(),
 
   // Branding
   brandLogoUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
@@ -1326,6 +1329,9 @@ export default function Settings() {
         specialty: practice.specialty || undefined,
         strictStcValidation: Boolean(practice.strictStcValidation),
         taxonomyCode: practice.taxonomyCode || "",
+        ownerName: practice.ownerName || "",
+        ownerTitle: practice.ownerTitle || "",
+        ownerSignature: practice.ownerSignature || "",
         brandLogoUrl: practice.brandLogoUrl || "",
         brandPrimaryColor: practice.brandPrimaryColor || "#2563eb",
         brandWebsiteUrl: practice.brandWebsiteUrl || "",
@@ -1583,6 +1589,57 @@ export default function Settings() {
                         </FormItem>
                       )}
                     />
+
+                    {/* Slice B — payer-enrollment authorization. Prefills
+                        EDI enrollment forms we submit on the practice's
+                        behalf. New practices capture this during onboarding
+                        step 4; existing practices fill it in here. */}
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 dark:bg-slate-900/20 dark:border-slate-700 p-4 space-y-3">
+                      <div>
+                        <h4 className="text-sm font-semibold">Payer Enrollment Authorization</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Authorizes us to submit EDI enrollment forms (270/271, 837P, 835) on behalf of this practice.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <FormField
+                          control={form.control}
+                          name="ownerName"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Authorized Signer Name</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Dr. Jane Smith" {...field} />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="ownerTitle"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Title</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Owner / CEO / Administrator" {...field} />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <FormField
+                        control={form.control}
+                        name="ownerSignature"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Typed Signature</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Type your full name as your signature" {...field} className="font-serif italic" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
                     <FormField
                       control={form.control}

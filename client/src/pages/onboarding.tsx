@@ -47,7 +47,7 @@ interface ChecklistResponse {
   allRequiredComplete: boolean;
 }
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 
 export default function OnboardingWizard() {
   const { user } = useAuth();
@@ -74,6 +74,15 @@ export default function OnboardingWizard() {
     firstName: "",
     lastName: "",
     credentials: "",
+  });
+  // Slice B — enrollment signature step. Collected on step 4 so we can
+  // prefill EDI enrollment forms on the practice's behalf and record
+  // their authorization to do so.
+  const [signatureForm, setSignatureForm] = useState({
+    ownerName: "",
+    ownerTitle: "",
+    ownerSignature: "",
+    acknowledged: false,
   });
   const [patientForm, setPatientForm] = useState({
     firstName: "",
@@ -624,6 +633,126 @@ export default function OnboardingWizard() {
         )}
 
         {currentStep === 4 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <CardTitle>Enrollment Authorization</CardTitle>
+                  <CardDescription>
+                    Sign here so we can submit payer enrollment forms on your behalf (required for electronic claims to most payers).
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="ownerName">Authorized Signer Name</Label>
+                  <Input
+                    id="ownerName"
+                    value={signatureForm.ownerName}
+                    onChange={(e) => setSignatureForm({ ...signatureForm, ownerName: e.target.value })}
+                    placeholder="e.g., Dr. Jane Smith"
+                    data-testid="input-owner-name"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="ownerTitle">Title</Label>
+                  <Input
+                    id="ownerTitle"
+                    value={signatureForm.ownerTitle}
+                    onChange={(e) => setSignatureForm({ ...signatureForm, ownerTitle: e.target.value })}
+                    placeholder="Owner / Practice Administrator / CEO"
+                    data-testid="input-owner-title"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="ownerSignature">Typed Signature</Label>
+                <Input
+                  id="ownerSignature"
+                  value={signatureForm.ownerSignature}
+                  onChange={(e) => setSignatureForm({ ...signatureForm, ownerSignature: e.target.value })}
+                  placeholder="Type your full name as your signature"
+                  className="font-serif italic"
+                  data-testid="input-owner-signature"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  A typed name is a legally valid electronic signature under the E-Sign Act. You can replace with a drawn signature later in Settings → Practice Details.
+                </p>
+              </div>
+              <div className="flex items-start gap-2 p-3 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                <input
+                  type="checkbox"
+                  id="enrollmentAck"
+                  checked={signatureForm.acknowledged}
+                  onChange={(e) => setSignatureForm({ ...signatureForm, acknowledged: e.target.checked })}
+                  className="mt-1"
+                  data-testid="checkbox-enrollment-ack"
+                />
+                <label htmlFor="enrollmentAck" className="text-xs text-blue-900 dark:text-blue-100">
+                  I authorize TherapyBill AI to submit payer enrollment forms (EDI 270/271, 837P, 835) on behalf of this practice, using the practice's NPI, Tax ID, and business address. I understand individual payer enrollments may take 2–6 weeks to approve. This authorization can be revoked at any time in Settings.
+                </label>
+              </div>
+              <div className="flex justify-between pt-4">
+                <Button variant="outline" onClick={handleBack} className="gap-2">
+                  <ArrowLeft className="w-4 h-4" /> {t("common.back")}
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (!signatureForm.ownerName.trim() || !signatureForm.ownerSignature.trim() || !signatureForm.acknowledged) {
+                      toast({
+                        title: "Missing info",
+                        description: "Name, signature, and authorization checkbox are required.",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
+                    // PATCH to the canonical practice update endpoint
+                    // (the existing PUT mutation in this page hits a
+                    // route that doesn't exist — pre-existing bug).
+                    const practiceIdForSave = (user as any)?.practiceId ?? 1;
+                    fetch(`/api/practices/${practiceIdForSave}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({
+                        ownerName: signatureForm.ownerName,
+                        ownerTitle: signatureForm.ownerTitle,
+                        ownerSignature: signatureForm.ownerSignature,
+                        enrollmentAuthorizedAt: new Date().toISOString(),
+                      }),
+                    })
+                      .then((r) => {
+                        if (!r.ok) throw new Error("Failed to save");
+                        toast({ title: "Authorization saved" });
+                        queryClient.invalidateQueries({ queryKey: ["/api/onboarding/checklist"] });
+                        handleNext();
+                      })
+                      .catch(() => {
+                        toast({
+                          title: "Save failed",
+                          description: "Please try again.",
+                          variant: "destructive",
+                        });
+                      });
+                  }}
+                  disabled={savePracticeMutation.isPending}
+                  className="gap-2"
+                  data-testid="button-save-signature"
+                >
+                  {savePracticeMutation.isPending ? "Saving…" : t("common.next")}
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {currentStep === 5 && (
           <Card>
             <CardHeader className="text-center pb-2">
               <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
