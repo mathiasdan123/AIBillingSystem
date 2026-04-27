@@ -330,53 +330,71 @@ async function backfillCptTherapyCategories(db: any) {
  */
 async function seedSoapInterventionTemplates(db: any) {
   type Tmpl = { name: string; description?: string };
+
+  // Activity-level items live in (O) Activities Performed (ACTIVITY_CATEGORIES
+  // in client/src/pages/soap-notes.tsx). The Interventions library is
+  // reserved for higher-level, cross-discipline templates that don't fit
+  // an exercise-with-assessment model — patient/family education, programs,
+  // equipment trials, consultation. Keep this list lean.
   const byCategory: Record<string, Tmpl[]> = {
-    'Speech Therapy — Evaluation': [
-      { name: 'Evaluation of speech sound production' },
-      { name: 'Evaluation of speech fluency' },
-      { name: 'Evaluation of speech sound production with language comprehension' },
+    'Education & Training': [
+      { name: 'Caregiver Education', description: 'Parent / caregiver education on therapy goals or strategies' },
+      { name: 'Home Exercise Program — Issued', description: 'New HEP provided to patient/caregiver' },
+      { name: 'Home Exercise Program — Reviewed', description: 'Existing HEP reviewed, progress checked' },
+      { name: 'Self-Regulation Strategy Coaching', description: 'Patient coached on regulation strategies' },
+      { name: 'Patient / Family Goal Review', description: 'Reviewed therapy goals with family' },
     ],
-    'Speech Therapy — Treatment': [
-      { name: 'Speech, language, voice, communication therapy' },
-      { name: 'Swallowing therapy' },
+    'Programs & Trials': [
+      { name: 'Sensory Diet Trial', description: 'Trialed sensory diet activities or schedule' },
+      { name: 'Brushing Protocol Trial', description: 'Wilbarger or similar brushing protocol trialed' },
+      { name: 'Joint Compression Protocol', description: 'Joint compression protocol provided' },
+      { name: 'Listening Program Trial', description: 'Therapeutic Listening / similar audio program trialed' },
     ],
-    'ADLs & Self-Care': [
-      { name: 'ADLs (Dressing / Self-Care)' },
-      { name: 'Feeding / Oral-Motor — ADL' },
-      { name: 'Feeding / Oral-Motor — Functional' },
-      { name: 'Feeding / Oral-Motor — Strengthening' },
+    'Equipment & AAC': [
+      { name: 'Adaptive Equipment Trial', description: 'Trialed adaptive equipment (utensil, grip, etc.)' },
+      { name: 'AAC Device Setup / Programming', description: 'Programmed or configured AAC device' },
+      { name: 'AAC Use During Session', description: 'Patient used AAC throughout session' },
+      { name: 'Weighted / Compression Garment Trial', description: 'Trialed weighted vest, compression garment, etc.' },
     ],
-    'Core & Gross Motor Play': [
-      { name: 'Core / Gross Motor Play — Coordination' },
-      { name: 'Core / Gross Motor Play — Functional' },
-      { name: 'Core / Gross Motor Play — Strength' },
-    ],
-    'Fine Motor / Tabletop': [
-      { name: 'Fine Motor Tabletop — Coordination' },
-      { name: 'Fine Motor Tabletop — Handwriting' },
-      { name: 'Fine Motor Tabletop — Strengthening' },
-    ],
-    'Executive Function': [
-      { name: 'Executive Function / Structured Play — Coordination' },
-      { name: 'Executive Function / Structured Play — Functional' },
-      { name: 'Executive Function / Structured Play — Strength' },
-    ],
-    'Lycra Swing': [
-      { name: 'Lycra Swing — Neuromuscular' },
-      { name: 'Lycra Swing — Strength / Endurance' },
-      { name: 'Lycra Swing — Therapeutic' },
-    ],
-    'Platform Swing': [
-      { name: 'Platform Swing — Balance' },
-      { name: 'Platform Swing — Functional' },
-      { name: 'Platform Swing — Strength / Endurance' },
-    ],
-    'Obstacle Course': [
-      { name: 'Obstacle Course — Balance / Coordination' },
-      { name: 'Obstacle Course — Functional' },
-      { name: 'Obstacle Course — Strength / Endurance' },
+    'Consultation & Coordination': [
+      { name: 'School / Teacher Consultation', description: 'Consulted with school staff about patient progress' },
+      { name: 'Care Team Coordination', description: 'Coordinated with PT/OT/ST or physician on care plan' },
+      { name: 'Environmental Modification Recommendation', description: 'Recommended home/school environment modifications' },
+      { name: 'Re-evaluation / Progress Note', description: 'Formal re-evaluation or progress note completed' },
     ],
   };
+
+  // One-time cleanup: prior versions seeded activity-level duplicates
+  // (Speech Therapy ×2, ADLs, Core/Fine Motor, Executive Function,
+  // Lycra/Platform/Obstacle). Those now live in (O) Activities Performed
+  // exclusively. Remove the system-default rows from this table so the
+  // Interventions library stops showing them. We only delete rows with
+  // practice_id IS NULL — practice-custom rows (if any) are preserved.
+  const LEGACY_CATEGORIES = [
+    'Speech Therapy — Evaluation',
+    'Speech Therapy — Treatment',
+    'ADLs & Self-Care',
+    'Core & Gross Motor Play',
+    'Fine Motor / Tabletop',
+    'Executive Function',
+    'Lycra Swing',
+    'Platform Swing',
+    'Obstacle Course',
+  ];
+  try {
+    const placeholders = LEGACY_CATEGORIES.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+    const result: any = await db.execute(sql`
+      DELETE FROM soap_intervention_templates
+       WHERE practice_id IS NULL
+         AND category IN (${sql.raw(placeholders)})
+    `);
+    const deletedCount = result?.rowCount ?? result?.rows?.length ?? 0;
+    if (deletedCount > 0) {
+      console.log(`  Removed ${deletedCount} legacy intervention templates (now in (O) Activities Performed)`);
+    }
+  } catch (e: any) {
+    console.warn(`  legacy intervention cleanup failed: ${e.message}`);
+  }
 
   let insertedCount = 0;
   let sortOrder = 0;
