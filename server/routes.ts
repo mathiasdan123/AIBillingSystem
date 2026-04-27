@@ -38,6 +38,7 @@ import {
   credentialingRouter,
   payerCrosswalkRouter,
   payerEnrollmentsRouter,
+  soapInterventionTemplatesRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -249,6 +250,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Slice C — Payer Enrollments: /api/payer-enrollments/*
   app.use('/api/payer-enrollments', payerEnrollmentsRouter);
+
+  // SOAP intervention templates (activity picker library) — /api/soap-intervention-templates/*
+  app.use('/api/soap-intervention-templates', soapInterventionTemplatesRouter);
   // Patient Statement routes: /api/patient-statements/*
   app.use('/api/patient-statements', patientStatementsRouter);
   // Data Import routes: /api/data-import/*

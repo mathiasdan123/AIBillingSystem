@@ -322,6 +322,97 @@ async function backfillCptTherapyCategories(db: any) {
 }
 
 /**
+ * Seed the system-default SOAP intervention templates. Idempotent — only
+ * inserts rows that don't exist yet (matched on practice_id IS NULL +
+ * category + name). System defaults have practice_id = NULL and are
+ * shared by every practice. Practices add their own custom rows with
+ * practice_id set + is_custom = true.
+ */
+async function seedSoapInterventionTemplates(db: any) {
+  type Tmpl = { name: string; description?: string };
+  const byCategory: Record<string, Tmpl[]> = {
+    'Speech Therapy — Evaluation': [
+      { name: 'Evaluation of speech sound production' },
+      { name: 'Evaluation of speech fluency' },
+      { name: 'Evaluation of speech sound production with language comprehension' },
+    ],
+    'Speech Therapy — Treatment': [
+      { name: 'Speech, language, voice, communication therapy' },
+      { name: 'Swallowing therapy' },
+    ],
+    'ADLs & Self-Care': [
+      { name: 'ADLs (Dressing / Self-Care)' },
+      { name: 'Feeding / Oral-Motor — ADL' },
+      { name: 'Feeding / Oral-Motor — Functional' },
+      { name: 'Feeding / Oral-Motor — Strengthening' },
+    ],
+    'Core & Gross Motor Play': [
+      { name: 'Core / Gross Motor Play — Coordination' },
+      { name: 'Core / Gross Motor Play — Functional' },
+      { name: 'Core / Gross Motor Play — Strength' },
+    ],
+    'Fine Motor / Tabletop': [
+      { name: 'Fine Motor Tabletop — Coordination' },
+      { name: 'Fine Motor Tabletop — Handwriting' },
+      { name: 'Fine Motor Tabletop — Strengthening' },
+    ],
+    'Executive Function': [
+      { name: 'Executive Function / Structured Play — Coordination' },
+      { name: 'Executive Function / Structured Play — Functional' },
+      { name: 'Executive Function / Structured Play — Strength' },
+    ],
+    'Lycra Swing': [
+      { name: 'Lycra Swing — Neuromuscular' },
+      { name: 'Lycra Swing — Strength / Endurance' },
+      { name: 'Lycra Swing — Therapeutic' },
+    ],
+    'Platform Swing': [
+      { name: 'Platform Swing — Balance' },
+      { name: 'Platform Swing — Functional' },
+      { name: 'Platform Swing — Strength / Endurance' },
+    ],
+    'Obstacle Course': [
+      { name: 'Obstacle Course — Balance / Coordination' },
+      { name: 'Obstacle Course — Functional' },
+      { name: 'Obstacle Course — Strength / Endurance' },
+    ],
+  };
+
+  let insertedCount = 0;
+  let sortOrder = 0;
+  for (const [category, items] of Object.entries(byCategory)) {
+    for (const t of items) {
+      sortOrder += 1;
+      try {
+        const existing: any = await db.execute(sql`
+          SELECT 1 FROM soap_intervention_templates
+           WHERE practice_id IS NULL
+             AND category = ${category}
+             AND name = ${t.name}
+           LIMIT 1
+        `);
+        const hasRow = Array.isArray((existing as any).rows)
+          ? (existing as any).rows.length > 0
+          : (existing as any).length > 0;
+        if (!hasRow) {
+          await db.execute(sql`
+            INSERT INTO soap_intervention_templates
+              (practice_id, category, name, description, is_active, is_custom, sort_order)
+            VALUES (NULL, ${category}, ${t.name}, ${t.description ?? null}, true, false, ${sortOrder})
+          `);
+          insertedCount++;
+        }
+      } catch (e: any) {
+        console.warn(`  intervention template seed ${category}/${t.name} failed: ${e.message}`);
+      }
+    }
+  }
+  if (insertedCount > 0) {
+    console.log(`  Seeded ${insertedCount} SOAP intervention templates`);
+  }
+}
+
+/**
  * Seed benchmark insurance rates for the most common pediatric therapy payers,
  * so the Reimbursement page + Rates page have data out of the box instead of
  * showing empty dropdowns. These are industry-ballpark numbers, NOT contracted
@@ -495,6 +586,30 @@ export async function seedDatabase(options?: { force?: boolean }) {
       await seedBenchmarkInsuranceRates(db);
     } catch (err) {
       console.warn('  Benchmark insurance rates seed skipped:', err instanceof Error ? err.message : err);
+    }
+
+    // SOAP intervention templates — system-default activity library that
+    // therapists pick from on the SOAP note form. Idempotent.
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS soap_intervention_templates (
+          id SERIAL PRIMARY KEY,
+          practice_id INTEGER REFERENCES practices(id),
+          category VARCHAR(80) NOT NULL,
+          name VARCHAR(200) NOT NULL,
+          description TEXT,
+          is_active BOOLEAN DEFAULT TRUE,
+          is_custom BOOLEAN DEFAULT FALSE,
+          sort_order INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_soap_intervention_templates_practice ON soap_intervention_templates (practice_id, is_active)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_soap_intervention_templates_category ON soap_intervention_templates (category)`);
+      await seedSoapInterventionTemplates(db);
+    } catch (err) {
+      console.warn('  SOAP intervention templates seed skipped:', err instanceof Error ? err.message : err);
     }
 
     // Run schema migrations for new columns (safe to run multiple times)

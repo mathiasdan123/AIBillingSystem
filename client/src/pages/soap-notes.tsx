@@ -190,6 +190,11 @@ export default function SoapNotes() {
 
   // Objective - Selected activities with individual assessments
   const [selectedActivities, setSelectedActivities] = useState<ActivityWithAssessment[]>([]);
+  // Intervention templates (newer system — categorized library shared
+  // across practices, with practice-custom overrides). Lives alongside
+  // the existing Activities picker; therapists can use either.
+  const [selectedInterventions, setSelectedInterventions] = useState<string[]>([]);
+  const [expandedInterventionCategories, setExpandedInterventionCategories] = useState<string[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<string[]>(["Strengthening Activities"]);
   const [newExerciseInputs, setNewExerciseInputs] = useState<Record<string, string>>({});
   const [applyToAllAssessment, setApplyToAllAssessment] = useState<ActivityAssessment>({ ...DEFAULT_ACTIVITY_ASSESSMENT });
@@ -272,6 +277,7 @@ export default function SoapNotes() {
         if (data.caregiverReport) setCaregiverReport(data.caregiverReport);
         if (data.selectedActivities) setSelectedActivities(data.selectedActivities);
         if (data.selectedTherapies) setSelectedTherapies(data.selectedTherapies);
+        if (Array.isArray(data.selectedInterventions)) setSelectedInterventions(data.selectedInterventions);
         if (data.assessment) setAssessment(data.assessment);
         if (data.planNextSteps) setPlanNextSteps(data.planNextSteps);
         if (data.nextSessionFocus) setNextSessionFocus(data.nextSessionFocus);
@@ -293,13 +299,14 @@ export default function SoapNotes() {
       caregiverReport,
       selectedActivities,
       selectedTherapies,
+      selectedInterventions,
       assessment,
       planNextSteps,
       nextSessionFocus,
       homeProgram,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [selectedPatient, sessionDate, duration, location, mood, caregiverReport, selectedActivities, selectedTherapies, assessment, planNextSteps, nextSessionFocus, homeProgram]);
+  }, [selectedPatient, sessionDate, duration, location, mood, caregiverReport, selectedActivities, selectedTherapies, selectedInterventions, assessment, planNextSteps, nextSessionFocus, homeProgram]);
 
   const { data: patients, isLoading: patientsLoading } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
@@ -321,6 +328,25 @@ export default function SoapNotes() {
     queryKey: ["/api/therapy-bank"],
     retry: false,
   });
+
+  // Intervention templates — system defaults + practice custom rows,
+  // grouped by category. Categories come back in seed order.
+  const { data: interventionTemplates } = useQuery<{
+    categories: Array<{ category: string; items: Array<{ id: number; name: string; isCustom: boolean }> }>;
+  }>({
+    queryKey: ["/api/soap-intervention-templates"],
+    retry: false,
+  });
+  const toggleInterventionCategory = (cat: string) => {
+    setExpandedInterventionCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+  const toggleIntervention = (name: string) => {
+    setSelectedInterventions((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  };
 
   // Active treatment plan with goals for selected patient
   const { data: activePlanData } = useQuery<{
@@ -638,6 +664,7 @@ export default function SoapNotes() {
         activities: selectedActivities.map(a => a.name), // Activity names for backward compatibility
         activityAssessments: selectedActivities, // Full activity objects with assessments
         additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
+        interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
         mood: mood || "Cooperative",
         caregiverReport: caregiverReport || undefined,
         duration,
@@ -768,6 +795,9 @@ export default function SoapNotes() {
         sessionType: "individual",
         dataSource: "ai_generated",
         aiSuggestedCptCodes: generatedNote.cptCodes || [],
+        // Persist the picked intervention names alongside the note so the
+        // chart history shows them and analytics can later count usage.
+        interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
       };
 
       const soapNoteResponse = await apiRequest("POST", "/api/soap-notes", soapNoteData);
@@ -1548,6 +1578,83 @@ export default function SoapNotes() {
                       ))}
                     </div>
                   </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Interventions Library — system + practice-custom templates */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded bg-emerald-100 text-emerald-700 flex items-center justify-center text-sm font-bold">+</span>
+                    Interventions
+                  </div>
+                  {selectedInterventions.length > 0 && (
+                    <Badge className="bg-emerald-600">{selectedInterventions.length} selected</Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Higher-level intervention library (Speech Therapy, ADLs, Sensory Swing, etc.). Practice admins can add custom items in Settings.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {interventionTemplates?.categories?.length ? (
+                  <div className="space-y-2">
+                    {interventionTemplates.categories.map((cat) => {
+                      const expanded = expandedInterventionCategories.includes(cat.category);
+                      const selectedCount = cat.items.filter((i) => selectedInterventions.includes(i.name)).length;
+                      return (
+                        <div key={cat.category} className="border rounded-lg overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => toggleInterventionCategory(cat.category)}
+                            className="w-full px-3 py-2 bg-slate-50 hover:bg-slate-100 flex items-center justify-between text-left"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{cat.category}</span>
+                              {selectedCount > 0 && (
+                                <Badge className="bg-emerald-100 text-emerald-700 text-xs">
+                                  {selectedCount}
+                                </Badge>
+                              )}
+                            </div>
+                            {expanded ? (
+                              <ChevronUp className="w-4 h-4 text-muted-foreground/70" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-muted-foreground/70" />
+                            )}
+                          </button>
+                          {expanded && (
+                            <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-1">
+                              {cat.items.map((item) => {
+                                const checked = selectedInterventions.includes(item.name);
+                                return (
+                                  <label
+                                    key={item.id}
+                                    className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
+                                      checked ? "bg-emerald-50 text-emerald-800" : "hover:bg-slate-50"
+                                    }`}
+                                  >
+                                    <Checkbox
+                                      checked={checked}
+                                      onCheckedChange={() => toggleIntervention(item.name)}
+                                    />
+                                    <span className="text-xs flex-1">{item.name}</span>
+                                    {item.isCustom && (
+                                      <Badge variant="outline" className="text-[10px] px-1 py-0">Custom</Badge>
+                                    )}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Loading intervention library…</p>
                 )}
               </CardContent>
             </Card>

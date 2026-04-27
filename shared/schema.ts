@@ -352,6 +352,50 @@ export const soapNotes = pgTable("soap_notes", {
   index("idx_soap_notes_session_created").on(table.sessionId, table.createdAt),
 ]);
 
+/**
+ * SOAP intervention templates — the picker library on the SOAP note
+ * form. Therapists multi-select from this list when documenting what
+ * they did in a session, and the chosen names land in
+ * soapNotes.interventions (jsonb).
+ *
+ * Two flavors of rows:
+ *   - System defaults: practiceId IS NULL, isCustom = false. Seeded
+ *     once and shared by every practice. Cannot be deleted, only
+ *     hidden per-practice via isActive=false on a practice-owned row.
+ *   - Practice custom: practiceId set, isCustom = true. Editable +
+ *     deletable by that practice's admins/billers.
+ *
+ * The /api/soap-intervention-templates endpoint merges both into a
+ * single list scoped to the requesting practice.
+ */
+export const soapInterventionTemplates = pgTable("soap_intervention_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id), // NULL = system default
+  category: varchar("category", { length: 80 }).notNull(),
+  name: varchar("name", { length: 200 }).notNull(),
+  /** Free-text help shown on hover so a new therapist can learn what
+   *  the activity actually involves. Optional. */
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  isCustom: boolean("is_custom").default(false),
+  /** Order within the category (smaller = earlier). System defaults
+   *  use the order they're seeded; custom items append at the end. */
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_soap_intervention_templates_practice").on(table.practiceId, table.isActive),
+  index("idx_soap_intervention_templates_category").on(table.category),
+]);
+
+export const insertSoapInterventionTemplateSchema = createInsertSchema(soapInterventionTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type SoapInterventionTemplate = typeof soapInterventionTemplates.$inferSelect;
+export type InsertSoapInterventionTemplate = z.infer<typeof insertSoapInterventionTemplateSchema>;
+
 // Co-sign status enum values (for reference)
 export const COSIGN_STATUS = {
   NOT_REQUIRED: 'not_required',
