@@ -152,6 +152,99 @@ export const helpSections: HelpSection[] = [
     ],
   },
   {
+    id: 'prior-auth',
+    title: 'Prior Authorizations',
+    items: [
+      {
+        question: 'How do I log a prior authorization I got by phone or fax?',
+        answer:
+          'Patient detail → Prior Authorizations card → "Add Manually". Or click "Scan Approval" and drop the payer\'s approval letter — AI reads the auth number, units, dates, and CPT and prefills the form.',
+      },
+      {
+        question: 'How do I draft a PA request letter?',
+        answer:
+          'Patient detail → Prior Authorizations → "Draft PA Request". Pick CPT, diagnosis, units. AI writes a one-page letter using the patient\'s SOAP notes. Review, then Download PDF or copy to clipboard.',
+      },
+      {
+        question: 'What does the purple AI forecast banner mean?',
+        answer:
+          'AI watched this patient\'s session pace and predicts when their auth runs out. Earlier of (date expiry, projected unit exhaustion). Yellow/red urgency badges on the dashboard widget too — "request renewal now" guidance built in.',
+      },
+      {
+        question: 'A claim was denied for missing prior auth — what now?',
+        answer:
+          'Claims page → click the denied claim → "Fix & Resubmit". Call payer for retro auth, log it under the patient, then click resubmit. Goes out as a replacement claim (not a duplicate), payer treats it as a correction.',
+      },
+      {
+        question: 'How does claim auto-attach work?',
+        answer:
+          'When you submit a claim without an auth number, system finds the patient\'s active matching auth (status=active, today within date range, CPT matches or wildcard) and auto-attaches the auth number. No manual lookup needed.',
+      },
+      {
+        question: 'Where do I see auths about to expire?',
+        answer:
+          'Dashboard → "Auths at Risk" widget shows up to 5 patients with auth predicted to lapse within 30 days, sorted by urgency. Click through to the patient detail to act.',
+      },
+    ],
+  },
+  {
+    id: 'credentialing',
+    title: 'Credentialing',
+    items: [
+      {
+        question: 'What does the Credentialing page do?',
+        answer:
+          'Per-provider, per-payer in-network status tracker. Add credential records as you submit applications, mark status as pending → active → expired/denied. Daily emails alert admins about deadlines within 60 days.',
+      },
+      {
+        question: 'How do I draft an enrollment packet for a new provider?',
+        answer:
+          'Credentialing page → "AI Draft" dropdown → "Draft enrollment packet letter". Pick the provider (or type manually if not in system yet) + payer name. AI generates cover letter + document checklist. Download as PDF.',
+      },
+      {
+        question: 'How do I draft a credentialing application?',
+        answer:
+          'Same "AI Draft" dropdown → "Draft credentialing application". AI fills the standard payer questions (NPI, license, specialty, etc.) using practice + provider data. Download PDF or paste into payer portal.',
+      },
+      {
+        question: 'What does the EDI column mean on the credentialing page?',
+        answer:
+          'Aggregate enrollment status across the three transaction types (eligibility, claims, ERA) for that payer. Green = all enrolled, yellow = some pending, red = something rejected. Click to jump to Payer Enrollments page.',
+      },
+      {
+        question: 'How do I track payer enrollment for claim submission?',
+        answer:
+          'Sidebar → Settings → Practice → Payer Enrollments. Grid shows each payer × transaction type with status (not enrolled / pending / enrolled / rejected). Per-payer "X/Y providers credentialed" cross-link.',
+      },
+      {
+        question: 'When am I notified about credentialing deadlines?',
+        answer:
+          'Daily 9:15 AM email to practice admins listing any provider credential expiring or re-credentialing within 60 days. Plus 9:30 AM email for therapist license expirations. Plus the dashboard widget.',
+      },
+      {
+        question: 'I just enrolled with a new payer — will I be notified?',
+        answer:
+          'Yes — when an enrollment status flips to "enrolled" or "rejected", admins get an immediate email with the new status, transaction type, and (if rejected) the reason.',
+      },
+    ],
+  },
+  {
+    id: 'soap-interventions',
+    title: 'SOAP Interventions',
+    items: [
+      {
+        question: 'What\'s the new "Interventions" section on the SOAP form?',
+        answer:
+          'Categorized library of higher-level interventions (Speech Therapy, ADLs, Sensory Swing, etc.) you multi-select for the session. Different from "Activities Performed" — that\'s granular activities, this is the umbrella categories. Both feed the AI prompt.',
+      },
+      {
+        question: 'Can I add my own interventions to the picker?',
+        answer:
+          'Yes — practice admins can add custom items via API today (UI coming soon). System defaults are shared and can\'t be deleted, but you can hide ones you don\'t use.',
+      },
+    ],
+  },
+  {
     id: 'denials',
     title: 'Denials & Appeals',
     items: [
