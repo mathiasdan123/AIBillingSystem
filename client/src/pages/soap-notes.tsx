@@ -26,6 +26,19 @@ import { useAuth } from "@/hooks/useAuth";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 
 // ============================================
+// FEATURE FLAGS
+// ============================================
+
+/**
+ * Show the standalone "Interventions" card under the Objective tab.
+ *
+ * Disabled April 2026 — the library duplicated activity-level items now
+ * living in (O) Activities Performed. Flip back to true to re-enable;
+ * the API, schema, and seed are all still in place.
+ */
+const SHOW_INTERVENTIONS_CARD = false;
+
+// ============================================
 // OT-SPECIFIC DROPDOWN OPTIONS (from OT template)
 // ============================================
 
@@ -1593,7 +1606,18 @@ export default function SoapNotes() {
               </CardContent>
             </Card>
 
-            {/* Interventions Library — system + practice-custom templates */}
+            {/* Interventions Library — HIDDEN April 2026.
+             *
+             * The library duplicated activity-level items that now live
+             * exclusively in (O) Activities Performed. We're keeping the
+             * JSX, the API endpoint, the schema table, and the seed in
+             * place so this card can be re-enabled later (e.g. for
+             * higher-level templates: caregiver education, HEP, AAC
+             * setup) by flipping SHOW_INTERVENTIONS_CARD back to true.
+             * Don't delete this block — it's the cheapest way to bring
+             * the feature back if/when needed.
+             */}
+            {SHOW_INTERVENTIONS_CARD && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center justify-between">
@@ -1606,7 +1630,7 @@ export default function SoapNotes() {
                   )}
                 </CardTitle>
                 <CardDescription>
-                  Higher-level intervention library (Speech Therapy, ADLs, Sensory Swing, etc.). Practice admins can add custom items in Settings.
+                  Higher-level intervention library. Practice admins can add custom items in Settings.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -1669,6 +1693,7 @@ export default function SoapNotes() {
                 )}
               </CardContent>
             </Card>
+            )}
 
             {/* Assessment Quick Selections */}
             <Card>
