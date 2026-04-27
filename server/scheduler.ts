@@ -6,6 +6,7 @@ import { buildDailyReport, generateEmailHtml, generateEmailText, reportSubscribe
 import { sendEmail } from './services/emailService';
 import { generateDailyReport, generateWeeklyReport } from './services/insightsReportService';
 import { buildDailyInsightsEmailHtml, buildDailyInsightsEmailText } from './routes/analytics';
+import { generateInsightNarrativesBatch, type NarrativeRequest } from './services/insightsAiNarrativeService';
 
 // Store scheduled tasks for management
 const scheduledTasks: Map<string, ReturnType<typeof cron.schedule>> = new Map();
@@ -671,23 +672,47 @@ export function startScheduler() {
   });
   scheduledTasks.set('weeklyCancellationReport', weeklyCancellationTask);
 
-  // Daily insights report email - 6:00 PM (end of day summary)
+  // Daily insights report email - 6:00 PM (end of day summary).
+  // Two-phase: generate all reports → submit one Anthropic Batch API call
+  // for AI narratives → email each practice with narrative injected.
+  // Falls back to no-narrative emails if the batch fails or times out.
   const dailyInsightsTask = cron.schedule('0 18 * * *', async () => {
     try {
       logger.info('Running daily insights report');
       const practiceIds = await storage.getAllPracticeIds();
 
+      // Phase 1: build per-practice report bundles.
+      type Bundle = {
+        practiceId: number;
+        recipients: string[];
+        report: Awaited<ReturnType<typeof generateDailyReport>>;
+      };
+      const bundles: Bundle[] = [];
       for (const practiceId of practiceIds) {
         const admins = await storage.getAdminsByPractice(practiceId);
         const recipients = admins.map((a: any) => a.email).filter(Boolean);
         if (recipients.length === 0) continue;
-
         const report = await generateDailyReport(practiceId);
-        const html = buildDailyInsightsEmailHtml(report);
-        const text = buildDailyInsightsEmailText(report);
-        const subject = `Daily Insights Report - ${report.practiceName} - ${report.reportDate}`;
+        bundles.push({ practiceId, recipients, report });
+      }
 
-        for (const email of recipients) {
+      // Phase 2: submit narratives to Anthropic Batch API in one call.
+      const narrativeRequests: NarrativeRequest[] = bundles.map((b) => ({
+        customId: `daily-${b.practiceId}`,
+        kind: 'daily',
+        practiceName: b.report.practiceName,
+        report: b.report,
+      }));
+      const narratives = await generateInsightNarrativesBatch(narrativeRequests);
+
+      // Phase 3: email each practice (with narrative if we got one).
+      for (const b of bundles) {
+        const narrative = narratives.get(`daily-${b.practiceId}`);
+        const html = buildDailyInsightsEmailHtml(b.report, narrative);
+        const text = buildDailyInsightsEmailText(b.report, narrative);
+        const subject = `Daily Insights Report - ${b.report.practiceName} - ${b.report.reportDate}`;
+
+        for (const email of b.recipients) {
           await sendEmail({
             to: email,
             subject,
@@ -696,8 +721,11 @@ export function startScheduler() {
             fromName: 'TherapyBill AI Reports',
           });
         }
-
-        logger.info('Daily insights report sent', { practiceId, recipientCount: recipients.length });
+        logger.info('Daily insights report sent', {
+          practiceId: b.practiceId,
+          recipientCount: b.recipients.length,
+          hasNarrative: Boolean(narrative),
+        });
       }
     } catch (error: any) {
       logger.error('Daily insights report task failed', { error: error.message });
@@ -707,26 +735,54 @@ export function startScheduler() {
   });
   scheduledTasks.set('dailyInsightsReport', dailyInsightsTask);
 
-  // Weekly insights report email - Monday 8:00 AM
+  // Weekly insights report email - Monday 8:00 AM.
+  // Same two-phase pattern as daily: generate all reports → batch narratives
+  // via Anthropic Batch API → email each practice with narrative injected.
   const weeklyInsightsTask = cron.schedule('0 8 * * 1', async () => {
     try {
       logger.info('Running weekly insights report');
       const practiceIds = await storage.getAllPracticeIds();
 
+      type Bundle = {
+        practiceId: number;
+        recipients: string[];
+        report: Awaited<ReturnType<typeof generateWeeklyReport>>;
+      };
+      const bundles: Bundle[] = [];
       for (const practiceId of practiceIds) {
         const admins = await storage.getAdminsByPractice(practiceId);
         const recipients = admins.map((a: any) => a.email).filter(Boolean);
         if (recipients.length === 0) continue;
-
         const report = await generateWeeklyReport(practiceId);
+        bundles.push({ practiceId, recipients, report });
+      }
+
+      const narrativeRequests: NarrativeRequest[] = bundles.map((b) => ({
+        customId: `weekly-${b.practiceId}`,
+        kind: 'weekly',
+        practiceName: b.report.practiceName,
+        report: b.report,
+      }));
+      const narratives = await generateInsightNarrativesBatch(narrativeRequests);
+
+      for (const b of bundles) {
+        const report = b.report;
+        const narrative = narratives.get(`weekly-${b.practiceId}`);
         const subject = `Weekly Insights Report - ${report.practiceName} - Week of ${report.weekOf}`;
 
-        // Build a simple text/html email for the weekly report
+        const narrativeText = narrative ? `\nAI SUMMARY\n${narrative}\n` : '';
+        const narrativeHtml = narrative
+          ? `<div style="margin:16px 0;padding:14px 16px;background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:4px;">
+               <div style="font-size:11px;font-weight:bold;letter-spacing:0.04em;text-transform:uppercase;color:#6d28d9;margin-bottom:6px;">AI Summary</div>
+               <p style="margin:0;font-size:14px;line-height:1.5;color:#1f2937;">${narrative.replace(/\n/g, '<br/>')}</p>
+             </div>`
+          : '';
+
         const recommendations = report.recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n');
         const text = [
           `Weekly Insights Report - ${report.practiceName}`,
           `Week of ${report.weekOf} to ${report.weekEnd}`,
-          '',
+          narrativeText,
           'CLAIM TRENDS (this week / last week)',
           `  Total: ${report.claimTrends.thisWeek.total} / ${report.claimTrends.lastWeek.total}`,
           `  Paid: ${report.claimTrends.thisWeek.paid} / ${report.claimTrends.lastWeek.paid}`,
@@ -748,6 +804,7 @@ export function startScheduler() {
           <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a;">
             <h2 style="color:#1e40af;">Weekly Insights Report</h2>
             <p style="color:#6b7280;">${report.practiceName} &mdash; Week of ${report.weekOf}</p>
+            ${narrativeHtml}
             <h3>Claim Trends</h3>
             <p>Total: ${report.claimTrends.thisWeek.total} (prev: ${report.claimTrends.lastWeek.total}) |
                Paid: ${report.claimTrends.thisWeek.paid} | Denied: ${report.claimTrends.thisWeek.denied}</p>
@@ -760,7 +817,7 @@ export function startScheduler() {
             <p style="color:#9ca3af;font-size:12px;">Generated by TherapyBill AI</p>
           </div>`;
 
-        for (const email of recipients) {
+        for (const email of b.recipients) {
           await sendEmail({
             to: email,
             subject,
@@ -769,8 +826,11 @@ export function startScheduler() {
             fromName: 'TherapyBill AI Reports',
           });
         }
-
-        logger.info('Weekly insights report sent', { practiceId, recipientCount: recipients.length });
+        logger.info('Weekly insights report sent', {
+          practiceId: b.practiceId,
+          recipientCount: b.recipients.length,
+          hasNarrative: Boolean(narrative),
+        });
       }
     } catch (error: any) {
       logger.error('Weekly insights report task failed', { error: error.message });

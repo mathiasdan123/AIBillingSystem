@@ -761,7 +761,20 @@ router.post('/reports/daily-insights/email', isAuthenticated, async (req: any, r
 
 // ==================== EMAIL TEMPLATE HELPERS ====================
 
-function buildDailyInsightsEmailHtml(report: ReturnType<typeof generateDailyReport> extends Promise<infer T> ? T : never): string {
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/\n/g, '<br/>');
+}
+
+function buildDailyInsightsEmailHtml(
+  report: ReturnType<typeof generateDailyReport> extends Promise<infer T> ? T : never,
+  narrative?: string,
+): string {
   const actionItemsHtml = report.actionItems
     .map(
       (item) =>
@@ -775,10 +788,18 @@ function buildDailyInsightsEmailHtml(report: ReturnType<typeof generateDailyRepo
     )
     .join('');
 
+  const narrativeHtml = narrative
+    ? `<div style="margin:16px 0;padding:14px 16px;background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:4px;">
+         <div style="font-size:11px;font-weight:bold;letter-spacing:0.04em;text-transform:uppercase;color:#6d28d9;margin-bottom:6px;">AI Summary</div>
+         <p style="margin:0;font-size:14px;line-height:1.5;color:#1f2937;">${escapeHtml(narrative)}</p>
+       </div>`
+    : '';
+
   return `
     <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a;">
       <h2 style="color:#1e40af;">Daily Insights Report</h2>
       <p style="color:#6b7280;font-size:14px;">${report.practiceName} &mdash; ${report.reportDate}</p>
+      ${narrativeHtml}
 
       <h3 style="margin-top:24px;color:#374151;">Claims Summary</h3>
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
@@ -820,10 +841,20 @@ function buildDailyInsightsEmailHtml(report: ReturnType<typeof generateDailyRepo
   `;
 }
 
-function buildDailyInsightsEmailText(report: ReturnType<typeof generateDailyReport> extends Promise<infer T> ? T : never): string {
+function buildDailyInsightsEmailText(
+  report: ReturnType<typeof generateDailyReport> extends Promise<infer T> ? T : never,
+  narrative?: string,
+): string {
   const lines: string[] = [
     `Daily Insights Report - ${report.practiceName} - ${report.reportDate}`,
     '',
+  ];
+  if (narrative) {
+    lines.push('AI SUMMARY');
+    lines.push(narrative);
+    lines.push('');
+  }
+  lines.push(
     'CLAIMS SUMMARY',
     `  New: ${report.claimsSummary.newToday}  Submitted: ${report.claimsSummary.submittedToday}  Paid: ${report.claimsSummary.paidToday}  Denied: ${report.claimsSummary.deniedToday}`,
     '',
@@ -837,7 +868,7 @@ function buildDailyInsightsEmailText(report: ReturnType<typeof generateDailyRepo
     `  30+ days: ${report.agingClaims.over30.count} ($${report.agingClaims.over30.amount.toFixed(2)})`,
     `  60+ days: ${report.agingClaims.over60.count} ($${report.agingClaims.over60.amount.toFixed(2)})`,
     `  90+ days: ${report.agingClaims.over90.count} ($${report.agingClaims.over90.amount.toFixed(2)})`,
-  ];
+  );
 
   if (report.actionItems.length > 0) {
     lines.push('', 'ACTION ITEMS');
