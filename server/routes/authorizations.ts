@@ -342,4 +342,46 @@ router.post('/parse-document', isAuthenticated, async (req: any, res: Response) 
   }
 });
 
+/**
+ * POST /render-letter-pdf — render a PA letter (already drafted client-side
+ * after /draft-request) as a properly typeset PDF for download / fax / email.
+ * Body: { letter, subject, payerName }
+ * Practice info pulled from the requester's authorized practice.
+ */
+router.post('/render-letter-pdf', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { letter, subject, payerName } = req.body || {};
+    if (!letter || typeof letter !== 'string' || letter.length < 50) {
+      return res.status(400).json({ message: 'letter (string) is required.' });
+    }
+    const { storage } = await import('../storage');
+    const practice = await storage.getPractice(practiceId);
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+
+    const { renderLetterPdf } = await import('../services/letterPdfRenderer');
+    const buffer = await renderLetterPdf({
+      practice: {
+        name: practice.name,
+        address: (practice as any).address ?? null,
+        phone: (practice as any).phone ?? null,
+        email: (practice as any).email ?? null,
+        npi: (practice as any).npi ?? null,
+      },
+      recipient: payerName
+        ? { line1: 'Prior Authorization Review Department', line2: payerName }
+        : undefined,
+      subject: subject || 'Prior Authorization Request',
+      body: letter,
+    });
+
+    const filename = `pa-request-${Date.now()}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error: any) {
+    safeErrorResponse(res, 500, error?.message ?? 'Failed to render PDF', error);
+  }
+});
+
 export default router;

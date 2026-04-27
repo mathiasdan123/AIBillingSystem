@@ -950,6 +950,47 @@ export default function CredentialingPage() {
                     <Copy className="w-4 h-4 mr-1" />
                     Copy all
                   </Button>
+                  <Button
+                    onClick={async () => {
+                      // Render server-side PDF with letterhead + appended
+                      // sections (checklist for packet, Q&A for application).
+                      const isPacket = Boolean(draftPacketResult);
+                      const result = draftPacketResult || draftAppResult;
+                      try {
+                        const res = await fetch('/api/credentialing/render-letter-pdf', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include',
+                          body: JSON.stringify({
+                            mode: isPacket ? 'packet' : 'application',
+                            letter: result.coverLetter,
+                            payerName: draftForm.payerName.trim(),
+                            documentChecklist: isPacket ? result.documentChecklist : undefined,
+                            prefilledAnswers: !isPacket ? result.prefilledAnswers : undefined,
+                          }),
+                        });
+                        if (!res.ok) throw new Error('PDF render failed');
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `credentialing-${isPacket ? 'packet' : 'application'}-${Date.now()}.pdf`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      } catch {
+                        toast({
+                          title: 'PDF render failed',
+                          description: 'Try Copy all and paste into a doc.',
+                          variant: 'destructive',
+                        });
+                      }
+                    }}
+                    className="bg-purple-600 hover:bg-purple-700 text-white"
+                  >
+                    Download PDF
+                  </Button>
                 </>
               )}
             </div>
