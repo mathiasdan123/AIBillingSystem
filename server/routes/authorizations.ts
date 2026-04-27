@@ -343,6 +343,100 @@ router.post('/parse-document', isAuthenticated, async (req: any, res: Response) 
 });
 
 /**
+ * POST /email-letter — send the drafted PA letter directly via SMTP.
+ * Body: { to, cc?, subject?, letter, payerName? }
+ * - 'to' validates as a real email
+ * - body becomes both plain-text email body AND a PDF attachment
+ *   (rendered the same way as /render-letter-pdf)
+ * - From / from-name use the practice's email if set, otherwise the
+ *   platform default. Reply-to gets the practice email so payer
+ *   responses route correctly.
+ */
+router.post('/email-letter', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { to, cc, subject, letter, payerName } = req.body || {};
+    if (!letter || typeof letter !== 'string' || letter.length < 50) {
+      return res.status(400).json({ message: 'letter is required.' });
+    }
+    if (!to || typeof to !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())) {
+      return res.status(400).json({ message: 'A valid recipient email (to) is required.' });
+    }
+
+    const { storage } = await import('../storage');
+    const practice = await storage.getPractice(practiceId);
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+
+    // Render the same PDF the Download button produces, attach to email.
+    const { renderLetterPdf } = await import('../services/letterPdfRenderer');
+    const pdfBuffer = await renderLetterPdf({
+      practice: {
+        name: practice.name,
+        address: (practice as any).address ?? null,
+        phone: (practice as any).phone ?? null,
+        email: (practice as any).email ?? null,
+        npi: (practice as any).npi ?? null,
+      },
+      recipient: payerName
+        ? { line1: 'Prior Authorization Review Department', line2: payerName }
+        : undefined,
+      subject: subject || 'Prior Authorization Request',
+      body: letter,
+    });
+
+    const { sendEmail } = await import('../services/emailService');
+    const finalSubject = subject || 'Prior Authorization Request';
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#0f172a;">
+        <p>Please find the attached prior authorization request${payerName ? ` for ${payerName}` : ''} from ${practice.name}.</p>
+        <p>The full request is in the attached PDF. Plain-text body included below for accessibility.</p>
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0;" />
+        <pre style="white-space:pre-wrap;font-family:Georgia,serif;font-size:14px;line-height:1.5;">${escapeHtml(letter)}</pre>
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0;" />
+        <p style="font-size:11px;color:#94a3b8;">
+          Sent by ${practice.name} via TherapyBill AI.
+          ${(practice as any).phone ? ` Phone: ${(practice as any).phone}.` : ''}
+          ${(practice as any).email ? ` Reply: ${(practice as any).email}.` : ''}
+        </p>
+      </div>
+    `;
+
+    const result = await sendEmail({
+      to: to.trim(),
+      ...(cc && typeof cc === 'string' && cc.trim() ? { cc: cc.trim() } : {}),
+      subject: finalSubject,
+      html,
+      text: letter,
+      fromName: practice.name,
+      ...((practice as any).email ? { replyTo: (practice as any).email } : {}),
+      attachments: [
+        {
+          filename: `pa-request-${Date.now()}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+      ],
+    });
+
+    if (!result?.success) {
+      return res.status(502).json({ message: 'Email send failed. Check SMTP settings.' });
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    safeErrorResponse(res, 500, error?.message ?? 'Failed to email letter', error);
+  }
+});
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * POST /render-letter-pdf — render a PA letter (already drafted client-side
  * after /draft-request) as a properly typeset PDF for download / fax / email.
  * Body: { letter, subject, payerName }

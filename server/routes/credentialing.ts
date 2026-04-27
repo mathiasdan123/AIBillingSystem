@@ -244,6 +244,95 @@ router.post('/draft-packet', isAuthenticated, async (req: any, res: Response) =>
   }
 });
 
+/**
+ * POST /bulk-draft-packet — generate enrollment packet letters for
+ * multiple providers against the same payer in one call. Used during
+ * group onboarding (a practice hires 5 OTs; they all need credentialing
+ * packets sent to Aetna).
+ *
+ * Body: { providers: Array<{ providerId? | providerName?+optional }>, payerName, notes? }
+ * Returns: { results: Array<{ provider: {...}, success: boolean, result?, error? }> }
+ *
+ * Runs sequentially, not in parallel — Anthropic rate limits prefer it,
+ * and Claude Sonnet's per-letter latency is short enough that 5-10
+ * providers in series is fine (~30-60s end-to-end).
+ */
+router.post('/bulk-draft-packet', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const { providers, payerName, notes } = req.body || {};
+    if (!Array.isArray(providers) || providers.length === 0) {
+      return res.status(400).json({ message: 'providers array is required (1+ entries).' });
+    }
+    if (providers.length > 10) {
+      return res.status(400).json({ message: 'Max 10 providers per bulk request.' });
+    }
+    if (!payerName) {
+      return res.status(400).json({ message: 'payerName is required.' });
+    }
+
+    const { storage } = await import('../storage');
+    const practice = await storage.getPractice(practiceId);
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+
+    const { draftCredentialingPacketLetter } = await import('../services/credentialingAiService');
+    const practiceBlock = {
+      name: practice.name,
+      npi: (practice as any).npi ?? null,
+      taxId: (practice as any).taxId ?? null,
+      address: (practice as any).address ?? null,
+      phone: (practice as any).phone ?? null,
+      specialty: (practice as any).specialty ?? null,
+      professionalLicense: (practice as any).professionalLicense ?? null,
+      caqhProfileId: (practice as any).caqhProfileId ?? null,
+      ownerName: (practice as any).ownerName ?? null,
+      ownerTitle: (practice as any).ownerTitle ?? null,
+    };
+
+    const results: any[] = [];
+    for (const p of providers) {
+      const provider = await resolveProviderForDraft(p);
+      const providerLabel = provider
+        ? `${provider.firstName} ${provider.lastName}`.trim() || 'Unknown provider'
+        : 'Unknown provider';
+      if (!provider || (!provider.firstName && !provider.lastName)) {
+        results.push({
+          provider: { label: providerLabel, ...(p ?? {}) },
+          success: false,
+          error: 'Provider could not be resolved (missing id or name).',
+        });
+        continue;
+      }
+      try {
+        const result = await draftCredentialingPacketLetter({
+          practice: practiceBlock,
+          provider,
+          payer: { name: payerName, contact: null },
+          notes: notes ?? null,
+        });
+        results.push({
+          provider: { label: providerLabel, ...(p ?? {}) },
+          success: true,
+          result,
+        });
+      } catch (err: any) {
+        results.push({
+          provider: { label: providerLabel, ...(p ?? {}) },
+          success: false,
+          error: err?.message ?? 'Generation failed',
+        });
+      }
+    }
+
+    res.json({ results });
+  } catch (error: any) {
+    const msg = error?.message ?? 'Failed to bulk-draft credentialing packets';
+    const status = msg.includes('ANTHROPIC_API_KEY') ? 503 : 500;
+    safeErrorResponse(res, status, msg, error);
+  }
+});
+
 // POST /draft-application — AI-drafted credentialing application cover + Q&A
 router.post('/draft-application', isAuthenticated, async (req: any, res: Response) => {
   try {

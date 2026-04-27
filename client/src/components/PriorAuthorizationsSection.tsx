@@ -115,6 +115,12 @@ export default function PriorAuthorizationsSection({
   const [scanInputRef] = useState(() => ({ current: null as HTMLInputElement | null }));
   const [scanning, setScanning] = useState(false);
 
+  // Email-from-app state. When `emailDialogOpen` is true a small modal
+  // collects to/cc/subject and POSTs to /email-letter.
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [emailForm, setEmailForm] = useState({ to: '', cc: '', subject: '' });
+  const [sendingEmail, setSendingEmail] = useState(false);
+
   const { data: auths = [], isLoading } = useQuery<Authorization[]>({
     queryKey: [`/api/treatment-authorizations?patientId=${patientId}`],
     queryFn: async () => {
@@ -602,9 +608,137 @@ export default function PriorAuthorizationsSection({
                 >
                   Download PDF
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEmailForm({
+                      to: '',
+                      cc: '',
+                      subject: draftResult.subject || 'Prior Authorization Request',
+                    });
+                    setEmailDialogOpen(true);
+                  }}
+                  data-testid="button-pa-send-email"
+                >
+                  Send Email
+                </Button>
               </>
             )}
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Email dialog — to + cc + subject. Body is the existing
+          draft letter; PDF is auto-attached server-side. */}
+      <Dialog
+        open={emailDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !sendingEmail) setEmailDialogOpen(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Email this letter</DialogTitle>
+            <DialogDescription>
+              The letter sends as the email body, with the PDF version attached. Replies go to your
+              practice email if it's set on Practice Details.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="email-to">To *</Label>
+              <Input
+                id="email-to"
+                type="email"
+                value={emailForm.to}
+                onChange={(e) => setEmailForm({ ...emailForm, to: e.target.value })}
+                placeholder="auth@payer.com"
+                data-testid="input-email-to"
+              />
+            </div>
+            <div>
+              <Label htmlFor="email-cc">CC (optional)</Label>
+              <Input
+                id="email-cc"
+                value={emailForm.cc}
+                onChange={(e) => setEmailForm({ ...emailForm, cc: e.target.value })}
+                placeholder="someone@yourpractice.com"
+              />
+            </div>
+            <div>
+              <Label htmlFor="email-subject">Subject</Label>
+              <Input
+                id="email-subject"
+                value={emailForm.subject}
+                onChange={(e) => setEmailForm({ ...emailForm, subject: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => setEmailDialogOpen(false)}
+              disabled={sendingEmail}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!draftResult) return;
+                if (!emailForm.to.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailForm.to.trim())) {
+                  toast({
+                    title: 'Invalid recipient',
+                    description: 'Enter a valid email address.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
+                setSendingEmail(true);
+                try {
+                  const res = await fetch('/api/treatment-authorizations/email-letter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                      to: emailForm.to.trim(),
+                      cc: emailForm.cc.trim() || undefined,
+                      subject: emailForm.subject.trim() || undefined,
+                      letter: draftResult.letter,
+                    }),
+                  });
+                  if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err?.message || 'Email send failed');
+                  }
+                  toast({
+                    title: 'Email sent',
+                    description: `PA letter delivered to ${emailForm.to.trim()}.`,
+                  });
+                  setEmailDialogOpen(false);
+                } catch (e: any) {
+                  toast({
+                    title: 'Couldn\'t send',
+                    description: e?.message || 'Check SMTP settings on the server.',
+                    variant: 'destructive',
+                  });
+                } finally {
+                  setSendingEmail(false);
+                }
+              }}
+              disabled={sendingEmail}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+              data-testid="button-confirm-send-email"
+            >
+              {sendingEmail ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  Sending…
+                </>
+              ) : (
+                'Send'
+              )}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

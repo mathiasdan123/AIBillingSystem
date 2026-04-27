@@ -14,8 +14,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Plus, Trash2, Edit2, AlertTriangle, ShieldCheck, Search,
-  Sparkles, FileText, ClipboardList, Loader2, Copy,
+  Sparkles, FileText, ClipboardList, Loader2, Copy, Users,
+  CheckCircle2, XCircle as XCircleIcon, Download as DownloadIcon,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 // ==================== TYPES ====================
@@ -115,6 +117,26 @@ export default function CredentialingPage() {
   const [draftPacketResult, setDraftPacketResult] = useState<any | null>(null);
   const [draftAppResult, setDraftAppResult] = useState<any | null>(null);
 
+  // Bulk draft state — picks N existing therapists + 1 payer, generates
+  // a packet letter for each. Used for group onboarding.
+  const [bulkDraftOpen, setBulkDraftOpen] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPayerName, setBulkPayerName] = useState('');
+  const [bulkNotes, setBulkNotes] = useState('');
+  const [bulkResults, setBulkResults] = useState<Array<{
+    provider: { label: string };
+    success: boolean;
+    result?: { coverLetter: string; documentChecklist: any[]; summary: string };
+    error?: string;
+  }> | null>(null);
+  const resetBulk = () => {
+    setBulkDraftOpen(false);
+    setBulkSelectedIds(new Set());
+    setBulkPayerName('');
+    setBulkNotes('');
+    setBulkResults(null);
+  };
+
   // Therapists for the draft-mode provider dropdown
   const { data: therapists = [] } = useQuery<Array<{ id: string; firstName: string; lastName: string; credentials: string | null }>>({
     queryKey: ["/api/therapists"],
@@ -175,6 +197,19 @@ export default function CredentialingPage() {
       variant: 'destructive',
     }),
   });
+  const bulkDraftMutation = useMutation({
+    mutationFn: async (body: { providers: any[]; payerName: string; notes?: string }) => {
+      const res = await apiRequest("POST", "/api/credentialing/bulk-draft-packet", body);
+      return res.json();
+    },
+    onSuccess: (data) => setBulkResults(data?.results ?? []),
+    onError: (err: any) => toast({
+      title: "Bulk draft failed",
+      description: err?.message || 'Please try again.',
+      variant: 'destructive',
+    }),
+  });
+
   const draftAppMutation = useMutation({
     mutationFn: async (body: { providerId: string; payerName: string; notes?: string }) => {
       const res = await apiRequest("POST", "/api/credentialing/draft-application", body);
@@ -395,6 +430,10 @@ export default function CredentialingPage() {
                 <DropdownMenuItem onClick={() => setDraftMode('application')} data-testid="menu-draft-application">
                   <ClipboardList className="w-4 h-4 mr-2" />
                   Draft credentialing application
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setBulkDraftOpen(true)} data-testid="menu-bulk-draft">
+                  <Users className="w-4 h-4 mr-2" />
+                  Bulk: enrollment packets for multiple providers
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1082,6 +1121,230 @@ export default function CredentialingPage() {
                     Download PDF
                   </Button>
                 </>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Bulk Draft Dialog — packet letters for multiple providers */}
+        <Dialog
+          open={bulkDraftOpen}
+          onOpenChange={(open) => {
+            if (!open) resetBulk();
+          }}
+        >
+          <DialogContent className="sm:max-w-[760px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-purple-600" />
+                Bulk Draft: Enrollment Packets
+              </DialogTitle>
+              <DialogDescription>
+                Pick multiple providers + one payer. AI generates an enrollment packet letter for
+                each. Useful when onboarding a group of new hires with the same payer.
+              </DialogDescription>
+            </DialogHeader>
+
+            {!bulkResults ? (
+              <div className="space-y-3">
+                <div>
+                  <Label>Providers (select up to 10)</Label>
+                  {therapists.length === 0 ? (
+                    <div className="p-3 text-xs text-amber-800 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded">
+                      No therapists in the system yet. Add them in Settings → Users → Therapists
+                      first, then come back.
+                    </div>
+                  ) : (
+                    <div className="border rounded-md max-h-60 overflow-y-auto">
+                      {therapists.map((t) => {
+                        const checked = bulkSelectedIds.has(t.id);
+                        return (
+                          <label
+                            key={t.id}
+                            className={`flex items-center gap-2 p-2 cursor-pointer text-sm border-b last:border-b-0 ${
+                              checked ? 'bg-purple-50 dark:bg-purple-900/20' : 'hover:bg-muted/50'
+                            }`}
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={() => {
+                                setBulkSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(t.id)) next.delete(t.id);
+                                  else if (next.size < 10) next.add(t.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span>
+                              {t.firstName} {t.lastName}
+                              {t.credentials ? `, ${t.credentials}` : ''}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {bulkSelectedIds.size} of {therapists.length} selected · max 10
+                  </p>
+                </div>
+                <div>
+                  <Label>Payer *</Label>
+                  <Input
+                    value={bulkPayerName}
+                    onChange={(e) => setBulkPayerName(e.target.value)}
+                    placeholder="e.g. Aetna, Blue Cross Blue Shield"
+                  />
+                </div>
+                <div>
+                  <Label>Shared notes (optional)</Label>
+                  <Textarea
+                    value={bulkNotes}
+                    onChange={(e) => setBulkNotes(e.target.value)}
+                    placeholder="Context that applies to all letters in this batch (e.g. 'group onboarding starting May 1')"
+                    rows={2}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Generation runs sequentially. Expect ~10s per provider.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-3 rounded-md bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 text-xs text-purple-900 dark:text-purple-100">
+                  <strong>{bulkResults.filter((r) => r.success).length} of {bulkResults.length}</strong>
+                  {' '}letters generated successfully.
+                </div>
+                <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                  {bulkResults.map((r, i) => (
+                    <div
+                      key={i}
+                      className={`border rounded-md p-3 ${
+                        r.success ? 'border-green-200 bg-green-50/30 dark:bg-green-900/10' : 'border-red-200 bg-red-50/30 dark:bg-red-900/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        {r.success ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <XCircleIcon className="w-4 h-4 text-red-600" />
+                        )}
+                        <span className="font-medium text-sm">{r.provider.label}</span>
+                      </div>
+                      {r.success && r.result ? (
+                        <>
+                          <p className="text-xs text-muted-foreground mb-2">{r.result.summary}</p>
+                          <Textarea
+                            value={r.result.coverLetter}
+                            onChange={(e) => {
+                              const next = [...bulkResults];
+                              next[i] = { ...next[i], result: { ...next[i].result!, coverLetter: e.target.value } };
+                              setBulkResults(next);
+                            }}
+                            rows={6}
+                            className="font-mono text-xs"
+                          />
+                          <div className="flex gap-2 mt-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(r.result!.coverLetter);
+                                toast({ title: 'Copied' });
+                              }}
+                            >
+                              <Copy className="w-3 h-3 mr-1" />
+                              Copy
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  const res = await fetch('/api/credentialing/render-letter-pdf', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    credentials: 'include',
+                                    body: JSON.stringify({
+                                      mode: 'packet',
+                                      letter: r.result!.coverLetter,
+                                      payerName: bulkPayerName.trim(),
+                                      documentChecklist: r.result!.documentChecklist,
+                                    }),
+                                  });
+                                  if (!res.ok) throw new Error('PDF render failed');
+                                  const blob = await res.blob();
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  const safeName = r.provider.label.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+                                  a.download = `packet-${safeName}-${Date.now()}.pdf`;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  document.body.removeChild(a);
+                                  URL.revokeObjectURL(url);
+                                } catch {
+                                  toast({ title: 'PDF render failed', variant: 'destructive' });
+                                }
+                              }}
+                            >
+                              <DownloadIcon className="w-3 h-3 mr-1" />
+                              PDF
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-red-700">{r.error || 'Generation failed.'}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              {!bulkResults ? (
+                <>
+                  <Button variant="outline" onClick={resetBulk}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (bulkSelectedIds.size === 0 || !bulkPayerName.trim()) {
+                        toast({
+                          title: 'Missing info',
+                          description: 'Select 1+ provider and enter a payer.',
+                          variant: 'destructive',
+                        });
+                        return;
+                      }
+                      bulkDraftMutation.mutate({
+                        providers: Array.from(bulkSelectedIds).map((id) => ({ providerId: id })),
+                        payerName: bulkPayerName.trim(),
+                        notes: bulkNotes.trim() || undefined,
+                      });
+                    }}
+                    disabled={bulkDraftMutation.isPending || bulkSelectedIds.size === 0}
+                    className="bg-purple-600 hover:bg-purple-700 text-white"
+                  >
+                    {bulkDraftMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        Generating {bulkSelectedIds.size} letter{bulkSelectedIds.size !== 1 ? 's' : ''}…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-1" />
+                        Generate {bulkSelectedIds.size} letter{bulkSelectedIds.size !== 1 ? 's' : ''}
+                      </>
+                    )}
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={resetBulk}>Close</Button>
               )}
             </div>
           </DialogContent>

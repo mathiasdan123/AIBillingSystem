@@ -74,6 +74,8 @@ interface QueuedEmail {
   text: string;
   fromName?: string;
   replyTo?: string;
+  cc?: string | string[];
+  attachments?: SendEmailParams['attachments'];
   retries: number;
   resolve: (result: SendResult) => void;
 }
@@ -120,6 +122,8 @@ async function attemptSend(item: QueuedEmail): Promise<SendResult> {
         html: item.html,
         text: item.text,
         replyTo: item.replyTo,
+        ...(item.cc ? { cc: item.cc } : {}),
+        ...(item.attachments && item.attachments.length > 0 ? { attachments: item.attachments } : {}),
       });
 
       recordSend();
@@ -178,6 +182,16 @@ export interface SendEmailParams {
   text: string;
   fromName?: string;
   replyTo?: string;
+  /** Optional CC. Comma-separated string or array. */
+  cc?: string | string[];
+  /** Optional file attachments. Each item is forwarded to nodemailer
+   *  unmodified (it accepts content as Buffer or base64 string). */
+  attachments?: Array<{
+    filename: string;
+    content: Buffer | string;
+    contentType?: string;
+    encoding?: string;
+  }>;
 }
 
 export interface SendResult {
@@ -206,6 +220,8 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       text: params.text,
       fromName: params.fromName,
       replyTo: params.replyTo,
+      cc: params.cc,
+      attachments: params.attachments,
       retries: MAX_RETRIES,
       resolve,
     });
