@@ -45,72 +45,83 @@ const TARGETED_SKILLS = [
 ];
 
 // All activities organized by category (NO CPT codes shown - AI determines optimal billing)
+// Seeded from the practice's existing OT + ST exercise library (April 2026).
+// AI billing logic infers the right CPT family from the activity suffix
+// (- Strength → 97110, - Coordination → 97112, - Functional → 97530,
+//  - ADL → 97535, ST - … → 92507/92521-26).
 const ACTIVITY_CATEGORIES = [
   {
     name: "Strengthening Activities",
     activities: [
-      "Resistive Putty – Squeeze", "Resistive Putty – Pinch/Pinch-Drag",
-      "Theraband – Shoulder Flex/Abd", "Theraband – Rows",
-      "Grip Strengthener (Hand Gripper)", "Finger Web / Digi-Flex",
-      "Wall Push-Ups", "Table Push-Ups", "Chair/Bench Dips (assisted)",
-      "Plank Hold (front)", "Side Plank (assisted)",
-      "Prone Extension (Superman holds)", "Bridging / Hip Raises",
-      "Sit-to-Stand Reps", "Medicine Ball Press (light)",
-      "Thera-egg Squeezes", "Finger Isolation Taps",
-      "Clothespin Pinch Lines", "Pinch-Flip Coins / Chips",
-      "Rice Scoop with Weighted Spoon"
-    ]
+      "WK Core / Gross Motor Play - Strength",
+      "WK Feeding / Oral-Motor - Strengthening",
+      "WK Fine Motor Tabletop Activities - Strenghtening",
+      "WK Lycra swing - Strength/ Endurance",
+      "WK Obstacle Course - Strength/ Endurance",
+      "WK Platform Swing - Strength / Endurance",
+      "WK Pre-Writing / Handwriting - Hand Strength/Endurance",
+      "WK Pumpkin / Moon Swing - Strength",
+      "WK Rope Ladder - Strengthening",
+      "WK Thera-Putty - Strengthening",
+      "WK Trampoline - Strengthening",
+    ],
   },
   {
     name: "Balance & Motor Planning",
     activities: [
-      "Balance Board – Static", "Balance Board – Dynamic Reaching",
-      "Foam Beam – Tandem Walk", "Cross-Crawl (standing)",
-      "Animal Walks – Bunny Hops", "Animal Walks – Bear Walk",
-      "Animal Walks – Crab Walk", "Crab Walk (distance reps)",
-      "Bear Walk (distance reps)", "Wheelbarrow Walk (assisted)",
-      "Bilateral Ball Toss (over/under)", "Balloon Volleyball (postural control)",
-      "Ladder Drills (in/out)", "Step-Stool Up/Down Sequencing",
-      "Prone on Scooter Board – Pulls", "Supine Flexion Tucks (egg)",
-      "Swing – Prone Superman (control)", "Swing – Seated Linear (timing)",
-      "Target Toss While Balancing", "Midline Crossing – Bean Bag Sort",
-      "Finger-to-Nose Alternation", "Simon Says Sequencing",
-      "Theraband Isometrics with Balance", "Yoga Flow (child-cat-cow)",
-      "One-Leg Stance (eyes open/closed)"
-    ]
+      "WK Core / Gross Motor Play - Coordination",
+      "WK Fine Motor Tabletop Activities - Coordination",
+      "WK Lycra swing - Neuromuscular",
+      "WK Obstacle Course- Balance/Coordination",
+      "WK Platform Swing - Balance",
+      "WK Pre-Writing / Handwriting - Stability",
+      "WK Pumpkin / Moon Swing - Core",
+      "WK Rope Ladder- Postural Control",
+      "WK Trampoline - Coordination",
+      "WK Trampoline - Motor Planning",
+      "WK Trapeze Swing - Coordination",
+    ],
   },
   {
     name: "Fine Motor & ADL",
     activities: [
-      "Obstacle Course (multi-step)", "Pegboard – Pattern Copy",
-      "Puzzles – 12–24 pieces", "Mazes – Finger then Pencil",
-      "Cutting – Straight/Curved Lines", "Coloring – In-the-Lines",
-      "Block Design – 2D/3D", "Lacing – Cards/Shoes",
-      "Buttoning / Zipping Practice", "Feeding – Spoon/Fork Practice",
-      "Writing – Name/Letters", "Drawing – Pre-writing Shapes",
-      "Coin Bank – In/Sort", "Tweezers – Pom Transfer",
-      "Stickers – Precision Placement", "Playdough – Roll/Snake/Cut",
-      "Beading – Sequence/Pattern", "Puzzle Lite – Matching Cards",
-      "ADL – Handwashing Sequence", "ADL – Coat On/Off",
-      "ADL – Shoes/Socks", "UT Pencil Grasp Practice"
-    ]
+      "WK ADLs (Dressing / Self-Care)",
+      "WK Core / Gross Motor Play - Functional",
+      "WK Executive Function / Structured Play",
+      "WK Feeding / Oral-Motor - ADL",
+      "WK Feeding / Oral-Motor - Functional",
+      "WK Fine Motor Tabletop Activities - Handwriting",
+      "WK Lycra swing - Therapeutic",
+      "WK Obstacle Course - Functional",
+      "WK Platform Swing - Functional",
+      "WK Pre-Writing / Handwriting - Functional Fine Motor",
+      "WK Pumpkin / Moon Swing - Functional",
+      "WK Rope Ladder - Functional",
+      "WK Social Play / Turn-Taking",
+      "WK Thera-Putty - Functional",
+      "WK Thera-Putty - Hand manipulation",
+    ],
   },
   {
     name: "Sensory & Regulation",
     activities: [
-      "Rice Bin – Bury/Find", "Beans/Lentils Bin – Scoop/Pour",
-      "Kinetic Sand – Mold/Smash", "Brushing (Wilbarger) – Protocol",
-      "Joint Compressions – Protocol", "Crash Pad – Jumps/Deep Pressure",
-      "Weighted Vest – Trial", "Body Sock – Stretch/Push",
-      "Sensory Swing – Platform", "Sensory Swing – Lycra/Cuddle",
-      "Sensory Swing – Bolster", "Trampoline – Regulated Jumps",
-      "Deep Pressure – Roller/Steamroller", "Oral Motor – Chewelry",
-      "Oral Motor – Crunchy Snacks", "Fidgets – Heavy Work",
-      "Proprioceptive Carry (heavy)", "Tactile Play – Shaving Cream",
-      "Vibration – Z-vibe Trial", "Auditory – Headphones/Break",
-      "Visual – Low Lighting/Timers", "Calming Corner – Choice Chart"
-    ]
-  }
+      "WK Sensory Bin / Tactile Play",
+      "WK Sensory Brushing - Joint Compressions",
+      "WK Sensory Brushing - Regulation to support function",
+      "WK Sensory Regulation Activities - Functional",
+      "WK Sensory Regulation Activities - Neuro",
+    ],
+  },
+  {
+    name: "Speech Therapy",
+    activities: [
+      "ST - Eval of speech sound production with evaluation of language comprehension",
+      "ST - Evaluation of speech fluency",
+      "ST - Evaluation of speech sound production",
+      "ST - Speech, language, voice, communication therapy",
+      "ST - Swallowing therapy",
+    ],
+  },
 ];
 
 // Default rate per 15-minute unit
