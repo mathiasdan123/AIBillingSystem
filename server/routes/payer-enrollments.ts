@@ -141,7 +141,9 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
       .limit(1);
 
     let row;
+    let previousStatus: string | null = null;
     if (existing) {
+      previousStatus = existing.status;
       const [updated] = await db
         .update(payerEnrollments)
         .set({
@@ -170,6 +172,96 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
         })
         .returning();
       row = inserted;
+    }
+
+    // Status-change email — notify practice admins when something
+    // material happened. We skip noise transitions (anything → not_enrolled,
+    // pending → pending) and only send on the four transitions that
+    // change practice operational state. Best-effort: a failure here
+    // never breaks the API write.
+    try {
+      if (previousStatus !== status) {
+        const interesting = new Set(['enrolled', 'rejected']);
+        const becameInteresting = interesting.has(status);
+        const noLongerInteresting = previousStatus && interesting.has(previousStatus) && !interesting.has(status);
+        if (becameInteresting || noLongerInteresting) {
+          const { storage } = await import('../storage');
+          const [admins, practice] = await Promise.all([
+            storage.getAdminsByPractice(practiceId),
+            storage.getPractice(practiceId),
+          ]);
+          const recipients = (admins ?? [])
+            .map((a: any) => a.email)
+            .filter((e: any) => typeof e === 'string' && e.length > 0);
+          if (recipients.length > 0) {
+            const { sendEmail } = await import('../services/emailService');
+            const txLabel = transactionType === 'eligibility'
+              ? 'Eligibility (270/271)'
+              : transactionType === 'claims'
+                ? 'Claim Submission (837P)'
+                : 'ERA / Remittance (835)';
+            const subject = `${payerName} · ${txLabel} → ${status} · ${practice?.name ?? 'Practice'}`;
+            const html = `
+              <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+                <div style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;padding:20px;border-radius:12px 12px 0 0;">
+                  <h2 style="margin:0;">Payer enrollment status changed</h2>
+                  <p style="margin:4px 0 0 0;opacity:.9;">${practice?.name ?? 'Your practice'}</p>
+                </div>
+                <div style="background:white;padding:20px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;">
+                  <table style="width:100%;font-size:14px;border-collapse:collapse;">
+                    <tr><td style="padding:6px 0;color:#64748b;">Payer</td><td style="padding:6px 0;font-weight:600;">${payerName}</td></tr>
+                    <tr><td style="padding:6px 0;color:#64748b;">Transaction type</td><td style="padding:6px 0;">${txLabel}</td></tr>
+                    <tr><td style="padding:6px 0;color:#64748b;">Previous status</td><td style="padding:6px 0;">${previousStatus ?? '—'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#64748b;">New status</td><td style="padding:6px 0;font-weight:600;color:${status === 'enrolled' ? '#16a34a' : status === 'rejected' ? '#dc2626' : '#0f172a'};">${status}</td></tr>
+                    ${rejectionReason ? `<tr><td style="padding:6px 0;color:#64748b;">Reason</td><td style="padding:6px 0;">${rejectionReason}</td></tr>` : ''}
+                  </table>
+                  <p style="margin:16px 0 0 0;font-size:13px;color:#475569;">
+                    ${status === 'enrolled'
+                      ? 'You can now submit ' + txLabel.toLowerCase() + ' transactions to this payer.'
+                      : status === 'rejected'
+                        ? 'This enrollment was rejected. Review the reason and resubmit if applicable.'
+                        : 'Status has changed — see the Payer Enrollments page for details.'}
+                  </p>
+                </div>
+                <p style="font-size:11px;color:#94a3b8;text-align:center;margin-top:12px;">
+                  Automated alert from TherapyBill AI
+                </p>
+              </div>
+            `;
+            const text = [
+              `Payer enrollment status changed`,
+              ``,
+              `Practice: ${practice?.name ?? 'Your practice'}`,
+              `Payer: ${payerName}`,
+              `Transaction: ${txLabel}`,
+              `Previous: ${previousStatus ?? '—'}`,
+              `New: ${status}`,
+              rejectionReason ? `Reason: ${rejectionReason}` : '',
+            ].filter(Boolean).join('\n');
+            for (const email of recipients) {
+              await sendEmail({
+                to: email,
+                subject,
+                html,
+                text,
+                fromName: 'TherapyBill AI Alerts',
+              });
+            }
+            logger.info('Payer enrollment status-change alert sent', {
+              practiceId,
+              payerName,
+              transactionType,
+              previousStatus,
+              status,
+              recipientCount: recipients.length,
+            });
+          }
+        }
+      }
+    } catch (notifyErr: any) {
+      logger.warn('Failed to send enrollment status-change alert', {
+        error: notifyErr?.message ?? String(notifyErr),
+      });
     }
 
     res.json(row);
