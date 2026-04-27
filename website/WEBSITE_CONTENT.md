@@ -40,6 +40,7 @@
 | **Patient Portal** | Included | Included | Included |
 | **Telehealth** | — | Included | Included |
 | **Analytics & Benchmarking** | Basic dashboard | Full analytics | Full + benchmarking |
+| **AI-narrated insight reports** | — | Daily + weekly | Daily + weekly |
 | **Data Import** | Included | Included | Priority migration |
 | **Support** | Email | Email + chat | Priority + onboarding call |
 | **White-label Branding** | — | — | Included |
@@ -323,6 +324,7 @@ Guided data import from SimplePractice, TherapyNotes, Jane App, WebPT, Fusion/En
 - Industry benchmarking against MGMA, AOTA, and CMS data
 - Custom report builder with CSV export
 - Daily billing summary reports via email
+- **AI-narrated daily and weekly insight reports.** Every report opens with a 3-5 sentence executive summary written by Claude, citing your specific numbers and recommending the single most important next action. Skip the spreadsheet — read the takeaway.
 
 ---
 
