@@ -1260,4 +1260,26 @@ router.post('/:id/series/cancel', isAuthenticated, async (req: any, res) => {
   }
 });
 
+/**
+ * GET /auth-coverage — upcoming appointments where the patient lacks
+ * an active authorization with units remaining covering the scheduled
+ * date. Used by the dashboard widget + manual checks.
+ *
+ * Query: ?daysAhead=7 (default).
+ */
+router.get('/auth-coverage', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = req.userPracticeId ?? 1;
+    const daysAhead = parseInt((req.query.daysAhead as string) || '7', 10);
+    const { getAppointmentsNeedingAuthCoverage } = await import('../services/preSessionAuthCheckService');
+    const results = await getAppointmentsNeedingAuthCoverage(practiceId, daysAhead);
+    res.json(results);
+  } catch (error) {
+    logger.error('Error fetching auth-coverage report', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to fetch auth coverage' });
+  }
+});
+
 export default router;

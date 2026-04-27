@@ -477,6 +477,92 @@ export function startScheduler() {
   });
   scheduledTasks.set('providerLicenseAlert', providerLicenseAlertTask);
 
+  // Pre-session auth coverage — daily at 7:00 AM. Looks at the next 2
+  // days of scheduled appointments and emails admins about any whose
+  // patient lacks an active auth with units remaining. Forward-looking
+  // complement to the at-risk-authorizations widget.
+  const preSessionAuthCheckTask = cron.schedule('0 7 * * *', async () => {
+    try {
+      const practiceIds = await storage.getAllPracticeIds();
+      const { getAppointmentsNeedingAuthCoverage } = await import('./services/preSessionAuthCheckService');
+      for (const practiceId of practiceIds) {
+        const flagged = await getAppointmentsNeedingAuthCoverage(practiceId, 2);
+        if (flagged.length === 0) continue;
+
+        const admins = await storage.getAdminsByPractice(practiceId);
+        const emails = admins.map((a: any) => a.email).filter(Boolean);
+        if (emails.length === 0) continue;
+        const practice = await storage.getPractice(practiceId);
+
+        const reasonLabel = (r: string) =>
+          r === 'no_active_auth' ? 'No active auth' :
+          r === 'expired_by_date' ? 'Auth expired by appointment date' :
+          'Units exhausted';
+
+        const rowsHtml = flagged.map((f) => {
+          const when = new Date(f.appointment.startTime).toLocaleString('en-US', {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit',
+          });
+          return `
+            <tr>
+              <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${f.patientName}</td>
+              <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${when}</td>
+              <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#dc2626;">${reasonLabel(f.reason)}</td>
+            </tr>
+          `;
+        }).join('');
+
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;padding:20px;">
+            <div style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;padding:20px;border-radius:12px 12px 0 0;">
+              <h2 style="margin:0;">Sessions needing auth coverage</h2>
+              <p style="margin:4px 0 0 0;opacity:.9;">${practice?.name ?? 'Your practice'} · next 2 days</p>
+            </div>
+            <div style="background:white;padding:20px;border:1px solid #e2e8f0;border-top:none;">
+              <p>The following upcoming appointments don't have an active authorization with units remaining covering the scheduled date. Get an auth in place before the session — claims billed without coverage are likely to deny.</p>
+              <table style="width:100%;font-size:14px;border-collapse:collapse;">
+                <thead>
+                  <tr style="background:#f8fafc;">
+                    <th style="padding:10px;text-align:left;">Patient</th>
+                    <th style="padding:10px;text-align:left;">Appointment</th>
+                    <th style="padding:10px;text-align:left;">Issue</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>
+            <p style="font-size:11px;color:#94a3b8;text-align:center;margin-top:12px;">
+              Automated alert from TherapyBill AI · See the dashboard widget for live status
+            </p>
+          </div>
+        `;
+        const text = flagged.map((f) =>
+          `${f.patientName} · ${new Date(f.appointment.startTime).toISOString()} · ${reasonLabel(f.reason)}`
+        ).join('\n');
+        for (const email of emails) {
+          await sendEmail({
+            to: email,
+            subject: `${flagged.length} session${flagged.length === 1 ? '' : 's'} need${flagged.length === 1 ? 's' : ''} auth before ${flagged.length === 1 ? 'it' : 'they'} happen${flagged.length === 1 ? 's' : ''} — ${practice?.name ?? 'Practice'}`,
+            html,
+            text,
+            fromName: 'TherapyBill AI Alerts',
+          });
+        }
+        logger.info('Pre-session auth coverage alert sent', {
+          practiceId,
+          flaggedCount: flagged.length,
+          recipientCount: emails.length,
+        });
+      }
+    } catch (err: any) {
+      logger.error('Pre-session auth coverage task failed', { error: err.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('preSessionAuthCheck', preSessionAuthCheckTask);
+
   // Automated eligibility refresh - daily at 2:00 AM
   const eligibilityRefreshTask = cron.schedule('0 2 * * *', async () => {
     try {
