@@ -117,6 +117,7 @@ TherapyBill AI replaces your scheduling software, your EHR, your billing system,
 - Industry benchmarking against MGMA, AOTA, and CMS data
 - Custom report builder with CSV export
 - Daily billing summary reports via email
+- **AI-narrated daily and weekly insight reports** — every report opens with a 3-5 sentence executive summary written by Claude, citing your specific numbers and recommending the single most important next action (e.g., "Denial rate jumped to 18% this week, driven by 3 Aetna prior-auth denials — recommend retroactive auth requests"). No more reading rows of numbers to figure out what changed.
 
 ### Practice Management
 - Multi-location support
