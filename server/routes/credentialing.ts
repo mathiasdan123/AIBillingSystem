@@ -488,6 +488,207 @@ router.delete('/:id', isAuthenticated, async (req: any, res: Response) => {
   }
 });
 
+// ─── Document storage ─────────────────────────────────────────────
+//
+// Provider credentials need supporting docs (license PDF, malpractice
+// COI, diploma, CV, etc.). Stored inline as base64 in
+// provider_credentials.documents (JSONB) with a 4 MB per-file cap and
+// 10-file limit per credential.
+//
+// Trade-off: simple, no S3 setup, encrypted at rest by RDS. Doesn't
+// scale past a few dozen practices. When usage grows, move to S3 with
+// a presigned-URL flow — the API shape below is designed to make that
+// drop-in (clients only see metadata + download URLs, never the raw
+// base64 in list responses).
+const MAX_DOC_SIZE_BYTES = 4 * 1024 * 1024;
+const MAX_DOCS_PER_CREDENTIAL = 10;
+const ALLOWED_DOC_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/jpg',
+  'image/heic',
+  'image/heif',
+]);
+
+interface StoredDocument {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  base64: string;
+}
+
+function generateDocId(): string {
+  return `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** GET /:id/documents — list metadata only (no base64). */
+router.get('/:id/documents', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const credentialId = parseInt(req.params.id);
+    if (isNaN(credentialId)) return res.status(400).json({ message: 'Invalid id' });
+
+    const [credential] = await db
+      .select()
+      .from(providerCredentials)
+      .where(
+        and(
+          eq(providerCredentials.id, credentialId),
+          eq(providerCredentials.practiceId, practiceId),
+        ),
+      )
+      .limit(1);
+    if (!credential) return res.status(404).json({ message: 'Credential not found' });
+    const docs: StoredDocument[] = Array.isArray(credential.documents) ? (credential.documents as StoredDocument[]) : [];
+    res.json(
+      docs.map(({ base64, ...meta }) => meta),
+    );
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to list documents', error);
+  }
+});
+
+/** POST /:id/documents — upload one document. Body: { filename, contentType, base64 }. */
+router.post('/:id/documents', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const credentialId = parseInt(req.params.id);
+    if (isNaN(credentialId)) return res.status(400).json({ message: 'Invalid id' });
+    const { filename, contentType, base64 } = req.body || {};
+    if (typeof filename !== 'string' || !filename.trim()) {
+      return res.status(400).json({ message: 'filename is required' });
+    }
+    if (typeof contentType !== 'string' || !ALLOWED_DOC_MIME_TYPES.has(contentType)) {
+      return res.status(400).json({
+        message: `contentType must be one of: ${Array.from(ALLOWED_DOC_MIME_TYPES).join(', ')}`,
+      });
+    }
+    if (typeof base64 !== 'string' || base64.length < 50) {
+      return res.status(400).json({ message: 'base64 file content is required' });
+    }
+    // Strip data-URL prefix if the client sent one.
+    const rawBase64 = base64.replace(/^data:[^;]+;base64,/, '');
+    const sizeBytes = Math.floor(rawBase64.length * 0.75);
+    if (sizeBytes > MAX_DOC_SIZE_BYTES) {
+      return res.status(400).json({
+        message: `File exceeds ${Math.round(MAX_DOC_SIZE_BYTES / 1024 / 1024)} MB limit. Reduce file size and retry.`,
+      });
+    }
+
+    const [credential] = await db
+      .select()
+      .from(providerCredentials)
+      .where(
+        and(
+          eq(providerCredentials.id, credentialId),
+          eq(providerCredentials.practiceId, practiceId),
+        ),
+      )
+      .limit(1);
+    if (!credential) return res.status(404).json({ message: 'Credential not found' });
+
+    const existing: StoredDocument[] = Array.isArray(credential.documents) ? (credential.documents as StoredDocument[]) : [];
+    if (existing.length >= MAX_DOCS_PER_CREDENTIAL) {
+      return res.status(400).json({
+        message: `Max ${MAX_DOCS_PER_CREDENTIAL} documents per credential reached. Delete an old one first.`,
+      });
+    }
+
+    const newDoc: StoredDocument = {
+      id: generateDocId(),
+      filename: filename.trim().slice(0, 200),
+      contentType,
+      sizeBytes,
+      uploadedAt: new Date().toISOString(),
+      base64: rawBase64,
+    };
+    const updatedDocs = [...existing, newDoc];
+
+    await db
+      .update(providerCredentials)
+      .set({ documents: updatedDocs as any, updatedAt: new Date() })
+      .where(eq(providerCredentials.id, credentialId));
+
+    const { base64: _omit, ...meta } = newDoc;
+    res.json(meta);
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to upload document', error);
+  }
+});
+
+/** GET /:id/documents/:docId — download (returns the file binary). */
+router.get('/:id/documents/:docId', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const credentialId = parseInt(req.params.id);
+    if (isNaN(credentialId)) return res.status(400).json({ message: 'Invalid id' });
+
+    const [credential] = await db
+      .select()
+      .from(providerCredentials)
+      .where(
+        and(
+          eq(providerCredentials.id, credentialId),
+          eq(providerCredentials.practiceId, practiceId),
+        ),
+      )
+      .limit(1);
+    if (!credential) return res.status(404).json({ message: 'Credential not found' });
+
+    const docs: StoredDocument[] = Array.isArray(credential.documents) ? (credential.documents as StoredDocument[]) : [];
+    const doc = docs.find((d) => d.id === req.params.docId);
+    if (!doc) return res.status(404).json({ message: 'Document not found' });
+
+    const buffer = Buffer.from(doc.base64, 'base64');
+    res.setHeader('Content-Type', doc.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${doc.filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to download document', error);
+  }
+});
+
+/** DELETE /:id/documents/:docId — remove from the array. */
+router.delete('/:id/documents/:docId', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const credentialId = parseInt(req.params.id);
+    if (isNaN(credentialId)) return res.status(400).json({ message: 'Invalid id' });
+
+    const [credential] = await db
+      .select()
+      .from(providerCredentials)
+      .where(
+        and(
+          eq(providerCredentials.id, credentialId),
+          eq(providerCredentials.practiceId, practiceId),
+        ),
+      )
+      .limit(1);
+    if (!credential) return res.status(404).json({ message: 'Credential not found' });
+
+    const docs: StoredDocument[] = Array.isArray(credential.documents) ? (credential.documents as StoredDocument[]) : [];
+    const filtered = docs.filter((d) => d.id !== req.params.docId);
+    if (filtered.length === docs.length) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+    await db
+      .update(providerCredentials)
+      .set({ documents: filtered as any, updatedAt: new Date() })
+      .where(eq(providerCredentials.id, credentialId));
+    res.json({ success: true });
+  } catch (error) {
+    safeErrorResponse(res, 500, 'Failed to delete document', error);
+  }
+});
+
 /**
  * POST /render-letter-pdf — render a credentialing draft (packet OR
  * application) as a typeset PDF. Accepts the result of /draft-packet or
