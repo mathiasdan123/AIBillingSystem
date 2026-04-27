@@ -488,4 +488,79 @@ router.delete('/:id', isAuthenticated, async (req: any, res: Response) => {
   }
 });
 
+/**
+ * POST /render-letter-pdf — render a credentialing draft (packet OR
+ * application) as a typeset PDF. Accepts the result of /draft-packet or
+ * /draft-application after the biller has reviewed/edited it client-side.
+ * Body: { mode: 'packet' | 'application', letter, payerName,
+ *         documentChecklist?, prefilledAnswers? }
+ */
+router.post('/render-letter-pdf', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    await dbReady;
+    const practiceId = getAuthorizedPracticeId(req);
+    const { mode, letter, payerName, documentChecklist, prefilledAnswers, subject } = req.body || {};
+    if (!letter || typeof letter !== 'string' || letter.length < 50) {
+      return res.status(400).json({ message: 'letter is required.' });
+    }
+    if (mode !== 'packet' && mode !== 'application') {
+      return res.status(400).json({ message: 'mode must be "packet" or "application".' });
+    }
+    const { storage } = await import('../storage');
+    const practice = await storage.getPractice(practiceId);
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+
+    const sections: any[] = [];
+    if (mode === 'packet' && Array.isArray(documentChecklist) && documentChecklist.length > 0) {
+      sections.push({
+        type: 'checklist',
+        title: 'Document Checklist',
+        items: documentChecklist.map((d: any) => ({
+          item: String(d.item ?? ''),
+          description: String(d.description ?? ''),
+          alreadyOnFile: Boolean(d.alreadyOnFile),
+        })),
+      });
+    }
+    if (mode === 'application' && Array.isArray(prefilledAnswers) && prefilledAnswers.length > 0) {
+      sections.push({
+        type: 'qa',
+        title: 'Application Answers (paste into payer portal)',
+        entries: prefilledAnswers.map((qa: any) => ({
+          question: String(qa.question ?? ''),
+          answer: String(qa.answer ?? ''),
+        })),
+      });
+    }
+
+    const { renderLetterPdf } = await import('../services/letterPdfRenderer');
+    const buffer = await renderLetterPdf({
+      practice: {
+        name: practice.name,
+        address: (practice as any).address ?? null,
+        phone: (practice as any).phone ?? null,
+        email: (practice as any).email ?? null,
+        npi: (practice as any).npi ?? null,
+      },
+      recipient: payerName
+        ? { line1: 'Provider Credentialing Department', line2: payerName }
+        : undefined,
+      subject:
+        subject ||
+        (mode === 'packet'
+          ? 'Credentialing Enrollment Packet'
+          : 'Provider Credentialing Application'),
+      body: letter,
+      sections,
+    });
+
+    const filename = `credentialing-${mode}-${Date.now()}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error: any) {
+    safeErrorResponse(res, 500, error?.message ?? 'Failed to render PDF', error);
+  }
+});
+
 export default router;

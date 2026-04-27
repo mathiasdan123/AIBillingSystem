@@ -556,21 +556,51 @@ export default function PriorAuthorizationsSection({
                   Copy
                 </Button>
                 <Button
-                  onClick={() => {
-                    // Export as plain text download. Biller opens in Word / prints / faxes.
-                    const blob = new Blob([draftResult.letter], { type: 'text/plain' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `pa-request-${Date.now()}.txt`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                  onClick={async () => {
+                    // Render server-side as a properly typeset PDF with
+                    // practice letterhead, recipient block, signature line,
+                    // etc. Falls back to plain-text download if the PDF
+                    // endpoint errors so the biller is never stuck.
+                    try {
+                      const res = await fetch('/api/treatment-authorizations/render-letter-pdf', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({
+                          letter: draftResult.letter,
+                          subject: draftResult.subject,
+                        }),
+                      });
+                      if (!res.ok) throw new Error('PDF render failed');
+                      const blob = await res.blob();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `pa-request-${Date.now()}.pdf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    } catch {
+                      // Fallback: plain text. Biller can still print / fax.
+                      const blob = new Blob([draftResult.letter], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `pa-request-${Date.now()}.txt`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      toast({
+                        title: 'PDF render failed',
+                        description: 'Downloaded as plain text instead.',
+                      });
+                    }
                   }}
                   className="bg-purple-600 hover:bg-purple-700 text-white"
                 >
-                  Download
+                  Download PDF
                 </Button>
               </>
             )}
