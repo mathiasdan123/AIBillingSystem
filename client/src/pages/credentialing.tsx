@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -123,6 +124,44 @@ export default function CredentialingPage() {
       return res.json();
     },
   });
+
+  // Cross-link: pull payer enrollment status so each credential row can
+  // surface "EDI: enrolled / pending" alongside the credentialing record.
+  // Mirrors the cross-link the payer-enrollments page has the other
+  // direction. Status is computed per (payer, transactionType) — we
+  // aggregate across the three transaction types per payer for display.
+  const { data: enrollmentRows } = useQuery<Array<{
+    name: string;
+    enrollments: Array<{ transactionType: string; status: string; requiresEnrollment: boolean }>;
+  }>>({
+    queryKey: ["/api/payer-enrollments"],
+    queryFn: async () => {
+      const res = await fetch("/api/payer-enrollments", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const enrollmentByPayer = useMemo(() => {
+    const m = new Map<string, { enrolledCount: number; total: number; pendingCount: number; rejectedCount: number }>();
+    for (const row of enrollmentRows ?? []) {
+      const key = row.name.toLowerCase();
+      let enrolled = 0;
+      let pending = 0;
+      let rejected = 0;
+      for (const e of row.enrollments) {
+        if (e.status === 'enrolled') enrolled++;
+        else if (e.status === 'pending') pending++;
+        else if (e.status === 'rejected') rejected++;
+      }
+      m.set(key, {
+        enrolledCount: enrolled,
+        total: row.enrollments.length,
+        pendingCount: pending,
+        rejectedCount: rejected,
+      });
+    }
+    return m;
+  }, [enrollmentRows]);
 
   const draftPacketMutation = useMutation({
     mutationFn: async (body: { providerId: string; payerName: string; notes?: string }) => {
@@ -447,6 +486,7 @@ export default function CredentialingPage() {
                       <TableHead>Provider</TableHead>
                       <TableHead>Payer</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead title="Practice's EDI enrollment with this payer for eligibility / claims / ERA">EDI</TableHead>
                       <TableHead>Enrollment Date</TableHead>
                       <TableHead>Expiration</TableHead>
                       <TableHead>Re-Credentialing</TableHead>
@@ -493,6 +533,52 @@ export default function CredentialingPage() {
                                 Expiring Soon
                               </Badge>
                             )}
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              const ediStatus = enrollmentByPayer.get(credential.payerName.toLowerCase());
+                              if (!ediStatus || ediStatus.total === 0) {
+                                return (
+                                  <Link href="/payer-enrollments" className="text-xs text-slate-400 hover:underline">
+                                    Not tracked
+                                  </Link>
+                                );
+                              }
+                              if (ediStatus.enrolledCount === ediStatus.total) {
+                                return (
+                                  <Link href="/payer-enrollments">
+                                    <Badge className="bg-green-100 text-green-800 hover:bg-green-200 cursor-pointer">
+                                      All enrolled
+                                    </Badge>
+                                  </Link>
+                                );
+                              }
+                              if (ediStatus.rejectedCount > 0) {
+                                return (
+                                  <Link href="/payer-enrollments">
+                                    <Badge className="bg-red-100 text-red-800 hover:bg-red-200 cursor-pointer">
+                                      {ediStatus.rejectedCount} rejected
+                                    </Badge>
+                                  </Link>
+                                );
+                              }
+                              if (ediStatus.pendingCount > 0) {
+                                return (
+                                  <Link href="/payer-enrollments">
+                                    <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200 cursor-pointer">
+                                      {ediStatus.pendingCount} pending · {ediStatus.enrolledCount}/{ediStatus.total} enrolled
+                                    </Badge>
+                                  </Link>
+                                );
+                              }
+                              return (
+                                <Link href="/payer-enrollments">
+                                  <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer">
+                                    {ediStatus.enrolledCount}/{ediStatus.total} enrolled
+                                  </Badge>
+                                </Link>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell>{formatDate(credential.enrollmentDate)}</TableCell>
                           <TableCell className={expiringSoon ? "text-orange-600 font-medium" : ""}>
