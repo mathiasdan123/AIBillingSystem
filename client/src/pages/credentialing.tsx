@@ -749,6 +749,10 @@ export default function CredentialingPage() {
                 />
               </div>
 
+              {/* Documents — only shown when editing an existing credential
+                  (need an id to attach to). */}
+              {editingId && <DocumentsSection credentialId={editingId} />}
+
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={closeDialog}>
                   Cancel
@@ -1082,6 +1086,199 @@ export default function CredentialingPage() {
             </div>
           </DialogContent>
         </Dialog>
+      </div>
+    </div>
+  );
+}
+
+// ─── Documents (license PDFs, malpractice COIs, diplomas, etc.) ────
+//
+// Stored inline as base64 in provider_credentials.documents (JSONB).
+// Per-file 4 MB cap, 10 files per credential. Server validates both.
+// Trade-off vs. S3 — simple, no bucket setup, encrypted at rest by
+// RDS. When usage grows, swap for S3 with presigned URLs (the
+// list/upload/download endpoints already return metadata-only on
+// list, so the swap is invisible to callers).
+
+interface CredentialDocument {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
+const DOC_MAX_SIZE = 4 * 1024 * 1024;
+const DOC_ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
+
+function DocumentsSection({ credentialId }: { credentialId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const fileInputId = `cred-${credentialId}-doc-upload`;
+
+  const { data: docs = [], isLoading } = useQuery<CredentialDocument[]>({
+    queryKey: [`/api/credentialing/${credentialId}/documents`],
+    queryFn: async () => {
+      const res = await fetch(`/api/credentialing/${credentialId}/documents`, { credentials: 'include' });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Could not read file'));
+        reader.readAsDataURL(file);
+      });
+      const res = await apiRequest('POST', `/api/credentialing/${credentialId}/documents`, {
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        base64,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/credentialing/${credentialId}/documents`] });
+      toast({ title: 'Document uploaded' });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Upload failed',
+        description: err?.message || 'Try a smaller PDF.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (docId: string) => {
+      const res = await apiRequest('DELETE', `/api/credentialing/${credentialId}/documents/${docId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/credentialing/${credentialId}/documents`] });
+      toast({ title: 'Document deleted' });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Delete failed', description: err?.message, variant: 'destructive' });
+    },
+  });
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!DOC_ALLOWED_TYPES.includes(file.type)) {
+      toast({
+        title: 'Unsupported file type',
+        description: 'PDF, JPG, PNG, or HEIC only.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (file.size > DOC_MAX_SIZE) {
+      toast({
+        title: 'File too large',
+        description: 'Max 4 MB per file. Reduce + retry.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    uploadMutation.mutate(file);
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="space-y-2 border-t pt-4">
+      <div className="flex items-center justify-between">
+        <Label className="text-sm font-medium">Supporting Documents</Label>
+        <span className="text-xs text-muted-foreground">{docs.length}/10 · 4 MB max each</span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        License PDFs, malpractice insurance certificate, diploma, CV. Required when submitting
+        the enrollment packet to most payers.
+      </p>
+
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : docs.length === 0 ? (
+        <p className="text-xs text-muted-foreground italic">No documents uploaded yet.</p>
+      ) : (
+        <div className="border rounded-md divide-y">
+          {docs.map((d) => (
+            <div key={d.id} className="flex items-center justify-between p-2 text-sm">
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">{d.filename}</div>
+                <div className="text-xs text-muted-foreground">
+                  {formatSize(d.sizeBytes)} · uploaded {new Date(d.uploadedAt).toLocaleDateString()}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    window.open(`/api/credentialing/${credentialId}/documents/${d.id}`, '_blank');
+                  }}
+                  title="Download"
+                >
+                  Download
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (confirm(`Delete ${d.filename}?`)) deleteMutation.mutate(d.id);
+                  }}
+                  disabled={deleteMutation.isPending}
+                  className="text-red-600 hover:text-red-700"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div>
+        <input
+          id={fileInputId}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/*"
+          onChange={handleFileSelected}
+          className="hidden"
+          disabled={uploadMutation.isPending || docs.length >= 10}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => document.getElementById(fileInputId)?.click()}
+          disabled={uploadMutation.isPending || docs.length >= 10}
+        >
+          {uploadMutation.isPending ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              Uploading…
+            </>
+          ) : (
+            <>
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              Upload document
+            </>
+          )}
+        </Button>
       </div>
     </div>
   );
