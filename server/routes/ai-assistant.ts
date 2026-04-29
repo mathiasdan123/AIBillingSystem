@@ -1337,6 +1337,48 @@ async function executeTool(
 
         const denialReason = claim.denialReason || 'Reason not specified';
 
+        // Phase 0 / Workstream A + B enrichment: fetch parsed plan benefits
+        // (from any uploaded SBC/SPD documents) and prior-paid-claim precedents
+        // for this same payer + member + CPTs. Both feed into the appeal prompt
+        // so Claude can cite the patient's actual plan language and prior
+        // payments specifically. Best-effort — failures are non-fatal so the
+        // appeal still generates without the enrichment.
+        let parsedBenefits = null;
+        let precedents = null;
+        try {
+          if (claim.patientId) {
+            const { getPatientPlanBenefits } = await import('../storage/patients');
+            parsedBenefits = await getPatientPlanBenefits(claim.patientId);
+          }
+        } catch (benefitsError) {
+          logger.warn('Failed to fetch patient plan benefits for appeal — continuing without', {
+            claimId,
+            error: benefitsError instanceof Error ? benefitsError.message : String(benefitsError),
+          });
+        }
+        try {
+          const cptList = lineItemDetails
+            .map((li) => li.cptCode?.code)
+            .filter((c): c is string => typeof c === 'string' && c.length > 0);
+          const firstDx = lineItemDetails.find((li) => li.icd10Code)?.icd10Code?.code;
+          if (cptList.length > 0 && claim.patientId) {
+            const { findPrecedentsForDeniedClaim } = await import('../services/claimPrecedentService');
+            precedents = await findPrecedentsForDeniedClaim({
+              practiceId,
+              patientId: claim.patientId,
+              insuranceId: claim.insuranceId ?? undefined,
+              cptCodes: cptList,
+              diagnosisCode: firstDx,
+              daysBack: 365,
+            });
+          }
+        } catch (precedentError) {
+          logger.warn('Failed to fetch claim precedents for appeal — continuing without', {
+            claimId,
+            error: precedentError instanceof Error ? precedentError.message : String(precedentError),
+          });
+        }
+
         // Try to use the Claude appeal service if available
         try {
           const { generateClaudeAppeal, isClaudeAppealAvailable } = await import('../services/claudeAppealService');
@@ -1353,6 +1395,8 @@ async function executeTool(
               patient: patientData,
               practice: practiceData,
               denialReason,
+              parsedBenefits,
+              precedents,
             });
 
             return JSON.stringify({

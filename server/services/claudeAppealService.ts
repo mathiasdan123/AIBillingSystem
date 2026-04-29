@@ -8,6 +8,8 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from './logger';
+import type { ClaimPrecedent } from './claimPrecedentService';
+import { formatPrecedentsForAppeal } from './claimPrecedentService';
 
 // Re-export interfaces from aiAppealGenerator for consistency
 export interface AppealResult {
@@ -49,6 +51,17 @@ interface PracticeData {
   phone: string | null;
 }
 
+/**
+ * Optional richer-data inputs (Phase 0 / Workstream A + B). When present,
+ * Claude is instructed to cite the patient's actual plan language and prior
+ * paid claims by the same payer to make the appeal much more specific.
+ *
+ * Loose-typed because plan benefits come from a Drizzle row whose
+ * `rawExtractedData` JSONB field carries the new appeal-relevant fields
+ * (exclusions, appealRights, medicalNecessityCriteria, etc.) added to
+ * ParsedBenefits in planDocumentParser.ts. Caller doesn't need to know
+ * the shape — we read defensively.
+ */
 interface GenerateClaudeAppealParams {
   claim: ClaimData;
   lineItems: LineItemData[];
@@ -58,6 +71,10 @@ interface GenerateClaudeAppealParams {
   denialReason: string;
   appealLevel?: string;
   previousAppealOutcome?: string;
+  /** Patient's parsed plan benefits (DB row from getPatientPlanBenefits). */
+  parsedBenefits?: Record<string, any> | null;
+  /** Precedent paid claims keyed by CPT code from findPrecedentsForDeniedClaim. */
+  precedents?: Map<string, ClaimPrecedent[]> | null;
 }
 
 interface ClaudeAppealResponse {
@@ -142,6 +159,19 @@ function buildSystemPrompt(): string {
    - Authorization: Document urgency, retroactive request, clinical necessity
    - Coverage: Cite specific policy language, member benefits, CPT definitions
    - Timely Filing: Provide proof of original submission, document delays beyond provider control
+
+7. **Plan Document Citations** (when "Plan Benefits" section is provided in the prompt):
+   - When the plan's exclusions list is provided, check if the denial reason matches an actual exclusion. If it does NOT, say so explicitly and cite the verbatim exclusion list.
+   - When the plan's medical necessity criteria is provided, quote the verbatim language back at the payer to argue the denial conflicts with the plan's own definition.
+   - When network adequacy language is provided and this is an out-of-network denial, cite the verbatim language to argue OON services should be covered at in-network rates.
+   - When per-discipline visit limits are provided (otVisitLimit, ptVisitLimit, stVisitLimit), cite specific numbers: "Plan covers 60 visits per year; member has used X."
+   - When appeal rights timeframes are provided, cite them at the payer ("Per plan terms, [Payer] must respond within N days").
+   - Use VERBATIM language when quoting the plan — do not paraphrase. Wrap quoted plan text in quotation marks.
+
+8. **Precedent Claim Citations** (when "Prior Paid Claims" section is provided):
+   - Cite specific prior claim numbers, dates, and amounts where the SAME payer paid for the SAME CPT code on the SAME member previously.
+   - Use this as an inconsistency argument: "Aetna paid claim #X for CPT 97530 with diagnosis F84.0 on date Y. The denial of the present claim for the same code, member, and diagnosis is inconsistent with that prior payment history."
+   - Don't fabricate precedents — only cite what's provided in the prompt context.
 
 ## Response Format
 You MUST respond with valid JSON only (no markdown, no code blocks, no additional text). The JSON must have this exact structure:
@@ -242,6 +272,21 @@ ${icd10Codes.length > 0 ? icd10Codes.join('\n') : 'See attached documentation'}`
 ${soapNote.trim()}`;
   }
 
+  // Add parsed plan benefits when present (Workstream A enrichment).
+  // We read defensively from the rawExtractedData JSONB to surface the new
+  // appeal-relevant fields. If the patient hasn't uploaded a plan document,
+  // this whole block is skipped and the appeal proceeds without it.
+  const benefitsSection = buildPlanBenefitsSection(params.parsedBenefits);
+  if (benefitsSection) {
+    prompt += `\n\n${benefitsSection}`;
+  }
+
+  // Add precedent claims when present (Workstream B enrichment).
+  const precedentSection = buildPrecedentsSection(params.precedents);
+  if (precedentSection) {
+    prompt += `\n\n${precedentSection}`;
+  }
+
   // Add appeal level context
   if (appealLevel) {
     prompt += `\n\n## Appeal Level
@@ -270,6 +315,110 @@ Estimate the success probability (0-100) based on the strength of available evid
 Respond ONLY with valid JSON matching the required schema. Do not include any markdown formatting or code blocks.`;
 
   return prompt;
+}
+
+/**
+ * Build the "Plan Benefits" section of the prompt from the patient's parsed
+ * plan-document data. Returns empty string when nothing useful is available.
+ *
+ * Reads both columns and the rawExtractedData JSONB defensively — different
+ * documents extract different fields, and we don't want a single null to
+ * suppress everything else.
+ *
+ * Exported for unit testing — callers should still use generateClaudeAppeal.
+ */
+export function buildPlanBenefitsSection(benefits: any): string {
+  if (!benefits) return '';
+  const raw = benefits.rawExtractedData ?? {};
+  const lines: string[] = [];
+
+  // Column-level fields (always populated when document was parsed).
+  if (benefits.planName) lines.push(`Plan: ${benefits.planName}${benefits.planType ? ` (${benefits.planType})` : ''}`);
+
+  // Per-discipline visit limits — pull from raw JSONB. Most useful in appeals
+  // arguing "plan covers N visits, member has used Y".
+  const therapy = raw.therapy_limits ?? {};
+  const visitLimitParts: string[] = [];
+  if (raw.ot_visit_limit ?? therapy.ot) visitLimitParts.push(`OT ${raw.ot_visit_limit ?? therapy.ot} visits/year`);
+  if (raw.pt_visit_limit ?? therapy.pt) visitLimitParts.push(`PT ${raw.pt_visit_limit ?? therapy.pt} visits/year`);
+  if (raw.st_visit_limit ?? therapy.st) visitLimitParts.push(`ST ${raw.st_visit_limit ?? therapy.st} visits/year`);
+  if (therapy.combined && therapy.combined_limit) visitLimitParts.push(`Combined OT/PT/ST cap: ${therapy.combined_limit} visits/year`);
+  if (visitLimitParts.length > 0) lines.push(`Visit limits: ${visitLimitParts.join('; ')}`);
+
+  // Verbatim exclusions — quotable in appeals
+  if (Array.isArray(raw.exclusions) && raw.exclusions.length > 0) {
+    lines.push('Plan exclusions (verbatim — cite these when refuting denial reasons that don\'t match an actual exclusion):');
+    raw.exclusions.slice(0, 8).forEach((ex: string) => {
+      if (typeof ex === 'string' && ex.trim().length > 0) lines.push(`  - "${ex.trim()}"`);
+    });
+  }
+
+  // Verbatim medical necessity criteria
+  if (typeof raw.medical_necessity_criteria === 'string' && raw.medical_necessity_criteria.trim().length > 0) {
+    lines.push(`Plan's verbatim definition of medical necessity (quote this back):\n  "${raw.medical_necessity_criteria.trim()}"`);
+  }
+
+  // Network adequacy language
+  if (typeof raw.network_adequacy_language === 'string' && raw.network_adequacy_language.trim().length > 0) {
+    lines.push(`Plan's verbatim network-adequacy language (cite for OON denials):\n  "${raw.network_adequacy_language.trim()}"`);
+  }
+
+  // Prior auth requirements
+  if (Array.isArray(raw.prior_auth_required_for) && raw.prior_auth_required_for.length > 0) {
+    lines.push(`Prior authorization required for: ${raw.prior_auth_required_for.join(', ')}`);
+  }
+
+  // Appeal rights timeframes
+  const ar = raw.appeal_rights ?? {};
+  const arParts: string[] = [];
+  if (ar.first_level_days) arParts.push(`first-level appeal: ${ar.first_level_days} days from denial`);
+  if (ar.second_level_days) arParts.push(`second-level: ${ar.second_level_days} days`);
+  if (ar.external_review_days) arParts.push(`external review: ${ar.external_review_days} days`);
+  if (ar.payer_response_days) arParts.push(`payer must respond within: ${ar.payer_response_days} days`);
+  if (arParts.length > 0) lines.push(`Plan's appeal rights timeframes: ${arParts.join('; ')}`);
+
+  // OON benefits (from columns)
+  const oonParts: string[] = [];
+  if (benefits.oonDeductibleIndividual) oonParts.push(`OON deductible: $${benefits.oonDeductibleIndividual}`);
+  if (benefits.oonCoinsurancePercent) oonParts.push(`OON coinsurance: ${benefits.oonCoinsurancePercent}%`);
+  if (benefits.oonOutOfPocketMax) oonParts.push(`OON OOP max: $${benefits.oonOutOfPocketMax}`);
+  if (oonParts.length > 0) lines.push(`OON benefits: ${oonParts.join(' / ')}`);
+
+  // Coverage status per CPT (when explicit yes/no was extracted)
+  if (Array.isArray(raw.coverage_status) && raw.coverage_status.length > 0) {
+    lines.push('Coverage status by CPT:');
+    raw.coverage_status.slice(0, 10).forEach((cs: any) => {
+      if (cs && typeof cs.code === 'string') {
+        lines.push(`  - ${cs.code}: ${cs.covered ? 'covered' : 'NOT covered'}${cs.notes ? ` — ${cs.notes}` : ''}`);
+      }
+    });
+  }
+
+  if (lines.length === 0) return '';
+
+  return ['## Plan Benefits (from member\'s parsed plan documents)', ...lines].join('\n');
+}
+
+/**
+ * Build the "Prior Paid Claims" section from a precedent map keyed by CPT.
+ * Returns empty string when the map is empty or null. Exported for testing.
+ */
+export function buildPrecedentsSection(precedents: Map<string, ClaimPrecedent[]> | null | undefined): string {
+  if (!precedents || precedents.size === 0) return '';
+
+  const sections: string[] = [];
+  precedents.forEach((list, cpt) => {
+    if (list.length === 0) return;
+    sections.push(`For CPT ${cpt} — ${formatPrecedentsForAppeal(list)}`);
+  });
+  if (sections.length === 0) return '';
+
+  return [
+    '## Prior Paid Claims (precedent — same payer paid these for the same member)',
+    'Cite these specifically as inconsistency arguments. Do not fabricate additional precedents.',
+    '',
+    sections.join('\n\n'),
+  ].join('\n');
 }
 
 /**
