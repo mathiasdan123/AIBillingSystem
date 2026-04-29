@@ -718,7 +718,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
               { s: 12, label: "Sensory 2" },
               { s: 13, label: "Waiver" },
               { s: 14, label: "Financial" },
-              { s: 15, label: "Documents" },
+              { s: 15, label: "Insurance Card" },
             ].map(({ s, label }) => (
               <button
                 key={s}
