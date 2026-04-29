@@ -13,7 +13,7 @@ import {
   exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
   messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
-  aiAssistantRouter,
+  aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
   documentsRouter, followUpsRouter, eligibilityRouter,
@@ -205,6 +205,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', aiRouter);
   // AI Assistant chat routes: /api/ai/assistant, /api/ai/assistant/status
   app.use('/api/ai', aiAssistantRouter);
+  // AI debug routes (admin only): /api/ai/appeal-prompt-preview/:claimId
+  app.use('/api/ai', aiAppealDebugRouter);
   // Insurance routes: /api/insurances, /api/insurance-rates/*, /api/insurance/*, /api/eligibility-alerts/*,
   //   /api/patients/:id/plan-documents/*, /api/patients/:id/plan-benefits/*, /api/reimbursement/*,
   //   /api/cost-estimate/*, /api/patient-consents/*

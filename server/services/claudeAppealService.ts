@@ -108,7 +108,11 @@ function getAnthropicClient(): Anthropic {
 /**
  * Build the system prompt for Claude to generate appeal letters
  */
-function buildSystemPrompt(): string {
+/**
+ * Exported for the prompt-preview debug route. Public callers should use
+ * generateClaudeAppeal — this is just so admins can inspect prompts.
+ */
+export function buildSystemPrompt(): string {
   return `You are an expert medical billing appeal specialist for behavioral health and occupational therapy practices. Your role is to analyze denied insurance claims and generate professional, compelling appeal letters that maximize the likelihood of overturning denials.
 
 ## Your Expertise
@@ -199,7 +203,11 @@ Remember: Your appeal letter should be ready to print on practice letterhead and
 /**
  * Build the user prompt with specific claim details
  */
-function buildUserPrompt(params: GenerateClaudeAppealParams): string {
+/**
+ * Exported for the prompt-preview debug route. Public callers should use
+ * generateClaudeAppeal — this is just so admins can inspect prompts.
+ */
+export function buildUserPrompt(params: GenerateClaudeAppealParams): string {
   const {
     claim,
     lineItems,
