@@ -39,6 +39,7 @@ import {
   payerCrosswalkRouter,
   payerEnrollmentsRouter,
   soapInterventionTemplatesRouter,
+  maintenanceWindowsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -247,6 +248,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/fee-schedules', feeSchedulesRouter);
   // Treatment Authorization routes: /api/treatment-authorizations/*
   app.use('/api/treatment-authorizations', treatmentAuthorizationsRouter);
+
+  // Maintenance window banner routes: /api/maintenance-windows/*
+  app.use('/api/maintenance-windows', maintenanceWindowsRouter);
 
   // Slice C — Payer Enrollments: /api/payer-enrollments/*
   app.use('/api/payer-enrollments', payerEnrollmentsRouter);
