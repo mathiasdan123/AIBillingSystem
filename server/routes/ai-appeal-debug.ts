@@ -21,14 +21,40 @@
  */
 
 import { Router, type Response } from 'express';
+import { eq } from 'drizzle-orm';
 import { isAuthenticated } from '../replitAuth';
 import { storage } from '../storage';
+import { db } from '../db';
+import { claims } from '@shared/schema';
 import logger from '../services/logger';
 import { buildSystemPrompt, buildUserPrompt } from '../services/claudeAppealService';
 import { findPrecedentsForDeniedClaim } from '../services/claimPrecedentService';
 import { getPatientPlanBenefits } from '../storage/patients';
 
 const router = Router();
+
+/**
+ * Look up a claim by either:
+ *   - database ID (numeric, e.g. "47"), OR
+ *   - human-readable claim number (e.g. "CLM-DEMO-006")
+ *
+ * The UI shows claim numbers, not database IDs, and claims open in a modal
+ * so the database ID isn't visible from the URL bar. Accepting both makes
+ * the debug endpoint usable straight from the address bar.
+ */
+async function resolveClaim(idOrNumber: string) {
+  const asInt = parseInt(idOrNumber, 10);
+  if (!isNaN(asInt) && String(asInt) === idOrNumber.trim()) {
+    return await storage.getClaim(asInt);
+  }
+  // Fallback: lookup by claimNumber
+  const [row] = await db
+    .select()
+    .from(claims)
+    .where(eq(claims.claimNumber, idOrNumber.trim()))
+    .limit(1);
+  return row;
+}
 
 router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, res: Response) => {
   // Admin-only — this exposes raw prompts which include verbatim plan
@@ -38,14 +64,14 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
   }
 
   try {
-    const claimId = parseInt(req.params.claimId, 10);
-    if (isNaN(claimId)) {
-      return res.status(400).json({ message: 'Invalid claim ID' });
+    const idOrNumber = req.params.claimId;
+    if (!idOrNumber || typeof idOrNumber !== 'string') {
+      return res.status(400).json({ message: 'Provide a claim ID or claim number' });
     }
 
-    const claim = await storage.getClaim(claimId);
+    const claim = await resolveClaim(idOrNumber);
     if (!claim) {
-      return res.status(404).json({ message: `Claim ${claimId} not found` });
+      return res.status(404).json({ message: `Claim "${idOrNumber}" not found (looked up by ID and by claimNumber)` });
     }
 
     const userPracticeId = req.userPracticeId;
@@ -58,7 +84,7 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
     const practice = await storage.getPractice(claim.practiceId);
 
     // Line items + CPT/ICD lookups (mirrors the real handler in ai-assistant.ts)
-    const lineItems = await storage.getClaimLineItems(claimId);
+    const lineItems = await storage.getClaimLineItems(claim.id);
     const allCpts: any[] = await storage.getCptCodes();
     const allIcds: any[] = await storage.getIcd10Codes();
 
@@ -80,7 +106,7 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
       try {
         parsedBenefits = await getPatientPlanBenefits(claim.patientId);
       } catch (err: any) {
-        logger.warn('Preview: plan benefits fetch failed', { claimId, error: err?.message });
+        logger.warn('Preview: plan benefits fetch failed', { claimId: claim.id, error: err?.message });
       }
 
       const cptList = lineItemDetails
@@ -99,7 +125,7 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
             daysBack: 365,
           });
         } catch (err: any) {
-          logger.warn('Preview: precedent fetch failed', { claimId, error: err?.message });
+          logger.warn('Preview: precedent fetch failed', { claimId: claim.id, error: err?.message });
         }
       }
     }
