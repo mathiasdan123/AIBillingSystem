@@ -142,7 +142,3 @@ backups/
 
 # Generated OpenAPI spec (build artifact from npm run docs:api)
 openapi.json
-
-# Generated Squarespace paste-ready snippets — rebuild via `npm run website:build`
-website/squarespace-snippets/*.html
-website/squarespace-snippets/.last-build.json
