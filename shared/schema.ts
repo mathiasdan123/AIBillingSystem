@@ -4006,3 +4006,51 @@ export const patientStatementsRelations = relations(patientStatements, ({ one })
     references: [patients.id],
   }),
 }));
+
+// ==================== Maintenance Windows ====================
+//
+// Admin-posted scheduled-maintenance banners that surface in-app for the
+// duration of a window. Used to set user expectations before risky deploys
+// or infrastructure work.
+//
+// SECURITY: The `message` field is rendered to all users in a banner.
+// DO NOT include any PHI (patient names, DOBs, MRNs, claim numbers, etc.)
+// in maintenance messages. Keep messages limited to operational language
+// like "Scheduled maintenance Sunday 3am ET, expect 5 min interruption."
+export const maintenanceWindows = pgTable("maintenance_windows", {
+  id: serial("id").primaryKey(),
+  // NULL practiceId = system-wide banner shown to every practice.
+  // A specific practiceId scopes the banner to that one practice (rare).
+  practiceId: integer("practice_id").references(() => practices.id),
+  // Operational message shown to users. NEVER include PHI here.
+  message: text("message").notNull(),
+  severity: varchar("severity").default("info").notNull(), // info | warning | critical
+  startsAt: timestamp("starts_at").notNull(),
+  endsAt: timestamp("ends_at").notNull(),
+  dismissible: boolean("dismissible").default(true).notNull(),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_maintenance_windows_practice").on(table.practiceId),
+  index("idx_maintenance_windows_active_range").on(table.startsAt, table.endsAt),
+]);
+
+export const maintenanceWindowsRelations = relations(maintenanceWindows, ({ one }) => ({
+  practice: one(practices, {
+    fields: [maintenanceWindows.practiceId],
+    references: [practices.id],
+  }),
+  creator: one(users, {
+    fields: [maintenanceWindows.createdBy],
+    references: [users.id],
+  }),
+}));
+
+export const insertMaintenanceWindowSchema = createInsertSchema(maintenanceWindows).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type MaintenanceWindow = typeof maintenanceWindows.$inferSelect;
+export type InsertMaintenanceWindow = z.infer<typeof insertMaintenanceWindowSchema>;

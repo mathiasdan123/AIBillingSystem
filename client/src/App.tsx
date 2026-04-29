@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import SimpleNavigation from "@/components/SimpleNavigation";
 import { CommandPalette } from "@/components/CommandPalette";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
+import MaintenanceWindowBanner from "@/components/MaintenanceWindowBanner";
 import NotFound from "@/pages/not-found";
 import AiBillingAssistant from "@/components/AiBillingAssistant";
 
@@ -69,6 +70,7 @@ const DailyReport = lazy(() => import("@/pages/daily-report"));
 const InsightsReport = lazy(() => import("@/pages/insights-report"));
 const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 const Credentialing = lazy(() => import("@/pages/credentialing"));
+const MaintenanceWindows = lazy(() => import("@/pages/maintenance-windows"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -203,6 +205,7 @@ function Router() {
       <SimpleNavigation />
       <CommandPalette />
       <IdleTimeoutWarning />
+      <MaintenanceWindowBanner />
       <main id="main-content">
         <ErrorBoundary>
           <Suspense fallback={<PageLoader />}>
@@ -253,6 +256,7 @@ function Router() {
               {isAdmin && <Route path="/daily-report" component={DailyReport} />}
               <Route path="/insights-report" component={InsightsReport} />
               {isAdmin && <Route path="/credentialing" component={Credentialing} />}
+              {isAdmin && <Route path="/maintenance-windows" component={MaintenanceWindows} />}
               <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/mcp-setup" component={McpSetup} />
               <Route path="/onboarding" component={Onboarding} />
