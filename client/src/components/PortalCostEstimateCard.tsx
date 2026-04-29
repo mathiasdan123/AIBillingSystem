@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { DollarSign, Upload, Sparkles, Info } from 'lucide-react';
+import { DollarSign, Upload, Sparkles, Info, ExternalLink, Phone } from 'lucide-react';
+import { getPayerSbcInstructions, GENERIC_SBC_INSTRUCTIONS } from '@/lib/payerSbcInstructions';
 
 /**
  * Patient-portal cost estimate card.
@@ -22,6 +23,7 @@ interface CostEstimateResponse {
   estimateAvailable?: boolean;
   message?: string;
   hint?: string;
+  insuranceProvider?: string | null;
   planName?: string | null;
   perSessionCost?: number;
   breakdown?: {
@@ -60,8 +62,10 @@ export default function PortalCostEstimateCard({ token, onNavigateToDocuments }:
   // No data shape we recognize — fail silent (don't show a broken card to patients).
   if (!data) return null;
 
-  // State 1: needs upload
+  // State 1: needs upload — show carrier-specific instructions when available
   if (data.needsUpload) {
+    const carrierInstructions = getPayerSbcInstructions(data.insuranceProvider);
+
     return (
       <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50">
         <CardHeader className="pb-3">
@@ -79,6 +83,57 @@ export default function PortalCostEstimateCard({ token, onNavigateToDocuments }:
           <p className="text-sm text-emerald-900 mb-3">
             {data.message ?? 'Upload your insurance plan documents and we will show you your real per-session cost — including how much your deductible has covered so far.'}
           </p>
+
+          {/* Carrier-specific upload instructions */}
+          {carrierInstructions ? (
+            <div className="mb-3 p-3 bg-white/70 rounded-md border border-emerald-200/50">
+              <div className="text-xs font-semibold text-emerald-900 mb-2">
+                How to find your {carrierInstructions.payer} plan summary:
+              </div>
+              <ol className="text-xs text-slate-700 space-y-1 list-decimal list-inside mb-2">
+                {carrierInstructions.pathSteps.map((step, idx) => (
+                  <li key={idx}>{step}</li>
+                ))}
+              </ol>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <a
+                  href={carrierInstructions.portalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-900 underline"
+                >
+                  Open {carrierInstructions.payer} portal
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                {carrierInstructions.phone && (
+                  <span className="inline-flex items-center gap-1 text-slate-600">
+                    <Phone className="w-3 h-3" />
+                    or call {carrierInstructions.phone}
+                  </span>
+                )}
+              </div>
+              {carrierInstructions.alternativeNames && carrierInstructions.alternativeNames.length > 0 && (
+                <p className="text-[10px] text-slate-500 mt-2 italic">
+                  May also be called: {carrierInstructions.alternativeNames.join(', ')}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="mb-3 p-3 bg-white/70 rounded-md border border-emerald-200/50">
+              <div className="text-xs font-semibold text-emerald-900 mb-2">
+                How to find your plan summary:
+              </div>
+              <ol className="text-xs text-slate-700 space-y-1 list-decimal list-inside">
+                {GENERIC_SBC_INSTRUCTIONS.pathSteps.map((step, idx) => (
+                  <li key={idx}>{step}</li>
+                ))}
+              </ol>
+              <p className="text-[10px] text-slate-500 mt-2 italic">
+                May also be called: {GENERIC_SBC_INSTRUCTIONS.alternativeNames.join(', ')}
+              </p>
+            </div>
+          )}
+
           {data.hint && (
             <p className="text-xs text-emerald-800/80 mb-3 flex items-start gap-1.5">
               <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
