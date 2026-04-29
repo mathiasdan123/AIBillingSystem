@@ -41,6 +41,22 @@ export const helpSections: HelpSection[] = [
     ],
   },
   {
+    id: 'pricing-billing',
+    title: 'Pricing & Billing',
+    items: [
+      {
+        question: 'Are AI features really included? Will I get surprise bills?',
+        answer:
+          "AI features are included in your plan subject to fair use — typical practices never see an extra charge. If usage significantly exceeds the norm for your tier, we'll email you 14+ days before billing any incremental AI provider costs at-cost. Detailed usage will be visible in your billing dashboard. See Terms of Service section 7 for the full clause.",
+      },
+      {
+        question: 'What counts as "typical" AI usage?',
+        answer:
+          'AI SOAP narratives, claim review, denial prediction, appeal letters, PA letters, credentialing drafts, and daily/weekly insight reports are all included. Most practices use well under the threshold. If your account is an outlier we will reach out before any billing changes.',
+      },
+    ],
+  },
+  {
     id: 'patients',
     title: 'Patients',
     items: [
