@@ -47,6 +47,7 @@ export { default as benchmarkingRouter } from './benchmarking';
 // Final extraction pass - all remaining route groups from legacy routes.ts
 export { default as aiRouter } from './ai';
 export { default as aiAssistantRouter } from './ai-assistant';
+export { default as aiAppealDebugRouter } from './ai-appeal-debug';
 export { default as insuranceRouter } from './insurance';
 export { default as bookingRouter } from './booking';
 export { default as clinicalRouter } from './clinical';
