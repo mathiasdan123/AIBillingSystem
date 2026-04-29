@@ -97,6 +97,51 @@ export interface ParsedBenefits {
   teleHealthCovered?: boolean;
   teleHealthOonSameAsInPerson?: boolean;
 
+  // ===== APPEAL-RELEVANT FIELDS (Phase 0 — power the smarter appeal generator) =====
+
+  // Per-discipline visit limits (additive to mentalHealthVisitLimit which only covers MH)
+  otVisitLimit?: number; // visits per year covered for OT
+  ptVisitLimit?: number;
+  stVisitLimit?: number;
+  habilitativeServicesCombined?: boolean; // true when OT/PT/ST share a single combined cap
+  combinedTherapyVisitLimit?: number; // when habilitativeServicesCombined is true
+
+  /** CPT codes / service categories the plan requires prior authorization for.
+   *  Used to refute "no auth required" type denials, OR to confirm an auth was needed. */
+  priorAuthRequiredFor?: string[];
+
+  /** Verbatim exclusion clauses. Quotable in appeals when payer denies for a
+   *  reason that doesn't match an actual exclusion. */
+  exclusions?: string[];
+
+  /** Plan's own appeal-rights timeframes — quote these back at the payer. */
+  appealRights?: {
+    firstLevelDays?: number; // days member has to file first-level appeal
+    secondLevelDays?: number;
+    externalReviewDays?: number;
+    payerResponseDays?: number; // payer must respond within
+  };
+
+  /** Plan's verbatim definition of medical necessity. Used to argue
+   *  necessity-based denials by quoting the plan's own criteria. */
+  medicalNecessityCriteria?: string;
+
+  /** Verbatim network-adequacy language — used to refute out-of-network
+   *  denials when no in-network provider exists within the plan's stated radius. */
+  networkAdequacyLanguage?: string;
+
+  /** Per-service-category copays. Catches denials that apply the wrong copay
+   *  bucket (e.g., specialist copay instead of preventive). Keyed by category. */
+  serviceCategoryCopays?: Record<string, number>;
+
+  /** Per-CPT or category coverage status — explicit yes/no with optional notes.
+   *  Useful for both pre-claim verification and refuting "not a covered service" denials. */
+  coverageStatus?: Array<{
+    code: string; // CPT code or category name
+    covered: boolean;
+    notes?: string;
+  }>;
+
   // Extraction metadata
   extractionConfidence: number; // 0-1
   rawExtractedData: Record<string, any>;
@@ -229,9 +274,10 @@ export async function parsePlanDocumentFromPDF(
 }
 
 /**
- * Transform parsed data to benefits format
+ * Transform parsed data to benefits format.
+ * Exported for unit testing — public API stays parsePlanDocument().
  */
-function transformParsedData(parsedData: any): ParsedBenefits {
+export function transformParsedData(parsedData: any): ParsedBenefits {
   return {
     planName: parsedData.plan_name || parsedData.planName,
     planType: parsedData.plan_type || parsedData.planType,
@@ -266,23 +312,71 @@ function transformParsedData(parsedData: any): ParsedBenefits {
     teleHealthCovered: parsedData.telehealth_covered ?? parsedData.telehealth?.covered,
     teleHealthOonSameAsInPerson: parsedData.telehealth_oon_same || parsedData.telehealth?.oon_same_as_in_person,
 
+    // Appeal-relevant fields (Phase 0)
+    otVisitLimit: parseAmount(parsedData.ot_visit_limit || parsedData.therapy_limits?.ot),
+    ptVisitLimit: parseAmount(parsedData.pt_visit_limit || parsedData.therapy_limits?.pt),
+    stVisitLimit: parseAmount(parsedData.st_visit_limit || parsedData.therapy_limits?.st),
+    habilitativeServicesCombined: parsedData.habilitative_services_combined ?? parsedData.therapy_limits?.combined,
+    combinedTherapyVisitLimit: parseAmount(parsedData.combined_therapy_visit_limit || parsedData.therapy_limits?.combined_limit),
+    priorAuthRequiredFor: normalizeStringArray(parsedData.prior_auth_required_for || parsedData.prior_auth_codes),
+    exclusions: normalizeStringArray(parsedData.exclusions),
+    appealRights: parsedData.appeal_rights ? {
+      firstLevelDays: parseAmount(parsedData.appeal_rights.first_level_days),
+      secondLevelDays: parseAmount(parsedData.appeal_rights.second_level_days),
+      externalReviewDays: parseAmount(parsedData.appeal_rights.external_review_days),
+      payerResponseDays: parseAmount(parsedData.appeal_rights.payer_response_days),
+    } : undefined,
+    medicalNecessityCriteria: typeof parsedData.medical_necessity_criteria === 'string' ? parsedData.medical_necessity_criteria : undefined,
+    networkAdequacyLanguage: typeof parsedData.network_adequacy_language === 'string' ? parsedData.network_adequacy_language : undefined,
+    serviceCategoryCopays: parsedData.service_category_copays && typeof parsedData.service_category_copays === 'object'
+      ? Object.fromEntries(
+          Object.entries(parsedData.service_category_copays as Record<string, any>)
+            .map(([k, v]) => [k, parseAmount(v)])
+            .filter((e): e is [string, number] => typeof e[1] === 'number')
+        )
+      : undefined,
+    coverageStatus: Array.isArray(parsedData.coverage_status)
+      ? parsedData.coverage_status
+          .filter((c: any) => c && typeof c.code === 'string')
+          .map((c: any) => ({
+            code: c.code,
+            covered: Boolean(c.covered),
+            notes: typeof c.notes === 'string' ? c.notes : undefined,
+          }))
+      : undefined,
+
     extractionConfidence: parsedData.confidence || parsedData.extraction_confidence || 0.7,
     rawExtractedData: parsedData
   };
+}
+
+/** Coerce mixed input to a clean string[]. Strips empty/non-string entries. */
+function normalizeStringArray(value: any): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const clean = value
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .map((v) => v.trim());
+  return clean.length > 0 ? clean : undefined;
 }
 
 /**
  * Get the system prompt for document parsing
  */
 function getSystemPrompt(documentType: string): string {
-  return `You are an expert insurance benefits analyst specializing in mental health coverage.
-Your task is to extract structured benefit information from insurance plan documents.
+  return `You are an expert insurance benefits analyst specializing in behavioral health and pediatric therapy coverage (OT, PT, ST, mental health).
+Your task is to extract structured benefit information from insurance plan documents in a way that supports both pre-claim cost estimation AND post-claim denial appeals.
 
 Focus on extracting:
-1. OUT-OF-NETWORK (OON) benefits - this is the most critical information
+1. OUT-OF-NETWORK (OON) benefits - critical for OON cost estimation
 2. The ALLOWED AMOUNT METHODOLOGY - how the plan calculates what they'll pay for OON services
-3. Mental health specific benefits and limitations
-4. Deductibles, coinsurance, and out-of-pocket maximums
+3. Per-discipline therapy benefits and visit limits (OT / PT / ST / MH — separately, AND whether they share a combined cap)
+4. Deductibles, coinsurance, and out-of-pocket maximums (in-network and out-of-network)
+5. Prior authorization requirements (which CPT codes / categories require it)
+6. Exclusion clauses — extract the VERBATIM language for any explicit exclusions (so we can quote them in appeals)
+7. Appeal rights — timeframes the member has to file appeals at each level, and timeframes the payer must respond within
+8. The plan's verbatim definition of "medical necessity" — quote it exactly so we can cite it back in appeals
+9. Network adequacy language — verbatim text covering what happens when no in-network provider is available
+10. Per-service-category copays (preventive, specialist, therapy, urgent care, etc.)
 
 Common allowed amount methodologies:
 - UCR (Usual, Customary, and Reasonable) - often 80th or 90th percentile
@@ -290,10 +384,16 @@ Common allowed amount methodologies:
 - Fair Health - uses Fair Health database
 - Plan Schedule - fixed fee schedule set by the plan
 
-For mental health (CPT codes 90791, 90834, 90837, 90847):
-- Look for any visit limits or prior authorization requirements
-- Check if mental health has parity with medical benefits
-- Note any telehealth-specific provisions
+For therapy services:
+- OT (97530, 97535, 97110, 97112, 97533) — extract OT-specific visit limits
+- PT (97161-97164, 97110, 97112) — extract PT-specific visit limits
+- ST (92507, 92521-92526) — extract ST-specific visit limits
+- MH (90791, 90834, 90837, 90847) — extract MH visit limits + parity language
+- Note whether OT/PT/ST share a combined visit cap (common in pediatric plans)
+
+For exclusions and verbatim quotes:
+- Preserve the EXACT WORDING from the plan document
+- Don't paraphrase — appeals are stronger when we cite the plan's own language
 
 Always provide a confidence score (0-1) for your extraction.
 Output your findings as JSON only, no other text.`;
@@ -338,15 +438,55 @@ Return ONLY a JSON object (no markdown, no explanation) with these fields:
     "copay": 30
   },
 
+  "therapy_limits": {
+    "ot": 60,
+    "pt": 60,
+    "st": 60,
+    "combined": false,
+    "combined_limit": null
+  },
+
   "telehealth": {
     "covered": true,
     "oon_same_as_in_person": true
   },
 
+  "prior_auth_required_for": ["97530 after visit 30", "92526"],
+
+  "exclusions": [
+    "Verbatim quote of any exclusion clause from the plan, e.g.: 'Educational, vocational, or recreational therapy is not covered.'"
+  ],
+
+  "appeal_rights": {
+    "first_level_days": 180,
+    "second_level_days": 60,
+    "external_review_days": 120,
+    "payer_response_days": 30
+  },
+
+  "medical_necessity_criteria": "Verbatim quote of the plan's definition of medical necessity, exactly as written.",
+
+  "network_adequacy_language": "Verbatim quote of any network-adequacy provision, e.g.: 'When no in-network provider is available within 30 miles, out-of-network services will be covered at the in-network benefit level.'",
+
+  "service_category_copays": {
+    "specialist": 40,
+    "primary_care": 25,
+    "therapy": 30,
+    "urgent_care": 75,
+    "telehealth": 25
+  },
+
+  "coverage_status": [
+    { "code": "97530", "covered": true, "notes": "Therapeutic Activities — covered when medically necessary" },
+    { "code": "92507", "covered": true, "notes": "Speech therapy — covered with prior auth after visit 20" }
+  ],
+
   "confidence": 0.85
 }
 
-If a value cannot be determined, use null. Return ONLY valid JSON.`;
+If a value cannot be determined, use null. For verbatim fields (exclusions,
+medical_necessity_criteria, network_adequacy_language) use null if the plan
+doesn't contain that language — do NOT make up text. Return ONLY valid JSON.`;
 }
 
 /**
