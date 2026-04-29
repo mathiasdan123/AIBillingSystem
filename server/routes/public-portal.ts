@@ -998,6 +998,11 @@ router.get('/patient-portal/cost-estimate', async (req, res) => {
     if (!benefits) {
       return res.json({
         needsUpload: true,
+        // Pass the carrier name so the client can display payer-specific
+        // upload instructions (e.g., "Aetna keeps the SBC at aetna.com →
+        // My Plan → Plan Documents"). The client lookup table lives in
+        // client/src/lib/payerSbcInstructions.ts.
+        insuranceProvider: patient.insuranceProvider ?? null,
         message: 'Upload your insurance plan documents and we will show you your real per-session cost.',
         hint: 'Most plans publish a Summary of Benefits and Coverage (SBC) that you can download from your member portal. We can also use a recent EOB.',
       });
