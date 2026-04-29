@@ -124,6 +124,93 @@ describe('planDocumentParser - transformParsedData', () => {
     });
   });
 
+  describe('EOB accumulators (Tier A #1)', () => {
+    it('extracts accumulators from flat top-level fields', () => {
+      const result = transformParsedData({
+        oon_deductible_met: 350,
+        oon_out_of_pocket_met: 800,
+        inn_deductible_met: 750,
+        inn_out_of_pocket_met: 1200,
+        accumulator_as_of_date: '2026-04-15',
+      });
+      expect(result.oonDeductibleMet).toBe(350);
+      expect(result.oonOutOfPocketMet).toBe(800);
+      expect(result.innDeductibleMet).toBe(750);
+      expect(result.innOutOfPocketMet).toBe(1200);
+      expect(result.accumulatorAsOfDate).toBe('2026-04-15');
+    });
+
+    it('extracts accumulators from nested accumulators object', () => {
+      const result = transformParsedData({
+        accumulators: {
+          inn_deductible_met: 500,
+          inn_out_of_pocket_met: 900,
+          oon_deductible_met: 0,
+          oon_out_of_pocket_met: 0,
+          as_of_date: '2026-04-15',
+        },
+      });
+      expect(result.innDeductibleMet).toBe(500);
+      expect(result.innOutOfPocketMet).toBe(900);
+      expect(result.oonDeductibleMet).toBe(0);
+      expect(result.accumulatorAsOfDate).toBe('2026-04-15');
+    });
+
+    it('extracts recent claims from EOB', () => {
+      const result = transformParsedData({
+        recent_claims: [
+          {
+            date_of_service: '2026-03-20',
+            cpt_code: '97110',
+            icd10_code: 'F84.0',
+            billed_amount: 216,
+            allowed_amount: 183,
+            paid_amount: 183,
+            patient_responsibility: 33,
+            status: 'paid',
+            denial_code: null,
+            notes: null,
+          },
+          {
+            date_of_service: '2026-04-01',
+            cpt_code: '97530',
+            billed_amount: 100,
+            paid_amount: 0,
+            status: 'denied',
+            denial_code: 'CO-197',
+          },
+        ],
+      });
+      expect(result.recentClaimsFromEob).toHaveLength(2);
+      expect(result.recentClaimsFromEob![0]).toMatchObject({
+        dateOfService: '2026-03-20',
+        cptCode: '97110',
+        billedAmount: 216,
+        paidAmount: 183,
+        status: 'paid',
+      });
+      expect(result.recentClaimsFromEob![1]).toMatchObject({
+        cptCode: '97530',
+        status: 'denied',
+        denialCode: 'CO-197',
+      });
+    });
+
+    it('handles eob_claims as alternate field name', () => {
+      const result = transformParsedData({
+        eob_claims: [
+          { date_of_service: '2026-04-01', cpt_code: '97110', status: 'paid', paid_amount: 100 },
+        ],
+      });
+      expect(result.recentClaimsFromEob).toHaveLength(1);
+      expect(result.recentClaimsFromEob![0].cptCode).toBe('97110');
+    });
+
+    it('returns undefined recentClaimsFromEob when not provided', () => {
+      expect(transformParsedData({}).recentClaimsFromEob).toBeUndefined();
+    });
+  });
+
   describe('backward compatibility', () => {
     it('still extracts existing OON benefit fields', () => {
       const result = transformParsedData({
