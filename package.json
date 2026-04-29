@@ -19,8 +19,7 @@
     "test:client": "vitest run --config vitest.config.client.ts",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "docs:api": "node --import=tsx scripts/generate-openapi.ts",
-    "website:build": "tsx scripts/build-squarespace-snippets.ts"
+    "docs:api": "node --import=tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
