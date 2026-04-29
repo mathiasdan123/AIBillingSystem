@@ -17,6 +17,7 @@ import {
   ClockIcon,
   ClipboardCheck,
 } from "lucide-react";
+import PortalCostEstimateCard from "@/components/PortalCostEstimateCard";
 
 interface DashboardData {
   patient: {
@@ -182,6 +183,9 @@ export default function PatientPortalDashboard({ token, onNavigate }: PatientPor
           </CardContent>
         </Card>
       )}
+
+      {/* Per-session cost estimate / upload prompt */}
+      <PortalCostEstimateCard token={token} onNavigateToDocuments={() => onNavigate("documents")} />
 
       {/* Profile Completion Alert */}
       {dashboard.profileCompletion.percentage < 100 && (

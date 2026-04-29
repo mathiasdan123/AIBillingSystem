@@ -8,11 +8,77 @@
  */
 
 import { Router } from 'express';
+import { sql, eq, and } from 'drizzle-orm';
 import { storage } from '../storage';
+import { db } from '../db';
+import { patients, patientPlanDocuments, eligibilityChecks } from '@shared/schema';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
 
 const router = Router();
+
+/**
+ * Patients who have insurance on file but no parsed plan documents
+ * uploaded yet. Powers the practice-dashboard "missing uploads" widget —
+ * practice can see at a glance which patients are leaving Phase 0
+ * enrichment value on the table.
+ *
+ * A patient appears in this list when:
+ *   - their record is in this practice
+ *   - they have an insurance carrier set (i.e. not pure self-pay)
+ *   - they have NO row in patient_plan_documents (any status)
+ *
+ * Sorted with eligibility-verified patients first (those are the
+ * highest-leverage to chase — they're real billed patients).
+ */
+router.get('/:id/patients-missing-plan-documents', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = parseInt(req.params.id);
+    if (isNaN(practiceId)) {
+      return res.status(400).json({ message: 'Invalid practice ID' });
+    }
+    if (req.userPracticeId && req.userPracticeId !== practiceId && req.userRole !== 'admin') {
+      return res.status(403).json({ message: 'Cannot view another practice' });
+    }
+    if (!['admin', 'billing', 'therapist'].includes(req.userRole || '')) {
+      return res.status(403).json({ message: 'Staff role required' });
+    }
+
+    const rows = await db.execute(sql`
+      SELECT
+        p.id,
+        p.first_name AS "firstName",
+        p.last_name AS "lastName",
+        p.insurance_provider AS "insuranceProvider",
+        p.email,
+        p.phone,
+        EXISTS (
+          SELECT 1 FROM ${eligibilityChecks} e
+          WHERE e.patient_id = p.id
+        ) AS "hasEligibilityCheck"
+      FROM ${patients} p
+      WHERE p.practice_id = ${practiceId}
+        AND p.deleted_at IS NULL
+        AND p.insurance_provider IS NOT NULL
+        AND p.insurance_provider <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM ${patientPlanDocuments} d
+          WHERE d.patient_id = p.id
+        )
+      ORDER BY "hasEligibilityCheck" DESC, p.last_name, p.first_name
+      LIMIT 200
+    `);
+
+    const list = (rows as any).rows ?? rows ?? [];
+    res.json({
+      count: list.length,
+      patients: list,
+    });
+  } catch (err: any) {
+    logger.error('Failed to list patients missing plan documents', { error: err?.message });
+    res.status(500).json({ message: 'Failed to fetch list' });
+  }
+});
 
 // Get practice by ID
 router.get('/:id', isAuthenticated, async (req: any, res) => {

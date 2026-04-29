@@ -972,6 +972,84 @@ router.get('/patient-portal/dashboard', async (req, res) => {
 });
 
 // Get patient profile
+/**
+ * Patient-portal cost estimate — Tier A #1 follow-on.
+ *
+ * Returns the patient's expected per-session out-of-pocket cost based on
+ * their parsed plan benefits + accumulator status. When no plan document
+ * has been uploaded yet, returns a "needsUpload: true" hint with a CTA
+ * for the portal to display.
+ *
+ * Powers the upload-motivation strategy: patients see real, personalized
+ * cost numbers once they upload an SBC, which drives upload adoption.
+ */
+router.get('/patient-portal/cost-estimate', async (req, res) => {
+  try {
+    const auth = await getPatientFromPortalToken(req);
+    if (!auth) {
+      return res.status(401).json({ message: 'Invalid or expired session' });
+    }
+    const { patient } = auth;
+
+    // Pull parsed benefits — proxy for "has the patient uploaded a plan?"
+    const { getPatientPlanBenefits } = await import('../storage/patients');
+    const benefits = await getPatientPlanBenefits(patient.id);
+
+    if (!benefits) {
+      return res.json({
+        needsUpload: true,
+        message: 'Upload your insurance plan documents and we will show you your real per-session cost.',
+        hint: 'Most plans publish a Summary of Benefits and Coverage (SBC) that you can download from your member portal. We can also use a recent EOB.',
+      });
+    }
+
+    // Use the existing cost estimator with sensible defaults for therapy.
+    const { estimatePatientCost } = await import('../services/insuranceCostEstimator');
+    let estimate;
+    try {
+      // 4 units of 97110 (60-min therapeutic exercise) is a reasonable
+      // "typical session" baseline. The estimator pulls insurance rates,
+      // applies plan terms, and returns a per-session cost breakdown.
+      estimate = await estimatePatientCost(
+        patient.id,
+        [{ code: '97110', units: 4, description: 'Therapeutic exercises (60 min typical session)' }],
+        Number(req.query.sessionRate) || 300,
+      );
+    } catch (e: any) {
+      logger.warn('Cost estimate failed for portal', { patientId: patient.id, error: e?.message });
+      return res.json({
+        needsUpload: false,
+        estimateAvailable: false,
+        message: 'We have your plan on file but cannot compute a precise estimate yet. Your provider can verify benefits with your insurance directly.',
+      });
+    }
+
+    // Strip the breakdown to the patient-friendly fields. Don't expose
+    // internal billing terminology that would confuse a member.
+    res.json({
+      needsUpload: false,
+      estimateAvailable: true,
+      planName: benefits.planName ?? null,
+      perSessionCost: Math.round(estimate.patientResponsibility * 100) / 100,
+      breakdown: {
+        billed: Math.round(estimate.totalBilledAmount * 100) / 100,
+        insurancePays: Math.round(estimate.expectedInsurancePayment * 100) / 100,
+        youPay: Math.round(estimate.patientResponsibility * 100) / 100,
+        deductibleNote: estimate.breakdown.deductibleNote,
+      },
+      accumulators: {
+        oonDeductibleMet: benefits.oonDeductibleMet ?? null,
+        oonOopMet: benefits.oonOutOfPocketMet ?? null,
+      },
+      confidence: estimate.confidence,
+      notes: estimate.notes,
+    });
+  } catch (err: any) {
+    logger.error('Patient portal cost-estimate failed', { error: err?.message });
+    res.status(500).json({ message: 'Failed to compute cost estimate' });
+  }
+});
+
 router.get('/patient-portal/profile', async (req, res) => {
   try {
     const auth = await getPatientFromPortalToken(req);

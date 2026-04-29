@@ -13,6 +13,7 @@ import PatientArAgingSummary from "@/components/PatientArAgingSummary";
 import AtRiskAuthorizationsWidget from "@/components/AtRiskAuthorizationsWidget";
 import CredentialingDeadlinesWidget from "@/components/CredentialingDeadlinesWidget";
 import PreSessionAuthCheckWidget from "@/components/PreSessionAuthCheckWidget";
+import MissingPlanDocumentsWidget from "@/components/MissingPlanDocumentsWidget";
 import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles, Upload, BarChart3, Mail, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
@@ -468,12 +469,13 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Patient AR Aging + Auths at Risk + Credentialing Deadlines + Sessions Needing Auth */}
+      {/* Patient AR Aging + Auths at Risk + Credentialing Deadlines + Sessions Needing Auth + Missing Plan Docs */}
       <div className="mt-4 md:mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         <PatientArAgingSummary />
         <PreSessionAuthCheckWidget />
         <AtRiskAuthorizationsWidget />
         <CredentialingDeadlinesWidget />
+        <MissingPlanDocumentsWidget practiceId={practiceId} />
       </div>
 
       {/* Data Import CTA - Prominent for new practices */}
