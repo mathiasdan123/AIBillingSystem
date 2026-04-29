@@ -1379,6 +1379,25 @@ async function executeTool(
           });
         }
 
+        // Tier A #2 — fetch proven arguments from past won appeals for this
+        // practice + payer + (eventually) denial category. Best-effort.
+        let provenArguments: any[] | null = null;
+        try {
+          const { getProvenArgumentsForContext } = await import('../services/appealOutcomeLearningService');
+          provenArguments = await getProvenArgumentsForContext({
+            practiceId,
+            payerName: patientData.insuranceProvider ?? null,
+            // We don't yet know the denialCategory here (Claude assigns it
+            // in the response). Could refine later by re-querying after a
+            // first pass, but per-payer is already a strong filter.
+          });
+        } catch (provenError) {
+          logger.warn('Failed to fetch proven appeal arguments — continuing without', {
+            claimId,
+            error: provenError instanceof Error ? provenError.message : String(provenError),
+          });
+        }
+
         // Try to use the Claude appeal service if available
         try {
           const { generateClaudeAppeal, isClaudeAppealAvailable } = await import('../services/claudeAppealService');
@@ -1397,6 +1416,7 @@ async function executeTool(
               denialReason,
               parsedBenefits,
               precedents,
+              provenArguments,
             });
 
             return JSON.stringify({

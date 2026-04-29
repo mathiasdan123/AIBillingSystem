@@ -246,6 +246,9 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
       deadlineDate: calculatedDeadline,
       appealedAmount: claim.totalAmount,
       appealLetter: appealResult?.appealLetter || null,
+      // Tier A #2 — persist the AI's structured arguments so future appeals
+      // for the same payer + denial category can learn from outcomes.
+      keyArguments: appealResult?.keyArguments ?? null,
       notes,
       supportingDocs: [],
     });
@@ -473,6 +476,7 @@ router.post('/appeals/:id/regenerate-letter', isAuthenticated, async (req: any, 
     const updatedAppeal = await storage.updateAppealRecord(appealId, {
       appealLetter: appealResult.appealLetter,
       denialCategory: appealResult.denialCategory,
+      keyArguments: (appealResult as any)?.keyArguments ?? null,
       status: 'ready',
     });
 
