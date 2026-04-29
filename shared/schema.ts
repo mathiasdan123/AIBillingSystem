@@ -1513,6 +1513,12 @@ export const appeals = pgTable("appeals", {
   appealedAmount: decimal("appealed_amount", { precision: 10, scale: 2 }),
   recoveredAmount: decimal("recovered_amount", { precision: 10, scale: 2 }),
   appealLetter: text("appeal_letter"),
+  /** Structured key arguments returned by the AI generator (string[]).
+   *  Used by the outcome learning loop (Tier A #2) — when an appeal wins
+   *  or partially wins, these arguments become "proven approaches" that
+   *  feed back into future appeal prompts for the same payer + denial
+   *  category. */
+  keyArguments: jsonb("key_arguments"), // string[]
   supportingDocs: jsonb("supporting_docs"), // [{name, url, type}]
   insurerResponse: text("insurer_response"),
   notes: text("notes"),

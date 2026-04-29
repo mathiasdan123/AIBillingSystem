@@ -29,6 +29,7 @@ import { claims } from '@shared/schema';
 import logger from '../services/logger';
 import { buildSystemPrompt, buildUserPrompt } from '../services/claudeAppealService';
 import { findPrecedentsForDeniedClaim } from '../services/claimPrecedentService';
+import { getProvenArgumentsForContext } from '../services/appealOutcomeLearningService';
 import { getPatientPlanBenefits } from '../storage/patients';
 
 const router = Router();
@@ -130,6 +131,17 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
       }
     }
 
+    // Tier A #2 — proven arguments from past won appeals for this practice + payer
+    let provenArguments: any[] = [];
+    try {
+      provenArguments = await getProvenArgumentsForContext({
+        practiceId: claim.practiceId,
+        payerName: patient?.insuranceProvider ?? null,
+      });
+    } catch (err: any) {
+      logger.warn('Preview: proven arguments fetch failed', { claimId: claim.id, error: err?.message });
+    }
+
     // Build the prompts using the exact same paths as the real generator.
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt({
@@ -157,6 +169,7 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
       denialReason: claim.denialReason || 'Reason not specified',
       parsedBenefits,
       precedents,
+      provenArguments,
     });
 
     // Build a small enrichment summary so admins can quickly see what Phase 0
@@ -189,6 +202,15 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
         precedents: {
           totalCount: totalPrecedents,
           byCpt: precedentsByCpt,
+        },
+        provenArguments: {
+          count: provenArguments.length,
+          arguments: provenArguments.map((p) => ({
+            argument: p.argument,
+            winRate: p.winRate,
+            winCount: p.winCount,
+            totalCount: p.totalCount,
+          })),
         },
       },
       claim: {

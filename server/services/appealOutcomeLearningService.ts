@@ -1,7 +1,177 @@
 import { db } from '../db';
 import { appeals, claims, insurances } from '@shared/schema';
-import { eq, and, sql, count } from 'drizzle-orm';
+import { eq, and, sql, count, desc, inArray } from 'drizzle-orm';
 import { logger } from './logger';
+
+export interface ProvenArgument {
+  argument: string;
+  /** Number of past WON or PARTIAL appeals that used this exact argument string. */
+  winCount: number;
+  /** Total appeals (won + lost + partial) that used it — denominator for win rate. */
+  totalCount: number;
+  /** winCount / totalCount, rounded to 1 decimal. */
+  winRate: number;
+}
+
+/**
+ * Get arguments that have historically WON or partially won appeals for a
+ * given (practice, payer, denial category) context. Powers the Tier A #2
+ * outcome learning loop — the appeal generator feeds these in as
+ * "approaches that worked before for this payer" so subsequent appeals
+ * compound on past wins.
+ *
+ * Returns at most `limit` distinct arguments, sorted by win count desc.
+ * Empty array when no historical data — caller falls through gracefully.
+ *
+ * Multi-tenant safe: scoped by practiceId. We do NOT mine cross-practice
+ * arguments here for HIPAA reasons (an argument citing a specific prior
+ * member's plan language could leak). Cross-practice anonymized intel
+ * is a separate workstream.
+ */
+export async function getProvenArgumentsForContext(args: {
+  practiceId: number;
+  /** Payer / insurance name (matched case-insensitively). Optional — when
+   *  omitted, returns proven arguments across all payers. */
+  payerName?: string | null;
+  /** Denial category from the AI generator's classification. Optional but
+   *  highly recommended — narrows results dramatically. */
+  denialCategory?: string | null;
+  /** Lookback in days. Default 540 (~18 months) since appeal cycles are slow. */
+  daysBack?: number;
+  /** Max distinct arguments to return. Default 5. */
+  limit?: number;
+}): Promise<ProvenArgument[]> {
+  const { practiceId, payerName, denialCategory, daysBack = 540, limit = 5 } = args;
+  if (!practiceId) return [];
+
+  const horizon = new Date();
+  horizon.setDate(horizon.getDate() - daysBack);
+
+  try {
+    const conditions = [
+      eq(appeals.practiceId, practiceId),
+      sql`${appeals.createdAt} >= ${horizon}`,
+      sql`${appeals.keyArguments} IS NOT NULL`,
+      sql`${appeals.status} IN ('won', 'partial', 'lost')`, // include lost for the denominator
+    ];
+    if (denialCategory) {
+      conditions.push(eq(appeals.denialCategory, denialCategory));
+    }
+
+    const rows = await db
+      .select({
+        keyArguments: appeals.keyArguments,
+        status: appeals.status,
+        claimId: appeals.claimId,
+      })
+      .from(appeals)
+      .where(and(...conditions));
+
+    if (rows.length === 0) return [];
+
+    // Optional payer filter — applied via claims.insuranceId lookup since
+    // appeals doesn't denormalize the payer name.
+    let payerFiltered = rows;
+    if (payerName) {
+      const claimIds = rows.map((r: any) => r.claimId).filter(Boolean);
+      if (claimIds.length > 0) {
+        const claimRows = await db
+          .select({
+            id: claims.id,
+            insuranceId: claims.insuranceId,
+          })
+          .from(claims)
+          .where(inArray(claims.id, claimIds));
+        const insuranceIds = claimRows
+          .map((c: any) => c.insuranceId)
+          .filter((v: any): v is number => typeof v === 'number');
+        if (insuranceIds.length > 0) {
+          const insuranceRows = await db
+            .select({ id: insurances.id, name: insurances.name })
+            .from(insurances)
+            .where(inArray(insurances.id, insuranceIds));
+          const matchingInsuranceIds = new Set(
+            insuranceRows
+              .filter((i: any) => typeof i.name === 'string' &&
+                i.name.toLowerCase().includes(payerName.toLowerCase()))
+              .map((i: any) => i.id),
+          );
+          const matchingClaimIds = new Set(
+            claimRows
+              .filter((c: any) => matchingInsuranceIds.has(c.insuranceId))
+              .map((c: any) => c.id),
+          );
+          payerFiltered = rows.filter((r: any) => matchingClaimIds.has(r.claimId));
+        } else {
+          payerFiltered = [];
+        }
+      }
+    }
+
+    if (payerFiltered.length === 0) return [];
+
+    // Tally arguments. winCount = won + partial. totalCount includes lost.
+    const tally = new Map<string, { winCount: number; totalCount: number }>();
+    for (const row of payerFiltered) {
+      const argList = row.keyArguments;
+      if (!Array.isArray(argList)) continue;
+      const isWin = row.status === 'won' || row.status === 'partial';
+
+      for (const raw of argList) {
+        if (typeof raw !== 'string') continue;
+        // Normalize whitespace; otherwise duplicates with subtle formatting
+        // differences inflate the distinct count.
+        const arg = raw.trim().replace(/\s+/g, ' ');
+        if (arg.length === 0) continue;
+
+        const entry = tally.get(arg) ?? { winCount: 0, totalCount: 0 };
+        entry.totalCount += 1;
+        if (isWin) entry.winCount += 1;
+        tally.set(arg, entry);
+      }
+    }
+
+    const results: ProvenArgument[] = [];
+    tally.forEach((stats, arg) => {
+      // Only surface arguments that have actually won at least once.
+      if (stats.winCount === 0) return;
+      results.push({
+        argument: arg,
+        winCount: stats.winCount,
+        totalCount: stats.totalCount,
+        winRate: Math.round((stats.winCount / stats.totalCount) * 1000) / 10,
+      });
+    });
+
+    results.sort((a, b) =>
+      b.winCount - a.winCount || b.winRate - a.winRate,
+    );
+
+    return results.slice(0, limit);
+  } catch (err: any) {
+    logger.error('getProvenArgumentsForContext failed', {
+      practiceId,
+      payerName,
+      denialCategory,
+      error: err?.message,
+    });
+    return [];
+  }
+}
+
+/**
+ * Formats a list of proven arguments as a quotable string for inclusion in
+ * the appeal prompt. Returns empty string when the list is empty.
+ */
+export function formatProvenArgumentsForPrompt(args: ProvenArgument[]): string {
+  if (args.length === 0) return '';
+  const lines = args.map((a) => `  - "${a.argument}" (won ${a.winCount}/${a.totalCount} = ${a.winRate}% on this category)`);
+  return [
+    `The following arguments have HISTORICALLY WON appeals for this practice, payer, and denial category.`,
+    `Weave the most relevant ones into the new appeal letter where they apply — but only if they apply truthfully to this specific case. Do not force them in if they don't fit.`,
+    ...lines,
+  ].join('\n');
+}
 
 export interface AppealSuccessRate {
   category: string;

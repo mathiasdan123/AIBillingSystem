@@ -10,6 +10,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { logger } from './logger';
 import type { ClaimPrecedent } from './claimPrecedentService';
 import { formatPrecedentsForAppeal } from './claimPrecedentService';
+import type { ProvenArgument } from './appealOutcomeLearningService';
+import { formatProvenArgumentsForPrompt } from './appealOutcomeLearningService';
 
 // Re-export interfaces from aiAppealGenerator for consistency
 export interface AppealResult {
@@ -75,6 +77,10 @@ interface GenerateClaudeAppealParams {
   parsedBenefits?: Record<string, any> | null;
   /** Precedent paid claims keyed by CPT code from findPrecedentsForDeniedClaim. */
   precedents?: Map<string, ClaimPrecedent[]> | null;
+  /** Tier A #2 — proven arguments from past appeals that won for this
+   *  practice + payer + denial category. Caller fetches via
+   *  getProvenArgumentsForContext. Optional. */
+  provenArguments?: ProvenArgument[] | null;
 }
 
 interface ClaudeAppealResponse {
@@ -176,6 +182,11 @@ export function buildSystemPrompt(): string {
    - Cite specific prior claim numbers, dates, and amounts where the SAME payer paid for the SAME CPT code on the SAME member previously.
    - Use this as an inconsistency argument: "Aetna paid claim #X for CPT 97530 with diagnosis F84.0 on date Y. The denial of the present claim for the same code, member, and diagnosis is inconsistent with that prior payment history."
    - Don't fabricate precedents — only cite what's provided in the prompt context.
+
+9. **Proven Arguments** (when "Proven Arguments" section is provided):
+   - These are arguments that have HISTORICALLY won appeals for this practice with this payer for this denial category.
+   - Weave the most relevant ones into the new appeal letter where they apply truthfully — but DO NOT force them in if they don't fit the specific facts of the current case.
+   - Treat each proven argument as a starting point or template; restate it in your own words tied to this case's specifics.
 
 ## Response Format
 You MUST respond with valid JSON only (no markdown, no code blocks, no additional text). The JSON must have this exact structure:
@@ -293,6 +304,11 @@ ${soapNote.trim()}`;
   const precedentSection = buildPrecedentsSection(params.precedents);
   if (precedentSection) {
     prompt += `\n\n${precedentSection}`;
+  }
+
+  // Add proven arguments when present (Tier A #2 — outcome learning).
+  if (Array.isArray(params.provenArguments) && params.provenArguments.length > 0) {
+    prompt += `\n\n## Proven Arguments (won past appeals for this practice + payer + category)\n${formatProvenArgumentsForPrompt(params.provenArguments)}`;
   }
 
   // Add appeal level context
