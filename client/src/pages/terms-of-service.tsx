@@ -109,6 +109,16 @@ export default function TermsOfService() {
               <li>We reserve the right to change subscription pricing with 30 days' notice</li>
               <li>Failure to pay may result in suspension or termination of your account</li>
               <li>You are responsible for all applicable taxes related to your use of the Service</li>
+              <li>
+                <strong>AI usage — fair use.</strong> AI-powered features (SOAP narratives, claim review,
+                denial prediction, appeal letters, prior-authorization letters, credentialing drafts,
+                insight report narratives) are included in your subscription subject to fair use. If your
+                account significantly exceeds typical AI usage for your plan tier, we may bill the
+                incremental AI provider costs at-cost on your next invoice or work with you to move to a
+                higher-tier plan. We will give at least 14 days' written notice (via the email on file)
+                before billing any incremental AI costs, and detailed AI usage will be visible in your
+                billing dashboard.
+              </li>
             </ul>
           </section>
 

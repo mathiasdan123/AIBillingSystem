@@ -280,6 +280,14 @@ export default function Pricing() {
               </Card>
             ))}
           </div>
+
+          <p className="mt-8 text-center text-xs text-slate-500 max-w-3xl mx-auto px-4">
+            AI features are included subject to fair use. If your account significantly exceeds typical AI usage,
+            we may bill incremental AI provider costs at-cost on your next invoice with at least 14 days' notice.
+            See{' '}
+            <a href="/terms-of-service" className="underline hover:text-slate-700">Terms of Service</a>
+            {' '}for details.
+          </p>
         </div>
       </section>
 
