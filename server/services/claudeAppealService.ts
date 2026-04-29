@@ -392,6 +392,39 @@ export function buildPlanBenefitsSection(benefits: any): string {
   if (benefits.oonOutOfPocketMax) oonParts.push(`OON OOP max: $${benefits.oonOutOfPocketMax}`);
   if (oonParts.length > 0) lines.push(`OON benefits: ${oonParts.join(' / ')}`);
 
+  // Accumulators (Tier A #1) — from EOB upload + parse. The "deductible
+  // already met" argument is one of the strongest denial-fight tools.
+  const innDedMet = benefits.innDeductibleMet ?? raw.accumulators?.inn_deductible_met ?? raw.inn_deductible_met;
+  const innOopMet = benefits.innOutOfPocketMet ?? raw.accumulators?.inn_out_of_pocket_met ?? raw.inn_out_of_pocket_met;
+  const oonDedMet = benefits.oonDeductibleMet ?? raw.accumulators?.oon_deductible_met ?? raw.oon_deductible_met;
+  const oonOopMet = benefits.oonOutOfPocketMet ?? raw.accumulators?.oon_out_of_pocket_met ?? raw.oon_out_of_pocket_met;
+  const asOfDate = raw.accumulators?.as_of_date ?? raw.accumulator_as_of_date;
+  const accParts: string[] = [];
+  if (innDedMet != null) accParts.push(`In-network deductible met: $${innDedMet}`);
+  if (innOopMet != null) accParts.push(`In-network OOP met: $${innOopMet}`);
+  if (oonDedMet != null) accParts.push(`OON deductible met: $${oonDedMet}`);
+  if (oonOopMet != null) accParts.push(`OON OOP met: $${oonOopMet}`);
+  if (accParts.length > 0) {
+    const asOfSuffix = asOfDate ? ` (as of ${asOfDate})` : '';
+    lines.push(`Accumulators${asOfSuffix} — use for "deductible/OOP already met" arguments:`);
+    accParts.forEach((p) => lines.push(`  - ${p}`));
+  }
+
+  // Recent claims from EOB — proves payer processed similar codes already
+  if (Array.isArray(raw.recent_claims) && raw.recent_claims.length > 0) {
+    lines.push(`Recent claims listed on member's EOB (payer's own record of past adjudications):`);
+    raw.recent_claims.slice(0, 6).forEach((c: any) => {
+      if (!c) return;
+      const parts: string[] = [];
+      if (c.date_of_service) parts.push(c.date_of_service);
+      if (c.cpt_code) parts.push(`CPT ${c.cpt_code}`);
+      if (c.status) parts.push(c.status);
+      if (c.paid_amount != null) parts.push(`paid $${c.paid_amount}`);
+      if (c.denial_code) parts.push(`denial ${c.denial_code}`);
+      lines.push(`  - ${parts.join(' · ')}`);
+    });
+  }
+
   // Coverage status per CPT (when explicit yes/no was extracted)
   if (Array.isArray(raw.coverage_status) && raw.coverage_status.length > 0) {
     lines.push('Coverage status by CPT:');

@@ -77,6 +77,17 @@ export interface ParsedBenefits {
   oonCoinsurancePercent?: number; // What patient pays (e.g., 40)
   oonOutOfPocketMax?: number;
 
+  // Accumulators (Tier A #1 — extracted from EOBs, stored on the patient)
+  // The "deductible already met" argument is one of the strongest denial-fight
+  // tools. EOBs ARE the source of truth for accumulator status.
+  oonDeductibleMet?: number; // YTD individual OON deductible used
+  oonOutOfPocketMet?: number; // YTD OON out-of-pocket used
+  innDeductibleMet?: number; // YTD individual in-network deductible used
+  innOutOfPocketMet?: number; // YTD in-network out-of-pocket used
+  /** ISO date the accumulator values were current as-of (typically the EOB
+   *  process date). Without this, "deductible met" arguments lose force. */
+  accumulatorAsOfDate?: string;
+
   // Allowed Amount Method (critical!)
   allowedAmountMethod?: 'ucr' | 'medicare_percent' | 'fair_health' | 'plan_schedule' | 'unknown';
   allowedAmountPercent?: number; // e.g., 150 for 150% of Medicare
@@ -139,6 +150,24 @@ export interface ParsedBenefits {
   coverageStatus?: Array<{
     code: string; // CPT code or category name
     covered: boolean;
+    notes?: string;
+  }>;
+
+  /** Recent claim line items extracted from an uploaded EOB. Independent of
+   *  the precedent service — these are the *member's* historical claims as
+   *  the payer recorded them, useful for: (1) refuting "first time we've
+   *  seen this code" denials, (2) confirming network/coverage decisions
+   *  the payer made on prior encounters. */
+  recentClaimsFromEob?: Array<{
+    dateOfService?: string;
+    cptCode?: string;
+    icd10Code?: string;
+    billedAmount?: number;
+    allowedAmount?: number;
+    paidAmount?: number;
+    patientResponsibility?: number;
+    status?: string; // 'paid' | 'denied' | 'partial' | 'pending'
+    denialCode?: string;
     notes?: string;
   }>;
 
@@ -292,6 +321,15 @@ export function transformParsedData(parsedData: any): ParsedBenefits {
     oonCoinsurancePercent: parsePercent(parsedData.oon_coinsurance || parsedData.out_of_network?.coinsurance),
     oonOutOfPocketMax: parseAmount(parsedData.oon_out_of_pocket_max || parsedData.out_of_network?.out_of_pocket_max?.individual),
 
+    // Accumulators (typically populated from EOB documents)
+    oonDeductibleMet: parseAmount(parsedData.oon_deductible_met || parsedData.accumulators?.oon_deductible_met),
+    oonOutOfPocketMet: parseAmount(parsedData.oon_out_of_pocket_met || parsedData.accumulators?.oon_out_of_pocket_met),
+    innDeductibleMet: parseAmount(parsedData.inn_deductible_met || parsedData.accumulators?.inn_deductible_met),
+    innOutOfPocketMet: parseAmount(parsedData.inn_out_of_pocket_met || parsedData.accumulators?.inn_out_of_pocket_met),
+    accumulatorAsOfDate: typeof (parsedData.accumulator_as_of_date || parsedData.accumulators?.as_of_date) === 'string'
+      ? (parsedData.accumulator_as_of_date || parsedData.accumulators?.as_of_date)
+      : undefined,
+
     allowedAmountMethod: normalizeAllowedAmountMethod(
       parsedData.allowed_amount_method ||
       parsedData.reimbursement_methodology ||
@@ -345,6 +383,23 @@ export function transformParsedData(parsedData: any): ParsedBenefits {
           }))
       : undefined,
 
+    recentClaimsFromEob: Array.isArray(parsedData.recent_claims || parsedData.eob_claims)
+      ? (parsedData.recent_claims || parsedData.eob_claims)
+          .filter((c: any) => c && typeof c === 'object')
+          .map((c: any) => ({
+            dateOfService: typeof c.date_of_service === 'string' ? c.date_of_service : undefined,
+            cptCode: typeof c.cpt_code === 'string' ? c.cpt_code : undefined,
+            icd10Code: typeof c.icd10_code === 'string' ? c.icd10_code : undefined,
+            billedAmount: parseAmount(c.billed_amount),
+            allowedAmount: parseAmount(c.allowed_amount),
+            paidAmount: parseAmount(c.paid_amount),
+            patientResponsibility: parseAmount(c.patient_responsibility),
+            status: typeof c.status === 'string' ? c.status : undefined,
+            denialCode: typeof c.denial_code === 'string' ? c.denial_code : undefined,
+            notes: typeof c.notes === 'string' ? c.notes : undefined,
+          }))
+      : undefined,
+
     extractionConfidence: parsedData.confidence || parsedData.extraction_confidence || 0.7,
     rawExtractedData: parsedData
   };
@@ -394,6 +449,20 @@ For therapy services:
 For exclusions and verbatim quotes:
 - Preserve the EXACT WORDING from the plan document
 - Don't paraphrase — appeals are stronger when we cite the plan's own language
+
+For EOB documents specifically (documentType === 'eob'):
+- Extract CURRENT ACCUMULATORS — what the member has already met YTD:
+  - inn_deductible_met (in-network deductible used so far)
+  - inn_out_of_pocket_met (in-network OOP used so far)
+  - oon_deductible_met (out-of-network deductible used)
+  - oon_out_of_pocket_met (out-of-network OOP used)
+  - accumulator_as_of_date (the EOB process date — accumulators are point-in-time)
+- Extract RECENT CLAIMS LISTED on the EOB (recent_claims array). For each:
+  - date_of_service, cpt_code, icd10_code, billed_amount, allowed_amount,
+    paid_amount, patient_responsibility, status (paid/denied/partial),
+    denial_code (CARC), notes (any reason text)
+- These recent claims are powerful in appeals — they prove the payer has
+  processed similar codes/dates/diagnoses and how they were adjudicated.
 
 Always provide a confidence score (0-1) for your extraction.
 Output your findings as JSON only, no other text.`;
@@ -479,6 +548,29 @@ Return ONLY a JSON object (no markdown, no explanation) with these fields:
   "coverage_status": [
     { "code": "97530", "covered": true, "notes": "Therapeutic Activities — covered when medically necessary" },
     { "code": "92507", "covered": true, "notes": "Speech therapy — covered with prior auth after visit 20" }
+  ],
+
+  "accumulators": {
+    "inn_deductible_met": 750,
+    "inn_out_of_pocket_met": 1200,
+    "oon_deductible_met": 0,
+    "oon_out_of_pocket_met": 0,
+    "as_of_date": "2026-04-15"
+  },
+
+  "recent_claims": [
+    {
+      "date_of_service": "2026-03-20",
+      "cpt_code": "97110",
+      "icd10_code": "F84.0",
+      "billed_amount": 216,
+      "allowed_amount": 183,
+      "paid_amount": 183,
+      "patient_responsibility": 33,
+      "status": "paid",
+      "denial_code": null,
+      "notes": null
+    }
   ],
 
   "confidence": 0.85
@@ -581,6 +673,8 @@ export function benefitsToInsertFormat(
     oonDeductibleFamily: benefits.oonDeductibleFamily?.toString(),
     oonCoinsurancePercent: benefits.oonCoinsurancePercent?.toString(),
     oonOutOfPocketMax: benefits.oonOutOfPocketMax?.toString(),
+    oonDeductibleMet: benefits.oonDeductibleMet?.toString(),
+    oonOutOfPocketMet: benefits.oonOutOfPocketMet?.toString(),
 
     allowedAmountMethod: benefits.allowedAmountMethod,
     allowedAmountPercent: benefits.allowedAmountPercent?.toString(),

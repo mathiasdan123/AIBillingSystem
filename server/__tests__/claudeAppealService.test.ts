@@ -140,6 +140,58 @@ describe('buildPlanBenefitsSection', () => {
     expect(result).toContain('NOT_COVERED: NOT covered — Excluded');
   });
 
+  it('surfaces accumulators with as-of date for "deductible already met" arguments', () => {
+    const result = buildPlanBenefitsSection({
+      innDeductibleMet: '750',
+      innOutOfPocketMet: '1200',
+      rawExtractedData: {
+        accumulators: { as_of_date: '2026-04-15' },
+      },
+    });
+    expect(result).toContain('Accumulators (as of 2026-04-15)');
+    expect(result).toContain('In-network deductible met: $750');
+    expect(result).toContain('In-network OOP met: $1200');
+  });
+
+  it('surfaces accumulators from rawExtractedData when columns are empty', () => {
+    const result = buildPlanBenefitsSection({
+      rawExtractedData: {
+        accumulators: { inn_deductible_met: 500, oon_deductible_met: 0 },
+      },
+    });
+    expect(result).toContain('In-network deductible met: $500');
+    expect(result).toContain('OON deductible met: $0');
+  });
+
+  it('surfaces recent claims from EOB as payer-own evidence', () => {
+    const result = buildPlanBenefitsSection({
+      rawExtractedData: {
+        recent_claims: [
+          { date_of_service: '2026-03-20', cpt_code: '97110', status: 'paid', paid_amount: 183 },
+          { date_of_service: '2026-04-01', cpt_code: '97530', status: 'denied', denial_code: 'CO-197' },
+        ],
+      },
+    });
+    expect(result).toContain("Recent claims listed on member's EOB");
+    expect(result).toContain('2026-03-20 · CPT 97110 · paid · paid $183');
+    expect(result).toContain('2026-04-01 · CPT 97530 · denied · denial CO-197');
+  });
+
+  it('caps recent claims at 6 in the prompt to control size', () => {
+    const claims = Array.from({ length: 10 }, (_, i) => ({
+      date_of_service: `2026-04-${String(i + 1).padStart(2, '0')}`,
+      cpt_code: '97110',
+      status: 'paid',
+      paid_amount: 100,
+    }));
+    const result = buildPlanBenefitsSection({
+      rawExtractedData: { recent_claims: claims },
+    });
+    expect(result).toContain('2026-04-01');
+    expect(result).toContain('2026-04-06');
+    expect(result).not.toContain('2026-04-07');
+  });
+
   it('combines multiple data sources into one section header', () => {
     const result = buildPlanBenefitsSection({
       planName: 'Aetna PPO Standard',
