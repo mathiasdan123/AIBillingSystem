@@ -41,6 +41,8 @@ const SONNET_TOOLS = new Set([
   'draft_appeal_letter',
   'suggest_claim_correction',
   'create_appointment',
+  'reschedule_appointment',
+  'cancel_appointment',
   'batch_eligibility_check',
   'review_underpayments',
   'draft_underpayment_dispute',
@@ -515,6 +517,47 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'reschedule_appointment',
+    description: 'Move an existing appointment to a new date and/or time. Use when the user wants to reschedule, move, or change the time of an appointment. Requires the appointment ID and the new date/time. Looks up the appointment to preserve duration unless overridden.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to reschedule' },
+        date: { type: 'string' as const, description: 'New date in YYYY-MM-DD format' },
+        time: { type: 'string' as const, description: 'New start time in HH:MM (24h) format' },
+        duration: { type: 'number' as const, description: 'Optional new duration in minutes; defaults to existing duration' },
+      },
+      required: ['appointmentId', 'date', 'time'],
+    },
+  },
+  {
+    name: 'cancel_appointment',
+    description: 'Cancel an existing appointment. Marks it as cancelled with a reason; does not delete it. Use when the user wants to cancel a session.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to cancel' },
+        reason: { type: 'string' as const, description: 'Cancellation reason (e.g., "patient request", "provider unavailable", "no-show")' },
+        notes: { type: 'string' as const, description: 'Optional free-text notes about the cancellation' },
+      },
+      required: ['appointmentId', 'reason'],
+    },
+  },
+  {
+    name: 'suggest_appointment_slot',
+    description: 'Find open appointment slots over the next N days based on existing scheduled appointments. Returns up to 5 suggested start times. Use when a user wants to know "when can I fit Jane in" or "find me an open slot next week". Considers existing scheduled (non-cancelled) appointments as conflicts.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        durationMinutes: { type: 'number' as const, description: 'Slot length in minutes (default 60)' },
+        daysAhead: { type: 'number' as const, description: 'How many days ahead to search (default 7, max 30)' },
+        startHour: { type: 'number' as const, description: 'Earliest hour of day to consider, 0-23 (default 9)' },
+        endHour: { type: 'number' as const, description: 'Latest hour to start a slot, 0-23 (default 17)' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'navigate_user',
     description: 'Direct the user to a specific page in the app. Use this to help them find the right place for what they want to do.',
     input_schema: {
@@ -865,6 +908,116 @@ async function executeTool(
           status: 'scheduled',
         });
         return JSON.stringify({ success: true, appointment: { id: appt.id, date: args.date, time: args.time, duration }, message: 'Appointment scheduled successfully.' });
+      }
+
+      case 'reschedule_appointment': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+
+        const existingStart = new Date(existing.startTime as unknown as string);
+        const existingEnd = new Date(existing.endTime as unknown as string);
+        const existingDurationMin = Math.max(15, Math.round((existingEnd.getTime() - existingStart.getTime()) / 60000));
+        const duration = (args.duration as number) || existingDurationMin;
+
+        const newStart = new Date(`${args.date}T${args.time}:00`);
+        if (isNaN(newStart.getTime())) {
+          return JSON.stringify({ error: 'Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).' });
+        }
+        const newEnd = new Date(newStart.getTime() + duration * 60000);
+        const updated = await storage.updateAppointment(apptId, {
+          startTime: newStart,
+          endTime: newEnd,
+        } as any);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: updated.id, date: args.date, time: args.time, duration },
+          message: `Appointment ${apptId} rescheduled to ${args.date} at ${args.time}.`,
+        });
+      }
+
+      case 'cancel_appointment': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (existing.status === 'cancelled') {
+          return JSON.stringify({ success: true, alreadyCancelled: true, message: `Appointment ${apptId} was already cancelled.` });
+        }
+        const reason = (args.reason as string) || 'cancelled via assistant';
+        const notes = args.notes as string | undefined;
+        const cancelled = await storage.cancelAppointment(apptId, reason, notes, userId);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: cancelled.id, status: cancelled.status },
+          message: `Appointment ${apptId} cancelled.`,
+        });
+      }
+
+      case 'suggest_appointment_slot': {
+        const duration = Math.max(15, (args.durationMinutes as number) || 60);
+        const daysAhead = Math.min(30, Math.max(1, (args.daysAhead as number) || 7));
+        const startHour = Math.min(23, Math.max(0, (args.startHour as number) ?? 9));
+        const endHour = Math.min(23, Math.max(startHour + 1, (args.endHour as number) ?? 17));
+
+        const now = new Date();
+        const rangeStart = new Date(now);
+        const rangeEnd = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+        const existingAppts = await storage.getAppointmentsByDateRange(practiceId, rangeStart, rangeEnd);
+
+        // Treat any non-cancelled appointment as a conflict.
+        const busy: Array<{ start: number; end: number }> = existingAppts
+          .filter((a: any) => a.status !== 'cancelled')
+          .map((a: any) => ({
+            start: new Date(a.startTime).getTime(),
+            end: new Date(a.endTime).getTime(),
+          }));
+
+        const overlaps = (s: number, e: number) => busy.some(b => s < b.end && e > b.start);
+
+        const suggestions: Array<{ date: string; time: string; iso: string }> = [];
+        const slotMs = duration * 60000;
+
+        for (let d = 0; d < daysAhead && suggestions.length < 5; d++) {
+          const day = new Date(now);
+          day.setDate(day.getDate() + d);
+          day.setHours(0, 0, 0, 0);
+
+          for (let hour = startHour; hour <= endHour - Math.ceil(duration / 60) && suggestions.length < 5; hour++) {
+            for (const minute of [0, 30]) {
+              const slotStart = new Date(day);
+              slotStart.setHours(hour, minute, 0, 0);
+              if (slotStart.getTime() < now.getTime() + 30 * 60000) continue; // at least 30 min in future
+              const slotEnd = new Date(slotStart.getTime() + slotMs);
+              if (slotEnd.getHours() > endHour || (slotEnd.getHours() === endHour && slotEnd.getMinutes() > 0)) continue;
+              if (overlaps(slotStart.getTime(), slotEnd.getTime())) continue;
+
+              const yyyy = slotStart.getFullYear();
+              const mm = String(slotStart.getMonth() + 1).padStart(2, '0');
+              const dd = String(slotStart.getDate()).padStart(2, '0');
+              const hh = String(slotStart.getHours()).padStart(2, '0');
+              const mi = String(slotStart.getMinutes()).padStart(2, '0');
+              suggestions.push({
+                date: `${yyyy}-${mm}-${dd}`,
+                time: `${hh}:${mi}`,
+                iso: slotStart.toISOString(),
+              });
+              if (suggestions.length >= 5) break;
+            }
+          }
+        }
+
+        return JSON.stringify({
+          success: true,
+          durationMinutes: duration,
+          searchedDays: daysAhead,
+          businessHours: `${startHour}:00 - ${endHour}:00`,
+          suggestions,
+          message: suggestions.length
+            ? `Found ${suggestions.length} open slot(s) over the next ${daysAhead} day(s).`
+            : `No open slots found in the next ${daysAhead} day(s) within ${startHour}:00-${endHour}:00.`,
+        });
       }
 
       case 'navigate_user': {
