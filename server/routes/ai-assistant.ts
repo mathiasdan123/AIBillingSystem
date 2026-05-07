@@ -20,8 +20,14 @@ import {
   claims,
   feeSchedules,
   patients,
+  appeals,
+  insurances,
+  appointments,
+  soapNotes,
+  treatmentSessions,
+  users,
 } from '@shared/schema';
-import { eq, and, desc, sql, ilike, lte, isNotNull } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike, lte, gte, isNotNull, inArray, isNull, or } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
@@ -44,6 +50,8 @@ const SONNET_TOOLS = new Set([
   'batch_eligibility_check',
   'review_underpayments',
   'draft_underpayment_dispute',
+  'get_appeal_outcomes',
+  'get_provider_productivity',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -665,6 +673,46 @@ const assistantTools: Anthropic.Tool[] = [
         },
       },
       required: ['claimId'],
+    },
+  },
+  {
+    name: 'get_appeal_outcomes',
+    description: 'Report appeal outcomes history for the practice. Returns total appeals, overall win rate, win rate by payer, win rate by denial reason/category, and the top winning argument patterns. Use when a user asks about appeal track record, appeal success rate, what arguments work, or which payers we win against. Also useful before drafting a new appeal so the assistant can cite past wins.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        payerName: {
+          type: 'string' as const,
+          description: 'Optional payer/insurance name filter (matched case-insensitively, partial match).',
+        },
+        daysBack: {
+          type: 'number' as const,
+          description: 'How many days of history to include. Defaults to 365.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_provider_productivity',
+    description: 'Per-provider productivity report over a date range. Returns, for each provider in the practice: appointments completed, SOAP notes written, count of unsigned/incomplete notes, claims submitted, and total billed amount. Use when a user asks about productivity, provider stats, who is documenting, who is billing, or wants to compare therapists.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        startDate: {
+          type: 'string' as const,
+          description: 'Start date (YYYY-MM-DD). Defaults to 30 days ago.',
+        },
+        endDate: {
+          type: 'string' as const,
+          description: 'End date (YYYY-MM-DD). Defaults to today.',
+        },
+        providerId: {
+          type: 'string' as const,
+          description: 'Optional single provider/therapist user ID to scope the report to.',
+        },
+      },
+      required: [],
     },
   },
 ];
@@ -2000,6 +2048,307 @@ async function executeTool(
           message: assessment.worthDisputing
             ? 'Dispute letter drafted. Review and customize before sending to the payer. The letter references your contracted rate and identifies the specific adjustment codes that appear incorrect.'
             : 'I\'ve drafted a dispute letter, but note that the adjustments on this claim may be standard contractual adjustments. Review the analysis carefully before deciding to dispute.',
+        });
+      }
+
+      case 'get_appeal_outcomes': {
+        const daysBack = Number(args.daysBack) || 365;
+        const payerNameFilter = typeof args.payerName === 'string' ? args.payerName.trim() : '';
+        const horizon = new Date();
+        horizon.setDate(horizon.getDate() - daysBack);
+
+        // Pull all resolved (or active) appeals for the practice in window.
+        const appealRows = await db
+          .select({
+            id: appeals.id,
+            claimId: appeals.claimId,
+            status: appeals.status,
+            denialCategory: appeals.denialCategory,
+            keyArguments: appeals.keyArguments,
+            appealedAmount: appeals.appealedAmount,
+            recoveredAmount: appeals.recoveredAmount,
+            createdAt: appeals.createdAt,
+          })
+          .from(appeals)
+          .where(and(
+            eq(appeals.practiceId, practiceId),
+            gte(appeals.createdAt, horizon),
+          ));
+
+        // Build a claimId -> payerName map for grouping (and filtering).
+        const claimIds: number[] = Array.from(new Set(
+          appealRows.map((r: any) => r.claimId).filter((v: any): v is number => typeof v === 'number')
+        ));
+        const claimToPayer = new Map<number, string>();
+        if (claimIds.length > 0) {
+          const claimRows = await db
+            .select({ id: claims.id, insuranceId: claims.insuranceId })
+            .from(claims)
+            .where(and(eq(claims.practiceId, practiceId), inArray(claims.id, claimIds)));
+          const insuranceIds: number[] = Array.from(new Set(
+            claimRows.map((c: any) => c.insuranceId).filter((v: any): v is number => typeof v === 'number')
+          ));
+          const insuranceNameById = new Map<number, string>();
+          if (insuranceIds.length > 0) {
+            const insRows = await db
+              .select({ id: insurances.id, name: insurances.name })
+              .from(insurances)
+              .where(inArray(insurances.id, insuranceIds));
+            for (const ins of insRows) {
+              if (typeof ins.name === 'string') insuranceNameById.set(ins.id, ins.name);
+            }
+          }
+          for (const c of claimRows) {
+            const name = c.insuranceId != null ? insuranceNameById.get(c.insuranceId) : undefined;
+            claimToPayer.set(c.id, name || 'Unknown payer');
+          }
+        }
+
+        // Filter by payer if requested.
+        const filtered = payerNameFilter
+          ? appealRows.filter((r: any) => {
+              const p = claimToPayer.get(r.claimId) || '';
+              return p.toLowerCase().includes(payerNameFilter.toLowerCase());
+            })
+          : appealRows;
+
+        // Resolved = won/lost/partial (excludes draft/ready/submitted/in_review).
+        const resolved = filtered.filter((r: any) =>
+          r.status === 'won' || r.status === 'lost' || r.status === 'partial'
+        );
+
+        const wonCount = resolved.filter((r: any) => r.status === 'won').length;
+        const partialCount = resolved.filter((r: any) => r.status === 'partial').length;
+        const lostCount = resolved.filter((r: any) => r.status === 'lost').length;
+        const overallWinRate = resolved.length > 0
+          ? Math.round(((wonCount + partialCount) / resolved.length) * 1000) / 10
+          : null;
+
+        // Win rate by payer (resolved only).
+        const byPayer = new Map<string, { won: number; partial: number; lost: number; total: number; recovered: number }>();
+        for (const r of resolved) {
+          const payer = claimToPayer.get((r as any).claimId) || 'Unknown payer';
+          const e = byPayer.get(payer) || { won: 0, partial: 0, lost: 0, total: 0, recovered: 0 };
+          e.total += 1;
+          if (r.status === 'won') e.won += 1;
+          else if (r.status === 'partial') e.partial += 1;
+          else if (r.status === 'lost') e.lost += 1;
+          const rec = r.recoveredAmount ? Number(r.recoveredAmount) : 0;
+          if (!Number.isNaN(rec)) e.recovered += rec;
+          byPayer.set(payer, e);
+        }
+        const winRateByPayer = Array.from(byPayer.entries())
+          .map(([payer, e]) => ({
+            payer,
+            totalAppeals: e.total,
+            won: e.won,
+            partial: e.partial,
+            lost: e.lost,
+            winRate: Math.round(((e.won + e.partial) / e.total) * 1000) / 10,
+            totalRecovered: Math.round(e.recovered * 100) / 100,
+          }))
+          .sort((a, b) => b.totalAppeals - a.totalAppeals);
+
+        // Win rate by denial reason / category (resolved only).
+        const byCategory = new Map<string, { won: number; partial: number; lost: number; total: number }>();
+        for (const r of resolved) {
+          const cat = (r as any).denialCategory || 'uncategorized';
+          const e = byCategory.get(cat) || { won: 0, partial: 0, lost: 0, total: 0 };
+          e.total += 1;
+          if (r.status === 'won') e.won += 1;
+          else if (r.status === 'partial') e.partial += 1;
+          else if (r.status === 'lost') e.lost += 1;
+          byCategory.set(cat, e);
+        }
+        const winRateByDenialReason = Array.from(byCategory.entries())
+          .map(([category, e]) => ({
+            denialCategory: category,
+            totalAppeals: e.total,
+            won: e.won,
+            partial: e.partial,
+            lost: e.lost,
+            winRate: Math.round(((e.won + e.partial) / e.total) * 1000) / 10,
+          }))
+          .sort((a, b) => b.totalAppeals - a.totalAppeals);
+
+        // Top winning argument patterns: tally key_arguments from won/partial.
+        const argTally = new Map<string, { winCount: number; totalCount: number }>();
+        for (const r of resolved) {
+          const argList = (r as any).keyArguments;
+          if (!Array.isArray(argList)) continue;
+          const isWin = r.status === 'won' || r.status === 'partial';
+          for (const raw of argList) {
+            if (typeof raw !== 'string') continue;
+            const arg = raw.trim().replace(/\s+/g, ' ');
+            if (arg.length === 0) continue;
+            const e = argTally.get(arg) || { winCount: 0, totalCount: 0 };
+            e.totalCount += 1;
+            if (isWin) e.winCount += 1;
+            argTally.set(arg, e);
+          }
+        }
+        const topWinningArguments = Array.from(argTally.entries())
+          .filter(([, e]) => e.winCount > 0)
+          .map(([argument, e]) => ({
+            argument,
+            winCount: e.winCount,
+            totalCount: e.totalCount,
+            winRate: Math.round((e.winCount / e.totalCount) * 1000) / 10,
+          }))
+          .sort((a, b) => b.winCount - a.winCount || b.winRate - a.winRate)
+          .slice(0, 10);
+
+        return JSON.stringify({
+          windowDays: daysBack,
+          payerFilter: payerNameFilter || null,
+          totalAppeals: filtered.length,
+          resolvedAppeals: resolved.length,
+          inProgressAppeals: filtered.length - resolved.length,
+          won: wonCount,
+          partial: partialCount,
+          lost: lostCount,
+          overallWinRate,
+          winRateByPayer,
+          winRateByDenialReason,
+          topWinningArguments,
+          message: resolved.length === 0
+            ? 'No resolved appeals in this window yet, so win rates are not available.'
+            : `Across ${resolved.length} resolved appeal(s) in the last ${daysBack} day(s), the overall win rate is ${overallWinRate}%.`,
+        });
+      }
+
+      case 'get_provider_productivity': {
+        const endDate = args.endDate ? new Date(String(args.endDate)) : new Date();
+        const startDate = args.startDate
+          ? new Date(String(args.startDate))
+          : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
+        // Normalize end-of-day for inclusive end.
+        const endInclusive = new Date(endDate);
+        endInclusive.setHours(23, 59, 59, 999);
+        const providerIdFilter = typeof args.providerId === 'string' && args.providerId.trim().length > 0
+          ? args.providerId.trim()
+          : null;
+
+        // Get the provider list for the practice (therapists).
+        const therapists = await storage.getTherapistsByPractice(practiceId);
+        const providerList = providerIdFilter
+          ? therapists.filter((t: any) => t.id === providerIdFilter)
+          : therapists;
+
+        if (providerList.length === 0) {
+          return JSON.stringify({
+            startDate: startDate.toISOString().slice(0, 10),
+            endDate: endDate.toISOString().slice(0, 10),
+            providers: [],
+            message: providerIdFilter
+              ? 'No therapist found with that providerId in this practice.'
+              : 'No therapists found for this practice.',
+          });
+        }
+
+        const providerIds: string[] = providerList.map((p: any) => p.id).filter((v: any): v is string => typeof v === 'string');
+
+        // Appointments completed (status='completed') by therapist in window.
+        const apptRows = await db
+          .select({
+            therapistId: appointments.therapistId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(appointments)
+          .where(and(
+            eq(appointments.practiceId, practiceId),
+            eq(appointments.status, 'completed'),
+            gte(appointments.startTime, startDate),
+            lte(appointments.startTime, endInclusive),
+            inArray(appointments.therapistId, providerIds),
+          ))
+          .groupBy(appointments.therapistId);
+        const apptCount = new Map<string, number>();
+        for (const row of apptRows) {
+          if (row.therapistId) apptCount.set(row.therapistId, Number(row.count) || 0);
+        }
+
+        // SOAP notes written: total + unsigned. Notes link to therapist via
+        // soap_notes.therapistId (nullable until signed) AND via the parent
+        // treatment_session.therapistId. We attribute the note to the
+        // SESSION's therapist so unsigned notes are still counted for the
+        // right person, and treat "unsigned" as therapistSignedAt IS NULL.
+        const soapRows = await db
+          .select({
+            sessionTherapistId: treatmentSessions.therapistId,
+            therapistSignedAt: soapNotes.therapistSignedAt,
+          })
+          .from(soapNotes)
+          .innerJoin(treatmentSessions, eq(soapNotes.sessionId, treatmentSessions.id))
+          .where(and(
+            eq(treatmentSessions.practiceId, practiceId),
+            inArray(treatmentSessions.therapistId, providerIds),
+            gte(soapNotes.createdAt, startDate),
+            lte(soapNotes.createdAt, endInclusive),
+          ));
+        const soapTotal = new Map<string, number>();
+        const soapUnsigned = new Map<string, number>();
+        for (const r of soapRows) {
+          const tid = (r as any).sessionTherapistId;
+          if (!tid) continue;
+          soapTotal.set(tid, (soapTotal.get(tid) || 0) + 1);
+          if (!(r as any).therapistSignedAt) {
+            soapUnsigned.set(tid, (soapUnsigned.get(tid) || 0) + 1);
+          }
+        }
+
+        // Claims submitted + total billed: claims attribute to a therapist
+        // via the linked treatment session. We count claims with status in
+        // ('submitted','paid','denied','appeal','optimized') — anything past
+        // draft — using submittedAt when present, otherwise createdAt.
+        const claimRows = await db
+          .select({
+            sessionTherapistId: treatmentSessions.therapistId,
+            status: claims.status,
+            totalAmount: claims.totalAmount,
+            submittedAt: claims.submittedAt,
+            createdAt: claims.createdAt,
+          })
+          .from(claims)
+          .innerJoin(treatmentSessions, eq(claims.sessionId, treatmentSessions.id))
+          .where(and(
+            eq(claims.practiceId, practiceId),
+            inArray(treatmentSessions.therapistId, providerIds),
+          ));
+        const claimsSubmitted = new Map<string, number>();
+        const totalBilled = new Map<string, number>();
+        for (const r of claimRows) {
+          const tid = (r as any).sessionTherapistId;
+          if (!tid) continue;
+          if (r.status === 'draft') continue;
+          const eventDate: Date | null = r.submittedAt
+            ? new Date(r.submittedAt as any)
+            : r.createdAt ? new Date(r.createdAt as any) : null;
+          if (!eventDate || eventDate < startDate || eventDate > endInclusive) continue;
+          claimsSubmitted.set(tid, (claimsSubmitted.get(tid) || 0) + 1);
+          const amt = r.totalAmount ? Number(r.totalAmount) : 0;
+          if (!Number.isNaN(amt)) totalBilled.set(tid, (totalBilled.get(tid) || 0) + amt);
+        }
+
+        const providers = providerList.map((p: any) => {
+          const fullName = [p.firstName, p.lastName].filter(Boolean).join(' ').trim() || p.email || p.id;
+          return {
+            providerId: p.id,
+            name: fullName,
+            credentials: p.credentials || null,
+            appointmentsCompleted: apptCount.get(p.id) || 0,
+            soapNotesWritten: soapTotal.get(p.id) || 0,
+            unsignedNotes: soapUnsigned.get(p.id) || 0,
+            claimsSubmitted: claimsSubmitted.get(p.id) || 0,
+            totalBilled: Math.round((totalBilled.get(p.id) || 0) * 100) / 100,
+          };
+        }).sort((a, b) => b.appointmentsCompleted - a.appointmentsCompleted);
+
+        return JSON.stringify({
+          startDate: startDate.toISOString().slice(0, 10),
+          endDate: endDate.toISOString().slice(0, 10),
+          providerCount: providers.length,
+          providers,
         });
       }
 
