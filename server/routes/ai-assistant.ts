@@ -48,6 +48,7 @@ const SONNET_TOOLS = new Set([
   'draft_underpayment_dispute',
   'send_patient_portal_invite',
   'send_appointment_reminder',
+  'check_claim_status',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -738,6 +739,18 @@ const assistantTools: Anthropic.Tool[] = [
         },
       },
       required: ['claimId'],
+    },
+  },
+  {
+    name: 'check_claim_status',
+    description: 'Check the live status of a specific submitted claim by polling the clearinghouse (Stedi) via X12 276/277. Returns the current payer-reported status (paid, pending, denied, rejected, etc.), the 277CA category code and description, last status date, and any payment/adjudication amounts. Use when a user asks for the latest status of a claim, whether a claim has paid, or wants to follow up on a submitted claim. Provide either claimId (preferred) or claimNumber.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: { type: 'number' as const, description: 'Internal claim ID (preferred).' },
+        claimNumber: { type: 'string' as const, description: 'Claim number (e.g. "CLM-...") — used if claimId is not provided.' },
+      },
+      required: [],
     },
   },
 ];
@@ -2350,6 +2363,124 @@ async function executeTool(
           warnings: errors.length ? errors : undefined,
           message: `Reminder sent for appointment on ${startTime.toLocaleDateString()} at ${appointmentTime} (${[emailSent && 'email', smsSent && 'SMS'].filter(Boolean).join(' + ')}).`,
         });
+      }
+
+      case 'check_claim_status': {
+        const claimIdArg = args.claimId as number | undefined;
+        const claimNumberArg = args.claimNumber as string | undefined;
+
+        if (!claimIdArg && !claimNumberArg) {
+          return JSON.stringify({ error: 'Please provide a claimId or claimNumber.' });
+        }
+
+        // Resolve claim
+        let claim: any | undefined;
+        if (claimIdArg) {
+          claim = await storage.getClaim(claimIdArg);
+        } else if (claimNumberArg) {
+          const allClaims = await storage.getClaims(practiceId, { limit: 5000 });
+          claim = allClaims.find((c: any) => c.claimNumber === claimNumberArg);
+        }
+
+        if (!claim) {
+          return JSON.stringify({ error: `Claim not found.` });
+        }
+
+        // Practice ownership check
+        if (claim.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Claim does not belong to this practice.' });
+        }
+
+        if (claim.status === 'draft') {
+          return JSON.stringify({
+            error: 'This claim is still in draft status and has not been submitted yet. There is no clearinghouse status to check.',
+          });
+        }
+
+        const patient = await storage.getPatient(claim.patientId);
+        const practice = await storage.getPractice(practiceId);
+
+        let insurance: any = null;
+        if (claim.insuranceId) {
+          const insurances = await storage.getInsurances();
+          insurance = insurances.find((i: any) => i.id === claim.insuranceId);
+        }
+
+        if (!patient) {
+          return JSON.stringify({ error: 'Patient record for this claim is missing.' });
+        }
+
+        const stediService = await import('../services/stediService');
+        const stediKeyInfo = await stediService.getStediApiKeyForPractice(practiceId).catch(() => null);
+        const stediApiKey = stediKeyInfo?.apiKey || process.env.STEDI_API_KEY;
+
+        if (!stediApiKey) {
+          return JSON.stringify({
+            error: 'Clearinghouse (Stedi) is not configured. Status check unavailable.',
+          });
+        }
+
+        try {
+          const lineItems = await storage.getClaimLineItems(claim.id);
+          const dateOfService = lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0];
+
+          // Resolve payer trading-partner ID
+          const payerRouting = await stediService.resolvePayerId(
+            insurance?.name || patient.insuranceProvider || '',
+            patient.insuranceProvider || null,
+            insurance?.payerCode || null,
+          );
+
+          const statusResult = await stediService.checkClaimStatus(
+            {
+              claimId: claim.claimNumber || `CLM${claim.id}`,
+              payer: { id: payerRouting.tradingPartnerId },
+              provider: {
+                npi: practice?.npi || '',
+                taxId: practice?.taxId || '',
+              },
+              subscriber: {
+                memberId: patient.insuranceId || patient.policyNumber || '',
+                firstName: patient.firstName,
+                lastName: patient.lastName,
+                dateOfBirth: patient.dateOfBirth || '',
+              },
+              dateOfService,
+              claimAmount: parseFloat(String(claim.totalAmount)),
+            },
+            practiceId,
+          );
+
+          if (statusResult.errors && statusResult.errors.length > 0 && statusResult.status === 'unknown') {
+            return JSON.stringify({
+              error: `Clearinghouse status check failed: ${statusResult.errors.join('; ')}`,
+            });
+          }
+
+          return JSON.stringify({
+            success: true,
+            claimNumber: claim.claimNumber,
+            payer: insurance?.name || patient.insuranceProvider || 'Unknown',
+            currentStatus: statusResult.status,
+            statusCategoryCode: statusResult.statusCategoryCode,
+            statusCategoryValue: statusResult.statusCategoryValue,
+            statusCode: statusResult.statusCode,
+            statusDescription: statusResult.statusDescription,
+            lastStatusDate: statusResult.paidDate || new Date().toISOString().split('T')[0],
+            paidAmount: statusResult.paidAmount,
+            paidDate: statusResult.paidDate,
+            checkNumber: statusResult.checkNumber,
+            denialReason: statusResult.denialReason,
+            totalBilled: claim.totalAmount,
+            patient: `${patient.firstName} ${patient.lastName}`,
+            errors: statusResult.errors,
+            message: `Claim ${claim.claimNumber} status from ${insurance?.name || patient.insuranceProvider || 'payer'}: ${statusResult.statusCategoryValue || statusResult.status}.`,
+          });
+        } catch (err: any) {
+          return JSON.stringify({
+            error: `Failed to check claim status: ${err?.message || 'Unknown error'}`,
+          });
+        }
       }
 
       default:
