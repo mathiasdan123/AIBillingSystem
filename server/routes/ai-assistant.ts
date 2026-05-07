@@ -13,6 +13,7 @@ import { isAuthenticated } from '../replitAuth';
 import { getUserPracticeContext } from '../services/practiceContext';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import { assessUnderpayment, analyzeAdjustment } from '../services/underpaymentAnalyzer';
+import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import {
   remittanceAdvice,
@@ -49,6 +50,8 @@ const SONNET_TOOLS = new Set([
   'send_patient_portal_invite',
   'send_appointment_reminder',
   'check_claim_status',
+  'create_patient_invoice',
+  'send_patient_payment_link',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -751,6 +754,35 @@ const assistantTools: Anthropic.Tool[] = [
         claimNumber: { type: 'string' as const, description: 'Claim number (e.g. "CLM-...") — used if claimId is not provided.' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'create_patient_invoice',
+    description: 'Create an invoice for a patient (typically for a copay, coinsurance, or self-pay balance) via Stripe. Amount is in dollars. Optionally link to an existing claim. Returns the invoice (Stripe payment intent) details.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to invoice' },
+        amount: { type: 'number' as const, description: 'Invoice amount in dollars' },
+        description: { type: 'string' as const, description: 'Invoice description (e.g., "Copay for 03/15 session")' },
+        dueDate: { type: 'string' as const, description: 'Optional due date in YYYY-MM-DD format' },
+        claimId: { type: 'number' as const, description: 'Optional claim ID to link this invoice to' },
+      },
+      required: ['patientId', 'amount', 'description'],
+    },
+  },
+  {
+    name: 'send_patient_payment_link',
+    description: 'Send a Stripe payment link to a patient for a specific invoice or arbitrary amount. Provide either invoiceId (to charge an existing invoice amount) or amount (in dollars). Returns the Stripe-hosted payment URL the patient can use to pay.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID' },
+        invoiceId: { type: 'string' as const, description: 'Existing invoice / payment intent ID to charge for (alternative to amount)' },
+        amount: { type: 'number' as const, description: 'Amount to charge in dollars (alternative to invoiceId)' },
+        message: { type: 'string' as const, description: 'Optional message / description shown on the payment page' },
+      },
+      required: ['patientId'],
     },
   },
 ];
@@ -2481,6 +2513,125 @@ async function executeTool(
             error: `Failed to check claim status: ${err?.message || 'Unknown error'}`,
           });
         }
+      }
+
+      case 'create_patient_invoice': {
+        if (!stripeService.isStripeConfigured()) {
+          return JSON.stringify({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable patient invoicing.' });
+        }
+
+        const patientId = args.patientId as number | undefined;
+        const amount = args.amount as number | undefined;
+        const description = args.description as string | undefined;
+
+        if (!patientId) return JSON.stringify({ error: 'patientId is required.' });
+        if (typeof amount !== 'number' || amount <= 0) return JSON.stringify({ error: 'amount (in dollars) must be a positive number.' });
+        if (!description) return JSON.stringify({ error: 'description is required.' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        if ((patient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Access denied: patient belongs to a different practice.' });
+        }
+
+        if (args.claimId) {
+          const claim = await storage.getClaim(args.claimId as number);
+          if (!claim || (claim as any).practiceId !== practiceId) {
+            return JSON.stringify({ error: 'Linked claim not found or belongs to a different practice.' });
+          }
+        }
+
+        const paymentIntent = await stripeService.createPatientPaymentIntent({
+          amount: Math.round(amount * 100),
+          patientEmail: (patient as any).email || '',
+          patientName: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+          practiceId,
+          patientId,
+          claimId: args.claimId as number | undefined,
+          description,
+        });
+
+        return JSON.stringify({
+          success: true,
+          invoice: {
+            id: paymentIntent.id,
+            status: paymentIntent.status,
+            amount,
+            currency: paymentIntent.currency,
+            description,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            patientId,
+            claimId: args.claimId || null,
+            dueDate: (args.dueDate as string) || null,
+          },
+          message: `Invoice for $${amount.toFixed(2)} created for ${patient.firstName} ${patient.lastName}. Use send_patient_payment_link to send the patient a payment link.`,
+        });
+      }
+
+      case 'send_patient_payment_link': {
+        if (!stripeService.isStripeConfigured()) {
+          return JSON.stringify({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable patient payment links.' });
+        }
+
+        const patientId = args.patientId as number | undefined;
+        const invoiceId = args.invoiceId as string | undefined;
+        const amount = args.amount as number | undefined;
+
+        if (!patientId) return JSON.stringify({ error: 'patientId is required.' });
+        if (!invoiceId && (typeof amount !== 'number' || amount <= 0)) {
+          return JSON.stringify({ error: 'Either invoiceId or a positive amount (in dollars) is required.' });
+        }
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        if ((patient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Access denied: patient belongs to a different practice.' });
+        }
+
+        // Resolve charge amount: from invoice (Stripe payment intent) if invoiceId provided, else use amount
+        let chargeAmountCents: number;
+        let resolvedDescription: string;
+
+        if (invoiceId) {
+          try {
+            const stripe = stripeService.getStripeInstance();
+            const intent = await stripe.paymentIntents.retrieve(invoiceId);
+            if (intent.metadata?.practiceId && intent.metadata.practiceId !== practiceId.toString()) {
+              return JSON.stringify({ error: 'Invoice belongs to a different practice.' });
+            }
+            if (intent.metadata?.patientId && intent.metadata.patientId !== patientId.toString()) {
+              return JSON.stringify({ error: 'Invoice is for a different patient.' });
+            }
+            chargeAmountCents = intent.amount;
+            resolvedDescription = (args.message as string) || intent.description || `Payment for ${patient.firstName} ${patient.lastName}`;
+          } catch (err) {
+            return JSON.stringify({ error: `Could not retrieve invoice ${invoiceId}: ${err instanceof Error ? err.message : 'Unknown error'}` });
+          }
+        } else {
+          chargeAmountCents = Math.round((amount as number) * 100);
+          resolvedDescription = (args.message as string) || `Payment for ${patient.firstName} ${patient.lastName}`;
+        }
+
+        const paymentLink = await stripeService.createPatientPaymentLink({
+          amount: chargeAmountCents,
+          patientName: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+          practiceId,
+          patientId,
+          description: resolvedDescription,
+        });
+
+        return JSON.stringify({
+          success: true,
+          paymentLink: {
+            url: paymentLink.url,
+            id: paymentLink.id,
+            amount: chargeAmountCents / 100,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            patientId,
+            invoiceId: invoiceId || null,
+          },
+          message: `Payment link created for ${patient.firstName} ${patient.lastName} ($${(chargeAmountCents / 100).toFixed(2)}). Share this URL with the patient: ${paymentLink.url}`,
+        });
       }
 
       default:
