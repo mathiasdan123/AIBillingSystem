@@ -20,8 +20,10 @@ import {
   claims,
   feeSchedules,
   patients,
+  patientPlanDocuments,
+  patientPlanBenefits,
 } from '@shared/schema';
-import { eq, and, desc, sql, ilike, lte, isNotNull } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike, lte, gte, isNotNull } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
@@ -44,6 +46,8 @@ const SONNET_TOOLS = new Set([
   'batch_eligibility_check',
   'review_underpayments',
   'draft_underpayment_dispute',
+  'summarize_recent_eobs',
+  'check_plan_document_status',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -665,6 +669,38 @@ const assistantTools: Anthropic.Tool[] = [
         },
       },
       required: ['claimId'],
+    },
+  },
+  {
+    name: 'summarize_recent_eobs',
+    description: 'Summarize EOBs (Explanation of Benefits) that have been uploaded to the practice, with the accumulator data extracted from each (in-network and out-of-network deductible/out-of-pocket progress, accumulator as-of date) and any recent claim line items the EOB listed. READ-ONLY: this tool does not accept file uploads — it reports on EOBs already uploaded through the patient/practice document upload flow. Use when asked about EOBs on file, accumulator status, deductible progress, or recent payer payment history.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: {
+          type: 'number' as const,
+          description: 'Optional patient ID to filter EOBs to a single patient.',
+        },
+        daysBack: {
+          type: 'number' as const,
+          description: 'Number of days to look back for uploaded EOBs. Defaults to 30.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'check_plan_document_status',
+    description: 'Check whether a specific patient has an SBC / plan document on file, what fields were extracted from it (deductibles, coinsurance, visit limits, prior auth, mental health parity, telehealth coverage), and what important benefit fields are missing. READ-ONLY: does not accept uploads — patient/practice still uploads documents through the existing UI. Use when asked about plan documents, SBC, benefit details on file, or what we know about a patient\'s plan coverage.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: {
+          type: 'number' as const,
+          description: 'The ID of the patient to check plan-document status for.',
+        },
+      },
+      required: ['patientId'],
     },
   },
 ];
@@ -2000,6 +2036,250 @@ async function executeTool(
           message: assessment.worthDisputing
             ? 'Dispute letter drafted. Review and customize before sending to the payer. The letter references your contracted rate and identifies the specific adjustment codes that appear incorrect.'
             : 'I\'ve drafted a dispute letter, but note that the adjustments on this claim may be standard contractual adjustments. Review the analysis carefully before deciding to dispute.',
+        });
+      }
+
+      case 'summarize_recent_eobs': {
+        const filterPatientId = typeof args.patientId === 'number' ? args.patientId : undefined;
+        const daysBack = Number(args.daysBack) || 30;
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+        // If a patientId is provided, validate it belongs to this practice
+        if (filterPatientId !== undefined) {
+          const pat = await storage.getPatient(filterPatientId);
+          if (!pat || pat.practiceId !== practiceId) {
+            return JSON.stringify({ error: `Patient ${filterPatientId} not found in this practice.` });
+          }
+        }
+
+        // Fetch EOB documents for this practice in the time window
+        const whereClauses = [
+          eq(patientPlanDocuments.practiceId, practiceId),
+          eq(patientPlanDocuments.documentType, 'eob'),
+          gte(patientPlanDocuments.createdAt, cutoffDate),
+        ];
+        if (filterPatientId !== undefined) {
+          whereClauses.push(eq(patientPlanDocuments.patientId, filterPatientId));
+        }
+
+        const eobDocs = await db
+          .select({
+            id: patientPlanDocuments.id,
+            patientId: patientPlanDocuments.patientId,
+            fileName: patientPlanDocuments.fileName,
+            status: patientPlanDocuments.status,
+            parsedAt: patientPlanDocuments.parsedAt,
+            createdAt: patientPlanDocuments.createdAt,
+            patientFirstName: patients.firstName,
+            patientLastName: patients.lastName,
+          })
+          .from(patientPlanDocuments)
+          .innerJoin(patients, eq(patientPlanDocuments.patientId, patients.id))
+          .where(and(...whereClauses))
+          .orderBy(desc(patientPlanDocuments.createdAt))
+          .limit(50);
+
+        if (eobDocs.length === 0) {
+          return JSON.stringify({
+            count: 0,
+            eobs: [],
+            message: filterPatientId !== undefined
+              ? `No EOBs uploaded for this patient in the last ${daysBack} days.`
+              : `No EOBs have been uploaded in the last ${daysBack} days. Patients can upload EOBs through the patient portal documents flow.`,
+          });
+        }
+
+        // Pull benefits rows linked to each EOB document
+        const docIds: number[] = eobDocs.map((d: typeof eobDocs[number]) => d.id);
+        const benefitsRows = docIds.length > 0
+          ? await db
+              .select()
+              .from(patientPlanBenefits)
+              .where(
+                and(
+                  eq(patientPlanBenefits.practiceId, practiceId),
+                  sql`${patientPlanBenefits.documentId} IN (${sql.join(docIds.map((id: number) => sql`${id}`), sql`, `)})`,
+                )
+              )
+          : [];
+        const benefitsByDoc = new Map<number, typeof benefitsRows[number]>();
+        for (const b of benefitsRows) {
+          if (b.documentId != null) benefitsByDoc.set(b.documentId, b);
+        }
+
+        const eobs = eobDocs.map((doc: typeof eobDocs[number]) => {
+          const benefits = benefitsByDoc.get(doc.id);
+          const raw = (benefits?.rawExtractedData as Record<string, any> | null) || null;
+          // Pull accumulator and recent-claims fields from raw JSON (parser stashes them there)
+          const innDeductibleMet = raw?.inn_deductible_met ?? raw?.accumulators?.inn_deductible_met ?? null;
+          const innOutOfPocketMet = raw?.inn_out_of_pocket_met ?? raw?.accumulators?.inn_out_of_pocket_met ?? null;
+          const oonDeductibleMet = benefits?.oonDeductibleMet
+            ?? raw?.oon_deductible_met
+            ?? raw?.accumulators?.oon_deductible_met
+            ?? null;
+          const oonOutOfPocketMet = benefits?.oonOutOfPocketMet
+            ?? raw?.oon_out_of_pocket_met
+            ?? raw?.accumulators?.oon_out_of_pocket_met
+            ?? null;
+          const asOfDate = raw?.accumulator_as_of_date ?? raw?.accumulators?.as_of_date ?? null;
+          const recentClaimsRaw = Array.isArray(raw?.recent_claims)
+            ? raw.recent_claims
+            : Array.isArray(raw?.eob_claims)
+              ? raw.eob_claims
+              : [];
+          const recentClaims = recentClaimsRaw.slice(0, 6);
+
+          return {
+            documentId: doc.id,
+            patientId: doc.patientId,
+            patientName: `${doc.patientFirstName} ${doc.patientLastName}`,
+            fileName: doc.fileName,
+            status: doc.status,
+            uploadedAt: doc.createdAt,
+            parsedAt: doc.parsedAt,
+            payerName: benefits?.insuranceProvider ?? null,
+            planName: benefits?.planName ?? null,
+            accumulators: {
+              innDeductibleIndividual: benefits?.innDeductibleIndividual ?? null,
+              innDeductibleMet,
+              innOutOfPocketMax: benefits?.innOutOfPocketMax ?? null,
+              innOutOfPocketMet,
+              oonDeductibleIndividual: benefits?.oonDeductibleIndividual ?? null,
+              oonDeductibleMet,
+              oonOutOfPocketMax: benefits?.oonOutOfPocketMax ?? null,
+              oonOutOfPocketMet,
+              asOfDate,
+            },
+            recentClaims,
+            parsed: !!benefits,
+          };
+        });
+
+        return JSON.stringify({
+          count: eobs.length,
+          windowDays: daysBack,
+          eobs,
+          message: `Found ${eobs.length} EOB${eobs.length === 1 ? '' : 's'} uploaded in the last ${daysBack} days. Accumulator data is extracted from parsed EOBs and reflects the patient's deductible/out-of-pocket progress as of the EOB process date.`,
+        });
+      }
+
+      case 'check_plan_document_status': {
+        const targetPatientId = typeof args.patientId === 'number' ? args.patientId : undefined;
+        if (!targetPatientId) {
+          return JSON.stringify({ error: 'Please provide a patient ID.' });
+        }
+
+        const patient = await storage.getPatient(targetPatientId);
+        if (!patient) {
+          return JSON.stringify({ error: `Patient ${targetPatientId} not found.` });
+        }
+        if (patient.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient does not belong to this practice.' });
+        }
+
+        const allDocs = await storage.getPlanDocuments(targetPatientId);
+        // Only consider documents in this practice (defense in depth)
+        const docs = allDocs.filter((d: typeof allDocs[number]) => d.practiceId === practiceId);
+
+        if (docs.length === 0) {
+          return JSON.stringify({
+            patientId: targetPatientId,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            hasPlanDocument: false,
+            hasSbc: false,
+            documents: [],
+            benefits: null,
+            missingFields: [
+              'planName', 'planType', 'insuranceProvider',
+              'innDeductibleIndividual', 'innCoinsurancePercent', 'innOutOfPocketMax',
+              'oonDeductibleIndividual', 'oonCoinsurancePercent', 'oonOutOfPocketMax',
+              'mentalHealthVisitLimit', 'mentalHealthPriorAuthRequired', 'mentalHealthParity',
+              'teleHealthCovered',
+            ],
+            message: `No plan documents on file for ${patient.firstName} ${patient.lastName}. Ask the patient to upload an SBC (Summary of Benefits and Coverage) through the patient portal — it unlocks accurate per-session cost estimates and stronger appeal arguments.`,
+          });
+        }
+
+        const sbcDocs = docs.filter((d: typeof docs[number]) => d.documentType === 'sbc');
+        const eobDocs = docs.filter((d: typeof docs[number]) => d.documentType === 'eob');
+        const otherDocs = docs.filter((d: typeof docs[number]) => d.documentType !== 'sbc' && d.documentType !== 'eob');
+
+        const benefits = await storage.getPatientPlanBenefits(targetPatientId);
+        const raw = (benefits?.rawExtractedData as Record<string, any> | null) || null;
+
+        // Determine missing fields — anything important that's null/undefined
+        const importantFieldKeys: string[] = [
+          'planName', 'planType', 'insuranceProvider',
+          'innDeductibleIndividual', 'innCoinsurancePercent', 'innOutOfPocketMax',
+          'oonDeductibleIndividual', 'oonCoinsurancePercent', 'oonOutOfPocketMax',
+          'mentalHealthVisitLimit', 'mentalHealthPriorAuthRequired', 'mentalHealthParity',
+          'teleHealthCovered', 'allowedAmountMethod',
+        ];
+
+        const missingFields: string[] = [];
+        if (benefits) {
+          for (const key of importantFieldKeys) {
+            const v = (benefits as any)[key];
+            if (v === null || v === undefined || v === '') missingFields.push(key);
+          }
+        }
+
+        return JSON.stringify({
+          patientId: targetPatientId,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          hasPlanDocument: docs.length > 0,
+          hasSbc: sbcDocs.length > 0,
+          counts: {
+            sbc: sbcDocs.length,
+            eob: eobDocs.length,
+            other: otherDocs.length,
+          },
+          documents: docs.map((d: typeof docs[number]) => ({
+            id: d.id,
+            documentType: d.documentType,
+            fileName: d.fileName,
+            status: d.status,
+            uploadedAt: d.createdAt,
+            parsedAt: d.parsedAt,
+            parseError: d.parseError,
+          })),
+          benefits: benefits ? {
+            id: benefits.id,
+            planName: benefits.planName,
+            planType: benefits.planType,
+            insuranceProvider: benefits.insuranceProvider,
+            groupNumber: benefits.groupNumber,
+            policyNumber: benefits.policyNumber,
+            effectiveDate: benefits.effectiveDate,
+            terminationDate: benefits.terminationDate,
+            innDeductibleIndividual: benefits.innDeductibleIndividual,
+            innCoinsurancePercent: benefits.innCoinsurancePercent,
+            innOutOfPocketMax: benefits.innOutOfPocketMax,
+            oonDeductibleIndividual: benefits.oonDeductibleIndividual,
+            oonDeductibleFamily: benefits.oonDeductibleFamily,
+            oonCoinsurancePercent: benefits.oonCoinsurancePercent,
+            oonOutOfPocketMax: benefits.oonOutOfPocketMax,
+            oonDeductibleMet: benefits.oonDeductibleMet,
+            oonOutOfPocketMet: benefits.oonOutOfPocketMet,
+            mentalHealthParity: benefits.mentalHealthParity,
+            mentalHealthVisitLimit: benefits.mentalHealthVisitLimit,
+            mentalHealthVisitsUsed: benefits.mentalHealthVisitsUsed,
+            mentalHealthPriorAuthRequired: benefits.mentalHealthPriorAuthRequired,
+            mentalHealthCopay: benefits.mentalHealthCopay,
+            allowedAmountMethod: benefits.allowedAmountMethod,
+            allowedAmountPercent: benefits.allowedAmountPercent,
+            teleHealthCovered: benefits.teleHealthCovered,
+            teleHealthOonSameAsInPerson: benefits.teleHealthOonSameAsInPerson,
+            extractionConfidence: benefits.extractionConfidence,
+            innDeductibleMet: raw?.inn_deductible_met ?? raw?.accumulators?.inn_deductible_met ?? null,
+            innOutOfPocketMet: raw?.inn_out_of_pocket_met ?? raw?.accumulators?.inn_out_of_pocket_met ?? null,
+            accumulatorAsOfDate: raw?.accumulator_as_of_date ?? raw?.accumulators?.as_of_date ?? null,
+          } : null,
+          missingFields,
+          message: benefits
+            ? `${patient.firstName} has ${docs.length} plan document(s) on file (${sbcDocs.length} SBC, ${eobDocs.length} EOB). ${missingFields.length === 0 ? 'All key benefit fields were extracted.' : `${missingFields.length} important field(s) are missing — consider asking the patient to upload an additional document.`}`
+            : `${patient.firstName} has ${docs.length} document(s) uploaded but parsing has not produced a benefits record yet${docs.some((d) => d.status === 'failed') ? ' (some uploads failed parsing)' : ''}.`,
         });
       }
 
