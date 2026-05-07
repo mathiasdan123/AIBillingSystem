@@ -44,6 +44,8 @@ const SONNET_TOOLS = new Set([
   'batch_eligibility_check',
   'review_underpayments',
   'draft_underpayment_dispute',
+  'send_patient_portal_invite',
+  'send_appointment_reminder',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -512,6 +514,34 @@ const assistantTools: Anthropic.Tool[] = [
         type: { type: 'string' as const, description: 'Appointment type (default "Therapy Session")' },
       },
       required: ['patientId', 'date', 'time'],
+    },
+  },
+  {
+    name: 'send_patient_portal_invite',
+    description: 'Email a patient a magic-link invitation to access the patient portal. Use when a user asks to send/resend a portal link, invite a patient to the portal, or grant patient portal access. Provide either patientId or patientName.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to send the portal invite to' },
+        patientName: { type: 'string' as const, description: 'Patient name to look up (if ID not known)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'send_appointment_reminder',
+    description: 'Send an appointment reminder to a patient via email and/or SMS for a specific upcoming appointment. Use when a user asks to send/resend a reminder for a particular appointment.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'Appointment ID to send the reminder for' },
+        channel: {
+          type: 'string' as const,
+          enum: ['sms', 'email', 'both'],
+          description: 'Which channel to use. Default "both" — sends via every channel for which the patient has contact info and the practice has configured.',
+        },
+      },
+      required: ['appointmentId'],
     },
   },
   {
@@ -2000,6 +2030,172 @@ async function executeTool(
           message: assessment.worthDisputing
             ? 'Dispute letter drafted. Review and customize before sending to the payer. The letter references your contracted rate and identifies the specific adjustment codes that appear incorrect.'
             : 'I\'ve drafted a dispute letter, but note that the adjustments on this claim may be standard contractual adjustments. Review the analysis carefully before deciding to dispute.',
+        });
+      }
+
+      case 'send_patient_portal_invite': {
+        let patientId = args.patientId as number | undefined;
+
+        if (!patientId && args.patientName) {
+          const allPatients = await storage.getPatients(practiceId);
+          const match = allPatients.find((p: any) =>
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes((args.patientName as string).toLowerCase()),
+          );
+          if (!match) return JSON.stringify({ error: `Patient "${args.patientName}" not found.` });
+          patientId = match.id;
+        }
+
+        if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID.' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        if (patient.practiceId !== practiceId) return JSON.stringify({ error: 'Patient does not belong to your practice.' });
+        if (!patient.email) return JSON.stringify({ error: `${patient.firstName} ${patient.lastName} has no email on file. Add an email before sending a portal invite.` });
+
+        // Reuse existing portal-invite plumbing (see server/routes/patients.ts /:id/send-portal-link)
+        let access = await storage.getPatientPortalAccess(patientId);
+        if (!access) {
+          access = await storage.createPatientPortalAccess(patientId, practiceId);
+        }
+        const magicLink = await storage.createMagicLink(patientId);
+
+        const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
+        const portalUrl = `${baseUrl}/portal/login/${magicLink.token}`;
+
+        const practice = await storage.getPractice(practiceId);
+        const practiceName = practice?.name || 'Your Healthcare Provider';
+
+        const { portalWelcome } = await import('../services/emailTemplates');
+        const { sendEmail } = await import('../services/emailService');
+
+        const { subject, html, text } = portalWelcome({
+          patientName: patient.firstName,
+          practiceName,
+          portalUrl,
+        });
+
+        const emailResult = await sendEmail({
+          to: patient.email,
+          subject,
+          html,
+          text,
+          fromName: practiceName,
+        });
+
+        if (!emailResult.success) {
+          return JSON.stringify({
+            error: `Portal link created but email failed: ${emailResult.error || 'unknown error'}`,
+            portalUrl,
+          });
+        }
+
+        return JSON.stringify({
+          success: true,
+          patient: `${patient.firstName} ${patient.lastName}`,
+          email: patient.email,
+          message: `Portal invitation sent to ${patient.email}.`,
+        });
+      }
+
+      case 'send_appointment_reminder': {
+        const appointmentId = args.appointmentId as number | undefined;
+        if (!appointmentId) return JSON.stringify({ error: 'appointmentId is required.' });
+
+        const appointment = await storage.getAppointment(appointmentId);
+        if (!appointment) return JSON.stringify({ error: 'Appointment not found.' });
+        if (appointment.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment does not belong to your practice.' });
+        if (!appointment.patientId) return JSON.stringify({ error: 'Appointment has no patient assigned.' });
+
+        const patient = await storage.getPatient(appointment.patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found for this appointment.' });
+
+        const practice = await storage.getPractice(practiceId);
+        const practiceName = practice?.name || 'Your Practice';
+
+        const channel = ((args.channel as string) || 'both').toLowerCase();
+        const wantEmail = channel === 'email' || channel === 'both';
+        const wantSms = channel === 'sms' || channel === 'both';
+
+        // Reuse existing reminder plumbing (see server/services/appointmentReminderService.ts)
+        const { sendAppointmentReminderSMS, isSMSConfigured } = await import('../services/smsService');
+        const { sendEmail } = await import('../services/emailService');
+        const { appointmentReminder } = await import('../services/emailTemplates');
+        const { isEmailConfigured } = await import('../email');
+
+        const startTime = new Date(appointment.startTime);
+        const appointmentTime = startTime.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+
+        let emailSent = false;
+        let smsSent = false;
+        const errors: string[] = [];
+
+        if (wantEmail && patient.email) {
+          if (!isEmailConfigured()) {
+            errors.push('Email not configured for this practice.');
+          } else {
+            const { subject, html, text } = appointmentReminder({
+              patientName: patient.firstName,
+              appointmentDate: startTime,
+              appointmentTime,
+              providerName: undefined,
+              practiceName,
+              practiceAddress: practice?.address || undefined,
+              practicePhone: practice?.phone || undefined,
+            });
+            const emailResult = await sendEmail({
+              to: patient.email,
+              subject,
+              html,
+              text,
+              fromName: practiceName,
+            });
+            emailSent = emailResult.success;
+            if (!emailResult.success) errors.push(`Email: ${emailResult.error || 'failed'}`);
+          }
+        }
+
+        if (wantSms && patient.phone) {
+          if (!isSMSConfigured()) {
+            errors.push('SMS not configured for this practice.');
+          } else {
+            const smsResult = await sendAppointmentReminderSMS(
+              patient.phone,
+              patient.firstName,
+              startTime,
+              practiceName,
+              practice?.phone || undefined,
+            );
+            smsSent = smsResult.success;
+            if (!smsResult.success) errors.push(`SMS: ${smsResult.error || 'failed'}`);
+          }
+        }
+
+        if (!emailSent && !smsSent) {
+          return JSON.stringify({
+            error: `Could not send reminder. ${errors.length ? errors.join(' ') : 'Patient has no email or phone on file for the requested channel.'}`,
+          });
+        }
+
+        if (emailSent || smsSent) {
+          try {
+            await storage.updateAppointment(appointmentId, { reminderSent: true });
+          } catch {
+            // non-fatal
+          }
+        }
+
+        return JSON.stringify({
+          success: true,
+          appointmentId,
+          patient: `${patient.firstName} ${patient.lastName}`,
+          emailSent,
+          smsSent,
+          warnings: errors.length ? errors : undefined,
+          message: `Reminder sent for appointment on ${startTime.toLocaleDateString()} at ${appointmentTime} (${[emailSent && 'email', smsSent && 'SMS'].filter(Boolean).join(' + ')}).`,
         });
       }
 
