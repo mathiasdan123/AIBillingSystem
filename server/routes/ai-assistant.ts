@@ -42,6 +42,7 @@ const SONNET_TOOLS = new Set([
   'suggest_claim_correction',
   'create_appointment',
   'batch_eligibility_check',
+  'bulk_eligibility_by_filter',
   'review_underpayments',
   'draft_underpayment_dispute',
 ]);
@@ -640,6 +641,32 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'bulk_eligibility_by_filter',
+    description: 'Run insurance eligibility checks for a flexible set of patients filtered by date range and/or payer name. Generalization of batch_eligibility_check. Use when the user asks to check eligibility for a specific date range, a specific payer (e.g. "all my Aetna patients next month"), or all active patients on a payer regardless of appointments. Hard caps: date range max 60 days, max 200 patients per call.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        startDate: {
+          type: 'string' as const,
+          description: 'Start date for appointment range (YYYY-MM-DD). Defaults to today. Ignored when appointmentsOnly is false.',
+        },
+        endDate: {
+          type: 'string' as const,
+          description: 'End date for appointment range (YYYY-MM-DD), inclusive. Defaults to today + 7 days. Range may not exceed 60 days.',
+        },
+        payerName: {
+          type: 'string' as const,
+          description: 'Optional case-insensitive substring to filter by patient insurance carrier name (e.g. "aetna", "blue cross").',
+        },
+        appointmentsOnly: {
+          type: 'boolean' as const,
+          description: 'If true (default), only check patients with non-cancelled appointments in the date range. If false, check all active patients matching the payerName filter (date range ignored).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'review_underpayments',
     description: 'Review all claims where insurance paid less than the expected reimbursement (from the fee schedule). Analyzes CAS adjustment reason codes to determine whether underpayments are standard contractual adjustments, patient responsibility, or true underpayments worth disputing. Use when a user asks about underpayments, short pays, insurance paying less than expected, or wants to review ERA adjustments.',
     input_schema: {
@@ -668,6 +695,78 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
 ];
+
+// Shared helper: run eligibility checks for a list of patient IDs scoped to a practice.
+// Used by both batch_eligibility_check and bulk_eligibility_by_filter.
+type BulkEligibilityResult = {
+  checked: number;
+  eligible: number;
+  ineligible: number;
+  errors: number;
+  results: Array<{ patientName: string; insurance: string | null; status: string; eligible: boolean | null; error?: string }>;
+};
+
+async function runBulkEligibility(
+  practiceId: number,
+  patientIds: number[],
+): Promise<BulkEligibilityResult | { error: string }> {
+  const { checkEligibility: stediCheckEligibility, isStediConfigured, PAYER_IDS: payerIds } = await import('../services/stediService');
+  if (!isStediConfigured()) {
+    return { error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' };
+  }
+
+  const practice = await storage.getPractice(practiceId);
+
+  const results: BulkEligibilityResult['results'] = [];
+  let eligible = 0;
+  let ineligible = 0;
+  let errors = 0;
+
+  for (let i = 0; i < patientIds.length; i++) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, 200));
+    const pid = patientIds[i];
+    try {
+      const pat = await storage.getPatient(pid);
+      if (!pat) { errors++; results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not found' }); continue; }
+      // Guard: ensure patient belongs to this practice (defense in depth)
+      if (pat.practiceId !== practiceId) {
+        errors++;
+        results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not in practice' });
+        continue;
+      }
+      if (!pat.insuranceProvider && !pat.insuranceId && !pat.policyNumber) {
+        errors++;
+        results.push({ patientName: `${pat.firstName} ${pat.lastName}`, insurance: null, status: 'skipped', eligible: null, error: 'No insurance info' });
+        continue;
+      }
+
+      const insName = (pat.insuranceProvider || '').toLowerCase();
+      const pId = payerIds[insName] || pat.insuranceId || '60054';
+      const eligRes = await stediCheckEligibility({
+        payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
+        provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
+        subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
+      }, practiceId);
+
+      const isElig = eligRes.status === 'active';
+      if (isElig) eligible++;
+      else if (eligRes.status === 'inactive') ineligible++;
+      else errors++;
+
+      results.push({
+        patientName: `${pat.firstName} ${pat.lastName}`,
+        insurance: pat.insuranceProvider || null,
+        status: eligRes.status,
+        eligible: isElig,
+      });
+    } catch (err) {
+      errors++;
+      results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return { checked: patientIds.length, eligible, ineligible, errors, results };
+}
 
 // Execute tool calls against the database
 async function executeTool(
@@ -1578,14 +1677,6 @@ async function executeTool(
       }
 
       case 'batch_eligibility_check': {
-        const { checkEligibility: stediCheckEligibility, isStediConfigured, PAYER_IDS: payerIds } = await import('../services/stediService');
-
-        if (!isStediConfigured()) {
-          return JSON.stringify({ error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' });
-        }
-
-        const practice = await storage.getPractice(practiceId);
-
         // Get appointments for the next 7 days
         const now = new Date();
         const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -1596,7 +1687,7 @@ async function executeTool(
           upcomingAppts
             .filter((a: any) => a.status !== 'cancelled' && a.patientId)
             .map((a: any) => a.patientId!)
-        ));
+        )) as number[];
 
         if (uniquePatientIds.length === 0) {
           return JSON.stringify({
@@ -1609,56 +1700,93 @@ async function executeTool(
           });
         }
 
-        const batchResults: Array<{ patientName: string; insurance: string | null; status: string; eligible: boolean | null; error?: string }> = [];
-        let batchEligible = 0;
-        let batchIneligible = 0;
-        let batchErrors = 0;
+        const result = await runBulkEligibility(practiceId, uniquePatientIds);
+        if ('error' in result) return JSON.stringify({ error: result.error });
+        return JSON.stringify({
+          ...result,
+          message: `Checked ${result.checked} patient(s) with upcoming appointments. ${result.eligible} eligible, ${result.ineligible} ineligible, ${result.errors} error(s)/skipped.`,
+        });
+      }
 
-        for (let i = 0; i < uniquePatientIds.length; i++) {
-          if (i > 0) await new Promise((resolve) => setTimeout(resolve, 200));
-          const pid = uniquePatientIds[i];
-          try {
-            const pat = await storage.getPatient(pid);
-            if (!pat) { batchErrors++; batchResults.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not found' }); continue; }
-            if (!pat.insuranceProvider && !pat.insuranceId && !pat.policyNumber) {
-              batchErrors++;
-              batchResults.push({ patientName: `${pat.firstName} ${pat.lastName}`, insurance: null, status: 'skipped', eligible: null, error: 'No insurance info' });
-              continue;
-            }
+      case 'bulk_eligibility_by_filter': {
+        const startDateStr = typeof args.startDate === 'string' ? args.startDate : null;
+        const endDateStr = typeof args.endDate === 'string' ? args.endDate : null;
+        const payerNameFilter = typeof args.payerName === 'string' ? args.payerName.trim().toLowerCase() : '';
+        const appointmentsOnly = args.appointmentsOnly === undefined ? true : Boolean(args.appointmentsOnly);
 
-            const insName = (pat.insuranceProvider || '').toLowerCase();
-            const pId = payerIds[insName] || pat.insuranceId || '60054';
-            const eligRes = await stediCheckEligibility({
-              payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
-              provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
-              subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
-              // serviceTypeCodes omitted — resolved from practice.specialty by stediService.checkEligibility
-            }, practiceId);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const start = startDateStr ? new Date(startDateStr + 'T00:00:00') : today;
+        const defaultEnd = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const end = endDateStr ? new Date(endDateStr + 'T23:59:59') : defaultEnd;
 
-            const isElig = eligRes.status === 'active';
-            if (isElig) batchEligible++;
-            else if (eligRes.status === 'inactive') batchIneligible++;
-            else batchErrors++;
-
-            batchResults.push({
-              patientName: `${pat.firstName} ${pat.lastName}`,
-              insurance: pat.insuranceProvider || null,
-              status: eligRes.status,
-              eligible: isElig,
-            });
-          } catch (batchErr) {
-            batchErrors++;
-            batchResults.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: batchErr instanceof Error ? batchErr.message : String(batchErr) });
-          }
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          return JSON.stringify({ error: 'Invalid startDate or endDate. Use YYYY-MM-DD.' });
+        }
+        if (end.getTime() < start.getTime()) {
+          return JSON.stringify({ error: 'endDate must be on or after startDate.' });
+        }
+        const rangeDays = Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+        if (rangeDays > 60) {
+          return JSON.stringify({ error: `Date range too large (${rangeDays} days). Maximum is 60 days.` });
         }
 
+        let candidatePatientIds: number[] = [];
+
+        if (appointmentsOnly) {
+          const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
+          candidatePatientIds = Array.from(new Set(
+            appts
+              .filter((a: any) => a.status !== 'cancelled' && a.patientId)
+              .map((a: any) => a.patientId as number)
+          ));
+        } else {
+          // All active (non-deleted) patients for this practice — getPatients already scopes to practiceId
+          const allPatients = await storage.getPatients(practiceId);
+          candidatePatientIds = allPatients.map((p: any) => p.id as number);
+        }
+
+        // Apply payer filter if provided. We need patient records to filter by insuranceProvider.
+        let filteredIds = candidatePatientIds;
+        if (payerNameFilter) {
+          const matched: number[] = [];
+          for (const pid of candidatePatientIds) {
+            const pat = await storage.getPatient(pid);
+            if (!pat || pat.practiceId !== practiceId) continue;
+            const provider = (pat.insuranceProvider || '').toLowerCase();
+            if (provider.includes(payerNameFilter)) matched.push(pid);
+          }
+          filteredIds = matched;
+        }
+
+        if (filteredIds.length === 0) {
+          return JSON.stringify({
+            checked: 0,
+            eligible: 0,
+            ineligible: 0,
+            errors: 0,
+            results: [],
+            message: `No patients matched the filter (range ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}${payerNameFilter ? `, payer contains "${payerNameFilter}"` : ''}, appointmentsOnly=${appointmentsOnly}).`,
+          });
+        }
+
+        if (filteredIds.length > 200) {
+          return JSON.stringify({
+            error: `Too many patients matched (${filteredIds.length}). Maximum is 200 per call. Narrow the date range or payerName filter.`,
+          });
+        }
+
+        const result = await runBulkEligibility(practiceId, filteredIds);
+        if ('error' in result) return JSON.stringify({ error: result.error });
         return JSON.stringify({
-          checked: uniquePatientIds.length,
-          eligible: batchEligible,
-          ineligible: batchIneligible,
-          errors: batchErrors,
-          results: batchResults,
-          message: `Checked ${uniquePatientIds.length} patient(s) with upcoming appointments. ${batchEligible} eligible, ${batchIneligible} ineligible, ${batchErrors} error(s)/skipped.`,
+          ...result,
+          filters: {
+            startDate: start.toISOString().slice(0, 10),
+            endDate: end.toISOString().slice(0, 10),
+            payerName: payerNameFilter || null,
+            appointmentsOnly,
+          },
+          message: `Checked ${result.checked} patient(s). ${result.eligible} eligible, ${result.ineligible} ineligible, ${result.errors} error(s)/skipped.`,
         });
       }
 
