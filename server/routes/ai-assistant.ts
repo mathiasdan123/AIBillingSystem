@@ -901,7 +901,7 @@ const assistantTools: Anthropic.Tool[] = [
 // assistant transcript. Stedi 270/271/276/277 errors echo the request payload,
 // which contains member ID, DOB, and patient name. The assistant transcript is
 // persisted, so raw error text is HIPAA-relevant.
-function sanitizeExternalError(raw: string | undefined | null): string {
+export function sanitizeExternalError(raw: string | undefined | null): string {
   if (!raw) return 'unknown error';
   let s = String(raw);
   // SSN-like
