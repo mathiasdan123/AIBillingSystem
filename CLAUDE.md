@@ -85,6 +85,25 @@ migrations/          # Drizzle SQL migrations (18 files)
 - Push changes with `npm run db:push` (no migration generation needed for dev)
 - Key tables: users, practices, patients, insurances, claims, appointments, soapNotes, auditLogs
 
+### Migration safety (zero-downtime deploys)
+Production runs 2 ECS tasks behind ALB. During a rolling deploy, old and new code run side-by-side for ~30-90 seconds. Migrations that break old code = downtime.
+
+Before merging any migration, run `scripts/lint-migrations.sh` (or `scripts/lint-migrations.sh --staged` as a pre-commit). It flags the patterns that always break rolling deploys: `DROP COLUMN`, `SET NOT NULL`, `RENAME COLUMN`, `RENAME TO`, `DROP TABLE`.
+
+Use **expand → migrate → contract** for breaking changes:
+
+| Want to do | Do this instead |
+|---|---|
+| Drop a column | (1) Deploy code that no longer reads it. (2) Drop in a follow-up migration. |
+| Add NOT NULL constraint | (1) Add nullable. (2) Backfill data. (3) Add NOT NULL after every old task is gone (next deploy). |
+| Rename a column | (1) Add new column. (2) Deploy code that writes both, reads either. (3) Backfill. (4) Deploy code reading only new. (5) Drop old column. |
+| Rename a table | Create a view at the old name pointing to the new table. Ship for one release, then drop. |
+| Drop a table | Deploy code that no longer touches it → drop in follow-up migration. |
+
+Override (rare, only with a planned maintenance window): add `-- migration-lint: ignore (reason: <why>)` to the SQL file.
+
+Migrations run as a separate ECS task (`therapybill-migrate`) **before** the app rolls out. The app deploy and migration deploy are deliberately decoupled — the migration completes (or fails fast) before any new app task is created.
+
 ## Authentication & Security
 - Session-based auth with 30-min rolling idle timeout in production, 1-week in development (`express-session` `maxAge` in `server/replitAuth.ts`)
 - MFA re-verification timeout: 15 min for PHI/admin routes (`MFA_SESSION_TIMEOUT` in `server/middleware/mfa-required.ts`)
