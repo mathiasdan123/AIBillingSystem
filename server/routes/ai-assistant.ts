@@ -898,6 +898,30 @@ const assistantTools: Anthropic.Tool[] = [
   },
 ];
 
+// Strip likely PHI from clearinghouse / API error strings before they reach the
+// assistant transcript. Stedi 270/271/276/277 errors echo the request payload,
+// which contains member ID, DOB, and patient name. The assistant transcript is
+// persisted, so raw error text is HIPAA-relevant.
+function sanitizeExternalError(raw: string | undefined | null): string {
+  if (!raw) return 'unknown error';
+  let s = String(raw);
+  // SSN-like
+  s = s.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[redacted-id]');
+  // ISO and US dates (DOB / DOS)
+  s = s.replace(/\b\d{4}-\d{2}-\d{2}\b/g, '[redacted-date]');
+  s = s.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, '[redacted-date]');
+  // Long alphanumeric tokens (member IDs, policy numbers)
+  s = s.replace(/\b[A-Z0-9]{8,}\b/g, '[redacted-id]');
+  // Cap length so a verbose error can't dump a full payload into the transcript
+  if (s.length > 200) s = s.slice(0, 200) + '…';
+  return s;
+}
+
+function sanitizeExternalErrors(arr: string[] | undefined | null, max = 3): string[] {
+  if (!arr || arr.length === 0) return [];
+  return arr.slice(0, max).map(sanitizeExternalError);
+}
+
 // Shared helper: run eligibility checks for a list of patient IDs scoped to a practice.
 // Used by both batch_eligibility_check and bulk_eligibility_by_filter.
 type BulkEligibilityResult = {
@@ -963,7 +987,7 @@ async function runBulkEligibility(
       });
     } catch (err) {
       errors++;
-      results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: err instanceof Error ? err.message : String(err) });
+      results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: sanitizeExternalError(err instanceof Error ? err.message : String(err)) });
     }
   }
 
@@ -2696,8 +2720,14 @@ async function executeTool(
           );
 
           if (statusResult.errors && statusResult.errors.length > 0 && statusResult.status === 'unknown') {
+            // Log the unredacted error for debugging; only return a sanitized version to the assistant.
+            logger.warn('check_claim_status: clearinghouse error', {
+              practiceId,
+              claimId: claim.id,
+              errors: statusResult.errors,
+            });
             return JSON.stringify({
-              error: `Clearinghouse status check failed: ${statusResult.errors.join('; ')}`,
+              error: `Clearinghouse status check failed: ${sanitizeExternalErrors(statusResult.errors).join('; ')}`,
             });
           }
 
@@ -2717,12 +2747,17 @@ async function executeTool(
             denialReason: statusResult.denialReason,
             totalBilled: claim.totalAmount,
             patient: `${patient.firstName} ${patient.lastName}`,
-            errors: statusResult.errors,
+            errors: sanitizeExternalErrors(statusResult.errors),
             message: `Claim ${claim.claimNumber} status from ${insurance?.name || patient.insuranceProvider || 'payer'}: ${statusResult.statusCategoryValue || statusResult.status}.`,
           });
         } catch (err: any) {
+          logger.warn('check_claim_status: exception', {
+            practiceId,
+            claimId: claim.id,
+            error: err?.message,
+          });
           return JSON.stringify({
-            error: `Failed to check claim status: ${err?.message || 'Unknown error'}`,
+            error: `Failed to check claim status: ${sanitizeExternalError(err?.message)}`,
           });
         }
       }
@@ -2738,6 +2773,14 @@ async function executeTool(
 
         if (!patientId) return JSON.stringify({ error: 'patientId is required.' });
         if (typeof amount !== 'number' || amount <= 0) return JSON.stringify({ error: 'amount (in dollars) must be a positive number.' });
+        // Hard cap to prevent runaway invoices from LLM error or prompt injection.
+        // Anything above this should be created in the UI with an explicit human review.
+        const INVOICE_MAX_DOLLARS = 10000;
+        if (amount > INVOICE_MAX_DOLLARS) {
+          return JSON.stringify({
+            error: `Invoice amount $${amount.toFixed(2)} exceeds the assistant's $${INVOICE_MAX_DOLLARS.toLocaleString()} limit. Please create invoices over this amount through the billing UI.`,
+          });
+        }
         if (!description) return JSON.stringify({ error: 'description is required.' });
 
         const patient = await storage.getPatient(patientId);
@@ -2808,10 +2851,12 @@ async function executeTool(
           try {
             const stripe = stripeService.getStripeInstance();
             const intent = await stripe.paymentIntents.retrieve(invoiceId);
-            if (intent.metadata?.practiceId && intent.metadata.practiceId !== practiceId.toString()) {
-              return JSON.stringify({ error: 'Invoice belongs to a different practice.' });
+            // Require metadata to be present AND match. An intent without our
+            // metadata didn't originate from this app and must not be reused.
+            if (intent.metadata?.practiceId !== String(practiceId)) {
+              return JSON.stringify({ error: 'Invoice not found for this practice.' });
             }
-            if (intent.metadata?.patientId && intent.metadata.patientId !== patientId.toString()) {
+            if (intent.metadata?.patientId !== String(patientId)) {
               return JSON.stringify({ error: 'Invoice is for a different patient.' });
             }
             chargeAmountCents = intent.amount;
