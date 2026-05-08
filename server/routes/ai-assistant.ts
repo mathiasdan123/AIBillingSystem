@@ -41,9 +41,13 @@ const SONNET_TOOLS = new Set([
   'draft_appeal_letter',
   'suggest_claim_correction',
   'create_appointment',
+  'reschedule_appointment',
+  'cancel_appointment',
   'batch_eligibility_check',
   'review_underpayments',
   'draft_underpayment_dispute',
+  'send_patient_portal_invite',
+  'send_appointment_reminder',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -515,6 +519,75 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'reschedule_appointment',
+    description: 'Move an existing appointment to a new date and/or time. Use when the user wants to reschedule, move, or change the time of an appointment. Requires the appointment ID and the new date/time. Looks up the appointment to preserve duration unless overridden.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to reschedule' },
+        date: { type: 'string' as const, description: 'New date in YYYY-MM-DD format' },
+        time: { type: 'string' as const, description: 'New start time in HH:MM (24h) format' },
+        duration: { type: 'number' as const, description: 'Optional new duration in minutes; defaults to existing duration' },
+      },
+      required: ['appointmentId', 'date', 'time'],
+    },
+  },
+  {
+    name: 'cancel_appointment',
+    description: 'Cancel an existing appointment. Marks it as cancelled with a reason; does not delete it. Use when the user wants to cancel a session.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to cancel' },
+        reason: { type: 'string' as const, description: 'Cancellation reason (e.g., "patient request", "provider unavailable", "no-show")' },
+        notes: { type: 'string' as const, description: 'Optional free-text notes about the cancellation' },
+      },
+      required: ['appointmentId', 'reason'],
+    },
+  },
+  {
+    name: 'suggest_appointment_slot',
+    description: 'Find open appointment slots over the next N days based on existing scheduled appointments. Returns up to 5 suggested start times. Use when a user wants to know "when can I fit Jane in" or "find me an open slot next week". Considers existing scheduled (non-cancelled) appointments as conflicts.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        durationMinutes: { type: 'number' as const, description: 'Slot length in minutes (default 60)' },
+        daysAhead: { type: 'number' as const, description: 'How many days ahead to search (default 7, max 30)' },
+        startHour: { type: 'number' as const, description: 'Earliest hour of day to consider, 0-23 (default 9)' },
+        endHour: { type: 'number' as const, description: 'Latest hour to start a slot, 0-23 (default 17)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'send_patient_portal_invite',
+    description: 'Email a patient a magic-link invitation to access the patient portal. Use when a user asks to send/resend a portal link, invite a patient to the portal, or grant patient portal access. Provide either patientId or patientName.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to send the portal invite to' },
+        patientName: { type: 'string' as const, description: 'Patient name to look up (if ID not known)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'send_appointment_reminder',
+    description: 'Send an appointment reminder to a patient via email and/or SMS for a specific upcoming appointment. Use when a user asks to send/resend a reminder for a particular appointment.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'Appointment ID to send the reminder for' },
+        channel: {
+          type: 'string' as const,
+          enum: ['sms', 'email', 'both'],
+          description: 'Which channel to use. Default "both" — sends via every channel for which the patient has contact info and the practice has configured.',
+        },
+      },
+      required: ['appointmentId'],
+    },
+  },
+  {
     name: 'navigate_user',
     description: 'Direct the user to a specific page in the app. Use this to help them find the right place for what they want to do.',
     input_schema: {
@@ -865,6 +938,116 @@ async function executeTool(
           status: 'scheduled',
         });
         return JSON.stringify({ success: true, appointment: { id: appt.id, date: args.date, time: args.time, duration }, message: 'Appointment scheduled successfully.' });
+      }
+
+      case 'reschedule_appointment': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+
+        const existingStart = new Date(existing.startTime as unknown as string);
+        const existingEnd = new Date(existing.endTime as unknown as string);
+        const existingDurationMin = Math.max(15, Math.round((existingEnd.getTime() - existingStart.getTime()) / 60000));
+        const duration = (args.duration as number) || existingDurationMin;
+
+        const newStart = new Date(`${args.date}T${args.time}:00`);
+        if (isNaN(newStart.getTime())) {
+          return JSON.stringify({ error: 'Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).' });
+        }
+        const newEnd = new Date(newStart.getTime() + duration * 60000);
+        const updated = await storage.updateAppointment(apptId, {
+          startTime: newStart,
+          endTime: newEnd,
+        } as any);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: updated.id, date: args.date, time: args.time, duration },
+          message: `Appointment ${apptId} rescheduled to ${args.date} at ${args.time}.`,
+        });
+      }
+
+      case 'cancel_appointment': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (existing.status === 'cancelled') {
+          return JSON.stringify({ success: true, alreadyCancelled: true, message: `Appointment ${apptId} was already cancelled.` });
+        }
+        const reason = (args.reason as string) || 'cancelled via assistant';
+        const notes = args.notes as string | undefined;
+        const cancelled = await storage.cancelAppointment(apptId, reason, notes, userId);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: cancelled.id, status: cancelled.status },
+          message: `Appointment ${apptId} cancelled.`,
+        });
+      }
+
+      case 'suggest_appointment_slot': {
+        const duration = Math.max(15, (args.durationMinutes as number) || 60);
+        const daysAhead = Math.min(30, Math.max(1, (args.daysAhead as number) || 7));
+        const startHour = Math.min(23, Math.max(0, (args.startHour as number) ?? 9));
+        const endHour = Math.min(23, Math.max(startHour + 1, (args.endHour as number) ?? 17));
+
+        const now = new Date();
+        const rangeStart = new Date(now);
+        const rangeEnd = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+        const existingAppts = await storage.getAppointmentsByDateRange(practiceId, rangeStart, rangeEnd);
+
+        // Treat any non-cancelled appointment as a conflict.
+        const busy: Array<{ start: number; end: number }> = existingAppts
+          .filter((a: any) => a.status !== 'cancelled')
+          .map((a: any) => ({
+            start: new Date(a.startTime).getTime(),
+            end: new Date(a.endTime).getTime(),
+          }));
+
+        const overlaps = (s: number, e: number) => busy.some(b => s < b.end && e > b.start);
+
+        const suggestions: Array<{ date: string; time: string; iso: string }> = [];
+        const slotMs = duration * 60000;
+
+        for (let d = 0; d < daysAhead && suggestions.length < 5; d++) {
+          const day = new Date(now);
+          day.setDate(day.getDate() + d);
+          day.setHours(0, 0, 0, 0);
+
+          for (let hour = startHour; hour <= endHour - Math.ceil(duration / 60) && suggestions.length < 5; hour++) {
+            for (const minute of [0, 30]) {
+              const slotStart = new Date(day);
+              slotStart.setHours(hour, minute, 0, 0);
+              if (slotStart.getTime() < now.getTime() + 30 * 60000) continue; // at least 30 min in future
+              const slotEnd = new Date(slotStart.getTime() + slotMs);
+              if (slotEnd.getHours() > endHour || (slotEnd.getHours() === endHour && slotEnd.getMinutes() > 0)) continue;
+              if (overlaps(slotStart.getTime(), slotEnd.getTime())) continue;
+
+              const yyyy = slotStart.getFullYear();
+              const mm = String(slotStart.getMonth() + 1).padStart(2, '0');
+              const dd = String(slotStart.getDate()).padStart(2, '0');
+              const hh = String(slotStart.getHours()).padStart(2, '0');
+              const mi = String(slotStart.getMinutes()).padStart(2, '0');
+              suggestions.push({
+                date: `${yyyy}-${mm}-${dd}`,
+                time: `${hh}:${mi}`,
+                iso: slotStart.toISOString(),
+              });
+              if (suggestions.length >= 5) break;
+            }
+          }
+        }
+
+        return JSON.stringify({
+          success: true,
+          durationMinutes: duration,
+          searchedDays: daysAhead,
+          businessHours: `${startHour}:00 - ${endHour}:00`,
+          suggestions,
+          message: suggestions.length
+            ? `Found ${suggestions.length} open slot(s) over the next ${daysAhead} day(s).`
+            : `No open slots found in the next ${daysAhead} day(s) within ${startHour}:00-${endHour}:00.`,
+        });
       }
 
       case 'navigate_user': {
@@ -2000,6 +2183,172 @@ async function executeTool(
           message: assessment.worthDisputing
             ? 'Dispute letter drafted. Review and customize before sending to the payer. The letter references your contracted rate and identifies the specific adjustment codes that appear incorrect.'
             : 'I\'ve drafted a dispute letter, but note that the adjustments on this claim may be standard contractual adjustments. Review the analysis carefully before deciding to dispute.',
+        });
+      }
+
+      case 'send_patient_portal_invite': {
+        let patientId = args.patientId as number | undefined;
+
+        if (!patientId && args.patientName) {
+          const allPatients = await storage.getPatients(practiceId);
+          const match = allPatients.find((p: any) =>
+            `${p.firstName} ${p.lastName}`.toLowerCase().includes((args.patientName as string).toLowerCase()),
+          );
+          if (!match) return JSON.stringify({ error: `Patient "${args.patientName}" not found.` });
+          patientId = match.id;
+        }
+
+        if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID.' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        if (patient.practiceId !== practiceId) return JSON.stringify({ error: 'Patient does not belong to your practice.' });
+        if (!patient.email) return JSON.stringify({ error: `${patient.firstName} ${patient.lastName} has no email on file. Add an email before sending a portal invite.` });
+
+        // Reuse existing portal-invite plumbing (see server/routes/patients.ts /:id/send-portal-link)
+        let access = await storage.getPatientPortalAccess(patientId);
+        if (!access) {
+          access = await storage.createPatientPortalAccess(patientId, practiceId);
+        }
+        const magicLink = await storage.createMagicLink(patientId);
+
+        const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
+        const portalUrl = `${baseUrl}/portal/login/${magicLink.token}`;
+
+        const practice = await storage.getPractice(practiceId);
+        const practiceName = practice?.name || 'Your Healthcare Provider';
+
+        const { portalWelcome } = await import('../services/emailTemplates');
+        const { sendEmail } = await import('../services/emailService');
+
+        const { subject, html, text } = portalWelcome({
+          patientName: patient.firstName,
+          practiceName,
+          portalUrl,
+        });
+
+        const emailResult = await sendEmail({
+          to: patient.email,
+          subject,
+          html,
+          text,
+          fromName: practiceName,
+        });
+
+        if (!emailResult.success) {
+          return JSON.stringify({
+            error: `Portal link created but email failed: ${emailResult.error || 'unknown error'}`,
+            portalUrl,
+          });
+        }
+
+        return JSON.stringify({
+          success: true,
+          patient: `${patient.firstName} ${patient.lastName}`,
+          email: patient.email,
+          message: `Portal invitation sent to ${patient.email}.`,
+        });
+      }
+
+      case 'send_appointment_reminder': {
+        const appointmentId = args.appointmentId as number | undefined;
+        if (!appointmentId) return JSON.stringify({ error: 'appointmentId is required.' });
+
+        const appointment = await storage.getAppointment(appointmentId);
+        if (!appointment) return JSON.stringify({ error: 'Appointment not found.' });
+        if (appointment.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment does not belong to your practice.' });
+        if (!appointment.patientId) return JSON.stringify({ error: 'Appointment has no patient assigned.' });
+
+        const patient = await storage.getPatient(appointment.patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found for this appointment.' });
+
+        const practice = await storage.getPractice(practiceId);
+        const practiceName = practice?.name || 'Your Practice';
+
+        const channel = ((args.channel as string) || 'both').toLowerCase();
+        const wantEmail = channel === 'email' || channel === 'both';
+        const wantSms = channel === 'sms' || channel === 'both';
+
+        // Reuse existing reminder plumbing (see server/services/appointmentReminderService.ts)
+        const { sendAppointmentReminderSMS, isSMSConfigured } = await import('../services/smsService');
+        const { sendEmail } = await import('../services/emailService');
+        const { appointmentReminder } = await import('../services/emailTemplates');
+        const { isEmailConfigured } = await import('../email');
+
+        const startTime = new Date(appointment.startTime);
+        const appointmentTime = startTime.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+
+        let emailSent = false;
+        let smsSent = false;
+        const errors: string[] = [];
+
+        if (wantEmail && patient.email) {
+          if (!isEmailConfigured()) {
+            errors.push('Email not configured for this practice.');
+          } else {
+            const { subject, html, text } = appointmentReminder({
+              patientName: patient.firstName,
+              appointmentDate: startTime,
+              appointmentTime,
+              providerName: undefined,
+              practiceName,
+              practiceAddress: practice?.address || undefined,
+              practicePhone: practice?.phone || undefined,
+            });
+            const emailResult = await sendEmail({
+              to: patient.email,
+              subject,
+              html,
+              text,
+              fromName: practiceName,
+            });
+            emailSent = emailResult.success;
+            if (!emailResult.success) errors.push(`Email: ${emailResult.error || 'failed'}`);
+          }
+        }
+
+        if (wantSms && patient.phone) {
+          if (!isSMSConfigured()) {
+            errors.push('SMS not configured for this practice.');
+          } else {
+            const smsResult = await sendAppointmentReminderSMS(
+              patient.phone,
+              patient.firstName,
+              startTime,
+              practiceName,
+              practice?.phone || undefined,
+            );
+            smsSent = smsResult.success;
+            if (!smsResult.success) errors.push(`SMS: ${smsResult.error || 'failed'}`);
+          }
+        }
+
+        if (!emailSent && !smsSent) {
+          return JSON.stringify({
+            error: `Could not send reminder. ${errors.length ? errors.join(' ') : 'Patient has no email or phone on file for the requested channel.'}`,
+          });
+        }
+
+        if (emailSent || smsSent) {
+          try {
+            await storage.updateAppointment(appointmentId, { reminderSent: true });
+          } catch {
+            // non-fatal
+          }
+        }
+
+        return JSON.stringify({
+          success: true,
+          appointmentId,
+          patient: `${patient.firstName} ${patient.lastName}`,
+          emailSent,
+          smsSent,
+          warnings: errors.length ? errors : undefined,
+          message: `Reminder sent for appointment on ${startTime.toLocaleDateString()} at ${appointmentTime} (${[emailSent && 'email', smsSent && 'SMS'].filter(Boolean).join(' + ')}).`,
         });
       }
 
