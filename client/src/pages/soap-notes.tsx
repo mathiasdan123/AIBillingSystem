@@ -156,13 +156,42 @@ const ASSESSMENT_OPTIONS = {
   sensoryRegulation: ["Well-Regulated", "Needed Minimal Supports", "Required Frequent Supports", "Unable to Regulate"]
 };
 
-// Type for activity with full assessment
+// Speech-therapy assessment dimensions. ST sessions are evaluated on different
+// clinical dimensions than OT (cueing levels, accuracy, stimulability, carryover)
+// rather than strength / motor planning / sensory regulation. Only activities
+// in the "Speech Therapy" category render these.
+const ST_ASSESSMENT_OPTIONS = {
+  performance: ["Improved", "Stable", "Regression"],
+  cueingLevel: ["Independent", "Visual", "Verbal", "Tactile", "Modeled", "Hand-over-hand"],
+  accuracy: ["0-25%", "25-50%", "50-75%", "75-90%", "90-100%"],
+  stimulability: ["Yes", "Emerging", "No"],
+  carryover: ["Spontaneous", "Prompted", "Not yet"],
+};
+
+// Activity name prefix used for ST library items. Reliable because the seeded
+// ST entries all start with "ST -" (e.g. "ST - Speech, language, voice,
+// communication therapy"). When true, render ST dropdowns instead of OT.
+export function isStActivity(name: string): boolean {
+  return /^ST\s*-/.test(name.trim());
+}
+
+// Type for activity with full assessment. All fields are optional so a single
+// shape can hold either an OT-flavored assessment or an ST-flavored one. The
+// renderer picks which subset to show based on isStActivity(name). Existing
+// notes saved before ST fields existed will simply have ST fields undefined,
+// and vice versa — both round-trip through the JSONB column unchanged.
 interface ActivityAssessment {
-  performance: string;
-  assistance: string;
-  strength: string;
-  motorPlanning: string;
-  sensoryRegulation: string;
+  // OT dimensions
+  performance?: string;
+  assistance?: string;
+  strength?: string;
+  motorPlanning?: string;
+  sensoryRegulation?: string;
+  // ST dimensions (performance shared with OT above)
+  cueingLevel?: string;
+  accuracy?: string;
+  stimulability?: string;
+  carryover?: string;
 }
 
 interface ActivityWithAssessment {
@@ -175,7 +204,11 @@ const DEFAULT_ACTIVITY_ASSESSMENT: ActivityAssessment = {
   assistance: "",
   strength: "",
   motorPlanning: "",
-  sensoryRegulation: ""
+  sensoryRegulation: "",
+  cueingLevel: "",
+  accuracy: "",
+  stimulability: "",
+  carryover: "",
 };
 
 const PLAN_OPTIONS = [
@@ -622,7 +655,11 @@ export default function SoapNotes() {
   };
 
   // Update a specific assessment field for an activity
-  const updateActivityAssessment = (activityName: string, field: keyof ActivityAssessment, value: string) => {
+  const updateActivityAssessment = (
+    activityName: string,
+    field: keyof ActivityAssessment,
+    value: string,
+  ) => {
     setSelectedActivities(prev =>
       prev.map(a => a.name === activityName
         ? { ...a, assessment: { ...a.assessment, [field]: value } }
@@ -1445,7 +1482,7 @@ export default function SoapNotes() {
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                         <div>
                           <Label className="text-[10px] text-blue-600">Performance</Label>
-                          <Select value={applyToAllAssessment.performance} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, performance: v }))}>
+                          <Select value={applyToAllAssessment.performance ?? ""} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, performance: v }))}>
                             <SelectTrigger className="h-7 text-xs">
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
@@ -1458,7 +1495,7 @@ export default function SoapNotes() {
                         </div>
                         <div>
                           <Label className="text-[10px] text-blue-600">Assistance</Label>
-                          <Select value={applyToAllAssessment.assistance} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, assistance: v }))}>
+                          <Select value={applyToAllAssessment.assistance ?? ""} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, assistance: v }))}>
                             <SelectTrigger className="h-7 text-xs">
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
@@ -1471,7 +1508,7 @@ export default function SoapNotes() {
                         </div>
                         <div>
                           <Label className="text-[10px] text-blue-600">Strength</Label>
-                          <Select value={applyToAllAssessment.strength} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, strength: v }))}>
+                          <Select value={applyToAllAssessment.strength ?? ""} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, strength: v }))}>
                             <SelectTrigger className="h-7 text-xs">
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
@@ -1484,7 +1521,7 @@ export default function SoapNotes() {
                         </div>
                         <div>
                           <Label className="text-[10px] text-blue-600">Motor Planning</Label>
-                          <Select value={applyToAllAssessment.motorPlanning} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, motorPlanning: v }))}>
+                          <Select value={applyToAllAssessment.motorPlanning ?? ""} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, motorPlanning: v }))}>
                             <SelectTrigger className="h-7 text-xs">
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
@@ -1497,7 +1534,7 @@ export default function SoapNotes() {
                         </div>
                         <div>
                           <Label className="text-[10px] text-blue-600">Sensory Reg.</Label>
-                          <Select value={applyToAllAssessment.sensoryRegulation} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, sensoryRegulation: v }))}>
+                          <Select value={applyToAllAssessment.sensoryRegulation ?? ""} onValueChange={(v) => setApplyToAllAssessment(prev => ({ ...prev, sensoryRegulation: v }))}>
                             <SelectTrigger className="h-7 text-xs">
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
@@ -1531,73 +1568,143 @@ export default function SoapNotes() {
                               <span className="text-xs">Remove</span>
                             </Button>
                           </div>
-                          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                            <div>
-                              <Label className="text-[10px] text-green-600">Performance</Label>
-                              <Select value={activity.assessment.performance} onValueChange={(v) => updateActivityAssessment(activity.name, 'performance', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-card">
-                                  <SelectValue placeholder="Select" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {ASSESSMENT_OPTIONS.performance.map((o) => (
-                                    <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                          {isStActivity(activity.name) ? (
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                              <div>
+                                <Label className="text-[10px] text-green-600">Performance</Label>
+                                <Select value={activity.assessment.performance ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'performance', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ST_ASSESSMENT_OPTIONS.performance.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Cueing Level</Label>
+                                <Select value={activity.assessment.cueingLevel ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'cueingLevel', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ST_ASSESSMENT_OPTIONS.cueingLevel.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Accuracy %</Label>
+                                <Select value={activity.assessment.accuracy ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'accuracy', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ST_ASSESSMENT_OPTIONS.accuracy.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Stimulability</Label>
+                                <Select value={activity.assessment.stimulability ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'stimulability', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ST_ASSESSMENT_OPTIONS.stimulability.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Carryover</Label>
+                                <Select value={activity.assessment.carryover ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'carryover', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ST_ASSESSMENT_OPTIONS.carryover.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             </div>
-                            <div>
-                              <Label className="text-[10px] text-green-600">Assistance</Label>
-                              <Select value={activity.assessment.assistance} onValueChange={(v) => updateActivityAssessment(activity.name, 'assistance', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-card">
-                                  <SelectValue placeholder="Select" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {ASSESSMENT_OPTIONS.assistance.map((o) => (
-                                    <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                          ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                              <div>
+                                <Label className="text-[10px] text-green-600">Performance</Label>
+                                <Select value={activity.assessment.performance ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'performance', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ASSESSMENT_OPTIONS.performance.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Assistance</Label>
+                                <Select value={activity.assessment.assistance ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'assistance', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ASSESSMENT_OPTIONS.assistance.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Strength</Label>
+                                <Select value={activity.assessment.strength ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'strength', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ASSESSMENT_OPTIONS.strength.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Motor Planning</Label>
+                                <Select value={activity.assessment.motorPlanning ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'motorPlanning', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ASSESSMENT_OPTIONS.motorPlanning.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-green-600">Sensory Reg.</Label>
+                                <Select value={activity.assessment.sensoryRegulation ?? ""} onValueChange={(v) => updateActivityAssessment(activity.name, 'sensoryRegulation', v)}>
+                                  <SelectTrigger className="h-7 text-xs bg-card">
+                                    <SelectValue placeholder="Select" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ASSESSMENT_OPTIONS.sensoryRegulation.map((o) => (
+                                      <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             </div>
-                            <div>
-                              <Label className="text-[10px] text-green-600">Strength</Label>
-                              <Select value={activity.assessment.strength} onValueChange={(v) => updateActivityAssessment(activity.name, 'strength', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-card">
-                                  <SelectValue placeholder="Select" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {ASSESSMENT_OPTIONS.strength.map((o) => (
-                                    <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div>
-                              <Label className="text-[10px] text-green-600">Motor Planning</Label>
-                              <Select value={activity.assessment.motorPlanning} onValueChange={(v) => updateActivityAssessment(activity.name, 'motorPlanning', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-card">
-                                  <SelectValue placeholder="Select" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {ASSESSMENT_OPTIONS.motorPlanning.map((o) => (
-                                    <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div>
-                              <Label className="text-[10px] text-green-600">Sensory Reg.</Label>
-                              <Select value={activity.assessment.sensoryRegulation} onValueChange={(v) => updateActivityAssessment(activity.name, 'sensoryRegulation', v)}>
-                                <SelectTrigger className="h-7 text-xs bg-card">
-                                  <SelectValue placeholder="Select" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {ASSESSMENT_OPTIONS.sensoryRegulation.map((o) => (
-                                    <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
+                          )}
                         </div>
                       ))}
                     </div>
