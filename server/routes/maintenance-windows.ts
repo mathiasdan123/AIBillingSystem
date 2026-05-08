@@ -15,7 +15,7 @@
  */
 
 import { Router, type Response } from 'express';
-import { and, desc, eq, isNull, lte, gte, or } from 'drizzle-orm';
+import { and, desc, eq, isNull, lte, gte, or, sql } from 'drizzle-orm';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
 import { db } from '../db';
@@ -62,7 +62,12 @@ router.get('/active', isAuthenticated, async (req: any, res: Response) => {
           gte(maintenanceWindows.endsAt, now),
         ),
       )
-      .orderBy(desc(maintenanceWindows.severity), maintenanceWindows.endsAt);
+      // Severity is varchar; ASCII-desc would put "warning" before "critical".
+      // Use an explicit rank so critical surfaces first, then warning, then info.
+      .orderBy(
+        sql`CASE ${maintenanceWindows.severity} WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END`,
+        maintenanceWindows.endsAt,
+      );
 
     res.json(rows);
   } catch (error) {
