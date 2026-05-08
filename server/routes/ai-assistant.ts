@@ -797,14 +797,13 @@ const assistantTools: Anthropic.Tool[] = [
   },
   {
     name: 'create_patient_invoice',
-    description: 'Create an invoice for a patient (typically for a copay, coinsurance, or self-pay balance) via Stripe. Amount is in dollars. Optionally link to an existing claim. Returns the invoice (Stripe payment intent) details.',
+    description: 'Create an invoice for a patient (typically for a copay, coinsurance, or self-pay balance) via Stripe. Amount is in dollars and capped at $10,000 from the assistant. Optionally link to an existing claim. Returns the Stripe payment intent details.',
     input_schema: {
       type: 'object' as const,
       properties: {
         patientId: { type: 'number' as const, description: 'Patient ID to invoice' },
-        amount: { type: 'number' as const, description: 'Invoice amount in dollars' },
+        amount: { type: 'number' as const, description: 'Invoice amount in dollars (max 10000)' },
         description: { type: 'string' as const, description: 'Invoice description (e.g., "Copay for 03/15 session")' },
-        dueDate: { type: 'string' as const, description: 'Optional due date in YYYY-MM-DD format' },
         claimId: { type: 'number' as const, description: 'Optional claim ID to link this invoice to' },
       },
       required: ['patientId', 'amount', 'description'],
@@ -2068,6 +2067,9 @@ async function executeTool(
         }
 
         let candidatePatientIds: number[] = [];
+        // Cache of full patient records when we have them, so the payer filter
+        // doesn't have to refetch.
+        let candidateRecords: Map<number, any> | null = null;
 
         if (appointmentsOnly) {
           const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
@@ -2080,19 +2082,28 @@ async function executeTool(
           // All active (non-deleted) patients for this practice — getPatients already scopes to practiceId
           const allPatients = await storage.getPatients(practiceId);
           candidatePatientIds = allPatients.map((p: any) => p.id as number);
+          candidateRecords = new Map(allPatients.map((p: any) => [p.id, p]));
         }
 
-        // Apply payer filter if provided. We need patient records to filter by insuranceProvider.
+        // Enforce the patient-count cap before doing any per-patient work.
+        if (candidatePatientIds.length > 200) {
+          return JSON.stringify({
+            error: `Too many patients matched (${candidatePatientIds.length}). Maximum is 200 per call. Narrow the date range or payerName filter.`,
+          });
+        }
+
+        // Apply payer filter if provided. Look up records in one batch when needed.
         let filteredIds = candidatePatientIds;
         if (payerNameFilter) {
-          const matched: number[] = [];
-          for (const pid of candidatePatientIds) {
-            const pat = await storage.getPatient(pid);
-            if (!pat || pat.practiceId !== practiceId) continue;
-            const provider = (pat.insuranceProvider || '').toLowerCase();
-            if (provider.includes(payerNameFilter)) matched.push(pid);
+          if (!candidateRecords) {
+            candidateRecords = await storage.getPatientsByIds(candidatePatientIds);
           }
-          filteredIds = matched;
+          filteredIds = candidatePatientIds.filter((pid: number) => {
+            const pat = candidateRecords!.get(pid);
+            if (!pat || pat.practiceId !== practiceId) return false;
+            const provider = (pat.insuranceProvider || '').toLowerCase();
+            return provider.includes(payerNameFilter);
+          });
         }
 
         if (filteredIds.length === 0) {
@@ -2103,12 +2114,6 @@ async function executeTool(
             errors: 0,
             results: [],
             message: `No patients matched the filter (range ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}${payerNameFilter ? `, payer contains "${payerNameFilter}"` : ''}, appointmentsOnly=${appointmentsOnly}).`,
-          });
-        }
-
-        if (filteredIds.length > 200) {
-          return JSON.stringify({
-            error: `Too many patients matched (${filteredIds.length}). Maximum is 200 per call. Narrow the date range or payerName filter.`,
           });
         }
 
@@ -2670,8 +2675,7 @@ async function executeTool(
 
         let insurance: any = null;
         if (claim.insuranceId) {
-          const insurances = await storage.getInsurances();
-          insurance = insurances.find((i: any) => i.id === claim.insuranceId);
+          insurance = await storage.getInsurance(claim.insuranceId);
         }
 
         if (!patient) {
@@ -2817,7 +2821,6 @@ async function executeTool(
             patientName: `${patient.firstName} ${patient.lastName}`,
             patientId,
             claimId: args.claimId || null,
-            dueDate: (args.dueDate as string) || null,
           },
           message: `Invoice for $${amount.toFixed(2)} created for ${patient.firstName} ${patient.lastName}. Use send_patient_payment_link to send the patient a payment link.`,
         });
@@ -3306,6 +3309,12 @@ async function executeTool(
         const startDate = args.startDate
           ? new Date(String(args.startDate))
           : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          return JSON.stringify({ error: 'Invalid startDate or endDate. Use YYYY-MM-DD.' });
+        }
+        if (endDate.getTime() < startDate.getTime()) {
+          return JSON.stringify({ error: 'endDate must be on or after startDate.' });
+        }
         // Normalize end-of-day for inclusive end.
         const endInclusive = new Date(endDate);
         endInclusive.setHours(23, 59, 59, 999);
@@ -3382,33 +3391,32 @@ async function executeTool(
         }
 
         // Claims submitted + total billed: claims attribute to a therapist
-        // via the linked treatment session. We count claims with status in
-        // ('submitted','paid','denied','appeal','optimized') — anything past
-        // draft — using submittedAt when present, otherwise createdAt.
+        // via the linked treatment session. We count claims past draft status
+        // using submittedAt when present, otherwise createdAt. Date filtering
+        // is pushed to SQL so practices with years of claims don't load the
+        // entire history into memory.
         const claimRows = await db
           .select({
             sessionTherapistId: treatmentSessions.therapistId,
             status: claims.status,
             totalAmount: claims.totalAmount,
-            submittedAt: claims.submittedAt,
-            createdAt: claims.createdAt,
           })
           .from(claims)
           .innerJoin(treatmentSessions, eq(claims.sessionId, treatmentSessions.id))
           .where(and(
             eq(claims.practiceId, practiceId),
             inArray(treatmentSessions.therapistId, providerIds),
+            sql`${claims.status} <> 'draft'`,
+            or(
+              and(isNotNull(claims.submittedAt), gte(claims.submittedAt, startDate), lte(claims.submittedAt, endInclusive)),
+              and(isNull(claims.submittedAt), gte(claims.createdAt, startDate), lte(claims.createdAt, endInclusive)),
+            ),
           ));
         const claimsSubmitted = new Map<string, number>();
         const totalBilled = new Map<string, number>();
         for (const r of claimRows) {
           const tid = (r as any).sessionTherapistId;
           if (!tid) continue;
-          if (r.status === 'draft') continue;
-          const eventDate: Date | null = r.submittedAt
-            ? new Date(r.submittedAt as any)
-            : r.createdAt ? new Date(r.createdAt as any) : null;
-          if (!eventDate || eventDate < startDate || eventDate > endInclusive) continue;
           claimsSubmitted.set(tid, (claimsSubmitted.get(tid) || 0) + 1);
           const amt = r.totalAmount ? Number(r.totalAmount) : 0;
           if (!Number.isNaN(amt)) totalBilled.set(tid, (totalBilled.get(tid) || 0) + amt);
