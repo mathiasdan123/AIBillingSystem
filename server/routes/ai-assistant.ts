@@ -13,6 +13,7 @@ import { isAuthenticated } from '../replitAuth';
 import { getUserPracticeContext } from '../services/practiceContext';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import { assessUnderpayment, analyzeAdjustment } from '../services/underpaymentAnalyzer';
+import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import {
   remittanceAdvice,
@@ -20,8 +21,16 @@ import {
   claims,
   feeSchedules,
   patients,
+  patientPlanDocuments,
+  patientPlanBenefits,
+  appeals,
+  insurances,
+  appointments,
+  soapNotes,
+  treatmentSessions,
+  users,
 } from '@shared/schema';
-import { eq, and, desc, sql, ilike, lte, isNotNull } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike, lte, gte, isNotNull, inArray, isNull, or } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
@@ -44,10 +53,18 @@ const SONNET_TOOLS = new Set([
   'reschedule_appointment',
   'cancel_appointment',
   'batch_eligibility_check',
+  'bulk_eligibility_by_filter',
   'review_underpayments',
   'draft_underpayment_dispute',
   'send_patient_portal_invite',
   'send_appointment_reminder',
+  'check_claim_status',
+  'create_patient_invoice',
+  'send_patient_payment_link',
+  'summarize_recent_eobs',
+  'check_plan_document_status',
+  'get_appeal_outcomes',
+  'get_provider_productivity',
 ]);
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -713,6 +730,32 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'bulk_eligibility_by_filter',
+    description: 'Run insurance eligibility checks for a flexible set of patients filtered by date range and/or payer name. Generalization of batch_eligibility_check. Use when the user asks to check eligibility for a specific date range, a specific payer (e.g. "all my Aetna patients next month"), or all active patients on a payer regardless of appointments. Hard caps: date range max 60 days, max 200 patients per call.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        startDate: {
+          type: 'string' as const,
+          description: 'Start date for appointment range (YYYY-MM-DD). Defaults to today. Ignored when appointmentsOnly is false.',
+        },
+        endDate: {
+          type: 'string' as const,
+          description: 'End date for appointment range (YYYY-MM-DD), inclusive. Defaults to today + 7 days. Range may not exceed 60 days.',
+        },
+        payerName: {
+          type: 'string' as const,
+          description: 'Optional case-insensitive substring to filter by patient insurance carrier name (e.g. "aetna", "blue cross").',
+        },
+        appointmentsOnly: {
+          type: 'boolean' as const,
+          description: 'If true (default), only check patients with non-cancelled appointments in the date range. If false, check all active patients matching the payerName filter (date range ignored).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'review_underpayments',
     description: 'Review all claims where insurance paid less than the expected reimbursement (from the fee schedule). Analyzes CAS adjustment reason codes to determine whether underpayments are standard contractual adjustments, patient responsibility, or true underpayments worth disputing. Use when a user asks about underpayments, short pays, insurance paying less than expected, or wants to review ERA adjustments.',
     input_schema: {
@@ -740,10 +783,218 @@ const assistantTools: Anthropic.Tool[] = [
       required: ['claimId'],
     },
   },
+  {
+    name: 'check_claim_status',
+    description: 'Check the live status of a specific submitted claim by polling the clearinghouse (Stedi) via X12 276/277. Returns the current payer-reported status (paid, pending, denied, rejected, etc.), the 277CA category code and description, last status date, and any payment/adjudication amounts. Use when a user asks for the latest status of a claim, whether a claim has paid, or wants to follow up on a submitted claim. Provide either claimId (preferred) or claimNumber.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: { type: 'number' as const, description: 'Internal claim ID (preferred).' },
+        claimNumber: { type: 'string' as const, description: 'Claim number (e.g. "CLM-...") — used if claimId is not provided.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'create_patient_invoice',
+    description: 'Create an invoice for a patient (typically for a copay, coinsurance, or self-pay balance) via Stripe. Amount is in dollars and capped at $10,000 from the assistant. Optionally link to an existing claim. Returns the Stripe payment intent details.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to invoice' },
+        amount: { type: 'number' as const, description: 'Invoice amount in dollars (max 10000)' },
+        description: { type: 'string' as const, description: 'Invoice description (e.g., "Copay for 03/15 session")' },
+        claimId: { type: 'number' as const, description: 'Optional claim ID to link this invoice to' },
+      },
+      required: ['patientId', 'amount', 'description'],
+    },
+  },
+  {
+    name: 'send_patient_payment_link',
+    description: 'Send a Stripe payment link to a patient for a specific invoice or arbitrary amount. Provide either invoiceId (to charge an existing invoice amount) or amount (in dollars). Returns the Stripe-hosted payment URL the patient can use to pay.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID' },
+        invoiceId: { type: 'string' as const, description: 'Existing invoice / payment intent ID to charge for (alternative to amount)' },
+        amount: { type: 'number' as const, description: 'Amount to charge in dollars (alternative to invoiceId)' },
+        message: { type: 'string' as const, description: 'Optional message / description shown on the payment page' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
+    name: 'summarize_recent_eobs',
+    description: 'Summarize EOBs (Explanation of Benefits) that have been uploaded to the practice, with the accumulator data extracted from each (in-network and out-of-network deductible/out-of-pocket progress, accumulator as-of date) and any recent claim line items the EOB listed. READ-ONLY: this tool does not accept file uploads — it reports on EOBs already uploaded through the patient/practice document upload flow. Use when asked about EOBs on file, accumulator status, deductible progress, or recent payer payment history.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: {
+          type: 'number' as const,
+          description: 'Optional patient ID to filter EOBs to a single patient.',
+        },
+        daysBack: {
+          type: 'number' as const,
+          description: 'Number of days to look back for uploaded EOBs. Defaults to 30.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'check_plan_document_status',
+    description: 'Check whether a specific patient has an SBC / plan document on file, what fields were extracted from it (deductibles, coinsurance, visit limits, prior auth, mental health parity, telehealth coverage), and what important benefit fields are missing. READ-ONLY: does not accept uploads — patient/practice still uploads documents through the existing UI. Use when asked about plan documents, SBC, benefit details on file, or what we know about a patient\'s plan coverage.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: {
+          type: 'number' as const,
+          description: 'The ID of the patient to check plan-document status for.',
+        },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
+    name: 'get_appeal_outcomes',
+    description: 'Report appeal outcomes history for the practice. Returns total appeals, overall win rate, win rate by payer, win rate by denial reason/category, and the top winning argument patterns. Use when a user asks about appeal track record, appeal success rate, what arguments work, or which payers we win against. Also useful before drafting a new appeal so the assistant can cite past wins.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        payerName: {
+          type: 'string' as const,
+          description: 'Optional payer/insurance name filter (matched case-insensitively, partial match).',
+        },
+        daysBack: {
+          type: 'number' as const,
+          description: 'How many days of history to include. Defaults to 365.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_provider_productivity',
+    description: 'Per-provider productivity report over a date range. Returns, for each provider in the practice: appointments completed, SOAP notes written, count of unsigned/incomplete notes, claims submitted, and total billed amount. Use when a user asks about productivity, provider stats, who is documenting, who is billing, or wants to compare therapists.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        startDate: {
+          type: 'string' as const,
+          description: 'Start date (YYYY-MM-DD). Defaults to 30 days ago.',
+        },
+        endDate: {
+          type: 'string' as const,
+          description: 'End date (YYYY-MM-DD). Defaults to today.',
+        },
+        providerId: {
+          type: 'string' as const,
+          description: 'Optional single provider/therapist user ID to scope the report to.',
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
+// Strip likely PHI from clearinghouse / API error strings before they reach the
+// assistant transcript. Stedi 270/271/276/277 errors echo the request payload,
+// which contains member ID, DOB, and patient name. The assistant transcript is
+// persisted, so raw error text is HIPAA-relevant.
+export function sanitizeExternalError(raw: string | undefined | null): string {
+  if (!raw) return 'unknown error';
+  let s = String(raw);
+  // SSN-like
+  s = s.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[redacted-id]');
+  // ISO and US dates (DOB / DOS)
+  s = s.replace(/\b\d{4}-\d{2}-\d{2}\b/g, '[redacted-date]');
+  s = s.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, '[redacted-date]');
+  // Long alphanumeric tokens (member IDs, policy numbers)
+  s = s.replace(/\b[A-Z0-9]{8,}\b/g, '[redacted-id]');
+  // Cap length so a verbose error can't dump a full payload into the transcript
+  if (s.length > 200) s = s.slice(0, 200) + '…';
+  return s;
+}
+
+function sanitizeExternalErrors(arr: string[] | undefined | null, max = 3): string[] {
+  if (!arr || arr.length === 0) return [];
+  return arr.slice(0, max).map(sanitizeExternalError);
+}
+
+// Shared helper: run eligibility checks for a list of patient IDs scoped to a practice.
+// Used by both batch_eligibility_check and bulk_eligibility_by_filter.
+type BulkEligibilityResult = {
+  checked: number;
+  eligible: number;
+  ineligible: number;
+  errors: number;
+  results: Array<{ patientName: string; insurance: string | null; status: string; eligible: boolean | null; error?: string }>;
+};
+
+async function runBulkEligibility(
+  practiceId: number,
+  patientIds: number[],
+): Promise<BulkEligibilityResult | { error: string }> {
+  const { checkEligibility: stediCheckEligibility, isStediConfigured, PAYER_IDS: payerIds } = await import('../services/stediService');
+  if (!isStediConfigured()) {
+    return { error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' };
+  }
+
+  const practice = await storage.getPractice(practiceId);
+
+  const results: BulkEligibilityResult['results'] = [];
+  let eligible = 0;
+  let ineligible = 0;
+  let errors = 0;
+
+  for (let i = 0; i < patientIds.length; i++) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, 200));
+    const pid = patientIds[i];
+    try {
+      const pat = await storage.getPatient(pid);
+      if (!pat) { errors++; results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not found' }); continue; }
+      // Guard: ensure patient belongs to this practice (defense in depth)
+      if (pat.practiceId !== practiceId) {
+        errors++;
+        results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not in practice' });
+        continue;
+      }
+      if (!pat.insuranceProvider && !pat.insuranceId && !pat.policyNumber) {
+        errors++;
+        results.push({ patientName: `${pat.firstName} ${pat.lastName}`, insurance: null, status: 'skipped', eligible: null, error: 'No insurance info' });
+        continue;
+      }
+
+      const insName = (pat.insuranceProvider || '').toLowerCase();
+      const pId = payerIds[insName] || pat.insuranceId || '60054';
+      const eligRes = await stediCheckEligibility({
+        payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
+        provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
+        subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
+      }, practiceId);
+
+      const isElig = eligRes.status === 'active';
+      if (isElig) eligible++;
+      else if (eligRes.status === 'inactive') ineligible++;
+      else errors++;
+
+      results.push({
+        patientName: `${pat.firstName} ${pat.lastName}`,
+        insurance: pat.insuranceProvider || null,
+        status: eligRes.status,
+        eligible: isElig,
+      });
+    } catch (err) {
+      errors++;
+      results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: sanitizeExternalError(err instanceof Error ? err.message : String(err)) });
+    }
+  }
+
+  return { checked: patientIds.length, eligible, ineligible, errors, results };
+}
+
 // Execute tool calls against the database
-async function executeTool(
+export async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
   practiceId: number,
@@ -1761,14 +2012,6 @@ async function executeTool(
       }
 
       case 'batch_eligibility_check': {
-        const { checkEligibility: stediCheckEligibility, isStediConfigured, PAYER_IDS: payerIds } = await import('../services/stediService');
-
-        if (!isStediConfigured()) {
-          return JSON.stringify({ error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' });
-        }
-
-        const practice = await storage.getPractice(practiceId);
-
         // Get appointments for the next 7 days
         const now = new Date();
         const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -1779,7 +2022,7 @@ async function executeTool(
           upcomingAppts
             .filter((a: any) => a.status !== 'cancelled' && a.patientId)
             .map((a: any) => a.patientId!)
-        ));
+        )) as number[];
 
         if (uniquePatientIds.length === 0) {
           return JSON.stringify({
@@ -1792,56 +2035,99 @@ async function executeTool(
           });
         }
 
-        const batchResults: Array<{ patientName: string; insurance: string | null; status: string; eligible: boolean | null; error?: string }> = [];
-        let batchEligible = 0;
-        let batchIneligible = 0;
-        let batchErrors = 0;
+        const result = await runBulkEligibility(practiceId, uniquePatientIds);
+        if ('error' in result) return JSON.stringify({ error: result.error });
+        return JSON.stringify({
+          ...result,
+          message: `Checked ${result.checked} patient(s) with upcoming appointments. ${result.eligible} eligible, ${result.ineligible} ineligible, ${result.errors} error(s)/skipped.`,
+        });
+      }
 
-        for (let i = 0; i < uniquePatientIds.length; i++) {
-          if (i > 0) await new Promise((resolve) => setTimeout(resolve, 200));
-          const pid = uniquePatientIds[i];
-          try {
-            const pat = await storage.getPatient(pid);
-            if (!pat) { batchErrors++; batchResults.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not found' }); continue; }
-            if (!pat.insuranceProvider && !pat.insuranceId && !pat.policyNumber) {
-              batchErrors++;
-              batchResults.push({ patientName: `${pat.firstName} ${pat.lastName}`, insurance: null, status: 'skipped', eligible: null, error: 'No insurance info' });
-              continue;
-            }
+      case 'bulk_eligibility_by_filter': {
+        const startDateStr = typeof args.startDate === 'string' ? args.startDate : null;
+        const endDateStr = typeof args.endDate === 'string' ? args.endDate : null;
+        const payerNameFilter = typeof args.payerName === 'string' ? args.payerName.trim().toLowerCase() : '';
+        const appointmentsOnly = args.appointmentsOnly === undefined ? true : Boolean(args.appointmentsOnly);
 
-            const insName = (pat.insuranceProvider || '').toLowerCase();
-            const pId = payerIds[insName] || pat.insuranceId || '60054';
-            const eligRes = await stediCheckEligibility({
-              payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
-              provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
-              subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
-              // serviceTypeCodes omitted — resolved from practice.specialty by stediService.checkEligibility
-            }, practiceId);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const start = startDateStr ? new Date(startDateStr + 'T00:00:00') : today;
+        const defaultEnd = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const end = endDateStr ? new Date(endDateStr + 'T23:59:59') : defaultEnd;
 
-            const isElig = eligRes.status === 'active';
-            if (isElig) batchEligible++;
-            else if (eligRes.status === 'inactive') batchIneligible++;
-            else batchErrors++;
-
-            batchResults.push({
-              patientName: `${pat.firstName} ${pat.lastName}`,
-              insurance: pat.insuranceProvider || null,
-              status: eligRes.status,
-              eligible: isElig,
-            });
-          } catch (batchErr) {
-            batchErrors++;
-            batchResults.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: batchErr instanceof Error ? batchErr.message : String(batchErr) });
-          }
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          return JSON.stringify({ error: 'Invalid startDate or endDate. Use YYYY-MM-DD.' });
+        }
+        if (end.getTime() < start.getTime()) {
+          return JSON.stringify({ error: 'endDate must be on or after startDate.' });
+        }
+        const rangeDays = Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+        if (rangeDays > 60) {
+          return JSON.stringify({ error: `Date range too large (${rangeDays} days). Maximum is 60 days.` });
         }
 
+        let candidatePatientIds: number[] = [];
+        // Cache of full patient records when we have them, so the payer filter
+        // doesn't have to refetch.
+        let candidateRecords: Map<number, any> | null = null;
+
+        if (appointmentsOnly) {
+          const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
+          candidatePatientIds = Array.from(new Set(
+            appts
+              .filter((a: any) => a.status !== 'cancelled' && a.patientId)
+              .map((a: any) => a.patientId as number)
+          ));
+        } else {
+          // All active (non-deleted) patients for this practice — getPatients already scopes to practiceId
+          const allPatients = await storage.getPatients(practiceId);
+          candidatePatientIds = allPatients.map((p: any) => p.id as number);
+          candidateRecords = new Map(allPatients.map((p: any) => [p.id, p]));
+        }
+
+        // Enforce the patient-count cap before doing any per-patient work.
+        if (candidatePatientIds.length > 200) {
+          return JSON.stringify({
+            error: `Too many patients matched (${candidatePatientIds.length}). Maximum is 200 per call. Narrow the date range or payerName filter.`,
+          });
+        }
+
+        // Apply payer filter if provided. Look up records in one batch when needed.
+        let filteredIds = candidatePatientIds;
+        if (payerNameFilter) {
+          if (!candidateRecords) {
+            candidateRecords = await storage.getPatientsByIds(candidatePatientIds);
+          }
+          filteredIds = candidatePatientIds.filter((pid: number) => {
+            const pat = candidateRecords!.get(pid);
+            if (!pat || pat.practiceId !== practiceId) return false;
+            const provider = (pat.insuranceProvider || '').toLowerCase();
+            return provider.includes(payerNameFilter);
+          });
+        }
+
+        if (filteredIds.length === 0) {
+          return JSON.stringify({
+            checked: 0,
+            eligible: 0,
+            ineligible: 0,
+            errors: 0,
+            results: [],
+            message: `No patients matched the filter (range ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}${payerNameFilter ? `, payer contains "${payerNameFilter}"` : ''}, appointmentsOnly=${appointmentsOnly}).`,
+          });
+        }
+
+        const result = await runBulkEligibility(practiceId, filteredIds);
+        if ('error' in result) return JSON.stringify({ error: result.error });
         return JSON.stringify({
-          checked: uniquePatientIds.length,
-          eligible: batchEligible,
-          ineligible: batchIneligible,
-          errors: batchErrors,
-          results: batchResults,
-          message: `Checked ${uniquePatientIds.length} patient(s) with upcoming appointments. ${batchEligible} eligible, ${batchIneligible} ineligible, ${batchErrors} error(s)/skipped.`,
+          ...result,
+          filters: {
+            startDate: start.toISOString().slice(0, 10),
+            endDate: end.toISOString().slice(0, 10),
+            payerName: payerNameFilter || null,
+            appointmentsOnly,
+          },
+          message: `Checked ${result.checked} patient(s). ${result.eligible} eligible, ${result.ineligible} ineligible, ${result.errors} error(s)/skipped.`,
         });
       }
 
@@ -2349,6 +2635,812 @@ async function executeTool(
           smsSent,
           warnings: errors.length ? errors : undefined,
           message: `Reminder sent for appointment on ${startTime.toLocaleDateString()} at ${appointmentTime} (${[emailSent && 'email', smsSent && 'SMS'].filter(Boolean).join(' + ')}).`,
+        });
+      }
+
+      case 'check_claim_status': {
+        const claimIdArg = args.claimId as number | undefined;
+        const claimNumberArg = args.claimNumber as string | undefined;
+
+        if (!claimIdArg && !claimNumberArg) {
+          return JSON.stringify({ error: 'Please provide a claimId or claimNumber.' });
+        }
+
+        // Resolve claim
+        let claim: any | undefined;
+        if (claimIdArg) {
+          claim = await storage.getClaim(claimIdArg);
+        } else if (claimNumberArg) {
+          const allClaims = await storage.getClaims(practiceId, { limit: 5000 });
+          claim = allClaims.find((c: any) => c.claimNumber === claimNumberArg);
+        }
+
+        if (!claim) {
+          return JSON.stringify({ error: `Claim not found.` });
+        }
+
+        // Practice ownership check
+        if (claim.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Claim does not belong to this practice.' });
+        }
+
+        if (claim.status === 'draft') {
+          return JSON.stringify({
+            error: 'This claim is still in draft status and has not been submitted yet. There is no clearinghouse status to check.',
+          });
+        }
+
+        const patient = await storage.getPatient(claim.patientId);
+        const practice = await storage.getPractice(practiceId);
+
+        let insurance: any = null;
+        if (claim.insuranceId) {
+          insurance = await storage.getInsurance(claim.insuranceId);
+        }
+
+        if (!patient) {
+          return JSON.stringify({ error: 'Patient record for this claim is missing.' });
+        }
+
+        const stediService = await import('../services/stediService');
+        const stediKeyInfo = await stediService.getStediApiKeyForPractice(practiceId).catch(() => null);
+        const stediApiKey = stediKeyInfo?.apiKey || process.env.STEDI_API_KEY;
+
+        if (!stediApiKey) {
+          return JSON.stringify({
+            error: 'Clearinghouse (Stedi) is not configured. Status check unavailable.',
+          });
+        }
+
+        try {
+          const lineItems = await storage.getClaimLineItems(claim.id);
+          const dateOfService = lineItems[0]?.dateOfService || new Date().toISOString().split('T')[0];
+
+          // Resolve payer trading-partner ID
+          const payerRouting = await stediService.resolvePayerId(
+            insurance?.name || patient.insuranceProvider || '',
+            patient.insuranceProvider || null,
+            insurance?.payerCode || null,
+          );
+
+          const statusResult = await stediService.checkClaimStatus(
+            {
+              claimId: claim.claimNumber || `CLM${claim.id}`,
+              payer: { id: payerRouting.tradingPartnerId },
+              provider: {
+                npi: practice?.npi || '',
+                taxId: practice?.taxId || '',
+              },
+              subscriber: {
+                memberId: patient.insuranceId || patient.policyNumber || '',
+                firstName: patient.firstName,
+                lastName: patient.lastName,
+                dateOfBirth: patient.dateOfBirth || '',
+              },
+              dateOfService,
+              claimAmount: parseFloat(String(claim.totalAmount)),
+            },
+            practiceId,
+          );
+
+          if (statusResult.errors && statusResult.errors.length > 0 && statusResult.status === 'unknown') {
+            // Log the unredacted error for debugging; only return a sanitized version to the assistant.
+            logger.warn('check_claim_status: clearinghouse error', {
+              practiceId,
+              claimId: claim.id,
+              errors: statusResult.errors,
+            });
+            return JSON.stringify({
+              error: `Clearinghouse status check failed: ${sanitizeExternalErrors(statusResult.errors).join('; ')}`,
+            });
+          }
+
+          return JSON.stringify({
+            success: true,
+            claimNumber: claim.claimNumber,
+            payer: insurance?.name || patient.insuranceProvider || 'Unknown',
+            currentStatus: statusResult.status,
+            statusCategoryCode: statusResult.statusCategoryCode,
+            statusCategoryValue: statusResult.statusCategoryValue,
+            statusCode: statusResult.statusCode,
+            statusDescription: statusResult.statusDescription,
+            lastStatusDate: statusResult.paidDate || new Date().toISOString().split('T')[0],
+            paidAmount: statusResult.paidAmount,
+            paidDate: statusResult.paidDate,
+            checkNumber: statusResult.checkNumber,
+            denialReason: statusResult.denialReason,
+            totalBilled: claim.totalAmount,
+            patient: `${patient.firstName} ${patient.lastName}`,
+            errors: sanitizeExternalErrors(statusResult.errors),
+            message: `Claim ${claim.claimNumber} status from ${insurance?.name || patient.insuranceProvider || 'payer'}: ${statusResult.statusCategoryValue || statusResult.status}.`,
+          });
+        } catch (err: any) {
+          logger.warn('check_claim_status: exception', {
+            practiceId,
+            claimId: claim.id,
+            error: err?.message,
+          });
+          return JSON.stringify({
+            error: `Failed to check claim status: ${sanitizeExternalError(err?.message)}`,
+          });
+        }
+      }
+
+      case 'create_patient_invoice': {
+        if (!stripeService.isStripeConfigured()) {
+          return JSON.stringify({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable patient invoicing.' });
+        }
+
+        const patientId = args.patientId as number | undefined;
+        const amount = args.amount as number | undefined;
+        const description = args.description as string | undefined;
+
+        if (!patientId) return JSON.stringify({ error: 'patientId is required.' });
+        if (typeof amount !== 'number' || amount <= 0) return JSON.stringify({ error: 'amount (in dollars) must be a positive number.' });
+        // Hard cap to prevent runaway invoices from LLM error or prompt injection.
+        // Anything above this should be created in the UI with an explicit human review.
+        const INVOICE_MAX_DOLLARS = 10000;
+        if (amount > INVOICE_MAX_DOLLARS) {
+          return JSON.stringify({
+            error: `Invoice amount $${amount.toFixed(2)} exceeds the assistant's $${INVOICE_MAX_DOLLARS.toLocaleString()} limit. Please create invoices over this amount through the billing UI.`,
+          });
+        }
+        if (!description) return JSON.stringify({ error: 'description is required.' });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        if ((patient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Access denied: patient belongs to a different practice.' });
+        }
+
+        if (args.claimId) {
+          const claim = await storage.getClaim(args.claimId as number);
+          if (!claim || (claim as any).practiceId !== practiceId) {
+            return JSON.stringify({ error: 'Linked claim not found or belongs to a different practice.' });
+          }
+        }
+
+        const paymentIntent = await stripeService.createPatientPaymentIntent({
+          amount: Math.round(amount * 100),
+          patientEmail: (patient as any).email || '',
+          patientName: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+          practiceId,
+          patientId,
+          claimId: args.claimId as number | undefined,
+          description,
+        });
+
+        return JSON.stringify({
+          success: true,
+          invoice: {
+            id: paymentIntent.id,
+            status: paymentIntent.status,
+            amount,
+            currency: paymentIntent.currency,
+            description,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            patientId,
+            claimId: args.claimId || null,
+          },
+          message: `Invoice for $${amount.toFixed(2)} created for ${patient.firstName} ${patient.lastName}. Use send_patient_payment_link to send the patient a payment link.`,
+        });
+      }
+
+      case 'send_patient_payment_link': {
+        if (!stripeService.isStripeConfigured()) {
+          return JSON.stringify({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable patient payment links.' });
+        }
+
+        const patientId = args.patientId as number | undefined;
+        const invoiceId = args.invoiceId as string | undefined;
+        const amount = args.amount as number | undefined;
+
+        if (!patientId) return JSON.stringify({ error: 'patientId is required.' });
+        if (!invoiceId && (typeof amount !== 'number' || amount <= 0)) {
+          return JSON.stringify({ error: 'Either invoiceId or a positive amount (in dollars) is required.' });
+        }
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        if ((patient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Access denied: patient belongs to a different practice.' });
+        }
+
+        // Resolve charge amount: from invoice (Stripe payment intent) if invoiceId provided, else use amount
+        let chargeAmountCents: number;
+        let resolvedDescription: string;
+
+        if (invoiceId) {
+          try {
+            const stripe = stripeService.getStripeInstance();
+            const intent = await stripe.paymentIntents.retrieve(invoiceId);
+            // Require metadata to be present AND match. An intent without our
+            // metadata didn't originate from this app and must not be reused.
+            if (intent.metadata?.practiceId !== String(practiceId)) {
+              return JSON.stringify({ error: 'Invoice not found for this practice.' });
+            }
+            if (intent.metadata?.patientId !== String(patientId)) {
+              return JSON.stringify({ error: 'Invoice is for a different patient.' });
+            }
+            chargeAmountCents = intent.amount;
+            resolvedDescription = (args.message as string) || intent.description || `Payment for ${patient.firstName} ${patient.lastName}`;
+          } catch (err) {
+            return JSON.stringify({ error: `Could not retrieve invoice ${invoiceId}: ${err instanceof Error ? err.message : 'Unknown error'}` });
+          }
+        } else {
+          chargeAmountCents = Math.round((amount as number) * 100);
+          resolvedDescription = (args.message as string) || `Payment for ${patient.firstName} ${patient.lastName}`;
+        }
+
+        const paymentLink = await stripeService.createPatientPaymentLink({
+          amount: chargeAmountCents,
+          patientName: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+          practiceId,
+          patientId,
+          description: resolvedDescription,
+        });
+
+        return JSON.stringify({
+          success: true,
+          paymentLink: {
+            url: paymentLink.url,
+            id: paymentLink.id,
+            amount: chargeAmountCents / 100,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            patientId,
+            invoiceId: invoiceId || null,
+          },
+          message: `Payment link created for ${patient.firstName} ${patient.lastName} ($${(chargeAmountCents / 100).toFixed(2)}). Share this URL with the patient: ${paymentLink.url}`,
+        });
+      }
+
+      case 'summarize_recent_eobs': {
+        const filterPatientId = typeof args.patientId === 'number' ? args.patientId : undefined;
+        const daysBack = Number(args.daysBack) || 30;
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+        // If a patientId is provided, validate it belongs to this practice
+        if (filterPatientId !== undefined) {
+          const pat = await storage.getPatient(filterPatientId);
+          if (!pat || pat.practiceId !== practiceId) {
+            return JSON.stringify({ error: `Patient ${filterPatientId} not found in this practice.` });
+          }
+        }
+
+        // Fetch EOB documents for this practice in the time window
+        const whereClauses = [
+          eq(patientPlanDocuments.practiceId, practiceId),
+          eq(patientPlanDocuments.documentType, 'eob'),
+          gte(patientPlanDocuments.createdAt, cutoffDate),
+        ];
+        if (filterPatientId !== undefined) {
+          whereClauses.push(eq(patientPlanDocuments.patientId, filterPatientId));
+        }
+
+        const eobDocs = await db
+          .select({
+            id: patientPlanDocuments.id,
+            patientId: patientPlanDocuments.patientId,
+            fileName: patientPlanDocuments.fileName,
+            status: patientPlanDocuments.status,
+            parsedAt: patientPlanDocuments.parsedAt,
+            createdAt: patientPlanDocuments.createdAt,
+            patientFirstName: patients.firstName,
+            patientLastName: patients.lastName,
+          })
+          .from(patientPlanDocuments)
+          .innerJoin(patients, eq(patientPlanDocuments.patientId, patients.id))
+          .where(and(...whereClauses))
+          .orderBy(desc(patientPlanDocuments.createdAt))
+          .limit(50);
+
+        if (eobDocs.length === 0) {
+          return JSON.stringify({
+            count: 0,
+            eobs: [],
+            message: filterPatientId !== undefined
+              ? `No EOBs uploaded for this patient in the last ${daysBack} days.`
+              : `No EOBs have been uploaded in the last ${daysBack} days. Patients can upload EOBs through the patient portal documents flow.`,
+          });
+        }
+
+        // Pull benefits rows linked to each EOB document
+        const docIds: number[] = eobDocs.map((d: typeof eobDocs[number]) => d.id);
+        const benefitsRows = docIds.length > 0
+          ? await db
+              .select()
+              .from(patientPlanBenefits)
+              .where(
+                and(
+                  eq(patientPlanBenefits.practiceId, practiceId),
+                  sql`${patientPlanBenefits.documentId} IN (${sql.join(docIds.map((id: number) => sql`${id}`), sql`, `)})`,
+                )
+              )
+          : [];
+        const benefitsByDoc = new Map<number, typeof benefitsRows[number]>();
+        for (const b of benefitsRows) {
+          if (b.documentId != null) benefitsByDoc.set(b.documentId, b);
+        }
+
+        const eobs = eobDocs.map((doc: typeof eobDocs[number]) => {
+          const benefits = benefitsByDoc.get(doc.id);
+          const raw = (benefits?.rawExtractedData as Record<string, any> | null) || null;
+          // Pull accumulator and recent-claims fields from raw JSON (parser stashes them there)
+          const innDeductibleMet = raw?.inn_deductible_met ?? raw?.accumulators?.inn_deductible_met ?? null;
+          const innOutOfPocketMet = raw?.inn_out_of_pocket_met ?? raw?.accumulators?.inn_out_of_pocket_met ?? null;
+          const oonDeductibleMet = benefits?.oonDeductibleMet
+            ?? raw?.oon_deductible_met
+            ?? raw?.accumulators?.oon_deductible_met
+            ?? null;
+          const oonOutOfPocketMet = benefits?.oonOutOfPocketMet
+            ?? raw?.oon_out_of_pocket_met
+            ?? raw?.accumulators?.oon_out_of_pocket_met
+            ?? null;
+          const asOfDate = raw?.accumulator_as_of_date ?? raw?.accumulators?.as_of_date ?? null;
+          const recentClaimsRaw = Array.isArray(raw?.recent_claims)
+            ? raw.recent_claims
+            : Array.isArray(raw?.eob_claims)
+              ? raw.eob_claims
+              : [];
+          const recentClaims = recentClaimsRaw.slice(0, 6);
+
+          return {
+            documentId: doc.id,
+            patientId: doc.patientId,
+            patientName: `${doc.patientFirstName} ${doc.patientLastName}`,
+            fileName: doc.fileName,
+            status: doc.status,
+            uploadedAt: doc.createdAt,
+            parsedAt: doc.parsedAt,
+            payerName: benefits?.insuranceProvider ?? null,
+            planName: benefits?.planName ?? null,
+            accumulators: {
+              innDeductibleIndividual: benefits?.innDeductibleIndividual ?? null,
+              innDeductibleMet,
+              innOutOfPocketMax: benefits?.innOutOfPocketMax ?? null,
+              innOutOfPocketMet,
+              oonDeductibleIndividual: benefits?.oonDeductibleIndividual ?? null,
+              oonDeductibleMet,
+              oonOutOfPocketMax: benefits?.oonOutOfPocketMax ?? null,
+              oonOutOfPocketMet,
+              asOfDate,
+            },
+            recentClaims,
+            parsed: !!benefits,
+          };
+        });
+
+        return JSON.stringify({
+          count: eobs.length,
+          windowDays: daysBack,
+          eobs,
+          message: `Found ${eobs.length} EOB${eobs.length === 1 ? '' : 's'} uploaded in the last ${daysBack} days. Accumulator data is extracted from parsed EOBs and reflects the patient's deductible/out-of-pocket progress as of the EOB process date.`,
+        });
+      }
+
+      case 'check_plan_document_status': {
+        const targetPatientId = typeof args.patientId === 'number' ? args.patientId : undefined;
+        if (!targetPatientId) {
+          return JSON.stringify({ error: 'Please provide a patient ID.' });
+        }
+
+        const patient = await storage.getPatient(targetPatientId);
+        if (!patient) {
+          return JSON.stringify({ error: `Patient ${targetPatientId} not found.` });
+        }
+        if (patient.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient does not belong to this practice.' });
+        }
+
+        const allDocs = await storage.getPlanDocuments(targetPatientId);
+        // Only consider documents in this practice (defense in depth)
+        const docs = allDocs.filter((d: typeof allDocs[number]) => d.practiceId === practiceId);
+
+        if (docs.length === 0) {
+          return JSON.stringify({
+            patientId: targetPatientId,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            hasPlanDocument: false,
+            hasSbc: false,
+            documents: [],
+            benefits: null,
+            missingFields: [
+              'planName', 'planType', 'insuranceProvider',
+              'innDeductibleIndividual', 'innCoinsurancePercent', 'innOutOfPocketMax',
+              'oonDeductibleIndividual', 'oonCoinsurancePercent', 'oonOutOfPocketMax',
+              'mentalHealthVisitLimit', 'mentalHealthPriorAuthRequired', 'mentalHealthParity',
+              'teleHealthCovered',
+            ],
+            message: `No plan documents on file for ${patient.firstName} ${patient.lastName}. Ask the patient to upload an SBC (Summary of Benefits and Coverage) through the patient portal — it unlocks accurate per-session cost estimates and stronger appeal arguments.`,
+          });
+        }
+
+        const sbcDocs = docs.filter((d: typeof docs[number]) => d.documentType === 'sbc');
+        const eobDocs = docs.filter((d: typeof docs[number]) => d.documentType === 'eob');
+        const otherDocs = docs.filter((d: typeof docs[number]) => d.documentType !== 'sbc' && d.documentType !== 'eob');
+
+        const benefits = await storage.getPatientPlanBenefits(targetPatientId);
+        const raw = (benefits?.rawExtractedData as Record<string, any> | null) || null;
+
+        // Determine missing fields — anything important that's null/undefined
+        const importantFieldKeys: string[] = [
+          'planName', 'planType', 'insuranceProvider',
+          'innDeductibleIndividual', 'innCoinsurancePercent', 'innOutOfPocketMax',
+          'oonDeductibleIndividual', 'oonCoinsurancePercent', 'oonOutOfPocketMax',
+          'mentalHealthVisitLimit', 'mentalHealthPriorAuthRequired', 'mentalHealthParity',
+          'teleHealthCovered', 'allowedAmountMethod',
+        ];
+
+        const missingFields: string[] = [];
+        if (benefits) {
+          for (const key of importantFieldKeys) {
+            const v = (benefits as any)[key];
+            if (v === null || v === undefined || v === '') missingFields.push(key);
+          }
+        }
+
+        return JSON.stringify({
+          patientId: targetPatientId,
+          patientName: `${patient.firstName} ${patient.lastName}`,
+          hasPlanDocument: docs.length > 0,
+          hasSbc: sbcDocs.length > 0,
+          counts: {
+            sbc: sbcDocs.length,
+            eob: eobDocs.length,
+            other: otherDocs.length,
+          },
+          documents: docs.map((d: typeof docs[number]) => ({
+            id: d.id,
+            documentType: d.documentType,
+            fileName: d.fileName,
+            status: d.status,
+            uploadedAt: d.createdAt,
+            parsedAt: d.parsedAt,
+            parseError: d.parseError,
+          })),
+          benefits: benefits ? {
+            id: benefits.id,
+            planName: benefits.planName,
+            planType: benefits.planType,
+            insuranceProvider: benefits.insuranceProvider,
+            groupNumber: benefits.groupNumber,
+            policyNumber: benefits.policyNumber,
+            effectiveDate: benefits.effectiveDate,
+            terminationDate: benefits.terminationDate,
+            innDeductibleIndividual: benefits.innDeductibleIndividual,
+            innCoinsurancePercent: benefits.innCoinsurancePercent,
+            innOutOfPocketMax: benefits.innOutOfPocketMax,
+            oonDeductibleIndividual: benefits.oonDeductibleIndividual,
+            oonDeductibleFamily: benefits.oonDeductibleFamily,
+            oonCoinsurancePercent: benefits.oonCoinsurancePercent,
+            oonOutOfPocketMax: benefits.oonOutOfPocketMax,
+            oonDeductibleMet: benefits.oonDeductibleMet,
+            oonOutOfPocketMet: benefits.oonOutOfPocketMet,
+            mentalHealthParity: benefits.mentalHealthParity,
+            mentalHealthVisitLimit: benefits.mentalHealthVisitLimit,
+            mentalHealthVisitsUsed: benefits.mentalHealthVisitsUsed,
+            mentalHealthPriorAuthRequired: benefits.mentalHealthPriorAuthRequired,
+            mentalHealthCopay: benefits.mentalHealthCopay,
+            allowedAmountMethod: benefits.allowedAmountMethod,
+            allowedAmountPercent: benefits.allowedAmountPercent,
+            teleHealthCovered: benefits.teleHealthCovered,
+            teleHealthOonSameAsInPerson: benefits.teleHealthOonSameAsInPerson,
+            extractionConfidence: benefits.extractionConfidence,
+            innDeductibleMet: raw?.inn_deductible_met ?? raw?.accumulators?.inn_deductible_met ?? null,
+            innOutOfPocketMet: raw?.inn_out_of_pocket_met ?? raw?.accumulators?.inn_out_of_pocket_met ?? null,
+            accumulatorAsOfDate: raw?.accumulator_as_of_date ?? raw?.accumulators?.as_of_date ?? null,
+          } : null,
+          missingFields,
+          message: benefits
+            ? `${patient.firstName} has ${docs.length} plan document(s) on file (${sbcDocs.length} SBC, ${eobDocs.length} EOB). ${missingFields.length === 0 ? 'All key benefit fields were extracted.' : `${missingFields.length} important field(s) are missing — consider asking the patient to upload an additional document.`}`
+            : `${patient.firstName} has ${docs.length} document(s) uploaded but parsing has not produced a benefits record yet${docs.some((d) => d.status === 'failed') ? ' (some uploads failed parsing)' : ''}.`,
+        });
+      }
+
+      case 'get_appeal_outcomes': {
+        const daysBack = Number(args.daysBack) || 365;
+        const payerNameFilter = typeof args.payerName === 'string' ? args.payerName.trim() : '';
+        const horizon = new Date();
+        horizon.setDate(horizon.getDate() - daysBack);
+
+        // Pull all resolved (or active) appeals for the practice in window.
+        const appealRows = await db
+          .select({
+            id: appeals.id,
+            claimId: appeals.claimId,
+            status: appeals.status,
+            denialCategory: appeals.denialCategory,
+            keyArguments: appeals.keyArguments,
+            appealedAmount: appeals.appealedAmount,
+            recoveredAmount: appeals.recoveredAmount,
+            createdAt: appeals.createdAt,
+          })
+          .from(appeals)
+          .where(and(
+            eq(appeals.practiceId, practiceId),
+            gte(appeals.createdAt, horizon),
+          ));
+
+        // Build a claimId -> payerName map for grouping (and filtering).
+        const claimIds: number[] = Array.from(new Set(
+          appealRows.map((r: any) => r.claimId).filter((v: any): v is number => typeof v === 'number')
+        ));
+        const claimToPayer = new Map<number, string>();
+        if (claimIds.length > 0) {
+          const claimRows = await db
+            .select({ id: claims.id, insuranceId: claims.insuranceId })
+            .from(claims)
+            .where(and(eq(claims.practiceId, practiceId), inArray(claims.id, claimIds)));
+          const insuranceIds: number[] = Array.from(new Set(
+            claimRows.map((c: any) => c.insuranceId).filter((v: any): v is number => typeof v === 'number')
+          ));
+          const insuranceNameById = new Map<number, string>();
+          if (insuranceIds.length > 0) {
+            const insRows = await db
+              .select({ id: insurances.id, name: insurances.name })
+              .from(insurances)
+              .where(inArray(insurances.id, insuranceIds));
+            for (const ins of insRows) {
+              if (typeof ins.name === 'string') insuranceNameById.set(ins.id, ins.name);
+            }
+          }
+          for (const c of claimRows) {
+            const name = c.insuranceId != null ? insuranceNameById.get(c.insuranceId) : undefined;
+            claimToPayer.set(c.id, name || 'Unknown payer');
+          }
+        }
+
+        // Filter by payer if requested.
+        const filtered = payerNameFilter
+          ? appealRows.filter((r: any) => {
+              const p = claimToPayer.get(r.claimId) || '';
+              return p.toLowerCase().includes(payerNameFilter.toLowerCase());
+            })
+          : appealRows;
+
+        // Resolved = won/lost/partial (excludes draft/ready/submitted/in_review).
+        const resolved = filtered.filter((r: any) =>
+          r.status === 'won' || r.status === 'lost' || r.status === 'partial'
+        );
+
+        const wonCount = resolved.filter((r: any) => r.status === 'won').length;
+        const partialCount = resolved.filter((r: any) => r.status === 'partial').length;
+        const lostCount = resolved.filter((r: any) => r.status === 'lost').length;
+        const overallWinRate = resolved.length > 0
+          ? Math.round(((wonCount + partialCount) / resolved.length) * 1000) / 10
+          : null;
+
+        // Win rate by payer (resolved only).
+        const byPayer = new Map<string, { won: number; partial: number; lost: number; total: number; recovered: number }>();
+        for (const r of resolved) {
+          const payer = claimToPayer.get((r as any).claimId) || 'Unknown payer';
+          const e = byPayer.get(payer) || { won: 0, partial: 0, lost: 0, total: 0, recovered: 0 };
+          e.total += 1;
+          if (r.status === 'won') e.won += 1;
+          else if (r.status === 'partial') e.partial += 1;
+          else if (r.status === 'lost') e.lost += 1;
+          const rec = r.recoveredAmount ? Number(r.recoveredAmount) : 0;
+          if (!Number.isNaN(rec)) e.recovered += rec;
+          byPayer.set(payer, e);
+        }
+        const winRateByPayer = Array.from(byPayer.entries())
+          .map(([payer, e]) => ({
+            payer,
+            totalAppeals: e.total,
+            won: e.won,
+            partial: e.partial,
+            lost: e.lost,
+            winRate: Math.round(((e.won + e.partial) / e.total) * 1000) / 10,
+            totalRecovered: Math.round(e.recovered * 100) / 100,
+          }))
+          .sort((a, b) => b.totalAppeals - a.totalAppeals);
+
+        // Win rate by denial reason / category (resolved only).
+        const byCategory = new Map<string, { won: number; partial: number; lost: number; total: number }>();
+        for (const r of resolved) {
+          const cat = (r as any).denialCategory || 'uncategorized';
+          const e = byCategory.get(cat) || { won: 0, partial: 0, lost: 0, total: 0 };
+          e.total += 1;
+          if (r.status === 'won') e.won += 1;
+          else if (r.status === 'partial') e.partial += 1;
+          else if (r.status === 'lost') e.lost += 1;
+          byCategory.set(cat, e);
+        }
+        const winRateByDenialReason = Array.from(byCategory.entries())
+          .map(([category, e]) => ({
+            denialCategory: category,
+            totalAppeals: e.total,
+            won: e.won,
+            partial: e.partial,
+            lost: e.lost,
+            winRate: Math.round(((e.won + e.partial) / e.total) * 1000) / 10,
+          }))
+          .sort((a, b) => b.totalAppeals - a.totalAppeals);
+
+        // Top winning argument patterns: tally key_arguments from won/partial.
+        const argTally = new Map<string, { winCount: number; totalCount: number }>();
+        for (const r of resolved) {
+          const argList = (r as any).keyArguments;
+          if (!Array.isArray(argList)) continue;
+          const isWin = r.status === 'won' || r.status === 'partial';
+          for (const raw of argList) {
+            if (typeof raw !== 'string') continue;
+            const arg = raw.trim().replace(/\s+/g, ' ');
+            if (arg.length === 0) continue;
+            const e = argTally.get(arg) || { winCount: 0, totalCount: 0 };
+            e.totalCount += 1;
+            if (isWin) e.winCount += 1;
+            argTally.set(arg, e);
+          }
+        }
+        const topWinningArguments = Array.from(argTally.entries())
+          .filter(([, e]) => e.winCount > 0)
+          .map(([argument, e]) => ({
+            argument,
+            winCount: e.winCount,
+            totalCount: e.totalCount,
+            winRate: Math.round((e.winCount / e.totalCount) * 1000) / 10,
+          }))
+          .sort((a, b) => b.winCount - a.winCount || b.winRate - a.winRate)
+          .slice(0, 10);
+
+        return JSON.stringify({
+          windowDays: daysBack,
+          payerFilter: payerNameFilter || null,
+          totalAppeals: filtered.length,
+          resolvedAppeals: resolved.length,
+          inProgressAppeals: filtered.length - resolved.length,
+          won: wonCount,
+          partial: partialCount,
+          lost: lostCount,
+          overallWinRate,
+          winRateByPayer,
+          winRateByDenialReason,
+          topWinningArguments,
+          message: resolved.length === 0
+            ? 'No resolved appeals in this window yet, so win rates are not available.'
+            : `Across ${resolved.length} resolved appeal(s) in the last ${daysBack} day(s), the overall win rate is ${overallWinRate}%.`,
+        });
+      }
+
+      case 'get_provider_productivity': {
+        const endDate = args.endDate ? new Date(String(args.endDate)) : new Date();
+        const startDate = args.startDate
+          ? new Date(String(args.startDate))
+          : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          return JSON.stringify({ error: 'Invalid startDate or endDate. Use YYYY-MM-DD.' });
+        }
+        if (endDate.getTime() < startDate.getTime()) {
+          return JSON.stringify({ error: 'endDate must be on or after startDate.' });
+        }
+        // Normalize end-of-day for inclusive end.
+        const endInclusive = new Date(endDate);
+        endInclusive.setHours(23, 59, 59, 999);
+        const providerIdFilter = typeof args.providerId === 'string' && args.providerId.trim().length > 0
+          ? args.providerId.trim()
+          : null;
+
+        // Get the provider list for the practice (therapists).
+        const therapists = await storage.getTherapistsByPractice(practiceId);
+        const providerList = providerIdFilter
+          ? therapists.filter((t: any) => t.id === providerIdFilter)
+          : therapists;
+
+        if (providerList.length === 0) {
+          return JSON.stringify({
+            startDate: startDate.toISOString().slice(0, 10),
+            endDate: endDate.toISOString().slice(0, 10),
+            providers: [],
+            message: providerIdFilter
+              ? 'No therapist found with that providerId in this practice.'
+              : 'No therapists found for this practice.',
+          });
+        }
+
+        const providerIds: string[] = providerList.map((p: any) => p.id).filter((v: any): v is string => typeof v === 'string');
+
+        // Appointments completed (status='completed') by therapist in window.
+        const apptRows = await db
+          .select({
+            therapistId: appointments.therapistId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(appointments)
+          .where(and(
+            eq(appointments.practiceId, practiceId),
+            eq(appointments.status, 'completed'),
+            gte(appointments.startTime, startDate),
+            lte(appointments.startTime, endInclusive),
+            inArray(appointments.therapistId, providerIds),
+          ))
+          .groupBy(appointments.therapistId);
+        const apptCount = new Map<string, number>();
+        for (const row of apptRows) {
+          if (row.therapistId) apptCount.set(row.therapistId, Number(row.count) || 0);
+        }
+
+        // SOAP notes written: total + unsigned. Notes link to therapist via
+        // soap_notes.therapistId (nullable until signed) AND via the parent
+        // treatment_session.therapistId. We attribute the note to the
+        // SESSION's therapist so unsigned notes are still counted for the
+        // right person, and treat "unsigned" as therapistSignedAt IS NULL.
+        const soapRows = await db
+          .select({
+            sessionTherapistId: treatmentSessions.therapistId,
+            therapistSignedAt: soapNotes.therapistSignedAt,
+          })
+          .from(soapNotes)
+          .innerJoin(treatmentSessions, eq(soapNotes.sessionId, treatmentSessions.id))
+          .where(and(
+            eq(treatmentSessions.practiceId, practiceId),
+            inArray(treatmentSessions.therapistId, providerIds),
+            gte(soapNotes.createdAt, startDate),
+            lte(soapNotes.createdAt, endInclusive),
+          ));
+        const soapTotal = new Map<string, number>();
+        const soapUnsigned = new Map<string, number>();
+        for (const r of soapRows) {
+          const tid = (r as any).sessionTherapistId;
+          if (!tid) continue;
+          soapTotal.set(tid, (soapTotal.get(tid) || 0) + 1);
+          if (!(r as any).therapistSignedAt) {
+            soapUnsigned.set(tid, (soapUnsigned.get(tid) || 0) + 1);
+          }
+        }
+
+        // Claims submitted + total billed: claims attribute to a therapist
+        // via the linked treatment session. We count claims past draft status
+        // using submittedAt when present, otherwise createdAt. Date filtering
+        // is pushed to SQL so practices with years of claims don't load the
+        // entire history into memory.
+        const claimRows = await db
+          .select({
+            sessionTherapistId: treatmentSessions.therapistId,
+            status: claims.status,
+            totalAmount: claims.totalAmount,
+          })
+          .from(claims)
+          .innerJoin(treatmentSessions, eq(claims.sessionId, treatmentSessions.id))
+          .where(and(
+            eq(claims.practiceId, practiceId),
+            inArray(treatmentSessions.therapistId, providerIds),
+            sql`${claims.status} <> 'draft'`,
+            or(
+              and(isNotNull(claims.submittedAt), gte(claims.submittedAt, startDate), lte(claims.submittedAt, endInclusive)),
+              and(isNull(claims.submittedAt), gte(claims.createdAt, startDate), lte(claims.createdAt, endInclusive)),
+            ),
+          ));
+        const claimsSubmitted = new Map<string, number>();
+        const totalBilled = new Map<string, number>();
+        for (const r of claimRows) {
+          const tid = (r as any).sessionTherapistId;
+          if (!tid) continue;
+          claimsSubmitted.set(tid, (claimsSubmitted.get(tid) || 0) + 1);
+          const amt = r.totalAmount ? Number(r.totalAmount) : 0;
+          if (!Number.isNaN(amt)) totalBilled.set(tid, (totalBilled.get(tid) || 0) + amt);
+        }
+
+        const providers = providerList.map((p: any) => {
+          const fullName = [p.firstName, p.lastName].filter(Boolean).join(' ').trim() || p.email || p.id;
+          return {
+            providerId: p.id,
+            name: fullName,
+            credentials: p.credentials || null,
+            appointmentsCompleted: apptCount.get(p.id) || 0,
+            soapNotesWritten: soapTotal.get(p.id) || 0,
+            unsignedNotes: soapUnsigned.get(p.id) || 0,
+            claimsSubmitted: claimsSubmitted.get(p.id) || 0,
+            totalBilled: Math.round((totalBilled.get(p.id) || 0) * 100) / 100,
+          };
+        }).sort((a, b) => b.appointmentsCompleted - a.appointmentsCompleted);
+
+        return JSON.stringify({
+          startDate: startDate.toISOString().slice(0, 10),
+          endDate: endDate.toISOString().slice(0, 10),
+          providerCount: providers.length,
+          providers,
         });
       }
 
