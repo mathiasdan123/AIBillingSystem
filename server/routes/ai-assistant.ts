@@ -994,7 +994,7 @@ async function runBulkEligibility(
 }
 
 // Execute tool calls against the database
-async function executeTool(
+export async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
   practiceId: number,
