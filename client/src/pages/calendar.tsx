@@ -91,10 +91,12 @@ export default function CalendarPage() {
   });
 
   // Fetch therapists for the dropdown
+  // Use /api/therapists (available to all authenticated users) rather than
+  // /api/users (admin-only) so non-admin users can still pick a therapist.
   const { data: therapists = [] } = useQuery<any[]>({
-    queryKey: ["/api/users"],
+    queryKey: ["/api/therapists"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/users");
+      const res = await apiRequest("GET", "/api/therapists");
       return res.json();
     },
   });

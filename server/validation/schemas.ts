@@ -113,7 +113,11 @@ export const createPatientSchema = z.object({
     .optional()
     .default('email'),
   smsConsentGiven: z.boolean().optional().default(false),
-  intakeData: z.record(z.unknown()).optional().nullable(),
+  // Intake form data — accept either a JSON object (preferred) or a JSON string
+  // (legacy callers). The route handler / storage layer normalizes downstream.
+  intakeData: z.union([z.record(z.unknown()), z.string()]).optional().nullable(),
+  // Timestamp recorded when the intake form is completed. ISO datetime string.
+  intakeCompletedAt: z.string().datetime().optional().nullable(),
 });
 
 export type CreatePatientInput = z.infer<typeof createPatientSchema>;

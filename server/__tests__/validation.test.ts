@@ -175,6 +175,49 @@ describe('createPatientSchema', () => {
       expect(result.data.smsConsentGiven).toBe(false);
     }
   });
+
+  // Regression: intake form submission was failing because the client posted
+  // intakeData as a JSON string and intakeCompletedAt as an ISO datetime,
+  // neither of which the schema previously accepted. Both shapes must pass.
+  it('accepts intakeData as a JSON object', () => {
+    const result = createPatientSchema.safeParse({
+      ...validPatient,
+      intakeData: { sensoryProcessing: { constantMotion: { response: 'Often' } } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts intakeData as a JSON string (legacy clients)', () => {
+    const result = createPatientSchema.safeParse({
+      ...validPatient,
+      intakeData: JSON.stringify({ foo: 'bar' }),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts intakeCompletedAt as an ISO datetime string', () => {
+    const result = createPatientSchema.safeParse({
+      ...validPatient,
+      intakeCompletedAt: new Date().toISOString(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a full intake-style payload (insurance cards + nested data)', () => {
+    const result = createPatientSchema.safeParse({
+      ...validPatient,
+      email: 'jane@example.com',
+      phone: '5555551234',
+      insuranceProvider: 'Aetna',
+      intakeData: {
+        insuranceCardFront: 'data:image/png;base64,AAA',
+        insuranceCardBack: 'data:image/png;base64,BBB',
+        sensoryProcessing: {},
+      },
+      intakeCompletedAt: new Date().toISOString(),
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
 describe('createClaimSchema', () => {

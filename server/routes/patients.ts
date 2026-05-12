@@ -261,17 +261,35 @@ router.get('/', isAuthenticated, async (req: any, res) => {
  */
 router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any, res) => {
   try {
-    const patient = await storage.createPatient(req.body);
+    // Normalize intake fields:
+    // - intakeData may arrive as a JSON string from legacy callers; the DB
+    //   column is jsonb so we parse to an object before insert.
+    // - intakeCompletedAt is a Postgres timestamp; Drizzle requires a Date,
+    //   not an ISO string, so we coerce here.
+    const payload: Record<string, any> = { ...req.body };
+    if (typeof payload.intakeData === 'string') {
+      try {
+        payload.intakeData = JSON.parse(payload.intakeData);
+      } catch {
+        // Leave as-is — storage layer will surface the error if invalid.
+      }
+    }
+    if (typeof payload.intakeCompletedAt === 'string') {
+      const d = new Date(payload.intakeCompletedAt);
+      if (!isNaN(d.getTime())) payload.intakeCompletedAt = d;
+    }
+
+    const patient = await storage.createPatient(payload as any);
 
     // Send front desk notification if this is an intake form submission
-    if (req.body.intakeCompletedAt || req.body.intakeData) {
+    if (payload.intakeCompletedAt || payload.intakeData) {
       try {
         const practice = await storage.getPractice(patient.practiceId);
         const practiceEmail = practice?.email;
         if (practiceEmail) {
-          const intakeData = typeof req.body.intakeData === 'string'
-            ? JSON.parse(req.body.intakeData)
-            : req.body.intakeData;
+          const intakeData = typeof payload.intakeData === 'string'
+            ? JSON.parse(payload.intakeData)
+            : payload.intakeData;
           const emailData = intakeSubmissionNotification({
             patientFirstName: patient.firstName,
             patientLastName: patient.lastName,

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { useTheme } from "next-themes";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,22 @@ export default function PatientPortalPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { t } = useTranslation();
+
+  // Force light theme for the patient-facing portal. The portal hardcodes
+  // light-on-light colors (bg-white headers, bg-slate-50 main, ghost-variant
+  // tab buttons with no explicit text color) which become unreadable when
+  // the user's OS is set to dark mode and next-themes applies the .dark
+  // class. Restore the previous theme on unmount so the staff app is
+  // unaffected.
+  const { theme, setTheme } = useTheme();
+  useEffect(() => {
+    const previous = theme;
+    setTheme("light");
+    return () => {
+      if (previous) setTheme(previous);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Get token from localStorage or URL query param (for demo QR code)
   const [portalToken, setPortalToken] = useState<string | null>(() => {
