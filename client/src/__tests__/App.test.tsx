@@ -18,6 +18,7 @@ vi.mock('@/hooks/useAuth', () => ({
     user: undefined,
     currentRole: 'therapist' as const,
     actualRole: 'therapist' as const,
+    needsMfaSetup: false,
   })),
 }));
 
@@ -48,6 +49,7 @@ describe('App component', () => {
       user: undefined,
       currentRole: 'therapist' as const,
       actualRole: 'therapist' as const,
+      needsMfaSetup: false,
     });
 
     render(<App />);
@@ -66,6 +68,7 @@ describe('App component', () => {
       user: undefined,
       currentRole: 'therapist' as const,
       actualRole: 'therapist' as const,
+      needsMfaSetup: false,
     });
 
     render(<App />);
