@@ -1,0 +1,18 @@
+# Known tooling IPs / CIDRs — append-only allowlist.
+#
+# When the high-401-rate or high-forbidden alarm fires, scripts/check-401-allowlist.sh
+# compares the top source IPs against this list. Anything in here is treated as
+# "expected" noise (your own smoke tests, monitoring probes, partner integrations,
+# etc.). Anything NOT in here is flagged for review.
+#
+# Format: one entry per line. Each is either a single IP, a CIDR, or a CIDR with
+# a trailing comment. Lines starting with # are ignored. Blank lines OK.
+#
+# Examples:
+#   1.2.3.4              # specific IP
+#   10.0.0.0/8           # whole subnet
+#   54.240.197.0/24      # AWS SES (us-east-1)
+#
+# If the alarm keeps firing on the same IP and you confirm it's yours, add it here
+# with a comment explaining what it is. Future runs of the alarm-triage script will
+# stop flagging it.
