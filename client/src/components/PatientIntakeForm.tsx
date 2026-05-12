@@ -214,6 +214,75 @@ interface PatientIntakeFormProps {
   startStep?: number;
 }
 
+// Sensory Processing Question Component
+// Hoisted out of the parent so React doesn't remount it (and lose input focus
+// / re-render the question text) on every keystroke. Also renders the question
+// text as a plain <p> with explicit slate-900 color so it can't be hidden by
+// inherited styling — fixes the "circles with no question text" bug.
+interface SensoryQuestionProps {
+  question: string;
+  fieldName: keyof PatientFormData;
+  commentsFieldName: keyof PatientFormData;
+  form: ReturnType<typeof useForm<PatientFormData>>;
+  questionNumber?: number;
+}
+
+function SensoryQuestion({
+  question,
+  fieldName,
+  commentsFieldName,
+  form,
+  questionNumber,
+}: SensoryQuestionProps) {
+  return (
+    <div className="space-y-2 p-3 bg-slate-50 rounded-lg">
+      <p className="text-sm font-medium text-slate-900" data-testid={`sensory-question-${String(fieldName)}`}>
+        {questionNumber ? `${questionNumber}. ` : ""}{question}
+      </p>
+      <FormField
+        control={form.control}
+        name={fieldName}
+        render={({ field }) => (
+          <FormItem>
+            <FormControl>
+              <RadioGroup
+                onValueChange={field.onChange}
+                value={(field.value as string) || ""}
+                className="flex flex-wrap gap-2"
+              >
+                {FREQUENCY_OPTIONS.map((option) => (
+                  <div key={option} className="flex items-center space-x-1">
+                    <RadioGroupItem value={option} id={`${String(fieldName)}-${option}`} />
+                    <Label htmlFor={`${String(fieldName)}-${option}`} className="text-xs">
+                      {option}
+                    </Label>
+                  </div>
+                ))}
+              </RadioGroup>
+            </FormControl>
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name={commentsFieldName}
+        render={({ field }) => (
+          <FormItem>
+            <FormControl>
+              <Input
+                placeholder="Comments (optional)"
+                {...field}
+                value={(field.value as string) || ""}
+                className="text-sm"
+              />
+            </FormControl>
+          </FormItem>
+        )}
+      />
+    </div>
+  );
+}
+
 export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: PatientIntakeFormProps) {
   const { toast } = useToast();
   const [step, setStep] = useState(startStep || 1);
@@ -484,7 +553,7 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
         secondaryInsuranceSubscriberName: data.secondaryInsuranceSubscriberName || null,
         secondaryInsuranceSubscriberDob: data.secondaryInsuranceSubscriberDob || null,
         practiceId,
-        intakeData: JSON.stringify(intakeData),
+        intakeData,
         intakeCompletedAt: new Date().toISOString(),
       });
       return response.json();
@@ -614,59 +683,6 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
     };
     reader.readAsDataURL(file);
   };
-
-  // Sensory Processing Question Component
-  const SensoryQuestion = ({
-    question,
-    fieldName,
-    commentsFieldName
-  }: {
-    question: string;
-    fieldName: keyof PatientFormData;
-    commentsFieldName: keyof PatientFormData;
-  }) => (
-    <div className="space-y-2 p-3 bg-slate-50 rounded-lg">
-      <Label className="text-sm font-medium">{question}</Label>
-      <FormField
-        control={form.control}
-        name={fieldName}
-        render={({ field }) => (
-          <FormItem>
-            <FormControl>
-              <RadioGroup
-                onValueChange={field.onChange}
-                value={field.value as string || ""}
-                className="flex flex-wrap gap-2"
-              >
-                {FREQUENCY_OPTIONS.map((option) => (
-                  <div key={option} className="flex items-center space-x-1">
-                    <RadioGroupItem value={option} id={`${fieldName}-${option}`} />
-                    <Label htmlFor={`${fieldName}-${option}`} className="text-xs">{option}</Label>
-                  </div>
-                ))}
-              </RadioGroup>
-            </FormControl>
-          </FormItem>
-        )}
-      />
-      <FormField
-        control={form.control}
-        name={commentsFieldName}
-        render={({ field }) => (
-          <FormItem>
-            <FormControl>
-              <Input
-                placeholder="Comments (optional)"
-                {...field}
-                value={field.value as string || ""}
-                className="text-sm"
-              />
-            </FormControl>
-          </FormItem>
-        )}
-      />
-    </div>
-  );
 
   return (
     <>
@@ -2177,46 +2193,55 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
 
             <div className="space-y-3">
               <SensoryQuestion
+                form={form}
                 question="Seems to be in constant motion or is unable to sit still for an activity"
                 fieldName="sensoryConstantMotion"
                 commentsFieldName="sensoryConstantMotionComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Has trouble concentrating or can't stay on task"
                 fieldName="sensoryConcentration"
                 commentsFieldName="sensoryConcentrationComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Seems to always be running, jumping, or stomping rather than walking"
                 fieldName="sensoryRunningJumping"
                 commentsFieldName="sensoryRunningJumpingComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Bumps into things or frequently knocks things over"
                 fieldName="sensoryBumpsInto"
                 commentsFieldName="sensoryBumpsIntoComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Reacts strongly to being bumped or touched"
                 fieldName="sensoryReactsToBumps"
                 commentsFieldName="sensoryReactsToBumpsComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Avoids messy play and doesn't like to get hands dirty"
                 fieldName="sensoryMessyPlay"
                 commentsFieldName="sensoryMessyPlayComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Hates having hair washed, brushed or cut"
                 fieldName="sensoryHairWashing"
                 commentsFieldName="sensoryHairWashingComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Resists wearing new clothing or is bothered by tags or socks"
                 fieldName="sensoryClothing"
                 commentsFieldName="sensoryClothingComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Distressed by loud or sudden sounds such as a siren or vacuum"
                 fieldName="sensoryLoudSounds"
                 commentsFieldName="sensoryLoudSoundsComments"
@@ -2238,51 +2263,61 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
 
             <div className="space-y-3">
               <SensoryQuestion
+                form={form}
                 question="Hesitates to play or climb on playground equipment"
                 fieldName="sensoryPlayground"
                 commentsFieldName="sensoryPlaygroundComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Difficulties with balance"
                 fieldName="sensoryBalance"
                 commentsFieldName="sensoryBalanceComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Loses place when reading or copying from board"
                 fieldName="sensoryReading"
                 commentsFieldName="sensoryReadingComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Difficulties tracking objects with eyes"
                 fieldName="sensoryTracking"
                 commentsFieldName="sensoryTrackingComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Mood variations, outbursts and tantrums"
                 fieldName="sensoryMoodVariations"
                 commentsFieldName="sensoryMoodVariationsComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Avoids eye contact"
                 fieldName="sensoryEyeContact"
                 commentsFieldName="sensoryEyeContactComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Has trouble following multistep instructions"
                 fieldName="sensoryInstructions"
                 commentsFieldName="sensoryInstructionsComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Fussy eater, often gags on food"
                 fieldName="sensoryFussyEater"
                 commentsFieldName="sensoryFussyEaterComments"
               />
               <SensoryQuestion
+                form={form}
                 question="Reacts strongly to smells"
                 fieldName="sensorySmells"
                 commentsFieldName="sensorySmellsComments"
               />
               <SensoryQuestion
+                form={form}
                 question="High pain threshold"
                 fieldName="sensoryPainThreshold"
                 commentsFieldName="sensoryPainThresholdComments"
