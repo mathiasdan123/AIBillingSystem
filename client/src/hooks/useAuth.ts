@@ -8,6 +8,12 @@ interface User {
   profileImageUrl?: string | null;
   role?: 'admin' | 'therapist';
   practiceId?: number;
+  // True when the user is authenticated but has not yet enabled MFA.
+  // Set by GET /api/auth/user (server/routes/auth.ts). Used to gate access
+  // to PHI routes — the server-side mfaSetupRequired middleware also
+  // enforces this, but the client gate prevents a 13-rejection storm
+  // every time a no-MFA user lands on the dashboard.
+  mfaRequired?: boolean;
 }
 
 export function useAuth() {
@@ -39,6 +45,8 @@ export function useAuth() {
     currentRole: effectiveRole || 'therapist',
     // Expose actual role (ignoring demo override) for certain checks
     actualRole: user?.role || 'therapist',
+    // True when authenticated but no MFA yet — gate PHI routes on this
+    needsMfaSetup: isAuthenticated && user?.mfaRequired === true,
   };
 }
 

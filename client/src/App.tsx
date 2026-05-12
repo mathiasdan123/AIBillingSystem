@@ -49,6 +49,7 @@ const TelehealthJoin = lazy(() => import("@/pages/telehealth-join"));
 const Messages = lazy(() => import("@/pages/messages"));
 const PatientPortal = lazy(() => import("@/pages/patient-portal/index"));
 const MfaChallenge = lazy(() => import("@/pages/mfa-challenge"));
+const MfaSetupRequired = lazy(() => import("@/pages/mfa-setup-required"));
 const OutcomeMeasures = lazy(() => import("@/pages/outcome-measures"));
 const PublicFeedback = lazy(() => import("@/pages/public-feedback"));
 const SessionRecorder = lazy(() => import("@/pages/session-recorder"));
@@ -157,13 +158,31 @@ function PageLoader() {
 }
 
 function Router() {
-  const { isAuthenticated, isLoading, isAdmin } = useAuth();
+  const { isAuthenticated, isLoading, isAdmin, needsMfaSetup } = useAuth();
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
       </div>
+    );
+  }
+
+  // Authenticated but no MFA yet: gate every PHI route behind the setup
+  // page. Without this gate the dashboard would mount, fire ~13 parallel
+  // API calls, and each one returns 403 from the server-side
+  // mfaSetupRequired middleware — tripping the high-403 CloudWatch alarm
+  // and showing the user a broken-looking dashboard with a misleading
+  // "session expired" toast.
+  if (isAuthenticated && needsMfaSetup) {
+    return (
+      <main id="main-content">
+        <ErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            <MfaSetupRequired />
+          </Suspense>
+        </ErrorBoundary>
+      </main>
     );
   }
 
