@@ -2568,13 +2568,34 @@ export default function Settings() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center">
-                    <BadgeCheck className="w-5 h-5 mr-2" />
-                    Therapist Profiles & Signatures
-                  </CardTitle>
-                  <CardDescription>
-                    Manage therapist credentials and digital signatures for SOAP notes
-                  </CardDescription>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="flex items-center">
+                        <BadgeCheck className="w-5 h-5 mr-2" />
+                        Therapist Profiles & Signatures
+                      </CardTitle>
+                      <CardDescription>
+                        Manage therapist credentials and digital signatures for SOAP notes
+                      </CardDescription>
+                    </div>
+                    {isAdmin && (
+                      <Button
+                        onClick={() => {
+                          setInviteRole("therapist");
+                          setActiveTab("users");
+                        }}
+                        data-testid="button-add-therapist"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Therapist
+                      </Button>
+                    )}
+                  </div>
+                  {!isAdmin && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      To add a new therapist, ask an admin to send an invite from the User Management section.
+                    </p>
+                  )}
                 </CardHeader>
                 <CardContent>
                   {therapistsLoading ? (
@@ -2747,6 +2768,19 @@ export default function Settings() {
                     <div className="text-center py-8 text-slate-600">
                       <p>No therapists found.</p>
                       <p className="text-sm mt-2">Therapists will appear here once they are added to your practice.</p>
+                      {isAdmin && (
+                        <Button
+                          className="mt-4"
+                          onClick={() => {
+                            setInviteRole("therapist");
+                            setActiveTab("users");
+                          }}
+                          data-testid="button-add-first-therapist"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Add Your First Therapist
+                        </Button>
+                      )}
                     </div>
                   )}
                 </CardContent>
