@@ -35,6 +35,14 @@ interface DetailedBenefits {
   };
   authRequired: boolean;
   authNotes?: string;
+  authDetails?: Array<{
+    serviceTypeCode?: string;
+    serviceTypeName?: string;
+    benefitCode?: string;
+    indicator: 'Y' | 'N' | 'U';
+    notes: string[];
+    inNetwork: boolean;
+  }>;
   copay?: number;
   specialistCopay?: number;
   coinsurance?: number;
@@ -362,6 +370,46 @@ export default function BenefitsVerificationCard({
                     {benefits?.authNotes || 'Contact insurance before scheduling sessions'}
                   </p>
                 </div>
+              </div>
+            )}
+
+            {/* Per-service-type auth detail from the 271 response */}
+            {benefits?.authDetails && benefits.authDetails.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
+                  Auth requirements by service
+                </p>
+                <ul className="space-y-2">
+                  {benefits.authDetails.map((d, idx) => {
+                    const label =
+                      d.serviceTypeName ||
+                      (d.serviceTypeCode ? `Service type ${d.serviceTypeCode}` : 'General benefit');
+                    const indicatorColor =
+                      d.indicator === 'Y' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                      d.indicator === 'N' ? 'bg-green-100 text-green-800 border-green-200' :
+                      'bg-slate-100 text-slate-700 border-slate-200';
+                    const indicatorLabel =
+                      d.indicator === 'Y' ? 'Required' : d.indicator === 'N' ? 'Not required' : 'Unknown';
+                    return (
+                      <li key={`${d.serviceTypeCode || 'na'}-${d.benefitCode || 'na'}-${idx}`} className="text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-slate-800">{label}</span>
+                          <Badge variant="outline" className={indicatorColor}>{indicatorLabel}</Badge>
+                          {!d.inNetwork && (
+                            <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">
+                              Out-of-network
+                            </Badge>
+                          )}
+                        </div>
+                        {d.notes.length > 0 && (
+                          <ul className="mt-1 list-disc list-inside text-slate-600 space-y-0.5">
+                            {d.notes.map((n, i) => <li key={i}>{n}</li>)}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
 

@@ -1771,6 +1771,13 @@ export type NormalizedBenefits = {
   priorAuthRequired: boolean;
   referralRequired: boolean;
   serviceLimitations?: string[];
+  authDetails?: Array<{
+    serviceTypeCode?: string;
+    benefitCode?: string;
+    indicator: 'Y' | 'N' | 'U';
+    notes: string[];
+    inNetwork: boolean;
+  }>;
 };
 
 export type NormalizedClaimsHistory = {

@@ -225,14 +225,16 @@ export class StediAdapter {
     let visitsUsed: number | undefined;
     let priorAuthRequired = false;
     let referralRequired = false;
+    const authDetails: NonNullable<NormalizedBenefits['authDetails']> = [];
 
     for (const benefit of benefits) {
       const code = benefit.code;
       const amount = parseFloat(benefit.benefitAmount || '0');
       const percent = parseFloat(benefit.benefitPercent || '0');
+      const inNetwork = benefit.inPlanNetworkIndicator !== 'N';
 
-      // Only process in-network benefits by default
-      if (benefit.inPlanNetworkIndicator === 'N') continue;
+      // Only process in-network benefits for primary financial summary.
+      if (!inNetwork) continue;
 
       switch (code) {
         case 'B': // Co-Payment
@@ -256,6 +258,28 @@ export class StediAdapter {
           priorAuthRequired = true;
           break;
       }
+
+      // Per-benefit prior-auth indicator + free-text notes.
+      const indicatorRaw: string | undefined = benefit.authOrCertIndicator;
+      const additionalInfo: Array<{ description?: string }> | undefined =
+        Array.isArray(benefit.additionalInformation) ? benefit.additionalInformation : undefined;
+      const notes = (additionalInfo || [])
+        .map((n) => (n && typeof n.description === 'string' ? n.description.trim() : ''))
+        .filter(Boolean);
+      const looksLikeAuthNote = notes.some((n) => /(prior\s*authoriz|pre[-\s]*auth|precertific)/i.test(n));
+      const indicator: 'Y' | 'N' | 'U' | undefined =
+        indicatorRaw === 'Y' || indicatorRaw === 'N' || indicatorRaw === 'U' ? indicatorRaw : undefined;
+      if (indicator || looksLikeAuthNote) {
+        const serviceTypeCode: string | undefined = benefit.serviceTypeCode || benefit.serviceType;
+        authDetails.push({
+          serviceTypeCode,
+          benefitCode: code,
+          indicator: indicator ?? 'U',
+          notes,
+          inNetwork,
+        });
+        if (indicator === 'Y' || looksLikeAuthNote) priorAuthRequired = true;
+      }
     }
 
     return {
@@ -277,6 +301,7 @@ export class StediAdapter {
       visitsUsed,
       priorAuthRequired,
       referralRequired,
+      authDetails: authDetails.length > 0 ? authDetails : undefined,
     };
   }
 

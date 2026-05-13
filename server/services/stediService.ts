@@ -1081,6 +1081,17 @@ export interface DetailedBenefits {
   // Prior authorization
   authRequired: boolean;
   authNotes?: string;
+  // Per-service-type prior-authorization detail derived from the 271's
+  // authOrCertIndicator + free-text additionalInformation. Surfaces what
+  // would otherwise require a payer phone call.
+  authDetails?: Array<{
+    serviceTypeCode?: string;
+    serviceTypeName?: string;
+    benefitCode?: string;
+    indicator: 'Y' | 'N' | 'U';
+    notes: string[];
+    inNetwork: boolean;
+  }>;
 
   // Financial details
   copay?: number;
@@ -1278,6 +1289,7 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
     const deductible: DetailedBenefits['deductible'] = {};
     const outOfPocketMax: DetailedBenefits['outOfPocketMax'] = {};
     const coverageDetails: DetailedBenefits['coverageDetails'] = [];
+    const authDetails: NonNullable<DetailedBenefits['authDetails']> = [];
 
     for (const benefit of benefitsInfo) {
       const code = benefit.code;
@@ -1354,12 +1366,37 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
         }
       }
 
-      // Authorization required
+      // Authorization required (CB benefit code path)
       if (code === 'CB') {
         result.authRequired = true;
         const therapyKey = serviceTypeToTherapy[serviceTypeCode];
         if (therapyKey) {
           result.authNotes = `Prior authorization required for ${therapyKey.toUpperCase()} services`;
+        }
+      }
+
+      // Per-benefit prior-auth indicator + free-text notes (the data the
+      // Stedi blog calls out as replacing payer phone calls).
+      const indicatorRaw: string | undefined = benefit.authOrCertIndicator;
+      const additionalInfo: Array<{ description?: string }> | undefined =
+        Array.isArray(benefit.additionalInformation) ? benefit.additionalInformation : undefined;
+      const notes = (additionalInfo || [])
+        .map((n) => (n && typeof n.description === 'string' ? n.description.trim() : ''))
+        .filter(Boolean);
+      const indicator: 'Y' | 'N' | 'U' | undefined =
+        indicatorRaw === 'Y' || indicatorRaw === 'N' || indicatorRaw === 'U' ? indicatorRaw : undefined;
+      const looksLikeAuthNote = notes.some((n) => /(prior\s*authoriz|pre[-\s]*auth|precertific)/i.test(n));
+      if (indicator || looksLikeAuthNote) {
+        authDetails.push({
+          serviceTypeCode: serviceTypeCode || undefined,
+          serviceTypeName: benefit.serviceTypeName,
+          benefitCode: code,
+          indicator: indicator ?? 'U',
+          notes,
+          inNetwork,
+        });
+        if (indicator === 'Y' || looksLikeAuthNote) {
+          result.authRequired = true;
         }
       }
 
@@ -1384,6 +1421,7 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
     if (Object.keys(outOfPocketMax).length > 0) result.outOfPocketMax = outOfPocketMax;
     if (Object.keys(therapyVisits).length > 0) result.therapyVisits = therapyVisits;
     if (coverageDetails.length > 0) result.coverageDetails = coverageDetails;
+    if (authDetails.length > 0) result.authDetails = authDetails;
 
   } catch (error) {
     console.error('Error parsing detailed benefits response:', error);
