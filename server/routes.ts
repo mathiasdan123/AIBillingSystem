@@ -106,6 +106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       status: allHealthy ? 'healthy' : 'degraded',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
+      release: process.env.RELEASE_SHA || 'unknown',
       checks,
       responseTime: Date.now() - startTime
     });

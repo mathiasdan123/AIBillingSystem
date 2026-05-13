@@ -39,6 +39,10 @@ ENV NODE_ENV=production
 ARG SENTRY_RELEASE=development
 ENV SENTRY_RELEASE=${SENTRY_RELEASE}
 
+# Git SHA of the deployed commit (baked in at build time)
+ARG RELEASE_SHA=unknown
+ENV RELEASE_SHA=${RELEASE_SHA}
+
 # Create non-root user for security
 RUN groupadd -g 1001 nodejs && \
     useradd -u 1001 -g nodejs nodejs

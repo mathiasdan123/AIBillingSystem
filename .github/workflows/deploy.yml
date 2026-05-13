@@ -1,0 +1,137 @@
+name: Deploy to Production
+
+# Runs the same chain as the manual playbook: archive → S3 → CodeBuild → ECS rollout → smoke test.
+# Triggers on push to main once CI has gone green, plus a manual button for re-deploys.
+#
+# Auth: GitHub OIDC → IAM role `therapybill-github-deploy` (trust scoped to refs/heads/main).
+# Production gate: `environment: production` — configure required reviewers in repo settings
+# if you want a human in the loop before the ECS step.
+
+on:
+  # NOTE: push trigger is intentionally commented out until this workflow has
+  # been validated end-to-end via at least one successful workflow_dispatch run.
+  # After validation, restore: push: { branches: [main] }
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (defaults to current main HEAD)"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "773320320189"
+  S3_BUCKET: therapybill-build-source-773320320189
+  S3_KEY: source.zip
+  CODEBUILD_PROJECT: therapybill-build
+  ECS_CLUSTER: therapybill-cluster
+  ECS_SERVICE: therapybill-service
+  ROLE_ARN: arn:aws:iam::773320320189:role/therapybill-github-deploy
+
+jobs:
+  # CI must pass before we deploy. We re-run the same checks the ci.yml workflow runs
+  # so this workflow is self-sufficient and the production gate sees a single status.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Resolve target SHA
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-deploy-${{ github.run_id }}
+
+      - name: Build source.zip with embedded SHA
+        run: |
+          # Embed the deployed commit SHA so /api/health can report it.
+          echo "${{ steps.sha.outputs.sha }}" > .release-sha
+          # git archive skips untracked + .git; we just need the SHA file added on top.
+          git archive --format=zip -o /tmp/source.zip HEAD
+          zip -j /tmp/source.zip .release-sha
+          ls -lh /tmp/source.zip
+
+      - name: Upload to S3
+        run: aws s3 cp /tmp/source.zip "s3://${{ env.S3_BUCKET }}/${{ env.S3_KEY }}"
+
+      - name: Trigger CodeBuild and wait
+        id: build
+        run: |
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "${{ env.CODEBUILD_PROJECT }}" \
+            --query 'build.id' --output text)
+          echo "Started CodeBuild: $BUILD_ID"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          # Poll every 30s; CodeBuild typically takes ~9 minutes.
+          while true; do
+            STATUS=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+              --query 'builds[0].buildStatus' --output text)
+            echo "Build status: $STATUS"
+            case "$STATUS" in
+              SUCCEEDED) break ;;
+              FAILED|FAULT|STOPPED|TIMED_OUT) echo "Build did not succeed"; exit 1 ;;
+              IN_PROGRESS) sleep 30 ;;
+              *) echo "Unexpected status: $STATUS"; exit 1 ;;
+            esac
+          done
+
+      - name: Force new ECS deployment
+        run: |
+          aws ecs update-service \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --service "${{ env.ECS_SERVICE }}" \
+            --force-new-deployment \
+            --query 'service.serviceName' --output text
+
+      - name: Wait for ECS service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}"
+
+      - name: Smoke test + verify deployed SHA
+        run: |
+          bash scripts/post-deploy-smoke-test.sh
+          DEPLOYED=$(curl -s https://app.therapybillai.com/api/health | jq -r .release)
+          EXPECTED="${{ steps.sha.outputs.sha }}"
+          echo "Deployed SHA: $DEPLOYED"
+          echo "Expected SHA: $EXPECTED"
+          if [ "$DEPLOYED" != "$EXPECTED" ]; then
+            echo "❌ /api/health is not reporting the SHA we just deployed."
+            exit 1
+          fi
+          echo "✅ Production is running $EXPECTED."

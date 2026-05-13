@@ -12,10 +12,14 @@ phases:
       # Generate unique release ID for Sentry error tracking
       - export SENTRY_RELEASE="therapybill-$(date +%Y%m%d-%H%M%S)"
       - echo "Release ID:" $SENTRY_RELEASE
+      # Git SHA — written into source.zip by the deploy pipeline so /api/health can report it.
+      # Defaults to "unknown" for ad-hoc builds that skipped the deploy script.
+      - export RELEASE_SHA=$(cat .release-sha 2>/dev/null || echo "unknown")
+      - echo "Release SHA:" $RELEASE_SHA
   build:
     commands:
       - echo Building Docker image...
-      - docker build --build-arg SENTRY_RELEASE=$SENTRY_RELEASE --target production -t therapybill-app .
+      - docker build --build-arg SENTRY_RELEASE=$SENTRY_RELEASE --build-arg RELEASE_SHA=$RELEASE_SHA --target production -t therapybill-app .
       - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
       - echo Building migrate image...
       - docker build --target migrate -t therapybill-app:migrate .
