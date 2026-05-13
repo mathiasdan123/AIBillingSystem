@@ -79,6 +79,9 @@ const AdjustmentsReport = lazy(() => import("@/pages/reports/Adjustments"));
 const IntakeCompletionReport = lazy(() => import("@/pages/reports/IntakeCompletion"));
 const ReferralsByMonthReport = lazy(() => import("@/pages/reports/ReferralsByMonth"));
 const UnverifiedBenefitsReport = lazy(() => import("@/pages/reports/UnverifiedBenefits"));
+const CapacityUtilizationReport = lazy(() => import("@/pages/reports/CapacityUtilization"));
+const PatientCreditsReport = lazy(() => import("@/pages/reports/PatientCredits"));
+const OperationsReportPage = lazy(() => import("@/pages/reports/OperationsReport"));
 const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 const Credentialing = lazy(() => import("@/pages/credentialing"));
 const MaintenanceWindows = lazy(() => import("@/pages/maintenance-windows"));
@@ -271,6 +274,9 @@ function Router() {
               <Route path="/reports/intake-completion" component={IntakeCompletionReport} />
               <Route path="/reports/referrals" component={ReferralsByMonthReport} />
               <Route path="/reports/unverified-benefits" component={UnverifiedBenefitsReport} />
+              <Route path="/reports/capacity-utilization" component={CapacityUtilizationReport} />
+              <Route path="/reports/patient-credits" component={PatientCreditsReport} />
+              <Route path="/reports/operations" component={OperationsReportPage} />
               <Route path="/expenses" component={Expenses} />
               <Route path="/settings" component={Settings} />
               <Route path="/data-upload" component={DataUpload} />

@@ -29,9 +29,11 @@ const CATEGORIES: ReportCategory[] = [
     label: "Operations",
     icon: Activity,
     reports: [
+      { name: "Operations Report", description: "Practice-wide rollup: visits, cancellations, new patients, claims, payments", route: "/reports/operations", status: "available" },
       { name: "Outcomes", description: "Patient outcome measure summaries", route: "/outcome-measures", status: "available" },
       { name: "Expected Collections", description: "Forecasted A/R based on contracted rates", route: "/reimbursement", status: "available" },
       { name: "Tasking Report", description: "Open and overdue billing tasks", route: "/billing-tasks", status: "available" },
+      { name: "Capacity Utilization", description: "Booked vs available hours per therapist", route: "/reports/capacity-utilization", status: "available" },
       { name: "Cancellations Report", description: "Cancellations by reason, therapist, and month", route: "/reports/cancellations", status: "available" },
       { name: "Days to Note Completion", description: "Time from visit to signed SOAP note, per therapist", route: "/reports/days-to-note-completion", status: "available" },
       { name: "Intake Completion", description: "Intake form completion rate and time-to-complete", route: "/reports/intake-completion", status: "available" },
@@ -63,6 +65,7 @@ const CATEGORIES: ReportCategory[] = [
       { name: "Detailed ERA Report", description: "ERA breakdown by claim and CPT", route: "/remittance", status: "available" },
       { name: "Revenue by CPT Code", description: "Revenue aggregated by procedure code", route: "/analytics", status: "available" },
       { name: "Adjustments Report", description: "Contractual and bad-debt adjustments", route: "/reports/adjustments", status: "available" },
+      { name: "Patient Credits", description: "Patients whose payments exceed responsibility", route: "/reports/patient-credits", status: "available" },
     ],
   },
 ];
