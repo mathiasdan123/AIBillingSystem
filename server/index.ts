@@ -343,6 +343,17 @@ app.use(apiVersionMiddleware);
 // API versioning: rewrite /api/v1/... URLs to /api/... so existing routers handle both
 app.use(apiVersionRewrite);
 
+// Never let API responses (likely PHI) be cached — by browsers, proxies, or
+// anything in between. Set on every /api/* response before the route handlers
+// run, so individual handlers can still override if they really need to (e.g.
+// a future public CPT code lookup endpoint).
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
