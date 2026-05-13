@@ -8,9 +8,8 @@ name: Deploy to Production
 # if you want a human in the loop before the ECS step.
 
 on:
-  # NOTE: push trigger is intentionally commented out until this workflow has
-  # been validated end-to-end via at least one successful workflow_dispatch run.
-  # After validation, restore: push: { branches: [main] }
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       sha:
