@@ -69,6 +69,15 @@ const BillingTasks = lazy(() => import("@/pages/billing-tasks"));
 const Benchmarking = lazy(() => import("@/pages/benchmarking"));
 const DailyReport = lazy(() => import("@/pages/daily-report"));
 const InsightsReport = lazy(() => import("@/pages/insights-report"));
+
+// Phase 2 canned reports
+const DaysToNoteCompletion = lazy(() => import("@/pages/reports/DaysToNoteCompletion"));
+const CancellationsReport = lazy(() => import("@/pages/reports/Cancellations"));
+const TimelyFilingReport = lazy(() => import("@/pages/reports/TimelyFiling"));
+const AdjustmentsReport = lazy(() => import("@/pages/reports/Adjustments"));
+const IntakeCompletionReport = lazy(() => import("@/pages/reports/IntakeCompletion"));
+const ReferralsByMonthReport = lazy(() => import("@/pages/reports/ReferralsByMonth"));
+const UnverifiedBenefitsReport = lazy(() => import("@/pages/reports/UnverifiedBenefits"));
 const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 const Credentialing = lazy(() => import("@/pages/credentialing"));
 const MaintenanceWindows = lazy(() => import("@/pages/maintenance-windows"));
@@ -254,6 +263,13 @@ function Router() {
               {isAdmin && <Route path="/analytics" component={Analytics} />}
               {isAdmin && <Route path="/benchmarking" component={Benchmarking} />}
               <Route path="/reports" component={Reports} />
+              <Route path="/reports/days-to-note-completion" component={DaysToNoteCompletion} />
+              <Route path="/reports/cancellations" component={CancellationsReport} />
+              <Route path="/reports/timely-filing" component={TimelyFilingReport} />
+              <Route path="/reports/adjustments" component={AdjustmentsReport} />
+              <Route path="/reports/intake-completion" component={IntakeCompletionReport} />
+              <Route path="/reports/referrals" component={ReferralsByMonthReport} />
+              <Route path="/reports/unverified-benefits" component={UnverifiedBenefitsReport} />
               <Route path="/expenses" component={Expenses} />
               <Route path="/settings" component={Settings} />
               <Route path="/data-upload" component={DataUpload} />
