@@ -15,6 +15,7 @@ import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import MaintenanceWindowBanner from "@/components/MaintenanceWindowBanner";
 import NotFound from "@/pages/not-found";
 import AiBillingAssistant from "@/components/AiBillingAssistant";
+import VersionUpdateBanner from "@/components/VersionUpdateBanner";
 
 // Keep frequently used pages in the main bundle
 import Landing from "@/pages/landing";
@@ -339,6 +340,7 @@ function App() {
           <AuthErrorListener />
           <Router />
           <AiBillingAssistant />
+          <VersionUpdateBanner />
         </TooltipProvider>
       </QueryClientProvider>
     </ThemeProvider>

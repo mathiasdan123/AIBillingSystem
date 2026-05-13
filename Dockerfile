@@ -6,6 +6,12 @@ ARG SENTRY_RELEASE=development
 ENV VITE_SENTRY_RELEASE=${SENTRY_RELEASE}
 ENV SENTRY_RELEASE=${SENTRY_RELEASE}
 
+# Git SHA of the deployed commit — exposed to the client bundle so the
+# in-app version-check hook can detect when the user is running stale JS
+# against a newer server build.
+ARG RELEASE_SHA=unknown
+ENV VITE_RELEASE_SHA=${RELEASE_SHA}
+
 # Set working directory
 WORKDIR /app
 
