@@ -3,8 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import CannedReportsLibrary from "@/components/CannedReportsLibrary";
 import {
   Table,
   TableBody,
@@ -467,6 +469,15 @@ export default function Reports() {
         </div>
       </div>
 
+      <Tabs defaultValue="library" className="w-full">
+        <TabsList className="mb-6">
+          <TabsTrigger value="library" data-testid="reports-tab-library">Report Library</TabsTrigger>
+          <TabsTrigger value="builder" data-testid="reports-tab-builder">Custom Builder</TabsTrigger>
+        </TabsList>
+        <TabsContent value="library" className="mt-0">
+          <CannedReportsLibrary />
+        </TabsContent>
+        <TabsContent value="builder" className="mt-0">
       <div className="flex gap-6">
         {/* Main content */}
         <div className="flex-1 min-w-0">
@@ -1014,6 +1025,8 @@ export default function Reports() {
           </div>
         )}
       </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
