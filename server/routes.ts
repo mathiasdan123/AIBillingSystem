@@ -16,7 +16,7 @@ import {
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
-  documentsRouter, followUpsRouter, eligibilityRouter,
+  documentsRouter, followUpsRouter, eligibilityRouter, payerIntelRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
   superbillsRouter,
   intakeFormsRouter,
@@ -242,6 +242,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/time-tracking', timeTrackingRouter);
   // Eligibility batch verification routes: /api/eligibility/*
   app.use('/api/eligibility', eligibilityRouter);
+  // Payer-intel (COB, Insurance Discovery): /api/payer-intel/*
+  app.use('/api/payer-intel', payerIntelRouter);
   // Audit report routes: /api/audit-reports/*
   app.use('/api/audit-reports', auditReportsRouter);
   // Superbill routes: /api/superbills/*

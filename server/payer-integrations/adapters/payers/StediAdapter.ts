@@ -2,6 +2,7 @@ import logger from '../../../services/logger';
 import type { NormalizedEligibility, NormalizedBenefits } from '@shared/schema';
 
 const STEDI_API_URL = 'https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/eligibility/v3';
+const STEDI_COB_URL = 'https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/coordinationOfBenefits/v1';
 
 // Local mirror of stediService.stcsForSpecialty — inlined to avoid a
 // circular dependency (stediService imports adapter types indirectly).
@@ -175,6 +176,103 @@ export class StediAdapter {
       });
       throw error;
     }
+  }
+
+  /**
+   * Coordination of Benefits Check — replaces a payer phone call asking
+   * "which plan is primary?" when a patient has more than one. Returns
+   * the parsed primacy result plus the raw response for debugging.
+   * If the COB API isn't enabled on this Stedi plan, the call surfaces
+   * a clear error rather than a generic 4xx.
+   */
+  async checkCoordinationOfBenefits(params: {
+    providerNpi: string;
+    providerName: string;
+    memberFirstName: string;
+    memberLastName: string;
+    memberDob: string; // YYYY-MM-DD
+    memberId: string;
+    payerName: string;
+    tradingPartnerServiceId?: string;
+  }): Promise<{
+    primacyDetermined: boolean;
+    classification?: string;
+    coverageOverlap?: boolean;
+    payerOrder: Array<{
+      order: string;
+      payerName?: string;
+      memberId?: string;
+    }>;
+    notSupported?: boolean;
+    raw: any;
+  }> {
+    const tradingPartnerId = params.tradingPartnerServiceId ||
+      this.resolveTradingPartnerId(params.payerName);
+    if (!tradingPartnerId) {
+      throw new Error(`No trading partner ID found for payer: ${params.payerName}`);
+    }
+    const controlNumber = this.generateControlNumber();
+    const request = {
+      controlNumber,
+      tradingPartnerServiceId: tradingPartnerId,
+      provider: { organizationName: params.providerName, npi: params.providerNpi },
+      subscriber: {
+        memberId: params.memberId,
+        firstName: params.memberFirstName,
+        lastName: params.memberLastName,
+        dateOfBirth: params.memberDob.replace(/-/g, ''),
+      },
+    };
+
+    logger.info('Stedi COB request', { controlNumber, tradingPartnerId });
+    const response = await fetch(STEDI_COB_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Key ${this.apiKey}` },
+      body: JSON.stringify(request),
+    });
+
+    if (response.status === 404 || response.status === 501) {
+      // Endpoint not available on this Stedi plan.
+      const body = await response.text();
+      logger.warn('Stedi COB endpoint unavailable', { status: response.status, body });
+      return {
+        primacyDetermined: false,
+        payerOrder: [],
+        notSupported: true,
+        raw: { status: response.status, body },
+      };
+    }
+    if (!response.ok) {
+      const body = await response.text();
+      logger.error('Stedi COB API error', { status: response.status, body, controlNumber });
+      throw new Error(`Stedi COB API returned ${response.status}: ${body}`);
+    }
+
+    const raw: any = await response.json();
+    const cob = raw?.coordinationOfBenefits || {};
+    const benefitsInformation: any[] = Array.isArray(raw?.benefitsInformation) ? raw.benefitsInformation : [];
+
+    const payerOrder: Array<{ order: string; payerName?: string; memberId?: string }> = [];
+    for (const b of benefitsInformation) {
+      const entities: any[] = Array.isArray(b?.benefitsRelatedEntities) ? b.benefitsRelatedEntities : [];
+      for (const e of entities) {
+        if (e?.entityIdentifier) {
+          payerOrder.push({
+            order: String(e.entityIdentifier),
+            payerName: e.entityName,
+            memberId: e.identificationCode || undefined,
+          });
+        }
+      }
+    }
+
+    return {
+      primacyDetermined: Boolean(cob.primacyDetermined),
+      classification: cob.classification,
+      coverageOverlap: typeof cob.coverageOverlap === 'boolean' ? cob.coverageOverlap : undefined,
+      payerOrder,
+      raw,
+    };
   }
 
   private parseEligibility(response: StediEligibilityResponse, params: any): NormalizedEligibility {
