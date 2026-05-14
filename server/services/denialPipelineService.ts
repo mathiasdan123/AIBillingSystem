@@ -18,6 +18,7 @@ import { claims, claimFollowUps } from '../../shared/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { storage } from '../storage';
 import { appealGenerator } from '../aiAppealGenerator';
+import { applyAutoFixableCorrections } from './claimAutoFixService';
 import logger from './logger';
 
 const APPEAL_FILING_WINDOW_DAYS = 14;
@@ -27,6 +28,7 @@ export interface DenialPipelineResult {
   appealCreated: boolean;
   appealId?: number;
   followUpCreated: boolean;
+  autoFixesApplied: number;
   skippedReason?: string;
   error?: string;
 }
@@ -40,6 +42,7 @@ export async function processDeniedClaim(claimId: number): Promise<DenialPipelin
     claimId,
     appealCreated: false,
     followUpCreated: false,
+    autoFixesApplied: 0,
   };
 
   try {
@@ -69,6 +72,10 @@ export async function processDeniedClaim(claimId: number): Promise<DenialPipelin
     // --- Follow-up task (idempotent: dedup on claimId + denial_appeal) ---
     result.followUpCreated = await ensureDenialFollowUp(claim);
 
+    // --- Auto-fix: persist corrections and apply the unambiguous ones ---
+    const autoFix = await applyAutoFixableCorrections(claimId, claim.practiceId);
+    result.autoFixesApplied = autoFix.fixesApplied;
+
     return result;
   } catch (error: any) {
     logger.error('Denial pipeline failed for claim', { claimId, error: error.message });
@@ -92,10 +99,12 @@ export async function runDenialPipeline(claimIds: number[]): Promise<DenialPipel
 
   const appealsDrafted = results.filter(r => r.appealCreated).length;
   const followUpsCreated = results.filter(r => r.followUpCreated).length;
+  const autoFixesApplied = results.reduce((sum, r) => sum + r.autoFixesApplied, 0);
   logger.info('Denial pipeline complete', {
     processed: results.length,
     appealsDrafted,
     followUpsCreated,
+    autoFixesApplied,
   });
 
   return results;

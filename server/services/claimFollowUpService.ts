@@ -17,7 +17,13 @@ const AGING_THRESHOLDS = {
   aging_90: { days: 90, priority: 'urgent' as const },
 };
 
-type FollowUpType = 'aging_30' | 'aging_60' | 'aging_90' | 'denial_appeal' | 'missing_info';
+type FollowUpType =
+  | 'aging_30'
+  | 'aging_60'
+  | 'aging_90'
+  | 'denial_appeal'
+  | 'missing_info'
+  | 'underpayment';
 type FollowUpStatus = 'pending' | 'in_progress' | 'completed' | 'dismissed';
 type FollowUpPriority = 'low' | 'medium' | 'high' | 'urgent';
 

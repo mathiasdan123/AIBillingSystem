@@ -1371,8 +1371,8 @@ export function startScheduler() {
   const autoFixAnalysisTask = cron.schedule('0 10 * * *', async () => {
     try {
       logger.info('Starting daily auto-fix analysis');
-      const { analyzeRecentDenialsForFixes } = await import('./services/claimAutoFixService');
-      const result = await analyzeRecentDenialsForFixes(1);
+      const { analyzeRecentDenialsForFixesAllPractices } = await import('./services/claimAutoFixService');
+      const result = await analyzeRecentDenialsForFixesAllPractices();
       logger.info('Auto-fix analysis completed', result);
     } catch (error: any) {
       logger.error('Auto-fix analysis failed', { error: error.message });
@@ -1383,7 +1383,8 @@ export function startScheduler() {
   scheduledTasks.set('autoFixAnalysis', autoFixAnalysisTask);
 
   // Claim follow-up generation - daily at 6 AM. Safety net across all
-  // practices for denials/aging claims the real-time pipeline didn't catch.
+  // practices for denials/aging claims and underpayments the real-time
+  // pipelines didn't catch.
   const claimFollowUpTask = cron.schedule('0 6 * * *', async () => {
     try {
       logger.info('Starting daily claim follow-up generation');
@@ -1392,6 +1393,16 @@ export function startScheduler() {
       logger.info('Claim follow-up generation completed', result);
     } catch (error: any) {
       logger.error('Claim follow-up generation failed', { error: error.message });
+    }
+
+    try {
+      const { generateUnderpaymentFollowUpsForAllPractices } = await import(
+        './services/underpaymentPipelineService'
+      );
+      const result = await generateUnderpaymentFollowUpsForAllPractices();
+      logger.info('Underpayment follow-up sweep completed', result);
+    } catch (error: any) {
+      logger.error('Underpayment follow-up sweep failed', { error: error.message });
     }
   }, {
     timezone: process.env.TIMEZONE || 'America/New_York',

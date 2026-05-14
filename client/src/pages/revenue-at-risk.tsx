@@ -52,6 +52,7 @@ const FOLLOW_UP_LABEL: Record<string, string> = {
   aging_60: "Aging 60+ days",
   aging_90: "Aging 90+ days",
   missing_info: "Missing info",
+  underpayment: "Underpaid claim",
 };
 
 function actionFor(item: ActionItem): { label: string; href: string } {

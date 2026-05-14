@@ -1,6 +1,23 @@
+/**
+ * Claim Auto-Fix Service
+ *
+ * Analyzes denied claims for correctable issues, persists every correction to
+ * the `claim_corrections` table for tracking, and automatically applies the
+ * narrow set of fixes that can be made unambiguously:
+ *  - Missing therapy modifier on a therapy CPT whose discipline is known
+ *    (OT->GO, PT->GP, ST->GN) and whose modifier field is empty.
+ *  - Missing line-item diagnosis, backfilled from a sibling line item on the
+ *    same claim.
+ *
+ * Anything ambiguous (which code to use, multi-modifier edits, generic
+ * "review your coding" advice) is persisted as a `pending` correction for a
+ * human to action — it is never auto-applied. Resubmission is always a human
+ * action: this service fixes claim data, it does not send claims.
+ */
+
 import { db } from '../db';
-import { claims, claimLineItems } from '@shared/schema';
-import { eq, and, gte, sql } from 'drizzle-orm';
+import { claims, claimLineItems, cptCodes, claimCorrections } from '@shared/schema';
+import { eq, and, gte } from 'drizzle-orm';
 import { logger } from './logger';
 
 export interface ClaimCorrection {
@@ -10,26 +27,33 @@ export interface ClaimCorrection {
   suggestedValue: string;
   reason: string;
   confidence: number; // 0-1
+  /** Set when the correction targets a specific line item. */
+  lineItemId?: number;
+  /** True when the fix can be applied programmatically without judgement. */
+  autoApplicable?: boolean;
+  /** Internal: the concrete change to apply when autoApplicable. */
+  apply?: { field: 'modifier'; value: string } | { field: 'icd10CodeId'; value: number };
 }
 
+const THERAPY_MODIFIER_BY_DISCIPLINE: Record<string, string> = {
+  PT: 'GP',
+  OT: 'GO',
+  ST: 'GN',
+};
+
 /**
- * Analyzes a denied claim for simple correctable issues
+ * Analyzes a denied claim for correctable issues. Returns in-memory
+ * corrections (including the concrete change for auto-applicable ones).
  */
 export async function analyzeClaimForFixes(claimId: number): Promise<ClaimCorrection[]> {
   try {
     const corrections: ClaimCorrection[] = [];
 
-    // Fetch claim
-    const claim = await db.query.claims.findFirst({
-      where: eq(claims.id, claimId),
-    });
-
+    const [claim] = await db.select().from(claims).where(eq(claims.id, claimId));
     if (!claim) {
       logger.error('Claim not found for auto-fix analysis', { claimId });
       return [];
     }
-
-    // Only analyze denied claims
     if (claim.status !== 'denied') {
       logger.info('Claim is not denied, skipping auto-fix analysis', {
         claimId,
@@ -40,33 +64,31 @@ export async function analyzeClaimForFixes(claimId: number): Promise<ClaimCorrec
 
     const denialReason = (claim.denialReason || '').toLowerCase();
 
-    // Pattern 1: Modifier-related denials
-    if (denialReason.includes('modifier')) {
-      if (!denialReason.includes('duplicate') && !denialReason.includes('inappropriate')) {
-        corrections.push({
-          claimId,
-          correctionType: 'modifier_fix',
-          originalValue: 'No modifier',
-          suggestedValue: 'Add modifier GP (for physical therapy) or GO (for occupational therapy)',
-          reason: 'Denial mentions missing or incorrect modifier',
-          confidence: 0.7,
-        });
-      }
+    // --- Advisory corrections from the denial reason text (never auto-applied) ---
+    if (
+      denialReason.includes('modifier') &&
+      !denialReason.includes('duplicate') &&
+      !denialReason.includes('inappropriate')
+    ) {
+      corrections.push({
+        claimId,
+        correctionType: 'modifier_fix',
+        originalValue: 'Denial cites a modifier issue',
+        suggestedValue: 'Review modifiers on each line item against payer rules',
+        reason: 'Denial mentions a missing or incorrect modifier',
+        confidence: 0.7,
+      });
     }
-
-    // Pattern 2: Bundling denials
     if (denialReason.includes('bundl') || denialReason.includes('inclusive')) {
       corrections.push({
         claimId,
         correctionType: 'modifier_fix',
-        originalValue: 'No unbundling modifier',
-        suggestedValue: 'Add modifier 59 or XE (separate service)',
-        reason: 'Services may have been bundled inappropriately',
-        confidence: 0.65,
+        originalValue: 'Services may have been bundled',
+        suggestedValue: 'Consider modifier 59 or XE (distinct/separate service) where appropriate',
+        reason: 'Denial indicates services were bundled',
+        confidence: 0.6,
       });
     }
-
-    // Pattern 3: Coding-related denials
     if (
       denialReason.includes('invalid code') ||
       denialReason.includes('incorrect code') ||
@@ -75,102 +97,95 @@ export async function analyzeClaimForFixes(claimId: number): Promise<ClaimCorrec
       corrections.push({
         claimId,
         correctionType: 'code_correction',
-        originalValue: 'Current procedure codes',
-        suggestedValue: 'Review codes for accuracy and current year validity',
-        reason: 'Denial indicates coding issue',
-        confidence: 0.6,
+        originalValue: 'Denial cites a coding issue',
+        suggestedValue: 'Review CPT/ICD-10 codes for accuracy and current-year validity',
+        reason: 'Denial indicates a coding issue',
+        confidence: 0.55,
       });
     }
 
-    // Pattern 4: Missing information
-    if (
-      denialReason.includes('missing') ||
-      denialReason.includes('incomplete') ||
-      denialReason.includes('invalid') && (
-        denialReason.includes('information') ||
-        denialReason.includes('data')
-      )
-    ) {
-      corrections.push({
-        claimId,
-        correctionType: 'info_update',
-        originalValue: 'Incomplete claim data',
-        suggestedValue: 'Verify all required fields: patient info, provider NPI, diagnosis codes, service dates',
-        reason: 'Denial indicates missing or invalid information',
-        confidence: 0.75,
-      });
-    }
+    // --- Structured line-item analysis (some of these are auto-applicable) ---
+    const lineItems = await db
+      .select({
+        id: claimLineItems.id,
+        cptCodeId: claimLineItems.cptCodeId,
+        icd10CodeId: claimLineItems.icd10CodeId,
+        modifier: claimLineItems.modifier,
+        cptCode: cptCodes.code,
+        therapyCategory: cptCodes.therapyCategory,
+      })
+      .from(claimLineItems)
+      .leftJoin(cptCodes, eq(claimLineItems.cptCodeId, cptCodes.id))
+      .where(eq(claimLineItems.claimId, claimId));
 
-    // Fetch line items for deeper analysis
-    const lineItems = await db.query.claimLineItems.findMany({
-      where: eq(claimLineItems.claimId, claimId),
-    });
+    // Pick a fallback diagnosis from sibling line items for backfilling.
+    const siblingDiagnosis = pickSiblingDiagnosis(lineItems);
 
-    // Analyze line items
     for (const item of lineItems) {
-      const procedureCode = item.procedureCode;
-
-      // Common therapy codes that often need modifiers
-      const therapyCodes = [
-        '97110', // Therapeutic exercises
-        '97112', // Neuromuscular re-education
-        '97116', // Gait training
-        '97140', // Manual therapy
-        '97530', // Therapeutic activities
-        '97535', // Self-care management
-        '97750', // Physical performance test
-        '97760', // Orthotic management
-        '97763', // Orthotic/prosthetic management
-      ];
-
-      if (therapyCodes.includes(procedureCode)) {
-        const modifiers = item.modifiers ? JSON.parse(item.modifiers as string) : [];
-
-        // Check if GP/GO modifier is present
-        const hasTherapyModifier = modifiers.some((m: string) =>
-          ['GP', 'GO', 'GN'].includes(m)
-        );
-
-        if (!hasTherapyModifier) {
+      // Missing therapy modifier — auto-applicable when discipline is known
+      // and the single modifier field is currently empty.
+      const expectedModifier = item.therapyCategory
+        ? THERAPY_MODIFIER_BY_DISCIPLINE[item.therapyCategory]
+        : undefined;
+      if (expectedModifier) {
+        const current = (item.modifier || '').toUpperCase();
+        if (!current) {
           corrections.push({
             claimId,
+            lineItemId: item.id,
             correctionType: 'modifier_fix',
-            originalValue: `${procedureCode} without therapy modifier`,
-            suggestedValue: `Add GP (Physical Therapy), GO (Occupational Therapy), or GN (Speech Therapy) modifier`,
-            reason: `Therapy code ${procedureCode} typically requires a therapy modifier`,
-            confidence: 0.8,
+            originalValue: `${item.cptCode ?? item.cptCodeId}: no modifier`,
+            suggestedValue: `Add ${expectedModifier} modifier (${item.therapyCategory} discipline)`,
+            reason: `Therapy code ${item.cptCode ?? item.cptCodeId} requires the ${item.therapyCategory} discipline modifier`,
+            confidence: 0.9,
+            autoApplicable: true,
+            apply: { field: 'modifier', value: expectedModifier },
+          });
+        } else if (!current.includes(expectedModifier)) {
+          // A modifier exists but isn't the expected discipline one — needs a
+          // human to decide rather than blindly overwriting.
+          corrections.push({
+            claimId,
+            lineItemId: item.id,
+            correctionType: 'modifier_fix',
+            originalValue: `${item.cptCode ?? item.cptCodeId}: modifier "${item.modifier}"`,
+            suggestedValue: `Verify ${expectedModifier} (${item.therapyCategory}) modifier is present`,
+            reason: `Therapy code expects the ${item.therapyCategory} discipline modifier`,
+            confidence: 0.7,
           });
         }
       }
 
-      // Check for missing diagnosis pointer
-      if (!item.diagnosisPointer) {
-        corrections.push({
-          claimId,
-          correctionType: 'info_update',
-          originalValue: `Line item ${item.id} missing diagnosis pointer`,
-          suggestedValue: 'Add diagnosis pointer linking to primary diagnosis',
-          reason: 'Line item must reference a diagnosis code',
-          confidence: 0.85,
-        });
+      // Missing line-item diagnosis — auto-applicable only when a sibling
+      // line item supplies an unambiguous diagnosis to copy.
+      if (!item.icd10CodeId) {
+        if (siblingDiagnosis) {
+          corrections.push({
+            claimId,
+            lineItemId: item.id,
+            correctionType: 'info_update',
+            originalValue: `${item.cptCode ?? item.cptCodeId}: no diagnosis`,
+            suggestedValue: `Link diagnosis from claim's other line items`,
+            reason: 'Line item must reference a diagnosis code',
+            confidence: 0.85,
+            autoApplicable: true,
+            apply: { field: 'icd10CodeId', value: siblingDiagnosis },
+          });
+        } else {
+          corrections.push({
+            claimId,
+            lineItemId: item.id,
+            correctionType: 'info_update',
+            originalValue: `${item.cptCode ?? item.cptCodeId}: no diagnosis`,
+            suggestedValue: 'Assign a diagnosis code to this line item',
+            reason: 'Line item must reference a diagnosis code',
+            confidence: 0.85,
+          });
+        }
       }
     }
 
-    // Remove duplicate corrections (same type + same suggested value)
-    const uniqueCorrections = corrections.filter((correction, index, self) =>
-      index === self.findIndex((c) =>
-        c.correctionType === correction.correctionType &&
-        c.suggestedValue === correction.suggestedValue
-      )
-    );
-
-    logger.info('Auto-fix analysis completed', {
-      claimId,
-      correctionsFound: uniqueCorrections.length,
-      denialReason: claim.denialReason,
-    });
-
-    return uniqueCorrections;
+    return corrections;
   } catch (error) {
     logger.error('Error analyzing claim for auto-fixes', { error, claimId });
     return [];
@@ -178,49 +193,169 @@ export async function analyzeClaimForFixes(claimId: number): Promise<ClaimCorrec
 }
 
 /**
- * Analyzes recent denied claims for a practice and suggests fixes
+ * Returns the diagnosis (icd10CodeId) shared by sibling line items, or null if
+ * there is no single unambiguous value to copy.
+ */
+function pickSiblingDiagnosis(lineItems: Array<{ icd10CodeId: number | null }>): number | null {
+  const present = lineItems
+    .map(li => li.icd10CodeId)
+    .filter((v): v is number => v != null);
+  if (present.length === 0) return null;
+  const unique = Array.from(new Set(present));
+  return unique.length === 1 ? unique[0] : null;
+}
+
+export interface AutoFixResult {
+  claimId: number;
+  correctionsFound: number;
+  correctionsPersisted: number;
+  fixesApplied: number;
+}
+
+/**
+ * Analyzes a denied claim, persists every correction to `claim_corrections`,
+ * and applies the auto-applicable subset to the claim's line items. Idempotent
+ * — applied fixes are not re-detected, and persistence dedupes on
+ * claim + type + suggestedValue.
+ */
+export async function applyAutoFixableCorrections(
+  claimId: number,
+  practiceId: number,
+): Promise<AutoFixResult> {
+  const result: AutoFixResult = {
+    claimId,
+    correctionsFound: 0,
+    correctionsPersisted: 0,
+    fixesApplied: 0,
+  };
+
+  const corrections = await analyzeClaimForFixes(claimId);
+  result.correctionsFound = corrections.length;
+  if (corrections.length === 0) return result;
+
+  // Existing corrections for this claim — used to dedupe.
+  const existing = await db
+    .select({
+      correctionType: claimCorrections.correctionType,
+      suggestedValue: claimCorrections.suggestedValue,
+    })
+    .from(claimCorrections)
+    .where(eq(claimCorrections.claimId, claimId));
+  const existingKeys = new Set(
+    existing.map((e: any) => `${e.correctionType}:${e.suggestedValue}`),
+  );
+
+  for (const correction of corrections) {
+    const key = `${correction.correctionType}:${correction.suggestedValue}`;
+    if (existingKeys.has(key)) continue;
+    existingKeys.add(key);
+
+    let applied = false;
+    if (correction.autoApplicable && correction.apply && correction.lineItemId) {
+      try {
+        await db
+          .update(claimLineItems)
+          .set({ [correction.apply.field]: correction.apply.value })
+          .where(eq(claimLineItems.id, correction.lineItemId));
+        applied = true;
+        result.fixesApplied++;
+        logger.info('Auto-fix applied to line item', {
+          claimId,
+          lineItemId: correction.lineItemId,
+          field: correction.apply.field,
+          value: correction.apply.value,
+        });
+      } catch (error: any) {
+        logger.error('Failed to apply auto-fix', {
+          claimId,
+          lineItemId: correction.lineItemId,
+          error: error.message,
+        });
+      }
+    }
+
+    await db.insert(claimCorrections).values({
+      claimId,
+      practiceId,
+      correctionType: correction.correctionType,
+      originalValue: correction.originalValue,
+      suggestedValue: correction.suggestedValue,
+      reason: correction.reason,
+      confidence: correction.confidence.toFixed(2),
+      status: applied ? 'applied' : 'pending',
+      approvedBy: applied ? 'auto-fix' : null,
+      approvedAt: applied ? new Date() : null,
+    });
+    result.correctionsPersisted++;
+  }
+
+  if (result.fixesApplied > 0 || result.correctionsPersisted > 0) {
+    logger.info('Auto-fix processing completed', result);
+  }
+  return result;
+}
+
+/**
+ * Runs auto-fix processing for all recently denied claims in a practice.
  */
 export async function analyzeRecentDenialsForFixes(
-  practiceId: number
-): Promise<{ analyzed: number; fixesSuggested: number }> {
+  practiceId: number,
+): Promise<{ analyzed: number; fixesApplied: number; correctionsPersisted: number }> {
   try {
-    // Find denied claims from the last 7 days
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     const deniedClaims = await db
-      .select({
-        id: claims.id,
-      })
+      .select({ id: claims.id })
       .from(claims)
       .where(
         and(
           eq(claims.practiceId, practiceId),
           eq(claims.status, 'denied'),
-          gte(claims.updatedAt, sevenDaysAgo)
-        )
+          gte(claims.updatedAt, sevenDaysAgo),
+        ),
       );
 
-    let totalFixes = 0;
-
-    // Analyze each denied claim
+    let fixesApplied = 0;
+    let correctionsPersisted = 0;
     for (const claim of deniedClaims) {
-      const corrections = await analyzeClaimForFixes(claim.id);
-      totalFixes += corrections.length;
+      const r = await applyAutoFixableCorrections(claim.id, practiceId);
+      fixesApplied += r.fixesApplied;
+      correctionsPersisted += r.correctionsPersisted;
     }
 
-    logger.info('Recent denials analyzed for auto-fixes', {
-      practiceId,
-      claimsAnalyzed: deniedClaims.length,
-      totalFixesSuggested: totalFixes,
-    });
-
-    return {
+    const summary = {
       analyzed: deniedClaims.length,
-      fixesSuggested: totalFixes,
+      fixesApplied,
+      correctionsPersisted,
     };
+    logger.info('Recent denials analyzed for auto-fixes', { practiceId, ...summary });
+    return summary;
   } catch (error) {
     logger.error('Error analyzing recent denials for fixes', { error, practiceId });
-    return { analyzed: 0, fixesSuggested: 0 };
+    return { analyzed: 0, fixesApplied: 0, correctionsPersisted: 0 };
   }
+}
+
+/**
+ * Runs auto-fix processing across every practice — scheduler safety net.
+ */
+export async function analyzeRecentDenialsForFixesAllPractices(): Promise<{
+  practices: number;
+  analyzed: number;
+  fixesApplied: number;
+}> {
+  const allClaims = await db.select({ practiceId: claims.practiceId }).from(claims);
+  const practiceIds: number[] = Array.from(
+    new Set(allClaims.map((c: any) => c.practiceId as number)),
+  );
+
+  let analyzed = 0;
+  let fixesApplied = 0;
+  for (const practiceId of practiceIds) {
+    const r = await analyzeRecentDenialsForFixes(practiceId);
+    analyzed += r.analyzed;
+    fixesApplied += r.fixesApplied;
+  }
+  return { practices: practiceIds.length, analyzed, fixesApplied };
 }
