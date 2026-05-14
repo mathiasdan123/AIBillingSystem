@@ -34,6 +34,7 @@ import {
   Upload,
   ClipboardList,
   LogIn,
+  AlertTriangle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -92,6 +93,7 @@ export const navigationSections: NavSection[] = [
       { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
       { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
       { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
+      { nameKey: 'nav.revenueAtRisk', href: '/revenue-at-risk', icon: AlertTriangle, adminOnly: false },
       { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
       { nameKey: 'nav.rates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
       { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },

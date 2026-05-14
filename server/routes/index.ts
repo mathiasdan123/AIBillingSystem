@@ -60,6 +60,7 @@ export { default as sessionsRouter } from './sessions';
 export { default as webhooksRouter } from './webhooks';
 export { default as documentsRouter } from './documents';
 export { default as followUpsRouter } from './follow-ups';
+export { default as revenueAtRiskRouter } from './revenue-at-risk';
 export { default as eligibilityRouter } from './eligibility';
 export { default as payerIntelRouter } from './payer-intel';
 export { default as practiceAnalyticsRouter } from './practice-analytics';
