@@ -6,7 +6,7 @@
  */
 
 import { db } from '../db';
-import { claims, claimFollowUps, type ClaimFollowUp, type InsertClaimFollowUp } from '../../shared/schema';
+import { claims, claimFollowUps, practices, type ClaimFollowUp, type InsertClaimFollowUp } from '../../shared/schema';
 import { eq, and, desc, count, inArray } from 'drizzle-orm';
 import logger from './logger';
 
@@ -140,6 +140,34 @@ export async function generateFollowUps(practiceId: number): Promise<ClaimFollow
 
   logger.info(`Generated ${inserted.length} claim follow-ups`, { practiceId });
   return inserted;
+}
+
+/**
+ * Runs follow-up generation across every practice. Used by the scheduler as
+ * a daily safety net so denials/aging claims always surface in the work
+ * queue, even ones the real-time denial pipeline didn't catch (e.g. claims
+ * marked denied manually).
+ */
+export async function generateFollowUpsForAllPractices(): Promise<{
+  practices: number;
+  followUpsCreated: number;
+}> {
+  const allPractices = await db.select({ id: practices.id }).from(practices);
+  let followUpsCreated = 0;
+
+  for (const practice of allPractices) {
+    try {
+      const created = await generateFollowUps(practice.id);
+      followUpsCreated += created.length;
+    } catch (error: any) {
+      logger.error('Follow-up generation failed for practice', {
+        practiceId: practice.id,
+        error: error.message,
+      });
+    }
+  }
+
+  return { practices: allPractices.length, followUpsCreated };
 }
 
 /**

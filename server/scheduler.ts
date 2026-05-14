@@ -1337,6 +1337,13 @@ export function startScheduler() {
         newPayments: result.newPayments,
         errors: result.errors.length,
       });
+
+      // Close the loop: every freshly-detected denial gets an auto-drafted
+      // appeal and a follow-up task so it can't silently age out.
+      if (result.deniedClaimIds.length > 0) {
+        const { runDenialPipeline } = await import('./services/denialPipelineService');
+        await runDenialPipeline(result.deniedClaimIds);
+      }
     } catch (error: any) {
       logger.error('Automated claim status polling failed', { error: error.message });
     }
@@ -1375,8 +1382,24 @@ export function startScheduler() {
   });
   scheduledTasks.set('autoFixAnalysis', autoFixAnalysisTask);
 
+  // Claim follow-up generation - daily at 6 AM. Safety net across all
+  // practices for denials/aging claims the real-time pipeline didn't catch.
+  const claimFollowUpTask = cron.schedule('0 6 * * *', async () => {
+    try {
+      logger.info('Starting daily claim follow-up generation');
+      const { generateFollowUpsForAllPractices } = await import('./services/claimFollowUpService');
+      const result = await generateFollowUpsForAllPractices();
+      logger.info('Claim follow-up generation completed', result);
+    } catch (error: any) {
+      logger.error('Claim follow-up generation failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('claimFollowUpGeneration', claimFollowUpTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis'],
+    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis', 'claimFollowUpGeneration'],
   });
 }
 

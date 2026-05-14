@@ -30,6 +30,8 @@ export interface ClaimStatusPollingSummary {
   newDenials: number;
   newPayments: number;
   newRejections: number;
+  /** Claim IDs that transitioned to `denied` this run — fed to the denial pipeline. */
+  deniedClaimIds: number[];
   errors: Array<{
     claimId: number;
     claimNumber: string;
@@ -50,6 +52,7 @@ export async function pollClaimStatuses(): Promise<ClaimStatusPollingSummary> {
       newDenials: 0,
       newPayments: 0,
       newRejections: 0,
+      deniedClaimIds: [],
       errors: [],
     };
   }
@@ -60,6 +63,7 @@ export async function pollClaimStatuses(): Promise<ClaimStatusPollingSummary> {
     newDenials: 0,
     newPayments: 0,
     newRejections: 0,
+    deniedClaimIds: [],
     errors: [],
   };
 
@@ -240,7 +244,10 @@ async function processClaimStatusCheck(
 
     // Update summary
     summary.statusChanges++;
-    if (newStatus === 'denied') summary.newDenials++;
+    if (newStatus === 'denied') {
+      summary.newDenials++;
+      summary.deniedClaimIds.push(claim.id);
+    }
     if (newStatus === 'paid') summary.newPayments++;
     if (newStatus === 'rejected') summary.newRejections++;
   }
@@ -398,11 +405,18 @@ export async function checkSingleClaimStatus(claimId: number): Promise<{
       newDenials: 0,
       newPayments: 0,
       newRejections: 0,
+      deniedClaimIds: [],
       errors: [],
     };
 
     const previousStatus = claim.status;
     await processClaimStatusCheck(claim, summary);
+
+    // A manual check that lands on a denial still feeds the denial pipeline.
+    if (summary.deniedClaimIds.length > 0) {
+      const { runDenialPipeline } = await import('./denialPipelineService');
+      await runDenialPipeline(summary.deniedClaimIds);
+    }
 
     // Update lastStatusCheckAt
     await db
