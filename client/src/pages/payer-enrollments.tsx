@@ -28,11 +28,11 @@ import {
   Clock,
   XCircle,
   Minus,
-  Handshake,
   Info,
   Users,
 } from 'lucide-react';
 import { Link } from 'wouter';
+import PageLayout from '@/components/PageLayout';
 
 /**
  * Payer Enrollments page (Slice C).
@@ -168,20 +168,11 @@ export default function PayerEnrollmentsPage() {
   }
 
   return (
-    <div className="container max-w-6xl mx-auto py-6 px-4 md:py-8 md:px-6">
-      <div className="flex items-start gap-3 mb-6">
-        <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0">
-          <Handshake className="w-5 h-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-        </div>
-        <div>
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Payer Enrollments</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Track which payers you can submit to today. Some payers require separate enrollment
-            approval per transaction type (eligibility checks, claims, or electronic remits).
-          </p>
-        </div>
-      </div>
-
+    <PageLayout
+      title="Payer Enrollments"
+      description="Track which payers you can submit to today. Some payers require separate enrollment approval per transaction type (eligibility checks, claims, or electronic remits)."
+      isLoading={isLoading}
+    >
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <SummaryCard label="Enrolled" value={totals.enrolled} tone="success" />
@@ -209,12 +200,9 @@ export default function PayerEnrollmentsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {isLoading ? (
-            <p className="p-6 text-sm text-muted-foreground">Loading…</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
                   <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-4 py-2 font-medium">Payer</th>
                     {(['eligibility', 'claims', 'era'] as TransactionType[]).map((tx) => (
@@ -269,7 +257,6 @@ export default function PayerEnrollmentsPage() {
                 </tbody>
               </table>
             </div>
-          )}
         </CardContent>
       </Card>
 
@@ -353,7 +340,7 @@ export default function PayerEnrollmentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageLayout>
   );
 }
 

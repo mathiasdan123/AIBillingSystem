@@ -4,8 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
+import PageLayout from "@/components/PageLayout";
 import {
-  AlertTriangle,
   DollarSign,
   TrendingUp,
   FileWarning,
@@ -78,31 +78,16 @@ export default function RevenueAtRisk() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-      <div>
-        <h1 className="text-xl md:text-2xl font-semibold flex items-center gap-2">
-          <AlertTriangle className="h-6 w-6 text-amber-500" />
-          Revenue at Risk
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Money tied up in denials and aging claims, what's been recovered, and the
-          prioritized work queue to recover the rest.
-        </p>
-      </div>
-
-      {isError ? (
-        <div className="text-center py-12">
-          <p className="text-sm text-muted-foreground mb-2">
-            Failed to load revenue-at-risk data
-          </p>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Retry
-          </Button>
-        </div>
-      ) : isLoading || !data ? (
-        <div className="text-center py-12 text-sm text-muted-foreground">Loading…</div>
-      ) : (
-        <>
+    <PageLayout
+      title="Revenue at Risk"
+      description="Money tied up in denials and aging claims, what's been recovered, and the prioritized work queue to recover the rest."
+      isLoading={isLoading || (!isError && !data)}
+      isError={isError}
+      errorMessage="Failed to load revenue-at-risk data"
+      onRetry={refetch}
+    >
+      {data && (
+        <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
               <CardHeader className="pb-2">
@@ -173,11 +158,6 @@ export default function RevenueAtRisk() {
                     {data.actionQueue.length === 1 ? "" : "s"}, highest priority first
                   </CardDescription>
                 </div>
-                <Link href="/follow-ups">
-                  <Button size="sm" variant="outline" className="text-xs md:text-sm">
-                    All follow-ups
-                  </Button>
-                </Link>
               </div>
             </CardHeader>
             <CardContent>
@@ -227,8 +207,8 @@ export default function RevenueAtRisk() {
               )}
             </CardContent>
           </Card>
-        </>
+        </div>
       )}
-    </div>
+    </PageLayout>
   );
 }
