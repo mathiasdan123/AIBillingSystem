@@ -1,5 +1,6 @@
 import {
   auditLog,
+  authorizationAuditLog,
   baaRecords,
   breachIncidents,
   amendmentRequests,
@@ -59,8 +60,24 @@ export async function createAuditLog(entry: InsertAuditLog): Promise<AuditLog> {
   return created;
 }
 
+/**
+ * Writes a HIPAA-flavored row to `authorization_audit_log` — the dedicated
+ * audit trail for the patient-insurance-authorization lifecycle (consent
+ * given/revoked, link clicks, data accesses, etc.). Distinct from the
+ * generic `audit_log` table, which uses a different schema (eventCategory,
+ * resourceType, integrity-hash chain) for cross-cutting PHI access events.
+ *
+ * Was previously delegating to `createAuditLog`, which silently dropped
+ * authorization-specific fields (authorizationId, actorEmail, dataScope) and
+ * also tripped a NOT NULL violation on `eventCategory` — so the audit trail
+ * was effectively not being recorded.
+ */
 export async function createAuditLogEntry(entry: any): Promise<any> {
-  return createAuditLog(entry);
+  const [created] = await db
+    .insert(authorizationAuditLog)
+    .values(entry)
+    .returning();
+  return created;
 }
 
 export async function verifyAuditLogIntegrity(limit?: number): Promise<{ valid: boolean; checkedCount: number; brokenAtId?: number }> {
