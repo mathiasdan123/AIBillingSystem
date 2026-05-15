@@ -1337,6 +1337,13 @@ export function startScheduler() {
         newPayments: result.newPayments,
         errors: result.errors.length,
       });
+
+      // Close the loop: every freshly-detected denial gets an auto-drafted
+      // appeal and a follow-up task so it can't silently age out.
+      if (result.deniedClaimIds.length > 0) {
+        const { runDenialPipeline } = await import('./services/denialPipelineService');
+        await runDenialPipeline(result.deniedClaimIds);
+      }
     } catch (error: any) {
       logger.error('Automated claim status polling failed', { error: error.message });
     }
@@ -1364,8 +1371,8 @@ export function startScheduler() {
   const autoFixAnalysisTask = cron.schedule('0 10 * * *', async () => {
     try {
       logger.info('Starting daily auto-fix analysis');
-      const { analyzeRecentDenialsForFixes } = await import('./services/claimAutoFixService');
-      const result = await analyzeRecentDenialsForFixes(1);
+      const { analyzeRecentDenialsForFixesAllPractices } = await import('./services/claimAutoFixService');
+      const result = await analyzeRecentDenialsForFixesAllPractices();
       logger.info('Auto-fix analysis completed', result);
     } catch (error: any) {
       logger.error('Auto-fix analysis failed', { error: error.message });
@@ -1375,8 +1382,35 @@ export function startScheduler() {
   });
   scheduledTasks.set('autoFixAnalysis', autoFixAnalysisTask);
 
+  // Claim follow-up generation - daily at 6 AM. Safety net across all
+  // practices for denials/aging claims and underpayments the real-time
+  // pipelines didn't catch.
+  const claimFollowUpTask = cron.schedule('0 6 * * *', async () => {
+    try {
+      logger.info('Starting daily claim follow-up generation');
+      const { generateFollowUpsForAllPractices } = await import('./services/claimFollowUpService');
+      const result = await generateFollowUpsForAllPractices();
+      logger.info('Claim follow-up generation completed', result);
+    } catch (error: any) {
+      logger.error('Claim follow-up generation failed', { error: error.message });
+    }
+
+    try {
+      const { generateUnderpaymentFollowUpsForAllPractices } = await import(
+        './services/underpaymentPipelineService'
+      );
+      const result = await generateUnderpaymentFollowUpsForAllPractices();
+      logger.info('Underpayment follow-up sweep completed', result);
+    } catch (error: any) {
+      logger.error('Underpayment follow-up sweep failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('claimFollowUpGeneration', claimFollowUpTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis'],
+    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis', 'claimFollowUpGeneration'],
   });
 }
 

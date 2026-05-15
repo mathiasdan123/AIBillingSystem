@@ -14,6 +14,7 @@ import { isAuthenticated } from '../replitAuth';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import { parse835, flattenToLineItems } from '../services/edi835Parser';
 import { assessUnderpayment } from '../services/underpaymentAnalyzer';
+import { ensureUnderpaymentFollowUp } from '../services/underpaymentPipelineService';
 import { db } from '../db';
 import {
   remittanceAdvice,
@@ -458,6 +459,20 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
                   expectedReimbursement,
                   paidAmount: paidAmt,
                   underpaymentAmount: expectedReimbursement - paidAmt,
+                });
+
+                // Surface the underpayment in the billing work queue.
+                const matchedClaim = practiceClaims.find(
+                  (c: any) => c.claimId === bestMatch!.claimId,
+                );
+                await ensureUnderpaymentFollowUp({
+                  claimId: bestMatch.claimId,
+                  practiceId,
+                  claimNumber: matchedClaim?.claimNumber,
+                  expectedAmount: expectedReimbursement,
+                  paidAmount: paidAmt,
+                  cptCode: lineItem.cptCode,
+                  payerName: remittance.payerName,
                 });
               }
             }
