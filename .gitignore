@@ -142,3 +142,10 @@ backups/
 
 # Generated OpenAPI spec (build artifact from npm run docs:api)
 openapi.json
+
+# Deploy artifacts
+.release-sha
+.claude/worktrees/
+
+# Office app lockfiles
+~$*
