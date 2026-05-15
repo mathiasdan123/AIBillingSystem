@@ -1,5 +1,6 @@
 import {
   soapNotes,
+  soapNoteDrafts,
   treatmentSessions,
   treatmentPlans,
   treatmentGoals,
@@ -18,6 +19,8 @@ import {
   users,
   type SoapNote,
   type InsertSoapNote,
+  type SoapNoteDraft,
+  type InsertSoapNoteDraft,
   type TreatmentPlan,
   type InsertTreatmentPlan,
   type TreatmentGoal,
@@ -52,6 +55,8 @@ import { eq, desc, and, gte, lte, isNull, inArray, sql, or } from "drizzle-orm";
 import {
   encryptSoapNoteRecord,
   decryptSoapNoteRecord,
+  encryptSoapDraftRecord,
+  decryptSoapDraftRecord,
 } from "../services/phiEncryptionService";
 import { getUser } from "./users";
 
@@ -195,6 +200,82 @@ export async function countAllSoapNotes(): Promise<number> {
     .select({ total: sql<number>`count(*)::int` })
     .from(soapNotes);
   return result?.total ?? 0;
+}
+
+// ==================== SOAP NOTE DRAFTS ====================
+// One in-progress draft per (therapistId, patientId). Upsert on save; the
+// unique partial index in migrations/add_soap_draft_columns.sql enforces this.
+
+export async function getSoapDraftForTherapistPatient(
+  practiceId: number,
+  therapistId: string,
+  patientId: number,
+): Promise<SoapNoteDraft | null> {
+  const [row] = await db
+    .select()
+    .from(soapNoteDrafts)
+    .where(
+      and(
+        eq(soapNoteDrafts.practiceId, practiceId),
+        eq(soapNoteDrafts.therapistId, therapistId),
+        eq(soapNoteDrafts.patientId, patientId),
+      ),
+    )
+    .limit(1);
+  return row ? (decryptSoapDraftRecord(row) as SoapNoteDraft) : null;
+}
+
+export async function upsertSoapDraft(draft: InsertSoapNoteDraft): Promise<SoapNoteDraft> {
+  if (!draft.practiceId || !draft.therapistId || !draft.patientId) {
+    throw new Error('practiceId, therapistId, and patientId are required');
+  }
+  const encrypted = encryptSoapDraftRecord({
+    ...draft,
+    lastSavedAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  // Find existing draft for this (therapist, patient) pair.
+  const [existing] = await db
+    .select({ id: soapNoteDrafts.id })
+    .from(soapNoteDrafts)
+    .where(
+      and(
+        eq(soapNoteDrafts.practiceId, draft.practiceId),
+        eq(soapNoteDrafts.therapistId, draft.therapistId),
+        eq(soapNoteDrafts.patientId, draft.patientId),
+      ),
+    )
+    .limit(1);
+
+  if (existing) {
+    const [updated] = await db
+      .update(soapNoteDrafts)
+      .set(encrypted)
+      .where(eq(soapNoteDrafts.id, existing.id))
+      .returning();
+    return decryptSoapDraftRecord(updated) as SoapNoteDraft;
+  }
+  const [created] = await db.insert(soapNoteDrafts).values(encrypted as any).returning();
+  return decryptSoapDraftRecord(created) as SoapNoteDraft;
+}
+
+export async function deleteSoapDraft(
+  practiceId: number,
+  therapistId: string,
+  draftId: number,
+): Promise<boolean> {
+  const result = await db
+    .delete(soapNoteDrafts)
+    .where(
+      and(
+        eq(soapNoteDrafts.id, draftId),
+        eq(soapNoteDrafts.practiceId, practiceId),
+        eq(soapNoteDrafts.therapistId, therapistId),
+      ),
+    )
+    .returning({ id: soapNoteDrafts.id });
+  return result.length > 0;
 }
 
 // ==================== TREATMENT PLANS ====================

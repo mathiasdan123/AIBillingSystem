@@ -15,6 +15,7 @@
 export { default as authRouter } from './auth';
 export { default as analyticsRouter } from './analytics';
 export { default as soapNotesRouter } from './soap-notes';
+export { default as soapDraftsRouter } from './soap-drafts';
 export { default as patientsRouter } from './patients';
 export { default as claimsRouter } from './claims';
 export { default as appointmentsRouter } from './appointments';
