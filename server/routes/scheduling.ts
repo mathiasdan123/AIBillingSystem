@@ -52,8 +52,8 @@ router.get('/utilization', isAuthenticated, async (req: any, res) => {
     if (!range) return res.status(400).json({ message: 'start and end query params required (ISO dates)' });
     const therapistIdRaw = req.query.therapistId as string | undefined;
     const therapistId = therapistIdRaw && therapistIdRaw !== 'all' ? therapistIdRaw : undefined;
-    const cells = await getUtilizationHeatmap(practiceId, range, therapistId);
-    res.json({ cells });
+    const heatmap = await getUtilizationHeatmap(practiceId, range, therapistId);
+    res.json({ heatmap });
   } catch (error) {
     logger.error('Error fetching utilization heatmap', {
       error: error instanceof Error ? error.message : String(error),
