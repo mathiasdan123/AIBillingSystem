@@ -302,7 +302,11 @@ router.get('/', isAuthenticated, async (req: any, res) => {
 // Get single appointment
 router.get('/:id', isAuthenticated, async (req: any, res) => {
   try {
-    const appt = await storage.getAppointment(parseInt(req.params.id));
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: 'Invalid appointment id' });
+    }
+    const appt = await storage.getAppointment(id);
     if (!appt) return res.status(404).json({ message: 'Appointment not found' });
     res.json(appt);
   } catch (error) {
@@ -314,7 +318,11 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
 // Update appointment
 router.patch('/:id', isAuthenticated, async (req: any, res) => {
   try {
-    const appt = await storage.updateAppointment(parseInt(req.params.id), req.body);
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: 'Invalid appointment id' });
+    }
+    const appt = await storage.updateAppointment(id, req.body);
     res.json(appt);
   } catch (error) {
     logger.error('Error updating appointment', { error: error instanceof Error ? error.message : String(error) });
