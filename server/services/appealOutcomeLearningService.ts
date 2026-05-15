@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { appeals, claims, insurances } from '@shared/schema';
+import { appeals, appealOutcomes, claims, insurances } from '@shared/schema';
 import { eq, and, sql, count, desc, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 
@@ -186,6 +186,17 @@ export interface AppealSuccessRate {
 /**
  * Records appeal outcome details when an appeal is resolved
  */
+/**
+ * Persists a row to `appeal_outcomes` when an appeal resolves (won/lost/
+ * partial). This is the immutable analytics/ML training record — separate
+ * from the mutable `appeals` row. Captures:
+ *  - `daysToResolution` (derived from createdAt → resolvedDate)
+ *  - `payerName` (denormalized from claim → insurance)
+ *  - `wasAiGenerated` / `aiModelUsed` (provenance for outcome attribution)
+ *
+ * Idempotent: re-running for the same appealId is a no-op once recorded.
+ * Used to be a log-only stub — see git history for context.
+ */
 export async function recordAppealOutcome(appealId: number): Promise<void> {
   try {
     const appeal = await db.query.appeals.findFirst({
@@ -197,7 +208,6 @@ export async function recordAppealOutcome(appealId: number): Promise<void> {
       return;
     }
 
-    // Only process resolved appeals
     if (!['won', 'lost', 'partial'].includes(appeal.status || '')) {
       logger.info('Appeal not in resolved status, skipping outcome recording', {
         appealId,
@@ -206,36 +216,64 @@ export async function recordAppealOutcome(appealId: number): Promise<void> {
       return;
     }
 
-    // Calculate days to resolution
-    let daysToResolution = null;
-    if (appeal.resolvedDate && appeal.createdAt) {
-      const resolved = new Date(appeal.resolvedDate);
-      const created = new Date(appeal.createdAt);
-      daysToResolution = Math.ceil(
-        (resolved.getTime() - created.getTime()) / (1000 * 60 * 60 * 24)
-      );
+    // Idempotent: don't double-record.
+    const existing = await db
+      .select({ id: appealOutcomes.id })
+      .from(appealOutcomes)
+      .where(eq(appealOutcomes.appealId, appealId))
+      .limit(1);
+    if (existing.length > 0) {
+      logger.info('Appeal outcome already recorded, skipping', { appealId });
+      return;
     }
 
-    // Log the outcome details
-    logger.info('Appeal outcome recorded', {
-      appealId,
-      status: appeal.status,
+    // Days from creation to resolution.
+    let daysToResolution: number | null = null;
+    if (appeal.resolvedDate && appeal.createdAt) {
+      const resolved = new Date(appeal.resolvedDate).getTime();
+      const created = new Date(appeal.createdAt).getTime();
+      daysToResolution = Math.ceil((resolved - created) / (1000 * 60 * 60 * 24));
+    }
+
+    // Denormalize payer name via claim → insurance.
+    let payerName: string | null = null;
+    const [claimWithPayer] = await db
+      .select({ payerName: insurances.name })
+      .from(claims)
+      .leftJoin(insurances, eq(claims.insuranceId, insurances.id))
+      .where(eq(claims.id, appeal.claimId))
+      .limit(1);
+    if (claimWithPayer?.payerName) payerName = claimWithPayer.payerName;
+
+    // AI provenance: the denial pipeline tags auto-drafted appeals with this
+    // exact notes prefix and populates keyArguments. Treat either as a
+    // positive signal.
+    const wasAiGenerated =
+      !!appeal.keyArguments ||
+      (appeal.notes ?? '').startsWith('Auto-drafted by denial pipeline');
+
+    await db.insert(appealOutcomes).values({
+      appealId: appeal.id,
+      claimId: appeal.claimId,
+      practiceId: appeal.practiceId,
+      payerName,
       denialCategory: appeal.denialCategory,
       appealLevel: appeal.appealLevel,
+      outcome: appeal.status!,
       appealedAmount: appeal.appealedAmount,
       recoveredAmount: appeal.recoveredAmount,
       daysToResolution,
-      practiceId: appeal.practiceId,
+      wasAiGenerated,
+      aiModelUsed: wasAiGenerated ? 'template-generator' : null,
     });
 
-    // Additional outcome analysis
-    if (appeal.recoveredAmount && appeal.appealedAmount) {
-      const recoveryRate = (appeal.recoveredAmount / appeal.appealedAmount) * 100;
-      logger.info('Appeal recovery rate calculated', {
-        appealId,
-        recoveryRate: recoveryRate.toFixed(2) + '%',
-      });
-    }
+    logger.info('Appeal outcome recorded', {
+      appealId,
+      outcome: appeal.status,
+      denialCategory: appeal.denialCategory,
+      daysToResolution,
+      practiceId: appeal.practiceId,
+    });
   } catch (error) {
     logger.error('Error recording appeal outcome', { error, appealId });
   }

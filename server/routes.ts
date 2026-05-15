@@ -16,7 +16,7 @@ import {
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
-  documentsRouter, followUpsRouter, revenueAtRiskRouter, eligibilityRouter, payerIntelRouter,
+  documentsRouter, followUpsRouter, revenueAtRiskRouter, schedulingRouter, eligibilityRouter, payerIntelRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
   superbillsRouter,
   intakeFormsRouter,
@@ -240,6 +240,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/follow-ups', followUpsRouter);
   // Revenue at Risk dashboard routes: /api/revenue-at-risk/*
   app.use('/api/revenue-at-risk', revenueAtRiskRouter);
+  // Scheduling insights routes: /api/scheduling/*
+  app.use('/api/scheduling', schedulingRouter);
   // Time Tracking routes: /api/time-tracking/*
   app.use('/api/time-tracking', timeTrackingRouter);
   // Eligibility batch verification routes: /api/eligibility/*

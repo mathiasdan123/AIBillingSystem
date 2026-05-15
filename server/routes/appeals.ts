@@ -21,6 +21,7 @@ import { Router } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { appealGenerator } from '../aiAppealGenerator';
+import { recordAppealOutcome } from '../services/appealOutcomeLearningService';
 import logger from '../services/logger';
 
 const router = Router();
@@ -361,6 +362,11 @@ router.post('/appeals/:id/resolve', isAuthenticated, async (req: any, res) => {
         paidAt: new Date(),
       });
     }
+
+    // Persist the immutable outcome row for ML / payer-success-rate analytics.
+    // Idempotent — safe if the route fires twice. Non-blocking on its own
+    // errors (logged inside the service).
+    await recordAppealOutcome(appealId);
 
     res.json({
       message: `Appeal resolved as ${outcome}`,
