@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import CopayModal from "@/components/CopayModal";
+import { WalkInDialog } from "@/components/WalkInDialog";
 import {
   LogIn,
   LogOut,
@@ -15,6 +16,7 @@ import {
   Clock3,
   UserCheck,
   Activity,
+  Plus,
 } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 
@@ -134,6 +136,8 @@ export default function FrontDeskPage() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const [walkInOpen, setWalkInOpen] = useState(false);
 
   // Tick every 30s for live wait-time counters + re-bucketing.
   const [nowTick, setNowTick] = useState(() => new Date());
@@ -270,11 +274,21 @@ export default function FrontDeskPage() {
             {t("frontDesk.subtitle", "Today's arrivals, waiting, in session, and checkouts")}
           </p>
         </div>
-        <div className="flex gap-6 text-right">
-          <SummaryStat label={t("frontDesk.summary.total", "Today")} value={summary.total} />
-          <SummaryStat label={t("frontDesk.summary.waiting", "Waiting")} value={summary.waiting} accent="text-amber-600" />
-          <SummaryStat label={t("frontDesk.summary.inSession", "In session")} value={summary.inSession} accent="text-emerald-600" />
-          <SummaryStat label={t("frontDesk.summary.completed", "Completed")} value={summary.completed} accent="text-slate-600" />
+        <div className="flex items-center gap-4">
+          <Button
+            size="sm"
+            onClick={() => setWalkInOpen(true)}
+            data-testid="walk-in-button"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Walk-in
+          </Button>
+          <div className="flex gap-6 text-right">
+            <SummaryStat label={t("frontDesk.summary.total", "Today")} value={summary.total} />
+            <SummaryStat label={t("frontDesk.summary.waiting", "Waiting")} value={summary.waiting} accent="text-amber-600" />
+            <SummaryStat label={t("frontDesk.summary.inSession", "In session")} value={summary.inSession} accent="text-emerald-600" />
+            <SummaryStat label={t("frontDesk.summary.completed", "Completed")} value={summary.completed} accent="text-slate-600" />
+          </div>
         </div>
       </div>
 
@@ -294,6 +308,13 @@ export default function FrontDeskPage() {
           />
         ))}
       </div>
+
+      <WalkInDialog
+        open={walkInOpen}
+        onOpenChange={setWalkInOpen}
+        patients={patients}
+        therapists={therapists}
+      />
 
       <CopayModal
         appointmentId={copayModalFor}
