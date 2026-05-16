@@ -11,6 +11,13 @@ import { db } from "../db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, or } from "drizzle-orm";
 
 // ==================== ANALYTICS ====================
+// Phase 5: every claims/patients/appointments aggregate excludes demo rows
+// (where is_demo = true). Demo data is for new-user navigation practice
+// and must not contaminate dashboards or reports. The helpers below produce
+// the per-table filter — apply them inside the WHERE clause of each query.
+const NOT_DEMO_CLAIM = eq(claims.isDemo, false);
+const NOT_DEMO_PATIENT = eq(patients.isDemo, false);
+const NOT_DEMO_APPOINTMENT = eq(appointments.isDemo, false);
 
 export async function getDashboardStats(practiceId: number): Promise<{
   totalClaims: number;
@@ -28,33 +35,34 @@ export async function getDashboardStats(practiceId: number): Promise<{
   const [totalClaimsResult] = await db
     .select({ count: count() })
     .from(claims)
-    .where(eq(claims.practiceId, practiceId));
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM));
 
   const [paidClaimsResult] = await db
     .select({ count: count() })
     .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), eq(claims.status, "paid")));
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "paid")));
 
   const [deniedClaimsResult] = await db
     .select({ count: count() })
     .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), eq(claims.status, "denied")));
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "denied")));
 
   const [pendingClaimsResult] = await db
     .select({ count: count() })
     .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), eq(claims.status, "submitted")));
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "submitted")));
 
   const [totalRevenueResult] = await db
     .select({ total: sum(claims.paidAmount) })
     .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), eq(claims.status, "paid")));
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "paid")));
 
   const [monthlyClaimsResult] = await db
     .select({ count: count() })
     .from(claims)
     .where(and(
       eq(claims.practiceId, practiceId),
+      NOT_DEMO_CLAIM,
       gte(claims.createdAt, currentMonth)
     ));
 
@@ -63,6 +71,7 @@ export async function getDashboardStats(practiceId: number): Promise<{
     .from(claims)
     .where(and(
       eq(claims.practiceId, practiceId),
+      NOT_DEMO_CLAIM,
       eq(claims.status, "paid"),
       gte(claims.paidAt, currentMonth)
     ));
@@ -98,6 +107,7 @@ export async function getRevenueByMonth(practiceId: number, startDate: Date, end
     .from(claims)
     .where(and(
       eq(claims.practiceId, practiceId),
+      NOT_DEMO_CLAIM,
       eq(claims.status, "paid"),
       gte(claims.paidAt, startDate),
       lte(claims.paidAt, endDate)
@@ -122,7 +132,7 @@ export async function getClaimsByStatus(practiceId: number): Promise<{
       count: count(),
     })
     .from(claims)
-    .where(eq(claims.practiceId, practiceId))
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM))
     .groupBy(claims.status);
 
   return result.map((row: any) => ({
@@ -143,6 +153,7 @@ export async function getTopDenialReasons(practiceId: number): Promise<{
     .from(claims)
     .where(and(
       eq(claims.practiceId, practiceId),
+      NOT_DEMO_CLAIM,
       eq(claims.status, "denied")
     ))
     .groupBy(claims.denialReason)
@@ -168,7 +179,7 @@ export async function getCollectionRate(practiceId: number): Promise<{
       totalCollected: sum(claims.paidAmount),
     })
     .from(claims)
-    .where(eq(claims.practiceId, practiceId));
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM));
 
   const totalBilled = Number(totals[0]?.totalBilled) || 0;
   const totalCollected = Number(totals[0]?.totalCollected) || 0;
@@ -182,7 +193,7 @@ export async function getCollectionRate(practiceId: number): Promise<{
     })
     .from(claims)
     .leftJoin(insurances, eq(claims.insuranceId, insurances.id))
-    .where(eq(claims.practiceId, practiceId))
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM))
     .groupBy(insurances.name);
 
   const byInsurance = byInsuranceResult.map((row: any) => {

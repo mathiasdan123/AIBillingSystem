@@ -87,6 +87,9 @@ const MUTATION_TOOLS = new Set<string>([
   'create_patient_invoice',
   'send_patient_payment_link',
   'generate_soap_note',
+  // Phase 5 — demo / practice mode
+  'enable_demo_mode',
+  'clear_demo_data',
 ]);
 
 /**
@@ -125,6 +128,10 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Send payment link${name ? ` to ${name}` : ''}${args.amount ? ` for $${args.amount}` : ''}`;
     case 'generate_soap_note':
       return `Generate & save SOAP note${name ? ` for ${name}` : ''}`;
+    case 'enable_demo_mode':
+      return 'Enable demo mode (creates 3 sample patients, 2 appointments, 1 ready-to-submit claim, all prefixed DEMO-)';
+    case 'clear_demo_data':
+      return 'Clear ALL demo data for this practice (irreversible)';
     default:
       return `Run ${toolName}`;
   }
@@ -181,6 +188,29 @@ function takeProposal(id: string): StoredProposal | null {
   if (!proposal) return null;
   proposalStore.delete(id); // one-shot; can't re-confirm
   return proposal;
+}
+
+/**
+ * Phase 5 guard — refuse mutation/send/charge operations when the target row
+ * (patient, claim, appointment) is a demo row. Returns a JSON-stringified
+ * error message ready to be returned directly from a tool executor, or null
+ * if the row is NOT demo and the caller should proceed.
+ *
+ * The message is user-facing: it tells the user this is demo data and
+ * suggests cloning the workflow on a real patient. Tools call this right
+ * after fetching the row by id.
+ */
+export function rejectIfDemoData(
+  row: { isDemo?: boolean } | null | undefined,
+  what: 'patient' | 'claim' | 'appointment',
+): string | null {
+  if (row && (row as any).isDemo) {
+    return JSON.stringify({
+      error: `This is a demo ${what} (created by enable_demo_mode). To keep demo and real data separate, demo rows can't be submitted, sent, or charged. To do this for real, create a real ${what} first — or call clear_demo_data to wipe the demo records.`,
+      code: 'demo_data_refused',
+    });
+  }
+  return null;
 }
 
 // Test-only access. Internal; do not import from runtime code.
@@ -516,6 +546,11 @@ If they seem confused at any step, slow down and explain in more detail. Offer t
 
 If they ask "what is MCP?" or "what is Claude Desktop?", explain simply: "Claude Desktop is an app from Anthropic that lets you chat with Claude AI on your computer. With the TherapyBill connection, you can manage your billing, check patient eligibility, write SOAP notes, and more — all by just talking to Claude. It's like having me available on your desktop at all times."
 
+## Demo / Practice Mode
+When a new user wants to "try things out", "practice", "explore safely", or seems nervous about adding real patients, OFFER demo mode: call the enable_demo_mode tool. It creates 3 sample patients (all prefixed with "DEMO-"), 2 sample appointments for tomorrow, and 1 ready-to-submit sample claim — all clearly labeled, excluded from analytics, and refused by submission/sending tools so nothing fake reaches a real payer or patient.
+
+After you've helped them walk through the workflow on the demo data and they're ready to use real data, OFFER to call clear_demo_data to remove it cleanly. Always mention that demo and real data live side-by-side — you can't accidentally mix them up because demo names are prefixed and refuse to be sent or submitted.
+
 ## Action Confirmation
 In the TherapyBill web chat (where the user is right now), every action that changes data — creating patients, sending invites, submitting claims, scheduling appointments — generates a Confirm/Cancel card before it runs. You should briefly explain what you're proposing each time so the user knows what they're approving. Do NOT promise that an action is done until they click Confirm and you see the result.
 
@@ -679,6 +714,26 @@ const assistantTools: Anthropic.Tool[] = [
   {
     name: 'get_practice_setup_status',
     description: 'Get the current setup and onboarding status for the practice. Call this when a user first messages you to understand if they are a new practice that needs setup guidance. Returns onboarding progress, patient/claim/appointment counts, sandbox mode status, and setup suggestions.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'enable_demo_mode',
+    description:
+      'Create a small set of clearly-labeled demo data (3 sample patients with DEMO- name prefix, 2 sample appointments for tomorrow, 1 ready-to-submit sample claim) so a new user can practice navigating TherapyBill without affecting real patient records. Demo data is excluded from analytics and refused by submission/sending paths — a fake claim can never be submitted to a real clearinghouse. Use this when a user asks to "try it out", "practice", "explore safely", or seems hesitant to add real data first.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'clear_demo_data',
+    description:
+      'Permanently delete ALL demo patients, appointments, and claims for this practice (rows where is_demo = true). Use when the user is done practicing and wants a clean slate. Irreversible — confirm with the user before calling.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -1357,6 +1412,152 @@ export async function executeTool(
         return JSON.stringify({ success: true, patient: { id: patient.id, firstName: patient.firstName, lastName: patient.lastName }, message: `Patient ${patient.firstName} ${patient.lastName} created successfully.` });
       }
 
+      case 'enable_demo_mode': {
+        // Creates a small, clearly-labeled set of practice rows for the user
+        // to navigate around without affecting real data. All rows carry
+        // isDemo=true so analytics excludes them and submission paths refuse
+        // them. The DEMO- name prefix is the visual marker in lists.
+        const baseDob = '1990-01-15';
+        const demoPatientSeeds = [
+          { firstName: 'DEMO-Aaron', lastName: 'Sample', insuranceProvider: 'DEMO BCBS' },
+          { firstName: 'DEMO-Bella', lastName: 'Sample', insuranceProvider: 'DEMO Aetna' },
+          { firstName: 'DEMO-Carlos', lastName: 'Sample', insuranceProvider: 'DEMO UHC' },
+        ];
+        const createdPatients = [];
+        for (const seed of demoPatientSeeds) {
+          const p = await storage.createPatient({
+            practiceId,
+            firstName: seed.firstName,
+            lastName: seed.lastName,
+            dateOfBirth: baseDob,
+            email: `demo-${seed.firstName.toLowerCase().replace('demo-', '')}@example.com`,
+            insuranceProvider: seed.insuranceProvider,
+            isDemo: true,
+          } as any);
+          createdPatients.push(p);
+        }
+
+        // Two appointments tomorrow, 60 min each, for the first two patients.
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(10, 0, 0, 0);
+        const apt1End = new Date(tomorrow.getTime() + 60 * 60_000);
+        const aptB = new Date(tomorrow);
+        aptB.setHours(14, 0, 0, 0);
+        const apt2End = new Date(aptB.getTime() + 60 * 60_000);
+        const createdAppointments = [];
+        if (createdPatients[0]) {
+          createdAppointments.push(
+            await storage.createAppointment({
+              practiceId,
+              patientId: createdPatients[0].id,
+              startTime: tomorrow,
+              endTime: apt1End,
+              title: 'DEMO - OT Session',
+              status: 'scheduled',
+              isDemo: true,
+            } as any),
+          );
+        }
+        if (createdPatients[1]) {
+          createdAppointments.push(
+            await storage.createAppointment({
+              practiceId,
+              patientId: createdPatients[1].id,
+              startTime: aptB,
+              endTime: apt2End,
+              title: 'DEMO - OT Session',
+              status: 'scheduled',
+              isDemo: true,
+            } as any),
+          );
+        }
+
+        // One ready-to-submit claim for the first patient. The submit_claim
+        // path will refuse it (isDemo=true), so a fake claim never reaches
+        // the clearinghouse — the user can still walk through the UI flow.
+        let createdClaim: any = null;
+        if (createdPatients[0]) {
+          try {
+            createdClaim = await storage.createClaim({
+              practiceId,
+              patientId: createdPatients[0].id,
+              status: 'ready',
+              totalAmount: '300.00',
+              dateOfService: new Date().toISOString().split('T')[0],
+              isDemo: true,
+            } as any);
+          } catch (e) {
+            logger.warn('Demo claim creation skipped', {
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+
+        logger.info('Blanche enabled demo mode', {
+          practiceId,
+          patients: createdPatients.length,
+          appointments: createdAppointments.length,
+          claim: !!createdClaim,
+        });
+
+        return JSON.stringify({
+          success: true,
+          summary: {
+            patients: createdPatients.length,
+            appointments: createdAppointments.length,
+            claims: createdClaim ? 1 : 0,
+          },
+          message:
+            `Demo mode enabled. Created ${createdPatients.length} sample patients (all prefixed with "DEMO-"), ` +
+            `${createdAppointments.length} appointments for tomorrow, and ${createdClaim ? '1 ready-to-submit claim' : '0 claims'}. ` +
+            `These rows are clearly labeled DEMO-, excluded from analytics, and submission/sending tools will refuse to act on them — ` +
+            `you can practice the workflow without anything real happening. Call clear_demo_data when you're done to wipe it all.`,
+        });
+      }
+
+      case 'clear_demo_data': {
+        // Bulk-delete in dependency-safe order: claims → appointments → patients.
+        // Drizzle inferred type doesn't expose `isDemo` consistently across all
+        // table records yet, hence the `as any` casts on the where clauses.
+        const { db } = await import('../db');
+        const { patients, claims, appointments } = await import('@shared/schema');
+        const { and, eq } = await import('drizzle-orm');
+
+        const claimsResult = await db
+          .delete(claims)
+          .where(and(eq(claims.practiceId, practiceId), eq((claims as any).isDemo, true)))
+          .returning({ id: claims.id });
+        const appointmentsResult = await db
+          .delete(appointments)
+          .where(and(eq(appointments.practiceId, practiceId), eq((appointments as any).isDemo, true)))
+          .returning({ id: appointments.id });
+        const patientsResult = await db
+          .delete(patients)
+          .where(and(eq(patients.practiceId, practiceId), eq((patients as any).isDemo, true)))
+          .returning({ id: patients.id });
+
+        logger.info('Blanche cleared demo data', {
+          practiceId,
+          claims: claimsResult.length,
+          appointments: appointmentsResult.length,
+          patients: patientsResult.length,
+        });
+
+        return JSON.stringify({
+          success: true,
+          deleted: {
+            claims: claimsResult.length,
+            appointments: appointmentsResult.length,
+            patients: patientsResult.length,
+          },
+          message:
+            `Cleared all demo data — removed ${patientsResult.length} patients, ` +
+            `${appointmentsResult.length} appointments, and ${claimsResult.length} claims. ` +
+            `Your real data is untouched.`,
+        });
+      }
+
       case 'create_appointment': {
         const duration = (args.duration as number) || 60;
         const startTime = new Date(`${args.date}T${args.time}:00`);
@@ -1514,6 +1715,8 @@ export async function executeTool(
 
         const patient = await storage.getPatient(patientId);
         if (!patient) return JSON.stringify({ error: 'Patient not found.' });
+        const submitDemoBlock = rejectIfDemoData(patient, 'patient');
+        if (submitDemoBlock) return submitDemoBlock;
 
         const cptCodes = args.cptCodes as string[];
         if (!cptCodes || cptCodes.length === 0) {
@@ -2670,6 +2873,8 @@ export async function executeTool(
         const patient = await storage.getPatient(patientId);
         if (!patient) return JSON.stringify({ error: 'Patient not found.' });
         if (patient.practiceId !== practiceId) return JSON.stringify({ error: 'Patient does not belong to your practice.' });
+        const inviteDemoBlock = rejectIfDemoData(patient, 'patient');
+        if (inviteDemoBlock) return inviteDemoBlock;
         if (!patient.email) return JSON.stringify({ error: `${patient.firstName} ${patient.lastName} has no email on file. Add an email before sending a portal invite.` });
 
         // Reuse existing portal-invite plumbing (see server/routes/patients.ts /:id/send-portal-link)
@@ -2724,10 +2929,14 @@ export async function executeTool(
         const appointment = await storage.getAppointment(appointmentId);
         if (!appointment) return JSON.stringify({ error: 'Appointment not found.' });
         if (appointment.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment does not belong to your practice.' });
+        const reminderApptDemoBlock = rejectIfDemoData(appointment, 'appointment');
+        if (reminderApptDemoBlock) return reminderApptDemoBlock;
         if (!appointment.patientId) return JSON.stringify({ error: 'Appointment has no patient assigned.' });
 
         const patient = await storage.getPatient(appointment.patientId);
         if (!patient) return JSON.stringify({ error: 'Patient not found for this appointment.' });
+        const reminderPatientDemoBlock = rejectIfDemoData(patient, 'patient');
+        if (reminderPatientDemoBlock) return reminderPatientDemoBlock;
 
         const practice = await storage.getPractice(practiceId);
         const practiceName = practice?.name || 'Your Practice';
@@ -2973,6 +3182,8 @@ export async function executeTool(
         if ((patient as any).practiceId !== practiceId) {
           return JSON.stringify({ error: 'Access denied: patient belongs to a different practice.' });
         }
+        const invoiceDemoBlock = rejectIfDemoData(patient, 'patient');
+        if (invoiceDemoBlock) return invoiceDemoBlock;
 
         if (args.claimId) {
           const claim = await storage.getClaim(args.claimId as number);
@@ -3026,6 +3237,8 @@ export async function executeTool(
         if ((patient as any).practiceId !== practiceId) {
           return JSON.stringify({ error: 'Access denied: patient belongs to a different practice.' });
         }
+        const linkDemoBlock = rejectIfDemoData(patient, 'patient');
+        if (linkDemoBlock) return linkDemoBlock;
 
         // Resolve charge amount: from invoice (Stripe payment intent) if invoiceId provided, else use amount
         let chargeAmountCents: number;
