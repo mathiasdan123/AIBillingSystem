@@ -4,10 +4,22 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { BLANCHE_OPEN_EVENT, type BlancheOpenDetail } from "@/lib/blancheControl";
 
+interface BlancheProposal {
+  id: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, any>;
+  // Local UI state after the user clicks Confirm or Cancel.
+  status?: "pending" | "confirming" | "confirmed" | "cancelled" | "error";
+  resultText?: string;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   suggestedActions?: { label: string; path: string }[];
+  // Phase 4: deferred mutations Blanche queued, awaiting Confirm/Cancel.
+  proposals?: BlancheProposal[];
   timestamp: number;
 }
 
@@ -52,6 +64,24 @@ function greetedKey(userId: string | undefined | null): string {
  *             on their first login, regardless of browser history).
  */
 const GREETING_VERSION = "2026.04.1";
+
+/**
+ * Best-effort one-line render of the tool-result the server returned after
+ * a confirmed proposal. Different tools return wildly different shapes — try
+ * the common id / message / status fields, fall back to "Done".
+ */
+function summarizeResult(result: unknown): string {
+  if (!result || typeof result !== "object") {
+    return typeof result === "string" ? result : "Done.";
+  }
+  const r = result as Record<string, any>;
+  if (r.error) return `Error: ${String(r.error)}`;
+  if (r.message) return String(r.message);
+  if (r.id) return `Created (id: ${r.id})`;
+  if (r.claimNumber) return `Submitted claim ${r.claimNumber}`;
+  if (r.success) return "Done.";
+  return "Done.";
+}
 
 function loadHistory(): ChatMessage[] {
   try {
@@ -348,6 +378,18 @@ export default function AiBillingAssistant() {
         role: "assistant",
         content: data.response,
         suggestedActions: data.suggestedActions,
+        // Phase 4: any mutation Blanche tried becomes a proposal card the
+        // user must Confirm or Cancel. The server stages these; we just
+        // render and round-trip the user's decision to /confirm-tool.
+        proposals: Array.isArray(data.proposals)
+          ? data.proposals.map((p: any) => ({
+              id: String(p.id),
+              toolName: String(p.toolName),
+              summary: String(p.summary ?? p.toolName),
+              args: p.args ?? {},
+              status: "pending" as const,
+            }))
+          : undefined,
         timestamp: Date.now(),
       };
 
@@ -427,6 +469,75 @@ export default function AiBillingAssistant() {
     recognitionRef.current?.stop();
     setIsListening(false);
   }, []);
+
+  // Phase 4: confirm or cancel a deferred mutation proposed by Blanche.
+  // Optimistically marks the proposal in-place so the buttons disable
+  // immediately, then patches the message with the result/cancellation.
+  const handleProposalDecision = useCallback(
+    async (
+      messageTimestamp: number,
+      proposalId: string,
+      action: "confirm" | "cancel",
+    ) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.timestamp !== messageTimestamp || !m.proposals
+            ? m
+            : {
+                ...m,
+                proposals: m.proposals.map((p) =>
+                  p.id === proposalId ? { ...p, status: "confirming" } : p,
+                ),
+              },
+        ),
+      );
+      try {
+        const res = await apiRequest("POST", "/api/ai/confirm-tool", {
+          proposalId,
+          action,
+        });
+        const data = await res.json();
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.timestamp !== messageTimestamp || !m.proposals
+              ? m
+              : {
+                  ...m,
+                  proposals: m.proposals.map((p) =>
+                    p.id !== proposalId
+                      ? p
+                      : action === "cancel"
+                        ? { ...p, status: "cancelled" }
+                        : {
+                            ...p,
+                            status: "confirmed",
+                            resultText: summarizeResult(data?.result),
+                          },
+                  ),
+                },
+          ),
+        );
+      } catch (err: any) {
+        const message =
+          err instanceof Error ? err.message : "Could not contact the server.";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.timestamp !== messageTimestamp || !m.proposals
+              ? m
+              : {
+                  ...m,
+                  proposals: m.proposals.map((p) =>
+                    p.id === proposalId
+                      ? { ...p, status: "error", resultText: message }
+                      : p,
+                  ),
+                },
+          ),
+        );
+      }
+    },
+    [],
+  );
 
   const handleActionClick = (path: string) => {
     window.location.href = path;
@@ -743,6 +854,80 @@ export default function AiBillingAssistant() {
                           {action.label}
                         </button>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Phase 4: proposal cards for deferred mutations */}
+                  {msg.proposals && msg.proposals.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                      {msg.proposals.map((proposal) => {
+                        const isBusy = proposal.status === "confirming";
+                        const isDone =
+                          proposal.status === "confirmed" ||
+                          proposal.status === "cancelled" ||
+                          proposal.status === "error";
+                        return (
+                          <div
+                            key={proposal.id}
+                            className="rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 p-2.5"
+                            data-testid={`blanche-proposal-${proposal.id}`}
+                          >
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">
+                              Proposed action
+                            </div>
+                            <div className="text-xs text-slate-900 dark:text-slate-100 mb-2">
+                              {proposal.summary}
+                            </div>
+                            {!isDone && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() =>
+                                    handleProposalDecision(
+                                      msg.timestamp,
+                                      proposal.id,
+                                      "confirm",
+                                    )
+                                  }
+                                  disabled={isBusy}
+                                  className="text-xs px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  data-testid={`blanche-proposal-${proposal.id}-confirm`}
+                                >
+                                  {isBusy ? "Confirming…" : "Confirm"}
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleProposalDecision(
+                                      msg.timestamp,
+                                      proposal.id,
+                                      "cancel",
+                                    )
+                                  }
+                                  disabled={isBusy}
+                                  className="text-xs px-3 py-1 rounded-md bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  data-testid={`blanche-proposal-${proposal.id}-cancel`}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            )}
+                            {proposal.status === "confirmed" && (
+                              <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                                ✓ {proposal.resultText ?? "Done."}
+                              </div>
+                            )}
+                            {proposal.status === "cancelled" && (
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                Cancelled.
+                              </div>
+                            )}
+                            {proposal.status === "error" && (
+                              <div className="text-[11px] text-red-600 dark:text-red-400">
+                                Error: {proposal.resultText ?? "Could not contact server."}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

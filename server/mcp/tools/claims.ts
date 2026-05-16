@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { storage } from '../../storage';
 import * as stediService from '../../services/stediService';
 import { withAudit } from '../audit';
+import { withMcpMutationGate } from '../confirmation';
 import type { McpPracticeContext } from '../types';
 
 export function registerClaimTools(
@@ -14,17 +15,17 @@ export function registerClaimTools(
     'submit_claim',
     'claim',
     true,
-    async (input: { claimId: number }) => {
+    withMcpMutationGate(async (input: { claimId: number }, ctx: McpPracticeContext) => {
       const claim = await storage.getClaim(input.claimId);
       if (!claim) throw new Error(`Claim ${input.claimId} not found`);
-      if ((claim as any).practiceId !== context.practiceId) {
+      if ((claim as any).practiceId !== ctx.practiceId) {
         throw new Error('Access denied: claim belongs to a different practice');
       }
 
       const patient = await storage.getPatient((claim as any).patientId);
       if (!patient) throw new Error('Patient not found for claim');
 
-      const practice = await storage.getPractice(context.practiceId);
+      const practice = await storage.getPractice(ctx.practiceId);
       if (!practice) throw new Error('Practice not found');
 
       const lineItems = await storage.getClaimLineItems(input.claimId);
@@ -82,7 +83,7 @@ export function registerClaimTools(
       };
 
       return stediService.submitClaim(submission);
-    },
+    }),
   );
 
   server.tool(

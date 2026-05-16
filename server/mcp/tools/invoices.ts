@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { storage } from '../../storage';
 import { createPatientPaymentIntent } from '../../services/stripeService';
 import { withAudit } from '../audit';
+import { withMcpMutationGate } from '../confirmation';
 import type { McpPracticeContext } from '../types';
 
 export function registerInvoiceTools(
@@ -13,15 +14,15 @@ export function registerInvoiceTools(
     'create_invoice',
     'payment',
     true,
-    async (input: {
+    withMcpMutationGate(async (input: {
       patientId: number;
       amount: number;
       description: string;
       claimId?: number;
-    }) => {
+    }, ctx: McpPracticeContext) => {
       const patient = await storage.getPatient(input.patientId);
       if (!patient) throw new Error(`Patient ${input.patientId} not found`);
-      if ((patient as any).practiceId !== context.practiceId) {
+      if ((patient as any).practiceId !== ctx.practiceId) {
         throw new Error('Access denied: patient belongs to a different practice');
       }
 
@@ -29,7 +30,7 @@ export function registerInvoiceTools(
         amount: Math.round(input.amount * 100), // dollars to cents
         patientEmail: (patient as any).email || '',
         patientName: `${(patient as any).firstName || ''} ${(patient as any).lastName || ''}`.trim(),
-        practiceId: context.practiceId,
+        practiceId: ctx.practiceId,
         patientId: input.patientId,
         claimId: input.claimId,
         description: input.description,
@@ -41,7 +42,7 @@ export function registerInvoiceTools(
         amount: input.amount,
         currency: paymentIntent.currency,
       };
-    },
+    }),
   );
 
   server.tool(
