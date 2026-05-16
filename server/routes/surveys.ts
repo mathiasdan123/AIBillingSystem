@@ -21,6 +21,7 @@ import {
 import { isAuthenticated } from '../replitAuth';
 import { storage } from '../storage';
 import logger from '../services/logger';
+import { sendEmail } from '../services/emailService';
 
 const router = Router();
 
@@ -233,12 +234,97 @@ router.post('/assign', isAuthenticated, async (req: any, res) => {
       }))
     ).returning();
 
-    res.status(201).json(assignments);
+    // Best-effort: send patient notification emails. Never block the assign on
+    // email failure or missing SMTP config.
+    const notifications = await Promise.all(
+      assignments.map(async (assignment: any) => {
+        try {
+          const patient = await storage.getPatient(assignment.patientId);
+          if (!patient?.email) {
+            return { patientId: assignment.patientId, emailSent: false, reason: 'no_email' };
+          }
+
+          const practice = await storage.getPractice(practiceId).catch(() => null);
+          const practiceName = practice?.name || 'Your Healthcare Provider';
+          const portalUrl = `${req.protocol}://${req.get('host')}/portal/surveys`;
+          const dueDateLine = assignment.dueDate
+            ? `Please complete this by ${new Date(assignment.dueDate).toLocaleDateString()}.`
+            : 'Please complete this at your earliest convenience.';
+
+          const subject = `${practiceName} sent you a survey: ${template.name}`;
+          const html = `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f8fafc;">
+  <div style="max-width:600px;margin:0 auto;padding:20px;">
+    <div style="background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:white;padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+      <h1 style="margin:0 0 8px 0;font-size:24px;">TherapyBill AI</h1>
+      <p style="margin:0;opacity:0.9;font-size:16px;">New Survey From ${escapeHtml(practiceName)}</p>
+    </div>
+    <div style="background:white;padding:30px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">
+      <p style="color:#1e293b;font-size:15px;line-height:1.6;">Hi ${escapeHtml(patient.firstName || 'there')},</p>
+      <p style="color:#475569;font-size:15px;line-height:1.6;">${escapeHtml(practiceName)} has shared a new survey with you: <strong>${escapeHtml(template.name)}</strong>.</p>
+      <p style="color:#475569;font-size:15px;line-height:1.6;">${escapeHtml(dueDateLine)}</p>
+      <div style="text-align:center;margin:30px 0;">
+        <a href="${escapeHtml(portalUrl)}" style="display:inline-block;padding:14px 28px;background:#2563eb;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:16px;">Open Patient Portal</a>
+      </div>
+      <p style="color:#64748b;font-size:13px;">If the button does not work, copy and paste this link into your browser:<br>${escapeHtml(portalUrl)}</p>
+    </div>
+    <div style="background:#f1f5f9;padding:20px;border-radius:0 0 12px 12px;text-align:center;border:1px solid #e2e8f0;border-top:none;">
+      <p style="margin:0 0 4px 0;color:#64748b;font-size:13px;">${escapeHtml(practiceName)}</p>
+    </div>
+  </div>
+</body></html>`;
+          const text = [
+            `${practiceName} sent you a survey: ${template.name}`,
+            '',
+            `Hi ${patient.firstName || 'there'},`,
+            '',
+            `${practiceName} has shared a new survey with you: ${template.name}.`,
+            dueDateLine,
+            '',
+            `Open the patient portal to complete it: ${portalUrl}`,
+            '',
+            practiceName,
+          ].join('\n');
+
+          const result = await sendEmail({
+            to: patient.email,
+            subject,
+            html,
+            text,
+            fromName: practiceName,
+          });
+
+          return {
+            patientId: assignment.patientId,
+            emailSent: !!result.success,
+            reason: result.success ? undefined : result.error || 'send_failed',
+          };
+        } catch (emailErr) {
+          logger.error('Error sending survey assignment email', {
+            error: emailErr instanceof Error ? emailErr.message : String(emailErr),
+            patientId: assignment.patientId,
+          });
+          return { patientId: assignment.patientId, emailSent: false, reason: 'exception' };
+        }
+      })
+    );
+
+    res.status(201).json({ assignments, notifications });
   } catch (error) {
     logger.error('Error assigning survey', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to assign survey' });
   }
 });
+
+// Local HTML escape helper to avoid pulling email template internals
+function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // GET /api/surveys/responses - list responses with filters
 router.get('/responses', isAuthenticated, async (req: any, res) => {

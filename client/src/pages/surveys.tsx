@@ -265,13 +265,37 @@ export default function SurveysPage() {
       const res = await apiRequest("POST", "/api/surveys/assign", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/surveys/assignments"] });
       setShowAssignDialog(false);
       setSelectedTemplate(null);
       setAssignPatientIds([]);
       setAssignDueDate("");
-      toast({ title: "Survey Assigned", description: "Survey has been assigned to the selected patient(s)." });
+
+      const notifications: Array<{ patientId: number; emailSent: boolean; reason?: string }> =
+        Array.isArray(result?.notifications) ? result.notifications : [];
+      const sentCount = notifications.filter(n => n.emailSent).length;
+      const noEmailCount = notifications.filter(n => !n.emailSent && n.reason === 'no_email').length;
+      const failedCount = notifications.filter(n => !n.emailSent && n.reason !== 'no_email').length;
+
+      // Build a friendly description matching the assigned patient names
+      const namesById = new Map(patientsList.map(p => [p.id, `${p.firstName} ${p.lastName}`]));
+      let description: string;
+      if (notifications.length === 1) {
+        const n = notifications[0];
+        const name = namesById.get(n.patientId) || 'patient';
+        if (n.emailSent) description = `Email sent to ${name}.`;
+        else if (n.reason === 'no_email') description = `Survey assigned (no email on file for ${name}).`;
+        else description = `Survey assigned to ${name}, but email delivery failed.`;
+      } else {
+        const parts: string[] = [];
+        if (sentCount) parts.push(`${sentCount} email${sentCount === 1 ? '' : 's'} sent`);
+        if (noEmailCount) parts.push(`${noEmailCount} without email on file`);
+        if (failedCount) parts.push(`${failedCount} email failure${failedCount === 1 ? '' : 's'}`);
+        description = parts.length ? parts.join(', ') + '.' : 'Survey assigned.';
+      }
+
+      toast({ title: "Survey Assigned", description });
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to assign survey.", variant: "destructive" });
