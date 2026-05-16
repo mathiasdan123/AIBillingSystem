@@ -18,7 +18,7 @@ import logger from "../services/logger";
 const router = Router();
 
 const requireTherapistContext = (req: any): { practiceId: number; therapistId: string } => {
-  const therapistId: string | undefined = req.user?.claims?.sub || req.userId;
+  const therapistId: string | undefined = req.user?.claims?.sub;
   const practiceId: number | undefined = req.userPracticeId;
   if (!therapistId) throw new Error("Authenticated user missing therapist id");
   if (!practiceId) throw new Error("Authenticated user not assigned to a practice");

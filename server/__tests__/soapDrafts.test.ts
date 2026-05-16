@@ -7,17 +7,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 const mockDbState: {
-  inserts: any[];
-  updates: any[];
+  upserts: any[];
+  conflictTargets: any[];
   deletes: any[];
-  existingRow: any | null;
   encryptCalls: any[];
   decryptCalls: any[];
 } = {
-  inserts: [],
-  updates: [],
+  upserts: [],
+  conflictTargets: [],
   deletes: [],
-  existingRow: null,
   encryptCalls: [],
   decryptCalls: [],
 };
@@ -38,31 +36,27 @@ vi.mock('../services/phiEncryptionService', () => ({
 
 vi.mock('../db', () => ({
   db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: () =>
-            Promise.resolve(mockDbState.existingRow ? [mockDbState.existingRow] : []),
-        }),
-      }),
-    }),
     insert: () => ({
       values: (vals: any) => ({
+        onConflictDoUpdate: (opts: any) => ({
+          returning: () => {
+            const row = { id: 999, ...vals };
+            mockDbState.upserts.push(row);
+            mockDbState.conflictTargets.push(opts);
+            return Promise.resolve([row]);
+          },
+        }),
         returning: () => {
           const row = { id: 999, ...vals };
-          mockDbState.inserts.push(row);
+          mockDbState.upserts.push(row);
           return Promise.resolve([row]);
         },
       }),
     }),
-    update: () => ({
-      set: (vals: any) => ({
+    select: () => ({
+      from: () => ({
         where: () => ({
-          returning: () => {
-            const row = { id: mockDbState.existingRow?.id ?? 1, ...vals };
-            mockDbState.updates.push(row);
-            return Promise.resolve([row]);
-          },
+          limit: () => Promise.resolve([]),
         }),
       }),
     }),
@@ -79,17 +73,15 @@ vi.mock('./users', () => ({ getUser: vi.fn(async () => null) }));
 import { upsertSoapDraft, deleteSoapDraft } from '../storage/clinical';
 
 beforeEach(() => {
-  mockDbState.inserts = [];
-  mockDbState.updates = [];
+  mockDbState.upserts = [];
+  mockDbState.conflictTargets = [];
   mockDbState.deletes = [];
-  mockDbState.existingRow = null;
   mockDbState.encryptCalls = [];
   mockDbState.decryptCalls = [];
 });
 
 describe('upsertSoapDraft', () => {
-  it('inserts a new row when no draft exists for (therapist, patient)', async () => {
-    mockDbState.existingRow = null;
+  it('performs a single atomic upsert (no find-then-write race)', async () => {
     await upsertSoapDraft({
       practiceId: 1,
       therapistId: 'therapist-a',
@@ -99,20 +91,20 @@ describe('upsertSoapDraft', () => {
       assessment: 'tension headache',
       plan: 'rest + follow-up',
     });
-    expect(mockDbState.inserts).toHaveLength(1);
-    expect(mockDbState.updates).toHaveLength(0);
+    expect(mockDbState.upserts).toHaveLength(1);
+    expect(mockDbState.conflictTargets).toHaveLength(1);
   });
 
-  it('updates the existing row when one already exists', async () => {
-    mockDbState.existingRow = { id: 7 };
+  it('targets (therapistId, patientId) as the conflict key', async () => {
     await upsertSoapDraft({
       practiceId: 1,
       therapistId: 'therapist-a',
       patientId: 42,
-      subjective: 'updated',
+      subjective: 'x',
     });
-    expect(mockDbState.inserts).toHaveLength(0);
-    expect(mockDbState.updates).toHaveLength(1);
+    const target = mockDbState.conflictTargets[0]?.target;
+    expect(Array.isArray(target)).toBe(true);
+    expect(target).toHaveLength(2);
   });
 
   it('routes PHI fields through encryptSoapDraftRecord before persistence', async () => {
@@ -149,7 +141,7 @@ describe('upsertSoapDraft', () => {
       patientId: 42,
       subjective: 'x',
     });
-    const persisted = mockDbState.inserts[0];
+    const persisted = mockDbState.upserts[0];
     expect(persisted.lastSavedAt).toBeInstanceOf(Date);
     expect(persisted.updatedAt).toBeInstanceOf(Date);
   });

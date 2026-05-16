@@ -235,29 +235,18 @@ export async function upsertSoapDraft(draft: InsertSoapNoteDraft): Promise<SoapN
     updatedAt: new Date(),
   });
 
-  // Find existing draft for this (therapist, patient) pair.
-  const [existing] = await db
-    .select({ id: soapNoteDrafts.id })
-    .from(soapNoteDrafts)
-    .where(
-      and(
-        eq(soapNoteDrafts.practiceId, draft.practiceId),
-        eq(soapNoteDrafts.therapistId, draft.therapistId),
-        eq(soapNoteDrafts.patientId, draft.patientId),
-      ),
-    )
-    .limit(1);
-
-  if (existing) {
-    const [updated] = await db
-      .update(soapNoteDrafts)
-      .set(encrypted)
-      .where(eq(soapNoteDrafts.id, existing.id))
-      .returning();
-    return decryptSoapDraftRecord(updated) as SoapNoteDraft;
-  }
-  const [created] = await db.insert(soapNoteDrafts).values(encrypted as any).returning();
-  return decryptSoapDraftRecord(created) as SoapNoteDraft;
+  // Atomic upsert — relies on the unique index on (therapist_id, patient_id).
+  // Avoids the find-then-write race where two concurrent autosaves both miss
+  // the SELECT and then collide on INSERT.
+  const [row] = await db
+    .insert(soapNoteDrafts)
+    .values(encrypted as any)
+    .onConflictDoUpdate({
+      target: [soapNoteDrafts.therapistId, soapNoteDrafts.patientId],
+      set: encrypted as any,
+    })
+    .returning();
+  return decryptSoapDraftRecord(row) as SoapNoteDraft;
 }
 
 export async function deleteSoapDraft(
