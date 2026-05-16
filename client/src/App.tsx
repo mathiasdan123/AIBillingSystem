@@ -16,6 +16,7 @@ import MaintenanceWindowBanner from "@/components/MaintenanceWindowBanner";
 import NotFound from "@/pages/not-found";
 import AiBillingAssistant from "@/components/AiBillingAssistant";
 import VersionUpdateBanner from "@/components/VersionUpdateBanner";
+import { openBlanche } from "@/lib/blancheControl";
 
 // Keep frequently used pages in the main bundle
 import Landing from "@/pages/landing";
@@ -160,6 +161,35 @@ class ErrorBoundary extends Component<
     }
     return this.props.children;
   }
+}
+
+/**
+ * Global keyboard shortcut: ⌘⇧B (macOS) / Ctrl+Shift+B (Win/Linux) opens
+ * Blanche from anywhere in the app. Ignored when the user is typing in an
+ * input, textarea, or contentEditable so it can't swallow a real keystroke.
+ *
+ * Cmd+K is already used by CommandPalette; Cmd+/ collides with browser shortcuts.
+ * Cmd+Shift+B is unused by mainstream apps and intuitive (B for Blanche).
+ */
+function BlancheShortcut() {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+      if (e.key !== 'B' && e.key !== 'b') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isTyping =
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        target?.isContentEditable === true;
+      if (isTyping) return;
+      e.preventDefault();
+      openBlanche();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+  return null;
 }
 
 // Loading fallback component
@@ -348,6 +378,7 @@ function App() {
           <AuthErrorListener />
           <Router />
           <AiBillingAssistant />
+          <BlancheShortcut />
           <VersionUpdateBanner />
         </TooltipProvider>
       </QueryClientProvider>

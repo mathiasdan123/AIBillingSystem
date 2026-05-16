@@ -24,7 +24,9 @@ import {
   Building2,
   ChevronDown,
   Search,
+  MessageSquare,
 } from "lucide-react";
+import { openBlanche } from "@/lib/blancheControl";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/hooks/useAuth";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
@@ -589,6 +591,17 @@ export default function SimpleNavigation() {
               onClick={cycleTheme}
             >
               {(() => { const ThemeIcon = themeIcon; return <ThemeIcon className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />; })()}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              aria-label="Ask Blanche (Cmd+Shift+B)"
+              title="Ask Blanche  (⌘⇧B)"
+              onClick={() => openBlanche()}
+              data-testid="sidebar-ask-blanche"
+            >
+              <MessageSquare className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
             </Button>
             <HelpSidebar />
             <Button
