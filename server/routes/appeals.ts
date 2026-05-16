@@ -54,6 +54,22 @@ const getAuthorizedPracticeId = (req: any): number => {
   return requestedPracticeId || userPracticeId;
 };
 
+/**
+ * Load an appeal and verify it belongs to the caller's practice.
+ * Returns the appeal, or null after sending a 404 response (caller should
+ * `return` immediately when null). Uses 404 — not 403 — to avoid leaking
+ * the existence of appeals owned by another practice.
+ */
+async function loadAppealForCaller(req: any, res: any, appealId: number) {
+  const practiceId = getAuthorizedPracticeId(req);
+  const appeal = await storage.getAppealById(appealId);
+  if (!appeal || appeal.practiceId !== practiceId) {
+    res.status(404).json({ message: 'Appeal not found' });
+    return null;
+  }
+  return appeal;
+}
+
 // Get appeals dashboard
 router.get('/appeals/dashboard', isAuthenticated, async (req: any, res) => {
   try {
@@ -148,11 +164,8 @@ router.get('/appeals', isAuthenticated, async (req: any, res) => {
 router.get('/appeals/:id', isAuthenticated, async (req: any, res) => {
   try {
     const appealId = parseInt(req.params.id);
-    const appeal = await storage.getAppealById(appealId);
-
-    if (!appeal) {
-      return res.status(404).json({ message: 'Appeal not found' });
-    }
+    const appeal = await loadAppealForCaller(req, res, appealId);
+    if (!appeal) return;
 
     // Enrich with claim and patient info
     const claim = await storage.getClaim(appeal.claimId);
@@ -278,10 +291,8 @@ router.patch('/appeals/:id', isAuthenticated, async (req: any, res) => {
     const appealId = parseInt(req.params.id);
     const updates = req.body;
 
-    const existingAppeal = await storage.getAppealById(appealId);
-    if (!existingAppeal) {
-      return res.status(404).json({ message: 'Appeal not found' });
-    }
+    const existingAppeal = await loadAppealForCaller(req, res, appealId);
+    if (!existingAppeal) return;
 
     // Don't allow updates to resolved appeals
     if (['won', 'lost', 'partial'].includes(existingAppeal.status) &&
@@ -302,10 +313,8 @@ router.post('/appeals/:id/submit', isAuthenticated, async (req: any, res) => {
   try {
     const appealId = parseInt(req.params.id);
 
-    const appeal = await storage.getAppealById(appealId);
-    if (!appeal) {
-      return res.status(404).json({ message: 'Appeal not found' });
-    }
+    const appeal = await loadAppealForCaller(req, res, appealId);
+    if (!appeal) return;
 
     if (!appeal.appealLetter) {
       return res.status(400).json({ message: 'Appeal letter is required before submission' });
@@ -336,10 +345,8 @@ router.post('/appeals/:id/resolve', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'Invalid outcome. Must be won, lost, or partial' });
     }
 
-    const appeal = await storage.getAppealById(appealId);
-    if (!appeal) {
-      return res.status(404).json({ message: 'Appeal not found' });
-    }
+    const appeal = await loadAppealForCaller(req, res, appealId);
+    if (!appeal) return;
 
     const updatedAppeal = await storage.updateAppealRecord(appealId, {
       status: outcome,
@@ -384,10 +391,8 @@ router.post('/appeals/:id/escalate', isAuthenticated, async (req: any, res) => {
     const appealId = parseInt(req.params.id);
     const { newDeadlineDate, notes } = req.body;
 
-    const appeal = await storage.getAppealById(appealId);
-    if (!appeal) {
-      return res.status(404).json({ message: 'Appeal not found' });
-    }
+    const appeal = await loadAppealForCaller(req, res, appealId);
+    if (!appeal) return;
 
     // Determine next level
     const levelProgression: Record<string, string> = {
@@ -442,10 +447,8 @@ router.post('/appeals/:id/regenerate-letter', isAuthenticated, async (req: any, 
     const appealId = parseInt(req.params.id);
     const { additionalContext } = req.body;
 
-    const appeal = await storage.getAppealById(appealId);
-    if (!appeal) {
-      return res.status(404).json({ message: 'Appeal not found' });
-    }
+    const appeal = await loadAppealForCaller(req, res, appealId);
+    if (!appeal) return;
 
     const claim = await storage.getClaim(appeal.claimId);
     if (!claim) {
