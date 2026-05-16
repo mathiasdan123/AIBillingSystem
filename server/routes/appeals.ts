@@ -215,7 +215,17 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
         units: item.units || 1,
         amount: item.amount || '0',
       }));
-      const practice = { name: 'Practice', npi: null, address: null, phone: null };
+      // Fetch the authenticated practice so the rendered letter uses the real
+      // practice name, NPI, address, phone — appeals letters are sent to payers
+      // and must identify the billing provider. Falls back to safe placeholders
+      // only if the practice row is missing (shouldn't happen in normal flow).
+      const practiceRecord = await storage.getPractice(practiceId);
+      const practice = {
+        name: practiceRecord?.name ?? 'Practice',
+        npi: practiceRecord?.npi ?? null,
+        address: practiceRecord?.address ?? null,
+        phone: practiceRecord?.phone ?? null,
+      };
       const patientData = patient ? {
         firstName: patient.firstName,
         lastName: patient.lastName,
@@ -462,7 +472,18 @@ router.post('/appeals/:id/regenerate-letter', isAuthenticated, async (req: any, 
       units: item.units || 1,
       amount: item.amount || '0',
     }));
-    const practice = { name: 'Practice', npi: null, address: null, phone: null };
+    // Use appeal.practiceId since this route doesn't take practiceId from the
+    // session — appeals are scoped by their owning practice column. The
+    // returned record's name/NPI/address/phone are stamped into the letter.
+    const practiceRecord = appeal.practiceId
+      ? await storage.getPractice(appeal.practiceId)
+      : null;
+    const practice = {
+      name: practiceRecord?.name ?? 'Practice',
+      npi: practiceRecord?.npi ?? null,
+      address: practiceRecord?.address ?? null,
+      phone: practiceRecord?.phone ?? null,
+    };
     const patientData = patient ? {
       firstName: patient.firstName,
       lastName: patient.lastName,
