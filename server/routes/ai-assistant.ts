@@ -350,7 +350,7 @@ Units are based on total timed treatment minutes:
 - Chat history should be treated as potentially containing PHI.
 `;
 
-const SYSTEM_PROMPT = `Your name is Blanche. You are a friendly, expert AI billing assistant for TherapyBill, a therapy practice management platform. You specialize in occupational therapy (OT), physical therapy (PT), and speech-language pathology (SLP) billing, coding, and practice management. Always introduce yourself as Blanche when greeting a user for the first time. Be warm, encouraging, and helpful — especially with new users who may not be technical.
+const BASE_SYSTEM_PROMPT = `Your name is Blanche. You are a friendly, expert AI billing assistant for TherapyBill, a therapy practice management platform. You specialize in occupational therapy (OT), physical therapy (PT), and speech-language pathology (SLP) billing, coding, and practice management. Always introduce yourself as Blanche when greeting a user for the first time. Be warm, encouraging, and helpful — especially with new users who may not be technical.
 
 Your role:
 1. Answer billing and coding questions accurately
@@ -363,15 +363,11 @@ Your role:
 ${BILLING_KNOWLEDGE}
 
 ## Onboarding Guidance
-When a user says "help me get started", "get started", "I'm new", or "walk me through" — do NOT call tools or show analytics. Instead, give a warm welcome and list these 5 steps:
-1. Add a patient
-2. Schedule a session
-3. Write a SOAP note
-4. Submit a test claim (sandbox mode — safe to practice)
-5. Connect Claude Desktop (2-minute setup)
-Ask which they'd like to start with.
+NEVER answer setup questions from your own memory. The real setup state lives in the database and changes as the user takes actions. On the first user message of a conversation (or any time you're asked about setup, getting started, what's left, what to do next), CALL the get_practice_setup_status tool FIRST and base your answer on the returned checklist. Do not invent steps or hardcode a list.
 
-IMPORTANT: After helping a user complete their first few tasks (adding a patient, creating a claim, etc.), proactively suggest Claude Desktop: "By the way, did you know you can do all of this from Claude Desktop on your computer? It takes about 2 minutes to set up, and then you can manage billing, check eligibility, and write SOAP notes just by chatting with me. Want me to walk you through it?" This is a key differentiator for TherapyBill — always look for natural moments to mention it.
+When the user is in active setup (onboardingCompleted: false OR the checklist has incomplete required items), tailor your guidance to their role — see "User Context" below. Acknowledge what they've already done ("nice work — you have the first 3 items completed"); don't repeat it back as if it's pending.
+
+After helping a user complete their first few real tasks (adding a patient, creating a claim, etc.), proactively suggest Claude Desktop: "By the way, did you know you can do all of this from Claude Desktop on your computer? It takes about 2 minutes to set up, and then you can manage billing, check eligibility, and write SOAP notes just by chatting with me. Want me to walk you through it?" This is a key differentiator for TherapyBill — always look for natural moments to mention it.
 
 ## Claude Desktop Integration (MCP)
 If a user asks about Claude Desktop, MCP, connecting Claude, or using AI on their desktop, walk them through the setup step by step:
@@ -401,6 +397,55 @@ Guidelines:
 - Important: TherapyBill AI assists with billing accuracy by suggesting codes based on clinical documentation. All coding decisions must be reviewed and approved by the treating provider. This platform does not encourage or facilitate billing for services not rendered. Never suggest billing for services that were not documented or performed.
 
 When a user asks about denied claims or denial follow-up, proactively review all denied claims using review_denied_claims, then offer to draft appeal letters or suggest corrections for each one.`;
+
+/**
+ * Role-specific opener guidance. Three roles exist in the system today:
+ * `admin` (practice owner/admin), `therapist` (clinician), `billing` (billing/
+ * front-desk staff). Each role's first-time-setup priorities are different.
+ */
+const ROLE_OPENERS: Record<string, string> = {
+  admin: `This user is the practice ADMIN/OWNER. Their setup priorities (in order): practice info (name/NPI/tax ID/address/phone) → team invites → clearinghouse setup → compliance (MFA, BAA review). Frame your opener around what unblocks going live. Vocabulary: "your practice", "your team", "your clearinghouse".`,
+  therapist: `This user is a THERAPIST/CLINICIAN. Setup priorities: their schedule, writing their first SOAP note, learning the workflow. Assume the back-office (NPI, payer setup, billing config) is handled by the admin — don't ask them about it. Vocabulary: "your schedule", "your patients", "your notes". Offer to walk through a SOAP note on a demo patient if available.`,
+  billing: `This user is a BILLING / FRONT-DESK staff member. Setup priorities: the Front Desk board, the Claims queue, patient check-in, copay handling. Don't burden them with NPI/clearinghouse questions — that's the admin's job. Vocabulary: "today's check-ins", "the claims queue", "your front-desk board". Offer a tour of the Front Desk page first.`,
+};
+
+/**
+ * Build the system prompt for a single request, injecting user role and current
+ * page context. Keeps Blanche grounded in who the user is and what screen they're
+ * looking at, so her responses are tailored instead of generic.
+ *
+ * Pass null/undefined for either field if not available — the prompt degrades
+ * gracefully (omits the block rather than emitting a placeholder).
+ */
+export function buildSystemPrompt(opts: {
+  role?: string | null;
+  pageContext?: { path?: string | null; title?: string | null } | null;
+}): string {
+  const parts: string[] = [];
+
+  const role = (opts.role ?? '').toLowerCase();
+  const roleOpener = ROLE_OPENERS[role];
+  const page = opts.pageContext;
+  const pageDesc = page?.title?.trim() || page?.path?.trim();
+
+  if (roleOpener || pageDesc) {
+    parts.push('## User Context');
+    if (roleOpener) parts.push(`- Role guidance: ${roleOpener}`);
+    if (pageDesc) {
+      parts.push(
+        `- Current page: ${page?.title?.trim() || 'unknown'}${
+          page?.path?.trim() ? ` (${page?.path?.trim()})` : ''
+        }`,
+      );
+      parts.push(
+        '- Tailor your guidance to what is on this screen. If the user asks "what can I do here?", explain the features of this page specifically.',
+      );
+    }
+    parts.push('');
+  }
+
+  return parts.length ? `${parts.join('\n')}\n${BASE_SYSTEM_PROMPT}` : BASE_SYSTEM_PROMPT;
+}
 
 // Tool definitions for Claude function calling
 const assistantTools: Anthropic.Tool[] = [
@@ -3542,7 +3587,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       });
     }
 
-    const { message, conversationHistory } = req.body;
+    const { message, conversationHistory, pageContext } = req.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ error: 'Message is required.' });
@@ -3556,6 +3601,18 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     const context = await getUserPracticeContext(req);
     const practiceId = context?.practiceId || 1;
     const userId = context?.userId;
+    const userRole = context?.role;
+
+    // Build a per-request system prompt: role-specific opener + current page.
+    // Falls back to the base prompt when either is missing.
+    const safePageContext =
+      pageContext && typeof pageContext === 'object'
+        ? {
+            path: typeof pageContext.path === 'string' ? pageContext.path : null,
+            title: typeof pageContext.title === 'string' ? pageContext.title : null,
+          }
+        : null;
+    const systemPrompt = buildSystemPrompt({ role: userRole, pageContext: safePageContext });
 
     // --- Cost Optimization #3: Check per-practice rate limit ---
     let billingPlan: string | null = null;
@@ -3622,7 +3679,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     try {
       response = await client.messages.create({
         model: currentModel,
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         messages,
         tools: assistantTools,
         max_tokens: 1500,
@@ -3635,7 +3692,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
         currentModel = MODEL_SONNET;
         response = await client.messages.create({
           model: currentModel,
-          system: SYSTEM_PROMPT,
+          system: systemPrompt,
           messages,
           tools: assistantTools,
           max_tokens: 1500,
@@ -3683,7 +3740,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
         response = await Promise.race([
           client.messages.create({
             model: currentModel,
-            system: SYSTEM_PROMPT,
+            system: systemPrompt,
             messages,
             tools: assistantTools,
             max_tokens: 1500,
@@ -3699,7 +3756,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
           response = await Promise.race([
             client.messages.create({
               model: currentModel,
-              system: SYSTEM_PROMPT,
+              system: systemPrompt,
               messages,
               tools: assistantTools,
               max_tokens: 1500,

@@ -249,9 +249,23 @@ export default function AiBillingAssistant() {
         content: m.content,
       }));
 
+      // Tell Blanche where the user is so she can tailor her response to the
+      // current screen. Best-effort — guarded for SSR / unusual environments.
+      const pageContext =
+        typeof window !== 'undefined'
+          ? {
+              path: window.location?.pathname ?? null,
+              title:
+                document?.title?.replace(/\s*[|\-—].*$/, '').trim() ||
+                document?.title?.trim() ||
+                null,
+            }
+          : null;
+
       const res = await apiRequest("POST", "/api/ai/assistant", {
         message: trimmed,
         conversationHistory,
+        pageContext,
       });
 
       const data = await res.json();
@@ -669,6 +683,18 @@ export default function AiBillingAssistant() {
           {!isMinimized && <div className="border-t border-slate-200 dark:border-slate-700 p-3 flex-shrink-0">
             {isAuthenticated ? (
               <>
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSend("What can I do on this page?")}
+                    disabled={isLoading || (statusChecked && status !== null && !status.available)}
+                    className="text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed underline-offset-2 hover:underline"
+                    data-testid="blanche-page-help"
+                    title="Ask Blanche what's available on the current screen"
+                  >
+                    ? What can I do here?
+                  </button>
+                </div>
                 <div className="flex items-end gap-2">
                   <textarea
                     ref={inputRef}
