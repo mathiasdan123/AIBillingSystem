@@ -175,6 +175,9 @@ export const practices = pgTable("practices", {
 export const patients = pgTable("patients", {
   id: serial("id").primaryKey(),
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // Phase 5 — true when created via Blanche's enable_demo_mode. Excluded
+  // from analytics, refused by send/submit/charge paths, swept by clear_demo_data.
+  isDemo: boolean("is_demo").notNull().default(false),
   firstName: varchar("first_name").notNull(),
   lastName: varchar("last_name").notNull(),
   dateOfBirth: date("date_of_birth"),
@@ -429,6 +432,9 @@ export const claims = pgTable("claims", {
   id: serial("id").primaryKey(),
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
+  // Phase 5 — see patients.isDemo. Demo claims are refused by submit_claim
+  // and excluded from analytics aggregates.
+  isDemo: boolean("is_demo").notNull().default(false),
   sessionId: integer("session_id").references(() => treatmentSessions.id),
   claimNumber: varchar("claim_number").unique(),
   insuranceId: integer("insurance_id").references(() => insurances.id),
@@ -607,6 +613,9 @@ export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
   practiceId: integer("practice_id").references(() => practices.id),
   patientId: integer("patient_id").references(() => patients.id),
+  // Phase 5 — see patients.isDemo. Demo appointments are refused by
+  // send_appointment_reminder and excluded from analytics aggregates.
+  isDemo: boolean("is_demo").notNull().default(false),
   therapistId: varchar("therapist_id").references(() => users.id),
   locationId: integer("location_id").references(() => practiceLocations.id),
   title: varchar("title"),
