@@ -564,11 +564,30 @@ export const soapNoteTemplates = pgTable("soap_note_templates", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// SOAP Note Drafts
+// SOAP Note Drafts — in-progress notes, autosaved by therapists.
+// One row per (therapistId, patientId). Final, signed notes live in `soapNotes`.
+// Legacy columns (draftName, formData, caregiverDropdownState, otInterventions,
+// aiOptimization) are unused by current code — kept nullable until a future
+// cleanup migration drops them.
 export const soapNoteDrafts = pgTable("soap_note_drafts", {
   id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id),
   patientId: integer("patient_id").references(() => patients.id),
-  therapistId: varchar("therapist_id"), // No FK constraint - may have placeholder values
+  therapistId: varchar("therapist_id"),
+  sessionId: integer("session_id").references(() => treatmentSessions.id),
+  // SOAP content — PHI, encrypted at rest via phiEncryptionService.
+  subjective: text("subjective"),
+  objective: text("objective"),
+  assessment: text("assessment"),
+  plan: text("plan"),
+  progressNotes: text("progress_notes"),
+  homeProgram: text("home_program"),
+  // Structured & metadata
+  interventions: jsonb("interventions"),
+  location: varchar("location"),
+  sessionType: varchar("session_type"),
+  lastSavedAt: timestamp("last_saved_at").defaultNow(),
+  // Legacy scaffold columns — unused.
   draftName: varchar("draft_name"),
   formData: jsonb("form_data"),
   caregiverDropdownState: jsonb("caregiver_dropdown_state"),
@@ -1567,6 +1586,8 @@ export type InsertCptCodeEquivalency = typeof cptCodeEquivalencies.$inferInsert;
 export type Practice = typeof practices.$inferSelect;
 export type InsertSoapNote = z.infer<typeof insertSoapNoteSchema>;
 export type SoapNote = typeof soapNotes.$inferSelect;
+export type SoapNoteDraft = typeof soapNoteDrafts.$inferSelect;
+export type InsertSoapNoteDraft = typeof soapNoteDrafts.$inferInsert;
 export type CptCodeMapping = typeof cptCodeMappings.$inferSelect;
 export type Patient = typeof patients.$inferSelect;
 export type TreatmentSession = typeof treatmentSessions.$inferSelect;

@@ -230,6 +230,11 @@ export function encryptSoapNoteRecord(note: Record<string, any>): Record<string,
   return encrypted;
 }
 
+// Drafts use the same PHI fields as signed soap notes — they're the same
+// clinical content, just in-progress. Reuse the field list.
+export const encryptSoapDraftRecord = encryptSoapNoteRecord;
+export const decryptSoapDraftRecord = decryptSoapNoteRecord;
+
 export function decryptSoapNoteRecord(note: Record<string, any> | null | undefined): Record<string, any> | null {
   if (!note) return null;
   const decrypted = { ...note };

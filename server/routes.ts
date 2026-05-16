@@ -7,7 +7,7 @@ import { storage } from "./storage";
 import insuranceAuthorizationRoutes from "./routes/insuranceAuthorizationRoutes";
 import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import {
-  authRouter, analyticsRouter, soapNotesRouter, patientsRouter, claimsRouter,
+  authRouter, analyticsRouter, soapNotesRouter, soapDraftsRouter, patientsRouter, claimsRouter,
   appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter,
   treatmentPlansRouter, locationsRouter, aiInsightsRouter, customReportsRouter, cannedReportsRouter,
   exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
@@ -153,6 +153,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/soap-notes', soapNotesRouter);
   // Backward compatibility for therapy-bank
   app.use('/api', soapNotesRouter);
+  // SOAP Note Drafts (autosave): /api/soap-drafts/*
+  app.use('/api/soap-drafts', soapDraftsRouter);
   // Patient routes: /api/patients/*
   app.use('/api/patients', patientsRouter);
   // Claims routes: /api/claims/*
