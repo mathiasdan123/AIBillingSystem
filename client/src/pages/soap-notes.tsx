@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -322,6 +322,13 @@ export default function SoapNotes() {
   // Server-side autosave of the AI-generated SOAP draft.
   // localStorage above keeps the raw inputs (per-browser); this keeps the
   // generated S-O-A-P so it survives device switches and cache clears.
+  //
+  // generatedNoteForPatientRef stamps which patient the current generatedNote
+  // belongs to. On patient switch, generatedNote may briefly still hold the
+  // previous patient's content (restore is async); the autosave effect uses
+  // the ref to refuse to save A's content under B's id.
+  const generatedNoteForPatientRef = useRef<number | null>(null);
+
   const {
     save: saveDraft,
     clear: clearDraft,
@@ -331,27 +338,32 @@ export default function SoapNotes() {
     patientId: selectedPatient,
     onRestore: (draft) => {
       if (draft.subjective || draft.objective || draft.assessment || draft.plan) {
-        setGeneratedNote((prev) => ({
+        // Reset CPT/billing fields explicitly — never carry over from the
+        // previous patient's note. If billing data is needed for this draft,
+        // the user re-runs "Generate".
+        setGeneratedNote({
           subjective: draft.subjective ?? "",
           objective: draft.objective ?? "",
           assessment: draft.assessment ?? "",
           plan: draft.plan ?? "",
-          // Restoration only covers the four narrative fields; CPT/billing
-          // structures stay whatever the page already has (usually empty
-          // until "Generate" runs).
-          cptCodes: prev?.cptCodes ?? [],
-          totalReimbursement: prev?.totalReimbursement ?? 0,
-          billingRationale: prev?.billingRationale ?? "",
-          auditNotes: prev?.auditNotes ?? [],
-          timeBlocks: prev?.timeBlocks ?? [],
-        }));
+          cptCodes: [],
+          totalReimbursement: 0,
+          billingRationale: "",
+          auditNotes: [],
+          timeBlocks: [],
+        });
+        generatedNoteForPatientRef.current = selectedPatient;
       }
     },
   });
 
-  // Autosave the generated SOAP whenever it changes.
+  // Autosave the generated SOAP whenever it changes. Only fires when the
+  // current generatedNote was actually produced for the current selectedPatient
+  // — guards against the brief window when patient changes but generatedNote
+  // still holds the previous patient's content.
   useEffect(() => {
     if (!generatedNote || !selectedPatient) return;
+    if (generatedNoteForPatientRef.current !== selectedPatient) return;
     saveDraft({
       subjective: generatedNote.subjective,
       objective: generatedNote.objective,
@@ -836,6 +848,7 @@ export default function SoapNotes() {
         billingRationale: aiResponse.billingRationale || "",
         auditNotes: aiResponse.auditNotes || []
       });
+      generatedNoteForPatientRef.current = selectedPatient;
 
       toast({
         title: "AI Generated Note & Codes",
@@ -1085,6 +1098,7 @@ export default function SoapNotes() {
                     setHomeProgram("");
                     setGoalProgressEntries([]);
                     setGeneratedNote(null);
+                    generatedNoteForPatientRef.current = null;
                     setSavedNoteInfo(null);
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}

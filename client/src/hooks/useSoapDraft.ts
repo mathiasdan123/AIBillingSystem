@@ -50,6 +50,13 @@ export function useSoapDraft({ patientId, onRestore }: UseSoapDraftOpts) {
   // save one patient's text into another patient's draft.
   const armedPatientRef = useRef<number | null>(null);
 
+  // Keep the latest onRestore in a ref so the restore effect always calls the
+  // current closure (avoids the stale-closure trap with inline callbacks).
+  const onRestoreRef = useRef(onRestore);
+  useEffect(() => {
+    onRestoreRef.current = onRestore;
+  }, [onRestore]);
+
   // Restore on patient change.
   useEffect(() => {
     if (!patientId) {
@@ -60,32 +67,33 @@ export function useSoapDraft({ patientId, onRestore }: UseSoapDraftOpts) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/soap-drafts?patientId=${patientId}`, {
-          credentials: "include",
-        });
+        // Use apiRequest so the Supabase Bearer token is attached, matching
+        // the PUT/DELETE paths below — plain fetch + cookies would 401 in
+        // setups where the app authenticates via Supabase.
+        const res = await apiRequest(
+          "GET",
+          `/api/soap-drafts?patientId=${patientId}`,
+        );
         if (cancelled) return;
-        if (res.status === 404) {
+        const draft: RestoredDraft = await res.json();
+        setDraftId(draft.id);
+        setLastSavedAt(draft.lastSavedAt ? new Date(draft.lastSavedAt) : null);
+        onRestoreRef.current?.(draft);
+      } catch (e: any) {
+        if (cancelled) return;
+        // 404 from apiRequest throws "404: ..." — treat as "no draft yet".
+        if (typeof e?.message === "string" && e.message.startsWith("404:")) {
           setDraftId(null);
           setLastSavedAt(null);
           return;
         }
-        if (!res.ok) {
-          setError(`Failed to load draft (${res.status})`);
-          return;
-        }
-        const draft: RestoredDraft = await res.json();
-        setDraftId(draft.id);
-        setLastSavedAt(draft.lastSavedAt ? new Date(draft.lastSavedAt) : null);
-        onRestore?.(draft);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? "Failed to load draft");
+        setError(e?.message ?? "Failed to load draft");
       }
     })();
     return () => {
       cancelled = true;
     };
-    // onRestore intentionally not in deps — callers usually pass an inline fn
-  }, [patientId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [patientId]);
 
   const flush = useCallback(async () => {
     if (!pendingRef.current || !armedPatientRef.current) return;
