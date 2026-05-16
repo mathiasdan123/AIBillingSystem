@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { BLANCHE_OPEN_EVENT, type BlancheOpenDetail } from "@/lib/blancheControl";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -174,6 +175,25 @@ export default function AiBillingAssistant() {
     localStorage.setItem(greetedKey(userId), GREETING_VERSION);
     setIsOpen(true);
   };
+
+  // Open-from-anywhere: keyboard shortcut, sidebar button, or any future
+  // contextual "Ask Blanche" button can dispatch the BLANCHE_OPEN_EVENT.
+  // Optional prefillMessage pre-populates the input so contextual callers
+  // can pass the question they want answered.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<BlancheOpenDetail>).detail ?? {};
+      setShowGreeting(false);
+      setIsOpen(true);
+      if (detail.prefillMessage) {
+        setInput(detail.prefillMessage);
+        // Focus after the panel renders so the prefilled text is editable.
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    };
+    window.addEventListener(BLANCHE_OPEN_EVENT, handler);
+    return () => window.removeEventListener(BLANCHE_OPEN_EVENT, handler);
+  }, []);
 
   // Check assistant availability on first open
   useEffect(() => {
@@ -421,8 +441,8 @@ export default function AiBillingAssistant() {
             setIsOpen(true);
           }}
           className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          aria-label="Open AI billing assistant"
-          title="Blanche"
+          aria-label="Open Blanche, your AI billing assistant (Cmd+Shift+B)"
+          title="Blanche — your AI assistant  (⌘⇧B)"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"

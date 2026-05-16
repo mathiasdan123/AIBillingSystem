@@ -134,7 +134,7 @@ describe('POST /api/appeals/:id/regenerate-letter — practice context', () => {
     storageStub.getAppealById.mockResolvedValueOnce({
       id: 12,
       claimId: 42,
-      practiceId: 11,
+      practiceId: 7,
       status: 'pending',
     });
     storageStub.getClaim.mockResolvedValueOnce({
@@ -148,7 +148,7 @@ describe('POST /api/appeals/:id/regenerate-letter — practice context', () => {
       lastName: 'Doe',
     });
     storageStub.getPractice.mockResolvedValueOnce({
-      id: 11,
+      id: 7,
       name: 'Big Practice',
       npi: '9999999999',
       address: '1 Plaza',
@@ -160,7 +160,7 @@ describe('POST /api/appeals/:id/regenerate-letter — practice context', () => {
       .send({ additionalContext: '' })
       .expect(200);
 
-    expect(storageStub.getPractice).toHaveBeenCalledWith(11);
+    expect(storageStub.getPractice).toHaveBeenCalledWith(7);
     const practiceArg = generateAppealMock.mock.calls[0][3];
     expect(practiceArg.name).toBe('Big Practice');
     expect(practiceArg.npi).toBe('9999999999');
