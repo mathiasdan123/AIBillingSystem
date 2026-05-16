@@ -153,15 +153,48 @@ export default function AiBillingAssistant() {
   // Key is scoped per-user so a new hire on a shared reception computer
   // still sees the welcome even if a coworker already dismissed it.
   // Legacy boolean GREETED_KEY/DISMISSED_KEY are ignored — users on those
-  // will see 2026.04.1 on their next load, which is the intended behavior.
+  // Onboarding state — drives the proactive opener and gates the greeting
+  // popup. Fetched once when the user is authenticated. Null while loading /
+  // on error (falls back to the existing version-gated greeting behavior).
+  const [onboardingStatus, setOnboardingStatus] = useState<{
+    step: number;
+    completed: boolean;
+  } | null>(null);
+
   useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest('GET', '/api/onboarding/status');
+        if (cancelled) return;
+        const data = await res.json();
+        setOnboardingStatus({
+          step: typeof data?.step === 'number' ? data.step : 0,
+          completed: !!data?.completed,
+        });
+      } catch {
+        // Non-blocking — leave onboardingStatus null and fall through to the
+        // existing version-gated greeting behavior below.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
+  // will see 2026.04.1 on their next load, which is the intended behavior.
+  // Phase 3: also suppress for established practices whose setup is complete —
+  // they've been here a while and don't need a "Hi, I'm Blanche" version pitch.
+  useEffect(() => {
+    if (onboardingStatus?.completed) return;
     const key = greetedKey(userId);
     const lastSeenVersion = localStorage.getItem(key);
     if (lastSeenVersion !== GREETING_VERSION && !isOpen) {
       const timer = setTimeout(() => setShowGreeting(true), 1500);
       return () => clearTimeout(timer);
     }
-  }, [isAuthenticated, isOpen, userId]);
+  }, [isAuthenticated, isOpen, userId, onboardingStatus]);
 
   const handleDismissGreeting = () => {
     setShowGreeting(false);
@@ -194,6 +227,27 @@ export default function AiBillingAssistant() {
     window.addEventListener(BLANCHE_OPEN_EVENT, handler);
     return () => window.removeEventListener(BLANCHE_OPEN_EVENT, handler);
   }, []);
+
+  // Phase 3: proactive opener. For practices that have not completed setup,
+  // auto-open Blanche once per user so the new practice sees her immediately
+  // instead of having to discover the bubble. Gated by a per-user localStorage
+  // flag — strictly once-per-browser, never re-triggers.
+  const autoOpenedKey = userId ? `blanche-auto-opened:${userId}` : null;
+  useEffect(() => {
+    if (!isAuthenticated || !onboardingStatus || isOpen) return;
+    if (onboardingStatus.completed) return;
+    if (!autoOpenedKey || localStorage.getItem(autoOpenedKey)) return;
+    const timer = setTimeout(() => {
+      // Suppress the small greeting card — the full panel is opening instead.
+      setShowGreeting(false);
+      setIsOpen(true);
+      localStorage.setItem(autoOpenedKey, new Date().toISOString());
+      // Also stamp the greeting-version flag so the small card doesn't show
+      // immediately after the user closes the auto-opened panel.
+      localStorage.setItem(greetedKey(userId), GREETING_VERSION);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated, onboardingStatus, isOpen, autoOpenedKey, userId]);
 
   // Check assistant availability on first open
   useEffect(() => {
@@ -614,13 +668,25 @@ export default function AiBillingAssistant() {
                 </p>
                 {isAuthenticated ? (
                   <div className="flex flex-wrap justify-center gap-2">
-                    {[
-                      "Help me get started",
-                      "Add my first patient",
-                      "How does billing work?",
-                      "Explain 97530 vs 97110",
-                      "What's my denial rate?",
-                    ].map((suggestion) => (
+                    {/* Setup-aware: lead with onboarding prompts when the
+                        practice hasn't completed setup; otherwise lead with
+                        operational prompts that established users care about. */}
+                    {(onboardingStatus && !onboardingStatus.completed
+                      ? [
+                          "Help me get set up",
+                          "What's left to set up?",
+                          "Add my first patient",
+                          "Schedule my first appointment",
+                          "Walk me through a test claim",
+                        ]
+                      : [
+                          "What's my denial rate?",
+                          "Show me top denial reasons",
+                          "Explain 97530 vs 97110",
+                          "Review my pending claims",
+                          "How does billing work?",
+                        ]
+                    ).map((suggestion) => (
                       <button
                         key={suggestion}
                         onClick={() => handleSend(suggestion)}
