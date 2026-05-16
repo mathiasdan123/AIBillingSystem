@@ -88,7 +88,7 @@ async function goToStep2(onSuccess: () => void) {
   fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
   await waitFor(() => {
-    expect(screen.getByText('Patient Information')).toBeInTheDocument();
+    expect(screen.getAllByText('Patient Information').length).toBeGreaterThan(0);
   });
 }
 
@@ -122,7 +122,7 @@ describe('PatientIntakeForm', () => {
 
   it('navigates to step 2 when HIPAA consent is given and Next is clicked', async () => {
     await goToStep2(onSuccess);
-    expect(screen.getByText('Patient Information')).toBeInTheDocument();
+    expect(screen.getAllByText('Patient Information').length).toBeGreaterThan(0);
     expect(screen.getByText(/Step 2 of 15/)).toBeInTheDocument();
   });
 

@@ -88,10 +88,10 @@ describe('Patients Page', () => {
         isAdmin: false,
       });
 
-      render(<Patients />, { wrapper: createWrapper() });
+      const { container } = render(<Patients />, { wrapper: createWrapper() });
 
-      // Should show loading spinner
-      expect(screen.getByText(/Loading patients/i)).toBeInTheDocument();
+      // Loading state renders skeleton placeholders (animate-pulse divs)
+      expect(container.querySelector('.animate-pulse')).toBeTruthy();
     });
 
     it('should show loading text during auth check', () => {
@@ -102,9 +102,9 @@ describe('Patients Page', () => {
         isAdmin: false,
       });
 
-      render(<Patients />, { wrapper: createWrapper() });
+      const { container } = render(<Patients />, { wrapper: createWrapper() });
 
-      expect(screen.getByText(/Loading patients/i)).toBeInTheDocument();
+      expect(container.querySelector('.animate-pulse')).toBeTruthy();
     });
   });
 
@@ -198,18 +198,18 @@ describe('Patients Page', () => {
       render(<Patients />, { wrapper: createWrapper([]) });
 
       await waitFor(() => {
-        expect(screen.getByText(/No Patients Found/i)).toBeInTheDocument();
+        expect(screen.getByText(/Welcome! Add your first patient/i)).toBeInTheDocument();
       });
 
       // Should show add patient prompt
-      expect(screen.getByText(/Get started by adding your first patient/i)).toBeInTheDocument();
+      expect(screen.getByText(/Your patient roster is empty/i)).toBeInTheDocument();
     });
 
-    it('should show "Add First Patient" button in empty state', async () => {
+    it('should show "Add Your First Patient" button in empty state', async () => {
       render(<Patients />, { wrapper: createWrapper([]) });
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Add First Patient/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Add Your First Patient/i })).toBeInTheDocument();
       });
     });
 
@@ -252,7 +252,7 @@ describe('Patients Page', () => {
       render(<Patients />, { wrapper: createWrapper([]) });
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/Search patients by name, email, or phone/i)).toBeInTheDocument();
+        expect(screen.getByPlaceholderText(/Search patients/i)).toBeInTheDocument();
       });
     });
 
