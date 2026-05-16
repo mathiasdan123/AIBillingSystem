@@ -53,11 +53,35 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+
+// A queryKey segment is "missing" if it would produce a meaningless URL when
+// joined — `null`, `undefined`, or `NaN`. Returning these to the server hits
+// routes like `/api/appointments/NaN` and used to surface as Postgres 500s
+// (now 400s after PR #96). Callers should gate the query with `enabled:` —
+// this guard catches the cases where they forgot.
+function findMissingSegment(queryKey: readonly unknown[]): number {
+  for (let i = 1; i < queryKey.length; i++) {
+    const v = queryKey[i];
+    if (v === null || v === undefined) return i;
+    if (typeof v === "number" && Number.isNaN(v)) return i;
+  }
+  return -1;
+}
+
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    const badIdx = findMissingSegment(queryKey);
+    if (badIdx !== -1) {
+      throw new Error(
+        `queryKey segment ${badIdx} is ${String(queryKey[badIdx])} — ` +
+          `the calling component should gate this query with \`enabled:\`. ` +
+          `Full queryKey: ${JSON.stringify(queryKey)}`,
+      );
+    }
+
     const authHeaders = await getAuthHeaders();
 
     const res = await fetch(queryKey.join("/") as string, {
