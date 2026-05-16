@@ -115,27 +115,38 @@ describe('ErrorBoundary', () => {
   });
 
   it('resets error state when "Try again" is clicked and re-renders children', () => {
-    // We need a component that only throws once so after reset it renders fine
-    let hasThrown = false;
-    function ThrowOnce() {
-      if (!hasThrown) {
-        hasThrown = true;
-        throw new Error('one-time error');
+    // Control throwing via a ref-like flag that we can flip from the test.
+    // This avoids issues with React 18 retry-rendering the throwing subtree
+    // before the error boundary state updates.
+    const flag = { shouldThrow: true };
+    function ConditionalThrower() {
+      if (flag.shouldThrow) {
+        throw new Error('controlled error');
       }
       return <div>Recovered successfully</div>;
     }
 
-    render(
+    const { rerender } = render(
       <ErrorBoundary>
-        <ThrowOnce />
+        <ConditionalThrower />
       </ErrorBoundary>,
     );
 
     // Fallback is showing
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
 
-    // Click Try again
+    // Flip the flag so the next render of the child won't throw
+    flag.shouldThrow = false;
+
+    // Click Try again — this resets the error boundary state
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+
+    // Force a rerender so the boundary re-renders with the reset state
+    rerender(
+      <ErrorBoundary>
+        <ConditionalThrower />
+      </ErrorBoundary>,
+    );
 
     // Children should render again
     expect(screen.getByText('Recovered successfully')).toBeInTheDocument();
