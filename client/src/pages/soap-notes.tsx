@@ -23,6 +23,8 @@ import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { useSoapDraft } from "@/hooks/useSoapDraft";
+import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 
 // ============================================
@@ -316,6 +318,58 @@ export default function SoapNotes() {
     claimAmount: string | null;
     patientName: string | null;
   } | null>(null);
+
+  // Server-side autosave of the AI-generated SOAP draft.
+  // localStorage above keeps the raw inputs (per-browser); this keeps the
+  // generated S-O-A-P so it survives device switches and cache clears.
+  const {
+    save: saveDraft,
+    clear: clearDraft,
+    lastSavedAt: draftLastSavedAt,
+    isSaving: draftSaving,
+  } = useSoapDraft({
+    patientId: selectedPatient,
+    onRestore: (draft) => {
+      if (draft.subjective || draft.objective || draft.assessment || draft.plan) {
+        setGeneratedNote((prev) => ({
+          subjective: draft.subjective ?? "",
+          objective: draft.objective ?? "",
+          assessment: draft.assessment ?? "",
+          plan: draft.plan ?? "",
+          // Restoration only covers the four narrative fields; CPT/billing
+          // structures stay whatever the page already has (usually empty
+          // until "Generate" runs).
+          cptCodes: prev?.cptCodes ?? [],
+          totalReimbursement: prev?.totalReimbursement ?? 0,
+          billingRationale: prev?.billingRationale ?? "",
+          auditNotes: prev?.auditNotes ?? [],
+          timeBlocks: prev?.timeBlocks ?? [],
+        }));
+      }
+    },
+  });
+
+  // Autosave the generated SOAP whenever it changes.
+  useEffect(() => {
+    if (!generatedNote || !selectedPatient) return;
+    saveDraft({
+      subjective: generatedNote.subjective,
+      objective: generatedNote.objective,
+      assessment: generatedNote.assessment,
+      plan: generatedNote.plan,
+      location,
+      sessionType,
+    });
+  }, [
+    generatedNote?.subjective,
+    generatedNote?.objective,
+    generatedNote?.assessment,
+    generatedNote?.plan,
+    selectedPatient,
+    saveDraft,
+    location,
+    sessionType,
+  ]);
 
   // Persist form data to localStorage
   const STORAGE_KEY = "soap-notes-draft";
@@ -903,6 +957,7 @@ export default function SoapNotes() {
       queryClient.invalidateQueries({ queryKey: ["/api/claims"] });
       // Clear saved draft so a future refresh doesn't re-populate old data.
       localStorage.removeItem(STORAGE_KEY);
+      void clearDraft();
       // Record the saved-note info so the confirmation banner can render.
       // Form state is intentionally kept populated so the therapist can
       // review what they just saved; "Start new note" explicitly clears it.
@@ -2066,6 +2121,7 @@ export default function SoapNotes() {
           <div className="space-y-4" id="generated-note-section">
             {generatedNote ? (
               <>
+                <DraftSavedIndicator saving={draftSaving} lastSavedAt={draftLastSavedAt} />
                 {/* CPT Codes Card */}
                 <Card className="border-green-200 bg-green-50">
                   <CardHeader className="pb-2">
