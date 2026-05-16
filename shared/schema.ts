@@ -128,6 +128,11 @@ export const practices = pgTable("practices", {
   // Onboarding fields
   onboardingCompleted: boolean("onboarding_completed").default(false),
   onboardingStep: integer("onboarding_step").default(0),
+  // Phase 4 — when true, Blanche mutations called via MCP / Claude Desktop
+  // require a server-side confirmation step in addition to Claude Desktop's
+  // own "Allow tool call?" prompt. Default false: trust Claude Desktop's
+  // prompt as the user's consent. Admins can flip on for belt-and-suspenders.
+  mcpRequiresConfirmation: boolean("mcp_requires_confirmation").notNull().default(false),
   // Practice therapy specialty — drives Service Type Codes sent on Stedi 270
   // eligibility requests. One of 'OT' | 'PT' | 'ST' | 'MH' | 'MIXED'.
   // Null is treated as 'MIXED' (sends all therapy STCs) to keep legacy

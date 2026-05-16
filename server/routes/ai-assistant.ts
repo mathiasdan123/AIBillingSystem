@@ -67,6 +67,137 @@ const SONNET_TOOLS = new Set([
   'get_provider_productivity',
 ]);
 
+/**
+ * Phase 4 — Tools that MUTATE real practice data and must require an explicit
+ * user confirmation step before executing. The web chat surfaces a proposal
+ * card; the user clicks Confirm or Cancel.
+ *
+ * Adding a new mutation tool? Put it in here. Drafts/reads/queries do NOT
+ * belong (e.g. draft_appeal_letter returns text without persisting; it stays
+ * auto-execute). When in doubt, add it — the worst case is one extra click.
+ */
+const MUTATION_TOOLS = new Set<string>([
+  'create_patient',
+  'create_appointment',
+  'reschedule_appointment',
+  'cancel_appointment',
+  'send_patient_portal_invite',
+  'send_appointment_reminder',
+  'submit_claim',
+  'create_patient_invoice',
+  'send_patient_payment_link',
+  'generate_soap_note',
+]);
+
+/**
+ * One-line, plain-English summary of what a proposed mutation will do.
+ * Surfaced on the proposal card so the user knows what they're approving
+ * without having to read the raw JSON args. Keep it specific and concrete —
+ * "Send portal invite to Jane Doe (jane@example.com)" beats "Send portal
+ * invite". Falls back to a generic phrasing if args don't include a name.
+ */
+export function summarizeProposal(toolName: string, args: Record<string, any>): string {
+  const name = (() => {
+    if (args.firstName || args.lastName) {
+      return `${args.firstName ?? ''} ${args.lastName ?? ''}`.trim();
+    }
+    if (args.patientName) return String(args.patientName);
+    return null;
+  })();
+  switch (toolName) {
+    case 'create_patient':
+      return name ? `Create patient ${name}` : 'Create a new patient';
+    case 'create_appointment':
+      return `Create an appointment${args.startTime ? ` at ${args.startTime}` : ''}${name ? ` for ${name}` : ''}`;
+    case 'reschedule_appointment':
+      return `Reschedule appointment ${args.appointmentId ?? ''} to ${args.newStartTime ?? 'a new time'}`.trim();
+    case 'cancel_appointment':
+      return `Cancel appointment ${args.appointmentId ?? ''}${args.reason ? ` (reason: ${args.reason})` : ''}`.trim();
+    case 'send_patient_portal_invite':
+      return `Send portal invite${name ? ` to ${name}` : ''}${args.email ? ` (${args.email})` : ''}`;
+    case 'send_appointment_reminder':
+      return `Send appointment reminder${args.appointmentId ? ` for #${args.appointmentId}` : ''} via ${args.channel ?? 'email'}`;
+    case 'submit_claim':
+      return `Submit claim${args.claimId ? ` #${args.claimId}` : ''} to the clearinghouse`;
+    case 'create_patient_invoice':
+      return `Create invoice${args.amount ? ` for $${args.amount}` : ''}${name ? ` to ${name}` : ''}`;
+    case 'send_patient_payment_link':
+      return `Send payment link${name ? ` to ${name}` : ''}${args.amount ? ` for $${args.amount}` : ''}`;
+    case 'generate_soap_note':
+      return `Generate & save SOAP note${name ? ` for ${name}` : ''}`;
+    default:
+      return `Run ${toolName}`;
+  }
+}
+
+/**
+ * In-memory proposal store. Keyed by random uuid. TTL of 5 minutes — older
+ * entries are cleared on each access. Per-process; on multi-task ECS the
+ * confirm request must land on the same task. ALB session affinity isn't
+ * configured today; if a confirm hits the wrong task it'll 404 and the user
+ * sees "proposal expired" — they can retry, Blanche will re-propose.
+ * Acceptable for v1; a Redis-backed store can replace this when the issue
+ * actually bites.
+ */
+interface StoredProposal {
+  id: string;
+  userId: string | undefined;
+  practiceId: number;
+  toolName: string;
+  args: Record<string, any>;
+  summary: string;
+  createdAt: number;
+}
+const PROPOSAL_TTL_MS = 5 * 60_000;
+const proposalStore = new Map<string, StoredProposal>();
+
+function pruneStaleProposals() {
+  const cutoff = Date.now() - PROPOSAL_TTL_MS;
+  proposalStore.forEach((p, id) => {
+    if (p.createdAt < cutoff) proposalStore.delete(id);
+  });
+}
+
+function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 'summary'> & { summary?: string }): StoredProposal {
+  pruneStaleProposals();
+  const id = (globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`) as string;
+  const proposal: StoredProposal = {
+    id,
+    userId: opts.userId,
+    practiceId: opts.practiceId,
+    toolName: opts.toolName,
+    args: opts.args,
+    summary: opts.summary ?? summarizeProposal(opts.toolName, opts.args),
+    createdAt: Date.now(),
+  };
+  proposalStore.set(id, proposal);
+  return proposal;
+}
+
+function takeProposal(id: string): StoredProposal | null {
+  pruneStaleProposals();
+  const proposal = proposalStore.get(id);
+  if (!proposal) return null;
+  proposalStore.delete(id); // one-shot; can't re-confirm
+  return proposal;
+}
+
+// Test-only access. Internal; do not import from runtime code.
+export const __proposalStoreTest = {
+  size: () => proposalStore.size,
+  clear: () => proposalStore.clear(),
+  has: (id: string) => proposalStore.has(id),
+  seed: (proposal: Omit<StoredProposal, 'id' | 'createdAt' | 'summary'> & { id?: string; summary?: string }) =>
+    createProposal({
+      userId: proposal.userId,
+      practiceId: proposal.practiceId,
+      toolName: proposal.toolName,
+      args: proposal.args,
+      summary: proposal.summary,
+    }),
+};
+
 // Keywords that indicate a complex query requiring Sonnet
 const SONNET_KEYWORDS = [
   'soap', 'appeal', 'denial', 'denied', 'generate', 'draft', 'write',
@@ -384,6 +515,11 @@ If a user asks about Claude Desktop, MCP, connecting Claude, or using AI on thei
 If they seem confused at any step, slow down and explain in more detail. Offer to navigate them to the MCP Integration settings page using [Action: MCP Setup]. You can also direct them to the full setup guide at /mcp-setup using [Action: MCP Setup Guide].
 
 If they ask "what is MCP?" or "what is Claude Desktop?", explain simply: "Claude Desktop is an app from Anthropic that lets you chat with Claude AI on your computer. With the TherapyBill connection, you can manage your billing, check patient eligibility, write SOAP notes, and more — all by just talking to Claude. It's like having me available on your desktop at all times."
+
+## Action Confirmation
+In the TherapyBill web chat (where the user is right now), every action that changes data — creating patients, sending invites, submitting claims, scheduling appointments — generates a Confirm/Cancel card before it runs. You should briefly explain what you're proposing each time so the user knows what they're approving. Do NOT promise that an action is done until they click Confirm and you see the result.
+
+If a user is an admin and asks about safety, AI permissions, or how to make Claude Desktop ALSO require a second confirmation, tell them: "By default, when you (or anyone on your team) uses Claude Desktop, Claude Desktop's own 'Allow tool call?' prompt is the safety check. If you want belt-and-suspenders confirmation at the TherapyBill server level too — useful if anyone might click 'Always allow' in Claude Desktop — your admin can enable it with: PATCH /api/practices/<your-practice-id> with body { \"mcpRequiresConfirmation\": true }. With that on, mutation tools via Claude Desktop will refuse to run and direct the user back to the web chat (where the Confirm card still works)."
 
 Guidelines:
 - Be concise but thorough. Use bullet points for clarity.
@@ -3703,6 +3839,16 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       }
     }
 
+    // Phase 4: collect proposals for any mutation tools Blanche tries to
+    // invoke. Web requests always gate mutations; the user has to confirm
+    // each one via the proposal card before it actually executes.
+    const pendingProposals: Array<{
+      id: string;
+      toolName: string;
+      summary: string;
+      args: Record<string, any>;
+    }> = [];
+
     // Handle tool use (up to 3 rounds to avoid infinite loops)
     let toolRounds = 0;
     while (response.stop_reason === 'tool_use' && toolRounds < 3) {
@@ -3720,7 +3866,46 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
             currentModel = MODEL_SONNET;
           }
 
-          const toolResult = await executeTool(block.name, (block.input as Record<string, unknown>) || {}, practiceId, userId);
+          const args = (block.input as Record<string, unknown>) || {};
+
+          // Phase 4 gate: if this is a mutation tool, defer execution and
+          // queue a proposal for the user to confirm in the chat. Tell Claude
+          // a synthetic tool_result so she can continue the turn (e.g. say
+          // "I'd like to do X — please confirm below").
+          if (MUTATION_TOOLS.has(block.name)) {
+            const proposal = createProposal({
+              userId,
+              practiceId,
+              toolName: block.name,
+              args: args as Record<string, any>,
+            });
+            pendingProposals.push({
+              id: proposal.id,
+              toolName: proposal.toolName,
+              summary: proposal.summary,
+              args: proposal.args,
+            });
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify({
+                status: 'awaiting_user_confirmation',
+                proposalId: proposal.id,
+                summary: proposal.summary,
+                message:
+                  'I have queued this action for the user to confirm in the chat. Briefly explain what you proposed and ask them to click Confirm or Cancel.',
+              }),
+            });
+            logger.info('Blanche proposal queued', {
+              proposalId: proposal.id,
+              toolName: block.name,
+              userId,
+              practiceId,
+            });
+            continue;
+          }
+
+          const toolResult = await executeTool(block.name, args, practiceId, userId);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -3828,6 +4013,10 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     res.json({
       response: cleanContent,
       suggestedActions,
+      // Phase 4: deferred mutations awaiting user confirmation. Empty array
+      // when Blanche didn't propose anything (or only did reads). Client
+      // renders each as a Confirm/Cancel card; POSTs back to /api/ai/confirm-tool.
+      proposals: pendingProposals,
       tokensUsed: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
       model: currentModel,
     });
@@ -3858,6 +4047,103 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     res.status(500).json({
       message: 'An error occurred while processing your request. Please try again.',
     });
+  }
+});
+
+/**
+ * POST /api/ai/confirm-tool — Phase 4 confirmation handler.
+ *
+ * Body: { proposalId: string, action: 'confirm' | 'cancel' }
+ *
+ * On 'confirm': validates the proposal belongs to this user + practice,
+ * executes the deferred tool with its original args, returns the result.
+ * On 'cancel': records the cancellation in the audit trail, returns ok.
+ *
+ * Proposals are single-use: the store removes them on take(). A double-click
+ * on Confirm results in a 404 on the second call (treat as already executed).
+ */
+router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const { proposalId, action } = req.body ?? {};
+    if (typeof proposalId !== 'string' || !proposalId) {
+      return res.status(400).json({ message: 'proposalId is required' });
+    }
+    if (action !== 'confirm' && action !== 'cancel') {
+      return res.status(400).json({ message: "action must be 'confirm' or 'cancel'" });
+    }
+
+    const context = await getUserPracticeContext(req);
+    if (!context) {
+      return res.status(401).json({ message: 'Not authenticated' });
+    }
+
+    const proposal = takeProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({
+        message: 'Proposal not found or expired. Ask Blanche to propose again.',
+      });
+    }
+
+    // Cross-user / cross-practice protection. Even with a valid id, a user
+    // from a different account/practice must not be able to execute someone
+    // else's queued proposal.
+    if (proposal.practiceId !== context.practiceId || proposal.userId !== context.userId) {
+      logger.warn('Proposal owner mismatch — refused', {
+        proposalId,
+        proposalUserId: proposal.userId,
+        proposalPracticeId: proposal.practiceId,
+        callerUserId: context.userId,
+        callerPracticeId: context.practiceId,
+      });
+      return res.status(404).json({ message: 'Proposal not found or expired.' });
+    }
+
+    if (action === 'cancel') {
+      logger.info('Blanche proposal cancelled', {
+        proposalId,
+        toolName: proposal.toolName,
+        userId: context.userId,
+        practiceId: context.practiceId,
+      });
+      return res.json({ status: 'cancelled', proposalId });
+    }
+
+    // Execute the original tool with the original args. This is the same
+    // executeTool() the chat endpoint would have run if confirmation weren't
+    // required — same authorization model, same downstream side effects.
+    logger.info('Blanche proposal confirmed — executing', {
+      proposalId,
+      toolName: proposal.toolName,
+      userId: context.userId,
+      practiceId: context.practiceId,
+    });
+
+    const toolResultJson = await executeTool(
+      proposal.toolName,
+      proposal.args,
+      context.practiceId,
+      context.userId,
+    );
+
+    let parsedResult: unknown = toolResultJson;
+    try {
+      parsedResult = JSON.parse(toolResultJson);
+    } catch {
+      // Some tools return non-JSON; surface the raw string in that case.
+    }
+
+    return res.json({
+      status: 'confirmed',
+      proposalId,
+      toolName: proposal.toolName,
+      summary: proposal.summary,
+      result: parsedResult,
+    });
+  } catch (error) {
+    logger.error('Blanche confirm-tool error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({ message: 'Failed to process confirmation' });
   }
 });
 
