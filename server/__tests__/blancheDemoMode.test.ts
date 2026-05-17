@@ -67,4 +67,23 @@ describe('summarizeProposal — Phase 5 tools', () => {
     expect(summary).toMatch(/clear ALL demo/i);
     expect(summary).toMatch(/irreversible/i);
   });
+
+  it('describes mark_patients_as_demo with the count and the cascade behavior', () => {
+    const one = summarizeProposal('mark_patients_as_demo', { patientIds: [42] });
+    const many = summarizeProposal('mark_patients_as_demo', { patientIds: [42, 43, 44] });
+    expect(one).toMatch(/1 patient\b/);
+    expect(one).toMatch(/cascades/i);
+    expect(many).toMatch(/3 patients/);
+  });
+
+  it('describes unmark_demo_patients with the count and the reverse cascade', () => {
+    const summary = summarizeProposal('unmark_demo_patients', { patientIds: [42, 43] });
+    expect(summary).toMatch(/un-mark 2 patients/i);
+    expect(summary).toMatch(/real data again/i);
+  });
+
+  it('handles empty / missing patientIds without crashing', () => {
+    expect(summarizeProposal('mark_patients_as_demo', {})).toMatch(/0 patients/);
+    expect(summarizeProposal('unmark_demo_patients', { patientIds: [] })).toMatch(/0 patients/);
+  });
 });

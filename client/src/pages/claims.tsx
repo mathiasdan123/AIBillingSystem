@@ -32,6 +32,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { DemoBadge } from "@/components/DemoBadge";
 
 const claimSchema = z.object({
   patientId: z.string().min(1, "Patient is required"),
@@ -2209,6 +2210,7 @@ export default function Claims() {
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold text-foreground">{claim.claimNumber}</h3>
+                        <DemoBadge show={!!(claim as any).isDemo} />
                         <Badge variant="secondary" className={getStatusBadge(claim.status)}>
                           {claim.status.charAt(0).toUpperCase() + claim.status.slice(1)}
                         </Badge>
