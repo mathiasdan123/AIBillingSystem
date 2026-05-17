@@ -53,6 +53,17 @@ export async function bulkSubmitClaims(
         continue;
       }
 
+      // Phase 5 firewall: never submit demo claims to a real clearinghouse,
+      // even in a bulk batch with real ones.
+      if ((claim as any).isDemo) {
+        results.push({
+          claimId,
+          success: false,
+          error: "Demo claim — can't be submitted. Demo data is for practice only.",
+        });
+        continue;
+      }
+
       if (claim.status !== 'draft') {
         results.push({
           claimId,

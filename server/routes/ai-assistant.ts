@@ -1473,20 +1473,39 @@ export async function executeTool(
           );
         }
 
-        // One ready-to-submit claim for the first patient. The submit_claim
-        // path will refuse it (isDemo=true), so a fake claim never reaches
-        // the clearinghouse — the user can still walk through the UI flow.
+        // One draft claim for the first patient with line items, so the UI
+        // actually shows a Submit button and the user can practice the flow.
+        // The submit route + Blanche's submit_claim tool both refuse demo
+        // claims (isDemo=true), so clicking Submit never reaches the real
+        // clearinghouse — the user sees the demo refusal message instead.
         let createdClaim: any = null;
         if (createdPatients[0]) {
           try {
             createdClaim = await storage.createClaim({
               practiceId,
               patientId: createdPatients[0].id,
-              status: 'ready',
+              status: 'draft', // <— 'draft' so UI shows Submit; submit route firewalls it
               totalAmount: '300.00',
               dateOfService: new Date().toISOString().split('T')[0],
               isDemo: true,
             } as any);
+
+            // Add two line items so the claim looks like a real OT session and
+            // passes basic UI completeness checks. Codes 97530 + 97140 are the
+            // most common OT combo; modifier-free, 1 unit each, $150/unit.
+            if (createdClaim?.id) {
+              const cptCodes = await storage.getCptCodes();
+              const cpt97530 = cptCodes.find((c: any) => c.code === '97530');
+              const cpt97140 = cptCodes.find((c: any) => c.code === '97140');
+              for (const cpt of [cpt97530, cpt97140].filter(Boolean)) {
+                await storage.createClaimLineItem({
+                  claimId: createdClaim.id,
+                  cptCodeId: (cpt as any).id,
+                  units: 1,
+                  amount: '150.00',
+                } as any);
+              }
+            }
           } catch (e) {
             logger.warn('Demo claim creation skipped', {
               error: e instanceof Error ? e.message : String(e),
