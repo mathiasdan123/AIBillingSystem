@@ -90,6 +90,9 @@ const MUTATION_TOOLS = new Set<string>([
   // Phase 5 — demo / practice mode
   'enable_demo_mode',
   'clear_demo_data',
+  // Phase 5.1 — flip the is_demo flag on existing rows
+  'mark_patients_as_demo',
+  'unmark_demo_patients',
 ]);
 
 /**
@@ -132,6 +135,14 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return 'Enable demo mode (creates 3 sample patients, 2 appointments, 1 ready-to-submit claim, all prefixed DEMO-)';
     case 'clear_demo_data':
       return 'Clear ALL demo data for this practice (irreversible)';
+    case 'mark_patients_as_demo': {
+      const ids = Array.isArray(args.patientIds) ? args.patientIds : [];
+      return `Mark ${ids.length} patient${ids.length === 1 ? '' : 's'} as demo (also cascades to their appointments + claims so the firewall is consistent)`;
+    }
+    case 'unmark_demo_patients': {
+      const ids = Array.isArray(args.patientIds) ? args.patientIds : [];
+      return `Un-mark ${ids.length} patient${ids.length === 1 ? '' : 's'} so they're real data again (also clears the demo flag on their appointments + claims)`;
+    }
     default:
       return `Run ${toolName}`;
   }
@@ -551,6 +562,8 @@ When a new user wants to "try things out", "practice", "explore safely", or seem
 
 After you've helped them walk through the workflow on the demo data and they're ready to use real data, OFFER to call clear_demo_data to remove it cleanly. Always mention that demo and real data live side-by-side — you can't accidentally mix them up because demo names are prefixed and refuse to be sent or submitted.
 
+If a user mentions they have OLD test/demo/seed patients from before demo mode existed (or they want to use existing patients as "showcase data" when demoing the product to prospects), use find_legacy_demo_candidates to spot them by their telltales (@example.* email domains, 555 area codes, DEMO/TEST/SAMPLE in name). Show the list to the user, let THEM pick which IDs to mark, then call mark_patients_as_demo with the chosen IDs. The mark cascades to those patients' appointments and claims so the firewall stays consistent. If the user accidentally marks the wrong patient, unmark_demo_patients undoes it cleanly.
+
 ## Action Confirmation
 In the TherapyBill web chat (where the user is right now), every action that changes data — creating patients, sending invites, submitting claims, scheduling appointments — generates a Confirm/Cancel card before it runs. You should briefly explain what you're proposing each time so the user knows what they're approving. Do NOT promise that an action is done until they click Confirm and you see the result.
 
@@ -738,6 +751,48 @@ const assistantTools: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: 'find_legacy_demo_candidates',
+    description:
+      'Find patients in this practice that LOOK like demo/test data based on telltale signals (IANA-reserved email domains like @example.com / @example.net / @example.org, 555 area code phone numbers, or DEMO / TEST / SAMPLE in the name) but are NOT currently tagged is_demo = true. Returns the candidates with which signal matched, so the user can review before flagging them. Use this when the user mentions cleaning up old/legacy demo or seed patients.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'mark_patients_as_demo',
+    description:
+      'Set is_demo = true on the given patient IDs (and cascade to all of their appointments + claims so the firewall is consistent — a "demo" patient with a real submittable claim would be a bug). Use this after find_legacy_demo_candidates so the user can confirm which IDs to flag. After this, those rows are excluded from analytics and refused by submit/send/charge paths.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientIds: {
+          type: 'array',
+          items: { type: 'integer' },
+          description: 'Patient IDs to flag as demo. Must belong to the caller\'s practice.',
+        },
+      },
+      required: ['patientIds'],
+    },
+  },
+  {
+    name: 'unmark_demo_patients',
+    description:
+      'Reverse mark_patients_as_demo: set is_demo = false on the given patient IDs and their appointments + claims. Safety net for accidental flagging.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientIds: {
+          type: 'array',
+          items: { type: 'integer' },
+          description: 'Patient IDs to un-flag.',
+        },
+      },
+      required: ['patientIds'],
     },
   },
   {
@@ -1574,6 +1629,127 @@ export async function executeTool(
             `Cleared all demo data — removed ${patientsResult.length} patients, ` +
             `${appointmentsResult.length} appointments, and ${claimsResult.length} claims. ` +
             `Your real data is untouched.`,
+        });
+      }
+
+      case 'find_legacy_demo_candidates': {
+        // Read-only — surfaces patients that LOOK like demo data so the user
+        // can review before flagging via mark_patients_as_demo. Scoped to the
+        // caller's practice; excludes already-tagged rows (is_demo = true).
+        const allPatients = await storage.getPatients(practiceId);
+        const candidates: Array<{
+          id: number;
+          name: string;
+          email: string | null;
+          phone: string | null;
+          signals: string[];
+        }> = [];
+        for (const p of allPatients as any[]) {
+          if (p.isDemo) continue;
+          const signals: string[] = [];
+          const email = (p.email || '').toLowerCase();
+          if (/@example\.(com|net|org)$/.test(email)) signals.push('example_email');
+          const phone = String(p.phone || '');
+          // 555 area code: matches (555)123-4567, 555-123-4567, 5551234567, +1-555-...
+          if (/(^|\D)555\D?\d{3}\D?\d{4}\b/.test(phone) || /\(555\)/.test(phone)) {
+            signals.push('555_phone');
+          }
+          const name = `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim();
+          if (/\b(demo|test|sample)\b/i.test(name)) signals.push('demo_name');
+          if (signals.length > 0) {
+            candidates.push({
+              id: p.id,
+              name,
+              email: p.email ?? null,
+              phone: p.phone ?? null,
+              signals,
+            });
+          }
+        }
+        return JSON.stringify({
+          count: candidates.length,
+          candidates,
+          message:
+            candidates.length === 0
+              ? 'No legacy demo candidates found — all suspicious-looking patients are already tagged is_demo.'
+              : `Found ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}. Review them, then call mark_patients_as_demo with the IDs you want to flag. Signals: example_email (@example.* domain), 555_phone (reserved fiction area code), demo_name (DEMO/TEST/SAMPLE in name).`,
+        });
+      }
+
+      case 'mark_patients_as_demo':
+      case 'unmark_demo_patients': {
+        const targetFlag = (toolName === 'mark_patients_as_demo');
+        const rawIds = Array.isArray(args.patientIds) ? args.patientIds : [];
+        const patientIds = rawIds
+          .map((x: any) => Number(x))
+          .filter((n: any) => Number.isInteger(n) && n > 0);
+        if (patientIds.length === 0) {
+          return JSON.stringify({
+            error: 'patientIds must be a non-empty array of positive integers.',
+          });
+        }
+
+        const { db } = await import('../db');
+        const { patients, appointments, claims } = await import('@shared/schema');
+        const { and, eq, inArray } = await import('drizzle-orm');
+
+        // Practice ownership check — never let the caller flip flags on another
+        // practice's rows even if they hand us the IDs.
+        const owned = await db
+          .select({ id: patients.id })
+          .from(patients)
+          .where(and(eq(patients.practiceId, practiceId), inArray(patients.id, patientIds)));
+        const ownedIds = owned.map((r: any) => r.id);
+        const refused = patientIds.filter((id: number) => !ownedIds.includes(id));
+
+        if (ownedIds.length === 0) {
+          return JSON.stringify({
+            error: 'None of the provided patient IDs belong to your practice.',
+            refusedIds: refused,
+          });
+        }
+
+        const patientResult = await db
+          .update(patients)
+          .set({ isDemo: targetFlag } as any)
+          .where(and(eq(patients.practiceId, practiceId), inArray(patients.id, ownedIds)))
+          .returning({ id: patients.id });
+        const appointmentResult = await db
+          .update(appointments)
+          .set({ isDemo: targetFlag } as any)
+          .where(and(eq(appointments.practiceId, practiceId), inArray(appointments.patientId, ownedIds)))
+          .returning({ id: appointments.id });
+        const claimResult = await db
+          .update(claims)
+          .set({ isDemo: targetFlag } as any)
+          .where(and(eq(claims.practiceId, practiceId), inArray(claims.patientId, ownedIds)))
+          .returning({ id: claims.id });
+
+        logger.info(`Blanche ${toolName}`, {
+          practiceId,
+          patients: patientResult.length,
+          appointments: appointmentResult.length,
+          claims: claimResult.length,
+          refused: refused.length,
+        });
+
+        const verb = targetFlag ? 'Marked as demo' : 'Un-marked';
+        return JSON.stringify({
+          success: true,
+          updated: {
+            patients: patientResult.length,
+            appointments: appointmentResult.length,
+            claims: claimResult.length,
+          },
+          refusedIds: refused,
+          message:
+            `${verb}: ${patientResult.length} patient(s), ${appointmentResult.length} appointment(s), ${claimResult.length} claim(s).` +
+            (refused.length > 0
+              ? ` Refused ${refused.length} ID(s) that don't belong to your practice: ${refused.join(', ')}.`
+              : '') +
+            (targetFlag
+              ? ' These rows are now excluded from analytics and refused by submit/send/charge paths.'
+              : ' These rows are now treated as real data again.'),
         });
       }
 

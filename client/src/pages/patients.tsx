@@ -25,6 +25,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PatientBillingTab from "@/components/PatientBillingTab";
 import PatientProgressNotesManager from "@/components/PatientProgressNotesManager";
+import { DemoBadge } from "@/components/DemoBadge";
 
 interface EligibilityCheck {
   id: number;
@@ -971,8 +972,9 @@ export default function Patients() {
                       />
                     )}
                     <div>
-                    <CardTitle className="text-lg">
-                      {patient.firstName} {patient.lastName}
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <span>{patient.firstName} {patient.lastName}</span>
+                      <DemoBadge show={!!(patient as any).isDemo} />
                     </CardTitle>
                     <CardDescription>
                       {patient.dateOfBirth && (
