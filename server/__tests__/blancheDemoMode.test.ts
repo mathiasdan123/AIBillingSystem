@@ -58,8 +58,10 @@ describe('summarizeProposal — Phase 5 tools', () => {
   it('describes enable_demo_mode with what it will create', () => {
     const summary = summarizeProposal('enable_demo_mode', {});
     expect(summary).toMatch(/demo mode/i);
-    expect(summary).toMatch(/3 sample patients/i);
-    expect(summary).toMatch(/DEMO-/);
+    expect(summary).toMatch(/8 DEMO-/);
+    expect(summary).toMatch(/5 appointments/);
+    expect(summary).toMatch(/5 claims/);
+    expect(summary).toMatch(/draft\/submitted\/paid\/denied\/held/);
   });
 
   it('flags clear_demo_data as irreversible', () => {
