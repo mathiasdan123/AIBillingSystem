@@ -132,7 +132,7 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
     case 'generate_soap_note':
       return `Generate & save SOAP note${name ? ` for ${name}` : ''}`;
     case 'enable_demo_mode':
-      return 'Enable demo mode (creates 3 sample patients, 2 appointments, 1 ready-to-submit claim, all prefixed DEMO-)';
+      return 'Enable demo mode (creates 8 DEMO- patients, 5 appointments across yesterday/today/tomorrow, and 5 claims across draft/submitted/paid/denied/held — enough variety to demo the full revenue cycle)';
     case 'clear_demo_data':
       return 'Clear ALL demo data for this practice (irreversible)';
     case 'mark_patients_as_demo': {
@@ -1468,93 +1468,131 @@ export async function executeTool(
       }
 
       case 'enable_demo_mode': {
-        // Creates a small, clearly-labeled set of practice rows for the user
-        // to navigate around without affecting real data. All rows carry
-        // isDemo=true so analytics excludes them and submission paths refuse
-        // them. The DEMO- name prefix is the visual marker in lists.
-        const baseDob = '1990-01-15';
+        // Creates a richer, clearly-labeled demo dataset so prospect demos
+        // feel substantial (revenue cycle, appeals, Front Desk activity, mix
+        // of claim states). All rows carry isDemo=true → analytics excludes
+        // them, submission/sending paths refuse them, DEMO badge in UI.
+        const today = new Date();
+        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+        const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+        const twoWeeksAgo = new Date(today); twoWeeksAgo.setDate(today.getDate() - 14);
+        const monthAgo = new Date(today); monthAgo.setDate(today.getDate() - 30);
+        const isoDate = (d: Date) => d.toISOString().split('T')[0];
+
+        // 8 patients with varied insurance, demographics, ages.
         const demoPatientSeeds = [
-          { firstName: 'DEMO-Aaron', lastName: 'Sample', insuranceProvider: 'DEMO BCBS' },
-          { firstName: 'DEMO-Bella', lastName: 'Sample', insuranceProvider: 'DEMO Aetna' },
-          { firstName: 'DEMO-Carlos', lastName: 'Sample', insuranceProvider: 'DEMO UHC' },
+          { firstName: 'DEMO-Aaron',   lastName: 'Sample', dob: '1985-04-12', insuranceProvider: 'DEMO BCBS' },
+          { firstName: 'DEMO-Bella',   lastName: 'Sample', dob: '2018-08-22', insuranceProvider: 'DEMO Aetna' },
+          { firstName: 'DEMO-Carlos',  lastName: 'Sample', dob: '1972-11-03', insuranceProvider: 'DEMO UHC' },
+          { firstName: 'DEMO-Dana',    lastName: 'Sample', dob: '2010-02-17', insuranceProvider: 'DEMO Cigna' },
+          { firstName: 'DEMO-Eli',     lastName: 'Sample', dob: '1958-06-30', insuranceProvider: 'DEMO Medicare' },
+          { firstName: 'DEMO-Frankie', lastName: 'Sample', dob: '2020-12-04', insuranceProvider: 'DEMO Humana' },
+          { firstName: 'DEMO-Grace',   lastName: 'Sample', dob: '1990-09-15', insuranceProvider: 'DEMO BCBS' },
+          { firstName: 'DEMO-Henry',   lastName: 'Sample', dob: '2022-03-08', insuranceProvider: 'DEMO Aetna' },
         ];
-        const createdPatients = [];
+        const createdPatients: any[] = [];
         for (const seed of demoPatientSeeds) {
           const p = await storage.createPatient({
             practiceId,
             firstName: seed.firstName,
             lastName: seed.lastName,
-            dateOfBirth: baseDob,
+            dateOfBirth: seed.dob,
             email: `demo-${seed.firstName.toLowerCase().replace('demo-', '')}@example.com`,
+            phone: '(555) 012-3456',
             insuranceProvider: seed.insuranceProvider,
             isDemo: true,
           } as any);
           createdPatients.push(p);
         }
 
-        // Two appointments tomorrow, 60 min each, for the first two patients.
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(10, 0, 0, 0);
-        const apt1End = new Date(tomorrow.getTime() + 60 * 60_000);
-        const aptB = new Date(tomorrow);
-        aptB.setHours(14, 0, 0, 0);
-        const apt2End = new Date(aptB.getTime() + 60 * 60_000);
-        const createdAppointments = [];
-        if (createdPatients[0]) {
+        // 5 appointments spanning yesterday → today → tomorrow so Front Desk
+        // and Calendar both have content. Status mix: completed past, active
+        // today, scheduled future.
+        const apptSeeds: Array<{ patientIdx: number; date: Date; hour: number; status: string; title: string }> = [
+          { patientIdx: 0, date: yesterday, hour: 10, status: 'completed', title: 'DEMO - OT Session' },
+          { patientIdx: 6, date: yesterday, hour: 14, status: 'completed', title: 'DEMO - PT Session' },
+          { patientIdx: 1, date: today,     hour: 11, status: 'in_session', title: 'DEMO - OT Session' },
+          { patientIdx: 5, date: tomorrow,  hour: 9,  status: 'scheduled', title: 'DEMO - SLP Session' },
+          { patientIdx: 1, date: tomorrow,  hour: 14, status: 'scheduled', title: 'DEMO - OT Follow-up' },
+        ];
+        const createdAppointments: any[] = [];
+        for (const seed of apptSeeds) {
+          const patient = createdPatients[seed.patientIdx];
+          if (!patient) continue;
+          const start = new Date(seed.date); start.setHours(seed.hour, 0, 0, 0);
+          const end = new Date(start.getTime() + 60 * 60_000);
           createdAppointments.push(
             await storage.createAppointment({
               practiceId,
-              patientId: createdPatients[0].id,
-              startTime: tomorrow,
-              endTime: apt1End,
-              title: 'DEMO - OT Session',
-              status: 'scheduled',
-              isDemo: true,
-            } as any),
-          );
-        }
-        if (createdPatients[1]) {
-          createdAppointments.push(
-            await storage.createAppointment({
-              practiceId,
-              patientId: createdPatients[1].id,
-              startTime: aptB,
-              endTime: apt2End,
-              title: 'DEMO - OT Session',
-              status: 'scheduled',
+              patientId: patient.id,
+              startTime: start,
+              endTime: end,
+              title: seed.title,
+              status: seed.status,
               isDemo: true,
             } as any),
           );
         }
 
-        // One draft claim for the first patient with line items, so the UI
-        // actually shows a Submit button and the user can practice the flow.
-        // The submit route + Blanche's submit_claim tool both refuse demo
-        // claims (isDemo=true), so clicking Submit never reaches the real
-        // clearinghouse — the user sees the demo refusal message instead.
-        let createdClaim: any = null;
-        if (createdPatients[0]) {
+        // 5 claims at varied statuses for the full revenue-cycle demo:
+        //   draft   → user can practice clicking Submit (firewall refuses)
+        //   paid    → contributes to "this looks like a working practice"
+        //   denied  → demo the appeals workflow
+        //   submitted → pending response, shows in-flight state
+        //   held    → biller-attention state, shows the workflow
+        const claimSeeds: Array<{
+          patientIdx: number;
+          status: string;
+          totalAmount: string;
+          paidAmount?: string;
+          submittedAt?: Date;
+          paidAt?: Date;
+          denialReason?: string;
+          holdReason?: string;
+          dateOfService: Date;
+        }> = [
+          { patientIdx: 0, status: 'paid',      totalAmount: '300.00', paidAmount: '240.00',
+            submittedAt: twoWeeksAgo, paidAt: yesterday, dateOfService: twoWeeksAgo },
+          { patientIdx: 1, status: 'draft',     totalAmount: '300.00', dateOfService: yesterday },
+          { patientIdx: 2, status: 'denied',    totalAmount: '425.00',
+            submittedAt: monthAgo, dateOfService: monthAgo,
+            denialReason: 'Missing prior authorization' },
+          { patientIdx: 3, status: 'submitted', totalAmount: '275.00',
+            submittedAt: new Date(today.getTime() - 3 * 86400_000),
+            dateOfService: new Date(today.getTime() - 5 * 86400_000) },
+          { patientIdx: 4, status: 'held',      totalAmount: '550.00',
+            holdReason: 'Awaiting insurance verification',
+            dateOfService: yesterday },
+        ];
+        const createdClaims: any[] = [];
+        const cptCodes = await storage.getCptCodes().catch(() => []);
+        const cpt97530 = (cptCodes as any[]).find((c: any) => c.code === '97530');
+        const cpt97140 = (cptCodes as any[]).find((c: any) => c.code === '97140');
+        for (const seed of claimSeeds) {
+          const patient = createdPatients[seed.patientIdx];
+          if (!patient) continue;
           try {
-            createdClaim = await storage.createClaim({
+            const claim = await storage.createClaim({
               practiceId,
-              patientId: createdPatients[0].id,
-              status: 'draft', // <— 'draft' so UI shows Submit; submit route firewalls it
-              totalAmount: '300.00',
-              dateOfService: new Date().toISOString().split('T')[0],
+              patientId: patient.id,
+              status: seed.status,
+              totalAmount: seed.totalAmount,
+              paidAmount: seed.paidAmount ?? null,
+              submittedAt: seed.submittedAt ?? null,
+              paidAt: seed.paidAt ?? null,
+              denialReason: seed.denialReason ?? null,
+              holdReason: seed.holdReason ?? null,
+              dateOfService: isoDate(seed.dateOfService),
               isDemo: true,
             } as any);
-
-            // Add two line items so the claim looks like a real OT session and
-            // passes basic UI completeness checks. Codes 97530 + 97140 are the
-            // most common OT combo; modifier-free, 1 unit each, $150/unit.
-            if (createdClaim?.id) {
-              const cptCodes = await storage.getCptCodes();
-              const cpt97530 = cptCodes.find((c: any) => c.code === '97530');
-              const cpt97140 = cptCodes.find((c: any) => c.code === '97140');
+            createdClaims.push(claim);
+            // Line items for draft + paid (the most-viewed states) so the UI
+            // detail panes have content. Other statuses can skip — they show
+            // top-line info in the list.
+            if (claim?.id && (seed.status === 'draft' || seed.status === 'paid')) {
               for (const cpt of [cpt97530, cpt97140].filter(Boolean)) {
                 await storage.createClaimLineItem({
-                  claimId: createdClaim.id,
+                  claimId: claim.id,
                   cptCodeId: (cpt as any).id,
                   units: 1,
                   amount: '150.00',
@@ -1563,6 +1601,7 @@ export async function executeTool(
             }
           } catch (e) {
             logger.warn('Demo claim creation skipped', {
+              status: seed.status,
               error: e instanceof Error ? e.message : String(e),
             });
           }
@@ -1572,7 +1611,7 @@ export async function executeTool(
           practiceId,
           patients: createdPatients.length,
           appointments: createdAppointments.length,
-          claim: !!createdClaim,
+          claims: createdClaims.length,
         });
 
         return JSON.stringify({
@@ -1580,13 +1619,15 @@ export async function executeTool(
           summary: {
             patients: createdPatients.length,
             appointments: createdAppointments.length,
-            claims: createdClaim ? 1 : 0,
+            claims: createdClaims.length,
           },
           message:
-            `Demo mode enabled. Created ${createdPatients.length} sample patients (all prefixed with "DEMO-"), ` +
-            `${createdAppointments.length} appointments for tomorrow, and ${createdClaim ? '1 ready-to-submit claim' : '0 claims'}. ` +
-            `These rows are clearly labeled DEMO-, excluded from analytics, and submission/sending tools will refuse to act on them — ` +
-            `you can practice the workflow without anything real happening. Call clear_demo_data when you're done to wipe it all.`,
+            `Demo mode enabled. Created ${createdPatients.length} sample patients (DEMO- prefix), ` +
+            `${createdAppointments.length} appointments (yesterday/today/tomorrow), and ` +
+            `${createdClaims.length} claims across draft/submitted/paid/denied/held states. ` +
+            `Every row is firewalled — submission and sending tools will refuse to act on demo data, and analytics excludes them. ` +
+            `Walk a prospect through the Dashboard, Front Desk, Claims, and Appeals pages — there's enough variety to demonstrate the full revenue cycle. ` +
+            `Call clear_demo_data when you're done.`,
         });
       }
 
