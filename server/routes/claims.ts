@@ -715,6 +715,16 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
         continue;
       }
 
+      // Phase 5 firewall: demo claims never reach the clearinghouse,
+      // even when bundled into a batch with real ones.
+      if ((claim as any).isDemo) {
+        validationErrors.push({
+          claimId,
+          error: "Demo claim — can't be submitted. Demo data is for practice only.",
+        });
+        continue;
+      }
+
       if (claim.status !== 'draft' && claim.status !== 'held') {
         validationErrors.push({ claimId, error: `Claim is in '${claim.status}' status, only draft or held claims can be submitted` });
         continue;
@@ -1125,6 +1135,19 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
 
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    // Phase 5 firewall: demo claims (created via Blanche's enable_demo_mode)
+    // must never reach a real clearinghouse. The button might appear in the
+    // UI so the user can practice clicking it, but the request stops here.
+    if ((claim as any).isDemo) {
+      return res.status(400).json({
+        message:
+          "This is a demo claim — it can't be submitted to the clearinghouse. " +
+          "Demo data is for practice only. To submit for real, create a claim from a real patient, " +
+          "or ask Blanche to clear_demo_data and start fresh.",
+        code: 'demo_data_refused',
+      });
     }
 
     if (claim.status !== 'draft' && claim.status !== 'held') {

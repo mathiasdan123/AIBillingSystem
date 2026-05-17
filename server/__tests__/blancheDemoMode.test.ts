@@ -42,6 +42,18 @@ describe('rejectIfDemoData', () => {
   });
 });
 
+describe('rejectIfDemoData — error shape contract', () => {
+  it('returns parseable JSON with both error and code fields', () => {
+    const raw = rejectIfDemoData({ isDemo: true }, 'claim');
+    expect(raw).not.toBeNull();
+    expect(() => JSON.parse(raw!)).not.toThrow();
+    const parsed = JSON.parse(raw!);
+    // Contract that the submit/send/charge routes rely on for friendly errors.
+    expect(parsed).toHaveProperty('error');
+    expect(parsed).toHaveProperty('code', 'demo_data_refused');
+  });
+});
+
 describe('summarizeProposal — Phase 5 tools', () => {
   it('describes enable_demo_mode with what it will create', () => {
     const summary = summarizeProposal('enable_demo_mode', {});
