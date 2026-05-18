@@ -4571,7 +4571,20 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
 
     // Extract text content from response
     const textBlocks = response.content.filter((b: any): b is Anthropic.TextBlock => b.type === 'text');
-    const content = textBlocks.map((b: Anthropic.TextBlock) => b.text).join('\n') || 'I apologize, but I was unable to generate a response. Please try again.';
+    // Default text when Claude returns no text blocks. With the Phase 4
+    // proposal flow, it's common for Claude to emit ONLY tool calls and
+    // skip a closing text block — the proposal card itself carries the
+    // user-facing message. The old "I apologize, but I was unable to
+    // generate a response" fallback made successful proposal turns look
+    // like errors. Now we tailor the fallback to whether proposals are
+    // pending: if yes, point the user at the card; if no, the original
+    // apology is still appropriate (Claude truly returned nothing).
+    const joinedText = textBlocks.map((b: Anthropic.TextBlock) => b.text).join('\n');
+    const content =
+      joinedText ||
+      (pendingProposals.length > 0
+        ? "I've queued the action below for your review — click **Confirm** or **Cancel** on the card."
+        : 'I apologize, but I was unable to generate a response. Please try again.');
 
     // Parse for suggested actions (look for patterns like "[Action: ...]")
     const actionPattern = /\[Action:\s*([^\]]+)\]/g;
