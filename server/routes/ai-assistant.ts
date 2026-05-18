@@ -4856,12 +4856,33 @@ router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) =>
       // Some tools return non-JSON; surface the raw string in that case.
     }
 
+    // Auto-continuation hook: tell the client to immediately send a hidden
+    // follow-up message to /api/ai/assistant so Blanche can continue the
+    // workflow (e.g. propose the next step in a multi-step intent, or just
+    // say "anything else?" if nothing's left). Without this, multi-step
+    // promises like "next I'll schedule the appointment" die silently after
+    // the user clicks Confirm.
+    //
+    // The followup is wrapped in an "[Auto-continue]" sentinel so Blanche
+    // (and the response augmenter) can recognize it as a system-generated
+    // continuation, not a real user message — and the client hides it from
+    // the rendered chat.
+    const summarized = summarizeResultForBlanche(parsedResult);
+    const autoContinue = {
+      suggestedFollowup:
+        `[Auto-continue] I just confirmed your proposed ${proposal.toolName}. ` +
+        `Result: ${summarized}. ` +
+        `Based on what we were doing, what's the next logical step? ` +
+        `If we're done, say so briefly (one short sentence) — don't propose anything new just for the sake of it.`,
+    };
+
     return res.json({
       status: 'confirmed',
       proposalId,
       toolName: proposal.toolName,
       summary: proposal.summary,
       result: parsedResult,
+      autoContinue,
     });
   } catch (error) {
     logger.error('Blanche confirm-tool error', {
@@ -4870,6 +4891,28 @@ router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) =>
     return res.status(500).json({ message: 'Failed to process confirmation' });
   }
 });
+
+/**
+ * Best-effort short summary of a tool-result for the auto-continue follow-up
+ * message. Different tools return wildly different shapes — pick out the
+ * most useful 1-2 fields and stringify, capping length so we don't shove
+ * a giant JSON blob into Blanche's context.
+ */
+function summarizeResultForBlanche(result: unknown): string {
+  if (!result || typeof result !== 'object') {
+    return typeof result === 'string' ? result.slice(0, 200) : 'success';
+  }
+  const r = result as Record<string, any>;
+  if (r.error) return `error: ${String(r.error).slice(0, 200)}`;
+  if (r.success && r.message) return String(r.message).slice(0, 300);
+  if (r.patient) return `patient ${r.patient.id} (${r.patient.firstName ?? ''} ${r.patient.lastName ?? ''}) created`.trim();
+  if (r.id && r.message) return `id ${r.id}, ${String(r.message).slice(0, 200)}`;
+  if (r.id) return `id ${r.id}`;
+  if (r.message) return String(r.message).slice(0, 300);
+  // Fallback: short JSON.
+  const json = JSON.stringify(r);
+  return json.length > 300 ? json.slice(0, 297) + '...' : json;
+}
 
 // GET /api/ai/assistant/status - Check if AI assistant is available
 router.get('/assistant/status', (req, res) => {
