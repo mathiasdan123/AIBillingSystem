@@ -281,7 +281,11 @@ export function detectSuccessClaim(text: string): string | null {
     { re: /^\s*(?:all\s+(?:set|done)|done!?|that['']?s\s+(?:done|all\s+set))(?:\s|[.!])/m, example: 'Done!' },
     { re: /(?:^|\n)\s*(?:perfect[!.]|all\s+set[!.])\s/m, example: 'Perfect!' },
     // Bullet-list of past-tense items framed as completion.
-    { re: /(?:^|\n)\s*[-*•]\s*[^\n]{0,100}(?:marked|tagged|flagged|created|sent|submitted)\s+(?:as|to)/m, example: '- marked as ...' },
+    // Tightened 2026-05-18: must be the FIRST word of the bullet content
+    // (allowing optional **emphasis**). This catches "- Marked all 7..." but
+    // not "- Janet Doe needs to be created as a patient first" (where the
+    // verb is preceded by "needs to be" indicating future intent).
+    { re: /(?:^|\n)\s*[-*•]\s*(?:\*\*)?(?:marked|tagged|flagged|created|sent|submitted|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|invited|generated|submitted)\b/im, example: '- Marked ...' },
     // ASCII check-mark "what was done" lists.
     { re: /(?:^|\n)\s*(?:✅|☑|✓)\s+(?:all|the)?\s*(?:these\s+)?(?:patients|claims|appointments|records|items)/m, example: '✅ patients ...' },
   ];
