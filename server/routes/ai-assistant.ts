@@ -256,57 +256,96 @@ async function takeProposal(id: string): Promise<StoredProposal | null> {
 /**
  * Hallucinated-success detector (Layer 2 of the Phase 4 trust defense).
  *
- * Catches the case where Claude (Blanche) writes a confident "Done!" / "I've
- * marked them" / "Successfully created" reply WITHOUT actually calling the
- * relevant mutation tool. That pattern shipped a real production bug —
- * Blanche told the user 7 patients were tagged as demo; zero tool calls
- * happened; user reasonably trusted her and was misled.
+ * Two categories of "you shouldn't say that" patterns:
  *
- * This is a heuristic, not a parser — over-flag is acceptable; under-flag
- * is the failure mode we're guarding against.
+ * STRONG_SUCCESS_PATTERNS — asserts an action was completed. e.g. "I've marked
+ * them", "Successfully created", "Done!", "- Marked all 7", "✅ patients...".
+ * These are dangerous because they misrepresent state. Flag both when no tool
+ * was called (pure hallucination) AND when a tool WAS called but the action
+ * is only queued, not executed.
  *
- * Returns the first matching phrase, or null if none.
+ * THEATRE_PATTERNS — cringe enthusiasm openers. "Perfect!", "Great!",
+ * "Excellent!". Not lies, but violate the rule against premature celebration.
+ * Flag only when no tool was called (so they're load-bearing on a non-action).
+ * Tolerate when a tool was called (system prompt should discourage them, but
+ * a warning every time Blanche says "Perfect!" while correctly queuing would
+ * be over-warning).
+ *
+ * Heuristic, not a parser — over-flag in the STRONG category is acceptable;
+ * under-flag is the failure mode being guarded against.
+ *
+ * Returns the matched example phrase, or null.
  */
-export function detectSuccessClaim(text: string): string | null {
+type DetectorMode = 'strong-only' | 'all';
+
+const STRONG_SUCCESS_PATTERNS: Array<{ re: RegExp; example: string }> = [
+  // Past-tense action verbs in first-person.
+  { re: /\bi['']?ve\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated)/, example: "I've marked" },
+  { re: /\bi\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated)\s+(?!.*\bif\b)/, example: 'I marked' },
+  // "Successfully X-ed" framing.
+  { re: /\bsuccessfully\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated|completed)/, example: 'successfully marked' },
+  // "All set" / "All done" / "Done!" closers — only when standalone.
+  { re: /^\s*(?:all\s+(?:set|done)|done!?|that['']?s\s+(?:done|all\s+set))(?:\s|[.!])/m, example: 'Done!' },
+  // Bullet-list of past-tense items framed as completion. Verb must be FIRST
+  // word of bullet content (so "- Janet needs to be created" doesn't match).
+  { re: /(?:^|\n)\s*[-*•]\s*(?:\*\*)?(?:marked|tagged|flagged|created|sent|submitted|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|invited|generated)\b/im, example: '- Marked ...' },
+  // ASCII check-mark "what was done" lists.
+  { re: /(?:^|\n)\s*(?:✅|☑|✓)\s+(?:all|the)?\s*(?:these\s+)?(?:patients|claims|appointments|records|items)/m, example: '✅ patients ...' },
+];
+
+const THEATRE_PATTERNS: Array<{ re: RegExp; example: string }> = [
+  // Premature-celebration openers. Line-start only (not anywhere in text).
+  { re: /(?:^|\n)\s*(?:perfect[!.]|all\s+set[!.])\s/m, example: 'Perfect!' },
+  { re: /(?:^|\n)\s*(?:great[!.]|excellent[!.]|awesome[!.]|fantastic[!.])\s/m, example: 'Great!' },
+];
+
+export function detectSuccessClaim(text: string, mode: DetectorMode = 'all'): string | null {
   if (!text) return null;
   // Strip markdown emphasis so "**Done!**" matches "done!".
   const normalized = text.toLowerCase().replace(/[*_`]/g, '');
-  const patterns: Array<{ re: RegExp; example: string }> = [
-    // Past-tense action verbs in first-person.
-    { re: /\bi['']?ve\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated)/, example: "I've marked" },
-    { re: /\bi\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated)\s+(?!.*\bif\b)/, example: 'I marked' },
-    // "Successfully X-ed" framing.
-    { re: /\bsuccessfully\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated|completed)/, example: 'successfully marked' },
-    // "All set" / "All done" / "Done!" closers — only when standalone.
-    { re: /^\s*(?:all\s+(?:set|done)|done!?|that['']?s\s+(?:done|all\s+set))(?:\s|[.!])/m, example: 'Done!' },
-    { re: /(?:^|\n)\s*(?:perfect[!.]|all\s+set[!.])\s/m, example: 'Perfect!' },
-    // Bullet-list of past-tense items framed as completion.
-    // Tightened 2026-05-18: must be the FIRST word of the bullet content
-    // (allowing optional **emphasis**). This catches "- Marked all 7..." but
-    // not "- Janet Doe needs to be created as a patient first" (where the
-    // verb is preceded by "needs to be" indicating future intent).
-    { re: /(?:^|\n)\s*[-*•]\s*(?:\*\*)?(?:marked|tagged|flagged|created|sent|submitted|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|invited|generated|submitted)\b/im, example: '- Marked ...' },
-    // ASCII check-mark "what was done" lists.
-    { re: /(?:^|\n)\s*(?:✅|☑|✓)\s+(?:all|the)?\s*(?:these\s+)?(?:patients|claims|appointments|records|items)/m, example: '✅ patients ...' },
-  ];
-  for (const { re, example } of patterns) {
+  for (const { re, example } of STRONG_SUCCESS_PATTERNS) {
     if (re.test(normalized)) return example;
+  }
+  if (mode === 'all') {
+    for (const { re, example } of THEATRE_PATTERNS) {
+      if (re.test(normalized)) return example;
+    }
   }
   return null;
 }
 
 /**
- * If Claude's final response makes a past-tense success claim but she didn't
- * call any mutation tool this turn, prepend a warning. This is a safety net —
- * stronger system-prompt rules (Rule 1–5 in the prompt above) handle the
- * primary prevention; this catches her when she goes off-script anyway.
+ * If Claude's final response misrepresents state, prepend a warning to the
+ * user. Two distinct misrepresentation cases:
+ *
+ * 1. No mutation tool called, success language present → pure hallucination.
+ *    Warning: "I may have skipped a tool call. Nothing actually changed."
+ * 2. Mutation tool called, STRONG success language present → premature
+ *    completion claim. The action is queued for Confirm, not executed yet.
+ *    Warning: "I used past-tense language but the action isn't done yet —
+ *    click Confirm on the card to actually run it."
+ *
+ * Mild theatre openers ("Perfect!") with a tool call do NOT warn — they're
+ * just cringe and the system prompt is the primary defense for those.
  */
 export function augmentIfHallucinatedSuccess(
   text: string,
   mutationsCalledCount: number,
 ): string {
-  if (mutationsCalledCount > 0) return text; // She actually did call one.
-  const matched = detectSuccessClaim(text);
+  if (mutationsCalledCount > 0) {
+    // Tool WAS called. Only flag STRONG success claims (not theatre openers).
+    const matched = detectSuccessClaim(text, 'strong-only');
+    if (!matched) return text;
+    return (
+      `⚠️ **Heads up — I used past-tense language for an action that hasn't run yet.** ` +
+      `My phrasing (e.g. "${matched}") could read as "done," but the action is queued in the ` +
+      `Confirm/Cancel card below — it only executes once you click Confirm. Nothing has changed yet.\n\n---\n\n` +
+      text
+    );
+  }
+  // No tool called. Flag both strong claims AND theatre openers — both are
+  // load-bearing on a non-action.
+  const matched = detectSuccessClaim(text, 'all');
   if (!matched) return text;
   return (
     `⚠️ **Heads up — I may have skipped a tool call.** I claimed an action was done ` +
@@ -699,7 +738,22 @@ This is the most important section of these instructions. Violating these rules 
 
 **Rule 2: NEVER claim an action has been performed.** When you call a mutation tool, the server will return status "awaiting_user_confirmation" — it is NOT executed yet; it is queued for the user to confirm via a Confirm/Cancel card in the chat. Until the user clicks Confirm AND you see the tool's actual result returned in a follow-up turn, the action HAS NOT HAPPENED. Frame your reply as **intent**, not as completion. Use phrasing like "I'm proposing to mark these 7 patients as demo — click Confirm below to do it" — never "I've marked them" or "Successfully marked" or "All set" or "Here's what I did" or "Done!" or any past-tense success phrasing.
 
-**Rule 3: No checkmark theatre.** Do not use ✅, "successfully", "done", "all set", "perfect" or similar success-y language when proposing a mutation. Use only neutral framing about what you're about to do.
+**Rule 3: No checkmark theatre AND no premature celebration.** Until the user clicks Confirm AND you see the tool's actual result, NOTHING has happened — including when you're correctly proposing an action. Do not open your response with "Perfect!", "Great!", "Excellent!", "Awesome!", or any similar enthusiasm word. Do not use ✅, "successfully", "done", or "all set" anywhere in a response that includes a proposed mutation. Start with a neutral acknowledgement and move to the proposal.
+
+GOOD opener examples (use these patterns):
+  - "I can do that. I'm proposing to..."
+  - "Got it — here's what I'd like to do..."
+  - "Sure. I'll queue this up for your review..."
+  - "I'd like to create [X] — please confirm below."
+
+BAD opener examples (do NOT use):
+  - "Perfect! I'm proposing to..."
+  - "Great! I'll create Janet Doe..."
+  - "Awesome, I'll queue that up..."
+  - "✅ I've marked the patients..."
+  - "All set! Just confirm below..."
+
+The user cannot tell from your text whether an action ran. They can only tell from (a) seeing the Confirm card, (b) clicking it, and (c) seeing the result message. Celebrating before any of that happens makes them think it's done when it isn't.
 
 **Rule 4: If you didn't call a tool, say so.** If the user asks you to do something and for some reason you don't call the tool (e.g. you're unsure of the IDs, you need clarification), say so explicitly: "I haven't done this yet — I need you to confirm X first" or "I'm not sure which patients to mark — can you confirm the IDs?" Never fake-execute a request by describing what would happen as if it happened.
 
