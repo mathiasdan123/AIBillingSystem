@@ -1786,10 +1786,10 @@ export async function executeTool(
         // for a multi-day demo cycle.
         const RECENCY_DAYS = 14;
         const cutoff = new Date(Date.now() - RECENCY_DAYS * 86400_000);
-
-        const { db } = await import('../db');
-        const { patients, claims, appointments } = await import('@shared/schema');
-        const { and, eq, gte } = await import('drizzle-orm');
+        // db, patients/claims/appointments tables, and Drizzle ops are imported
+        // at the top of the file. The previous dynamic imports collided with
+        // esbuild's minification of the top-level `eq` symbol, producing the
+        // production runtime error "eq62 is not a function". Top-level only.
 
         const claimsResult = await db
           .delete(claims)
@@ -1895,10 +1895,9 @@ export async function executeTool(
             error: 'patientIds must be a non-empty array of positive integers.',
           });
         }
-
-        const { db } = await import('../db');
-        const { patients, appointments, claims } = await import('@shared/schema');
-        const { and, eq, inArray } = await import('drizzle-orm');
+        // db, patients/claims/appointments tables, and Drizzle ops are imported
+        // at the top of the file — see the matching note in clear_demo_data
+        // above re: the esbuild minification collision on `eq`.
 
         // Practice ownership check — never let the caller flip flags on another
         // practice's rows even if they hand us the IDs.
