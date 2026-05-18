@@ -40,8 +40,10 @@ export default function CalendarPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [currentDate, setCurrentDate] = useState(new Date());
-  // Default to day view on mobile (screen width < 768px)
-  const [view, setView] = useState<"week" | "day">(
+  // Default to day view on mobile (screen width < 768px). Month view is
+  // desktop-only-by-default — useful for at-a-glance planning, less useful
+  // on a phone.
+  const [view, setView] = useState<"week" | "day" | "month">(
     typeof window !== 'undefined' && window.innerWidth < 768 ? "day" : "week"
   );
   const [showNewAppointment, setShowNewAppointment] = useState(false);
@@ -127,14 +129,37 @@ export default function CalendarPage() {
 
   const weekDates = getWeekDates(currentDate);
 
-  // Fetch appointments from backend
+  // Month grid: 6-week (42-cell) array starting from the Sunday on or before
+  // the 1st of the current month. Always 42 cells so the grid height is
+  // stable across months (no jitter from 4-row Feb vs 6-row long months).
+  const getMonthGridDates = (date: Date): Date[] => {
+    const firstOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(firstOfMonth.getDate() - firstOfMonth.getDay()); // back up to Sunday
+    return Array.from({ length: 42 }, (_, i) => {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + i);
+      return d;
+    });
+  };
+  const monthGridDates = getMonthGridDates(currentDate);
+
+  // Fetch appointments from backend over the visible range. Week view ⇒
+  // current week. Day view ⇒ current week (so back-nav stays smooth).
+  // Month view ⇒ the full 42-cell grid (includes prior/next-month tails).
   const weekStart = new Date(weekDates[0]);
   weekStart.setHours(0, 0, 0, 0);
   const weekEnd = new Date(weekDates[6]);
   weekEnd.setHours(23, 59, 59, 999);
+  const monthGridStart = new Date(monthGridDates[0]);
+  monthGridStart.setHours(0, 0, 0, 0);
+  const monthGridEnd = new Date(monthGridDates[41]);
+  monthGridEnd.setHours(23, 59, 59, 999);
+  const queryRangeStart = view === "month" ? monthGridStart : weekStart;
+  const queryRangeEnd = view === "month" ? monthGridEnd : weekEnd;
 
   const { data: appointments = [] } = useQuery<Appointment[]>({
-    queryKey: ["/api/appointments", `?practiceId=1&start=${weekStart.toISOString()}&end=${weekEnd.toISOString()}`],
+    queryKey: ["/api/appointments", `?practiceId=1&start=${queryRangeStart.toISOString()}&end=${queryRangeEnd.toISOString()}`],
   });
 
   // This week's cancellation summary
@@ -409,8 +434,16 @@ export default function CalendarPage() {
     d.setDate(d.getDate() + dir);
     setCurrentDate(d);
   };
+  const navigateMonth = (dir: number) => {
+    const d = new Date(currentDate);
+    // Pin to day 1 first so e.g. Jan 31 → Feb 28 (not Mar 3 via overflow).
+    d.setDate(1);
+    d.setMonth(d.getMonth() + dir);
+    setCurrentDate(d);
+  };
   const formatDate = (date: Date) => date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const formatDateFull = (date: Date) => date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const formatMonthYear = (date: Date) => date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
   // Filter appointments by selected location
   const filteredAppointments = filterLocationId === "all"
@@ -856,21 +889,27 @@ export default function CalendarPage() {
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
               <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
                 <div className="flex items-center gap-1.5">
-                  <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "week" ? navigateWeek(-1) : navigateDay(-1)}><ChevronLeft className="w-4 h-4" /></Button>
-                  <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "week" ? navigateWeek(1) : navigateDay(1)}><ChevronRight className="w-4 h-4" /></Button>
+                  <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "month" ? navigateMonth(-1) : view === "week" ? navigateWeek(-1) : navigateDay(-1)}><ChevronLeft className="w-4 h-4" /></Button>
+                  <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "month" ? navigateMonth(1) : view === "week" ? navigateWeek(1) : navigateDay(1)}><ChevronRight className="w-4 h-4" /></Button>
                   <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => setCurrentDate(new Date())}>Today</Button>
                 </div>
                 <div className="flex items-center gap-1.5 sm:hidden">
                   <Button variant={view === "week" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("week")}>Week</Button>
                   <Button variant={view === "day" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("day")}>Day</Button>
+                  <Button variant={view === "month" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("month")}>Month</Button>
                 </div>
               </div>
               <h2 className="text-sm md:text-lg font-semibold text-center">
-                {view === "week" ? formatDate(weekDates[0]) + " - " + formatDate(weekDates[6]) + ", " + weekDates[0].getFullYear() : formatDateFull(currentDate)}
+                {view === "month"
+                  ? formatMonthYear(currentDate)
+                  : view === "week"
+                    ? formatDate(weekDates[0]) + " - " + formatDate(weekDates[6]) + ", " + weekDates[0].getFullYear()
+                    : formatDateFull(currentDate)}
               </h2>
               <div className="hidden sm:flex items-center gap-2">
                 <Button variant={view === "week" ? "default" : "outline"} size="sm" onClick={() => setView("week")}>Week</Button>
                 <Button variant={view === "day" ? "default" : "outline"} size="sm" onClick={() => setView("day")}>Day</Button>
+                <Button variant={view === "month" ? "default" : "outline"} size="sm" onClick={() => setView("month")}>Month</Button>
               </div>
             </div>
           </CardContent>
@@ -879,6 +918,104 @@ export default function CalendarPage() {
         {/* Calendar Grid */}
         <Card>
           <CardContent className="p-0" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            {/* MONTH VIEW (desktop) — 6-week grid with appointment count + first
+                couple of appointments per day. Click a day to drill into day view. */}
+            {view === "month" && (
+              <div className="hidden md:block">
+                <div className="grid grid-cols-7 border-b bg-slate-50 dark:bg-slate-900">
+                  {DAYS.map((label) => (
+                    <div key={label} className="p-2 text-center text-xs font-medium text-slate-500 border-r last:border-r-0">
+                      {label.slice(0, 3)}
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7">
+                  {monthGridDates.map((date, ci) => {
+                    const isCurrentMonth = date.getMonth() === currentDate.getMonth();
+                    const isToday = date.toDateString() === new Date().toDateString();
+                    const dayAppointments = filteredAppointments.filter((apt) => {
+                      const start = new Date(apt.startTime);
+                      return start.toDateString() === date.toDateString();
+                    });
+                    return (
+                      <div
+                        key={ci}
+                        onClick={() => { setCurrentDate(date); setView("day"); }}
+                        className={
+                          "min-h-[110px] border-r border-b last:border-r-0 p-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors " +
+                          (isCurrentMonth ? "" : "bg-slate-50/60 dark:bg-slate-900/40 ") +
+                          (isToday ? "ring-2 ring-blue-500 ring-inset " : "")
+                        }
+                        data-testid={`month-cell-${date.toISOString().split('T')[0]}`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span
+                            className={
+                              "text-xs font-medium " +
+                              (isToday
+                                ? "text-blue-600 dark:text-blue-400 font-bold"
+                                : isCurrentMonth
+                                  ? "text-slate-700 dark:text-slate-200"
+                                  : "text-slate-400 dark:text-slate-600")
+                            }
+                          >
+                            {date.getDate()}
+                          </span>
+                          {dayAppointments.length > 0 && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                              {dayAppointments.length}
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-0.5">
+                          {dayAppointments.slice(0, 3).map((apt) => {
+                            const start = new Date(apt.startTime);
+                            const timeStr = start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                            const patient = patients.find((p) => p.id === apt.patientId);
+                            const patientName = patient
+                              ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                              : "Patient";
+                            const isCancelled = apt.status === "cancelled";
+                            return (
+                              <div
+                                key={apt.id}
+                                className={
+                                  "text-[10px] px-1 py-0.5 rounded truncate " +
+                                  (isCancelled
+                                    ? "bg-slate-100 dark:bg-slate-800 text-slate-400 line-through"
+                                    : "bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200")
+                                }
+                                title={`${timeStr} — ${patientName}`}
+                              >
+                                {timeStr} {patientName}
+                              </div>
+                            );
+                          })}
+                          {dayAppointments.length > 3 && (
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 px-1">
+                              +{dayAppointments.length - 3} more
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* MONTH VIEW (mobile fallback) — month is unwieldy on a phone;
+                steer the user to Day view. */}
+            {view === "month" && (
+              <div className="md:hidden p-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                Month view is best on desktop.
+                <div className="mt-3 flex justify-center gap-2">
+                  <Button variant="default" size="sm" onClick={() => setView("day")}>Switch to Day</Button>
+                  <Button variant="outline" size="sm" onClick={() => setView("week")}>Switch to Week</Button>
+                </div>
+              </div>
+            )}
+
             {view === "week" && (
               <div className="hidden md:grid grid-cols-8 border-b">
                 <div className="w-16 border-r" />
@@ -891,7 +1028,7 @@ export default function CalendarPage() {
               </div>
             )}
             {/* Desktop: traditional time grid */}
-            <div className="hidden md:block relative">
+            <div className={"hidden relative " + (view === "month" ? "" : "md:block")}>
               <div className={"grid " + (view === "week" ? "grid-cols-8" : "grid-cols-2")}>
                 <div className="w-16 border-r">
                   {HOURS.map((h) => (
