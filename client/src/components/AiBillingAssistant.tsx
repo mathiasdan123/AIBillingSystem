@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -113,6 +114,7 @@ function saveHistory(messages: ChatMessage[]) {
 
 export default function AiBillingAssistant() {
   const { isAuthenticated, user } = useAuth();
+  const queryClient = useQueryClient();
   const userId = (user as any)?.id ?? null;
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -541,6 +543,19 @@ export default function AiBillingAssistant() {
                 },
           ),
         );
+
+        // Cache invalidation: after a successful Confirm, refresh the React
+        // Query caches for resources that any Blanche mutation might have
+        // touched. Without this, the Calendar / Patients / Claims pages
+        // would show stale data until the user manually refreshes —
+        // making Blanche feel un-professional. Invalidate broadly: cheap
+        // (a couple refetches) vs. confusing stale UI.
+        if (action === "confirm") {
+          queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/claims"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+        }
 
         // Auto-continuation: after a successful Confirm, send a hidden
         // follow-up so Blanche can propose the next step (or just say

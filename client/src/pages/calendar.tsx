@@ -1055,10 +1055,16 @@ export default function CalendarPage() {
                       >
                         <div className="text-xs font-medium truncate flex items-center gap-1">
                           {(apt as any).isRecurring && <Repeat className="w-3 h-3 flex-shrink-0" />}
-                          {apt.title || "Appointment"}
+                          {(() => {
+                            const patient = patients.find((p: any) => p.id === apt.patientId);
+                            return patient
+                              ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                              : (apt.title || "Appointment");
+                          })()}
                         </div>
                         <div className="text-xs text-slate-600 truncate">
                           {formatTime(apt.startTime)}
+                          {apt.title && ` · ${apt.title}`}
                           {apt.therapistId && (() => {
                             const therapist = therapists.find((t: any) => t.id === apt.therapistId);
                             return therapist ? ` - ${therapist.firstName}` : "";
@@ -1129,7 +1135,14 @@ export default function CalendarPage() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 min-w-0">
                             {a.isRecurring && <Repeat className="w-3.5 h-3.5 flex-shrink-0" />}
-                            <span className="font-medium text-sm truncate">{apt.title || "Appointment"}</span>
+                            <span className="font-medium text-sm truncate">
+                              {(() => {
+                                const patient = patients.find((p: any) => p.id === apt.patientId);
+                                return patient
+                                  ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                                  : (apt.title || "Appointment");
+                              })()}
+                            </span>
                           </div>
                           <Badge className={`${getStatusColor(statusLabel)} text-[10px] flex-shrink-0 ml-2`}>
                             {statusLabel}
@@ -1137,6 +1150,7 @@ export default function CalendarPage() {
                         </div>
                         <div className="text-xs text-slate-600 mt-1">
                           {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
+                          {apt.title && ` · ${apt.title}`}
                           {apt.therapistId && (() => {
                             const therapist = therapists.find((t: any) => t.id === apt.therapistId);
                             return therapist ? ` | ${therapist.firstName}` : "";
@@ -1314,10 +1328,18 @@ export default function CalendarPage() {
                       <div className="min-w-0">
                         <div className="font-medium text-sm md:text-base flex items-center gap-1">
                           {a.isRecurring && <Repeat className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
-                          <span className="truncate">{apt.title || "Appointment"}</span>
+                          <span className="truncate">
+                            {(() => {
+                              const patient = patients.find((p: any) => p.id === apt.patientId);
+                              return patient
+                                ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                                : (apt.title || "Appointment");
+                            })()}
+                          </span>
                         </div>
                         <div className="text-xs md:text-sm text-slate-600 truncate">
                           {new Date(apt.startTime).toLocaleDateString()} at {formatTime(apt.startTime)} - {formatTime(apt.endTime)}
+                          {apt.title && ` · ${apt.title}`}
                           {apt.therapistId && (() => {
                             const therapist = therapists.find((t: any) => t.id === apt.therapistId);
                             return therapist ? ` | ${therapist.firstName} ${therapist.lastName}` : "";
