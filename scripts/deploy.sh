@@ -138,15 +138,30 @@ aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
 ok "Rollout triggered"
 
 log "Waiting for rollout to stabilize (typically ~3 min)…"
+# "Stable" = the new (PRIMARY) deployment has all desired tasks running.
+# We deliberately do NOT wait for `deployments == 1` — the OLD deployment
+# can take a long time to fully drain off (5–15 min in slow cases), and
+# blocking on that has nothing to do with whether the new code is live and
+# healthy. Once primaryRunning == primaryDesired, the new code is serving
+# traffic on every task; the old tasks draining in the background are
+# bookkeeping. Bumped timeout to 15 min for the genuine "new tasks won't
+# come up" failure case.
 START=$(date +%s)
 while true; do
   JSON=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
-    --query 'services[0].{primaryRunning:deployments[?status==`PRIMARY`].runningCount|[0],primaryDesired:deployments[?status==`PRIMARY`].desiredCount|[0],deployments:length(deployments)}' --output json)
+    --query 'services[0].{primaryRunning:deployments[?status==`PRIMARY`].runningCount|[0],primaryDesired:deployments[?status==`PRIMARY`].desiredCount|[0],rolloutState:deployments[?status==`PRIMARY`].rolloutState|[0],deployments:length(deployments)}' --output json)
   ELAPSED=$(($(date +%s) - START))
   printf "  [%4ds] %s\n" "$ELAPSED" "$(echo "$JSON" | tr -d '\n ' )"
-  STABLE=$(echo "$JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d['deployments']==1 and d['primaryRunning']==d['primaryDesired'] and d['primaryDesired']>0 else 'no')")
-  [ "$STABLE" = "yes" ] && { ok "Rollout stable"; break; }
-  [ "$ELAPSED" -gt 600 ] && fail "Rollout did not stabilize in 10 min"
+  STABLE=$(echo "$JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d['primaryRunning']==d['primaryDesired'] and d['primaryDesired']>0 and d.get('rolloutState') in (None,'COMPLETED') else 'no')")
+  if [ "$STABLE" = "yes" ]; then
+    DEPLOY_COUNT=$(echo "$JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['deployments'])")
+    if [ "$DEPLOY_COUNT" != "1" ]; then
+      warn "New tasks healthy. Old deployment still draining ($DEPLOY_COUNT total deployments); not blocking smoke test on that."
+    fi
+    ok "Rollout stable"
+    break
+  fi
+  [ "$ELAPSED" -gt 900 ] && fail "Rollout did not stabilize in 15 min"
   sleep 15
 done
 
