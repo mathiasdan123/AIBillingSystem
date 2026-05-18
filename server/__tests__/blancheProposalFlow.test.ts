@@ -130,9 +130,13 @@ describe('POST /api/ai/confirm-tool', () => {
       .expect(200);
 
     expect(res.body.autoContinue).toBeDefined();
-    expect(res.body.autoContinue.suggestedFollowup).toMatch(/\[Auto-continue\]/);
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/\[Auto-continue/);
     expect(res.body.autoContinue.suggestedFollowup).toMatch(/create_patient/);
-    expect(res.body.autoContinue.suggestedFollowup).toMatch(/next logical step/);
+    // Strong directive language so Blanche actually calls the next tool
+    // instead of narrating "I'm proposing..." without a tool call.
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/CALL THE NEXT TOOL NOW/);
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/original request/i);
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/Click Confirm below/);
   });
 
   it('cancel response does NOT include autoContinue (nothing to continue from)', async () => {

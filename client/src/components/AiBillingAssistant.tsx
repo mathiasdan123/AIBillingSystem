@@ -305,6 +305,19 @@ export default function AiBillingAssistant() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
+  // Scroll to bottom when the chat opens (so the user lands on the latest
+  // message, not at the top of stale history). Instant, not smooth, so it
+  // feels like the chat opened directly to where the conversation is. Uses a
+  // tiny timeout to wait for the panel to actually render and the messages
+  // container to be measurable.
+  useEffect(() => {
+    if (!isOpen) return;
+    const id = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+    }, 50);
+    return () => clearTimeout(id);
+  }, [isOpen]);
+
   // Save history when messages change
   useEffect(() => {
     saveHistory(messages);
