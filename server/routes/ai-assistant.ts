@@ -134,7 +134,7 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
     case 'enable_demo_mode':
       return 'Enable demo mode (creates 8 DEMO- patients, 5 appointments across yesterday/today/tomorrow, and 5 claims across draft/submitted/paid/denied/held — enough variety to demo the full revenue cycle)';
     case 'clear_demo_data':
-      return 'Clear ALL demo data for this practice (irreversible)';
+      return 'Clear recent demo data for this practice (rows from the last 14 days only — permanent showcase patients hand-tagged via mark_patients_as_demo are preserved). Irreversible.';
     case 'mark_patients_as_demo': {
       const ids = Array.isArray(args.patientIds) ? args.patientIds : [];
       return `Mark ${ids.length} patient${ids.length === 1 ? '' : 's'} as demo (also cascades to their appointments + claims so the firewall is consistent)`;
@@ -560,7 +560,9 @@ If they ask "what is MCP?" or "what is Claude Desktop?", explain simply: "Claude
 ## Demo / Practice Mode
 When a new user wants to "try things out", "practice", "explore safely", or seems nervous about adding real patients, OFFER demo mode: call the enable_demo_mode tool. It creates 3 sample patients (all prefixed with "DEMO-"), 2 sample appointments for tomorrow, and 1 ready-to-submit sample claim — all clearly labeled, excluded from analytics, and refused by submission/sending tools so nothing fake reaches a real payer or patient.
 
-After you've helped them walk through the workflow on the demo data and they're ready to use real data, OFFER to call clear_demo_data to remove it cleanly. Always mention that demo and real data live side-by-side — you can't accidentally mix them up because demo names are prefixed and refuse to be sent or submitted.
+After you've helped them walk through the workflow on the demo data and they're ready to use real data, OFFER to call clear_demo_data to remove it cleanly. clear_demo_data only deletes demo rows from the last 14 days, so any permanent showcase patients the user has hand-tagged via mark_patients_as_demo (e.g. their curated prospect-demo patients with realistic names) are preserved. Mention this if they ask whether their tagged patients will be affected.
+
+Demo and real data live side-by-side — they can't be confused because every demo row has a yellow "DEMO" badge in the UI, is excluded from analytics, and refuses to be sent or submitted. That's the whole demo-mode safety story.
 
 If a user mentions they have OLD test/demo/seed patients from before demo mode existed (or they want to use existing patients as "showcase data" when demoing the product to prospects), use find_legacy_demo_candidates to spot them by their telltales (@example.* email domains, 555 area codes, DEMO/TEST/SAMPLE in name). Show the list to the user, let THEM pick which IDs to mark, then call mark_patients_as_demo with the chosen IDs. The mark cascades to those patients' appointments and claims so the firewall stays consistent. If the user accidentally marks the wrong patient, unmark_demo_patients undoes it cleanly.
 
@@ -1479,16 +1481,22 @@ export async function executeTool(
         const monthAgo = new Date(today); monthAgo.setDate(today.getDate() - 30);
         const isoDate = (d: Date) => d.toISOString().split('T')[0];
 
-        // 8 patients with varied insurance, demographics, ages.
+        // 8 patients with realistic-looking names — the yellow DEMO badge
+        // (Phase 5.1) is the only visual signal of demo status now. Prospect
+        // demos look professional ("Aaron Sample" not "DEMO-Aaron Sample"),
+        // and the badge + firewall still prevent any confusion or accidental
+        // real-world action. Last name "Sample" is the soft secondary marker
+        // that clear_demo_data uses to distinguish auto-generated rows from
+        // hand-tagged ones (along with recency — see clear_demo_data below).
         const demoPatientSeeds = [
-          { firstName: 'DEMO-Aaron',   lastName: 'Sample', dob: '1985-04-12', insuranceProvider: 'DEMO BCBS' },
-          { firstName: 'DEMO-Bella',   lastName: 'Sample', dob: '2018-08-22', insuranceProvider: 'DEMO Aetna' },
-          { firstName: 'DEMO-Carlos',  lastName: 'Sample', dob: '1972-11-03', insuranceProvider: 'DEMO UHC' },
-          { firstName: 'DEMO-Dana',    lastName: 'Sample', dob: '2010-02-17', insuranceProvider: 'DEMO Cigna' },
-          { firstName: 'DEMO-Eli',     lastName: 'Sample', dob: '1958-06-30', insuranceProvider: 'DEMO Medicare' },
-          { firstName: 'DEMO-Frankie', lastName: 'Sample', dob: '2020-12-04', insuranceProvider: 'DEMO Humana' },
-          { firstName: 'DEMO-Grace',   lastName: 'Sample', dob: '1990-09-15', insuranceProvider: 'DEMO BCBS' },
-          { firstName: 'DEMO-Henry',   lastName: 'Sample', dob: '2022-03-08', insuranceProvider: 'DEMO Aetna' },
+          { firstName: 'Aaron',   lastName: 'Sample', dob: '1985-04-12', insuranceProvider: 'BCBS' },
+          { firstName: 'Bella',   lastName: 'Sample', dob: '2018-08-22', insuranceProvider: 'Aetna' },
+          { firstName: 'Carlos',  lastName: 'Sample', dob: '1972-11-03', insuranceProvider: 'UnitedHealthcare' },
+          { firstName: 'Dana',    lastName: 'Sample', dob: '2010-02-17', insuranceProvider: 'Cigna' },
+          { firstName: 'Eli',     lastName: 'Sample', dob: '1958-06-30', insuranceProvider: 'Medicare' },
+          { firstName: 'Frankie', lastName: 'Sample', dob: '2020-12-04', insuranceProvider: 'Humana' },
+          { firstName: 'Grace',   lastName: 'Sample', dob: '1990-09-15', insuranceProvider: 'BCBS' },
+          { firstName: 'Henry',   lastName: 'Sample', dob: '2022-03-08', insuranceProvider: 'Aetna' },
         ];
         const createdPatients: any[] = [];
         for (const seed of demoPatientSeeds) {
@@ -1497,7 +1505,7 @@ export async function executeTool(
             firstName: seed.firstName,
             lastName: seed.lastName,
             dateOfBirth: seed.dob,
-            email: `demo-${seed.firstName.toLowerCase().replace('demo-', '')}@example.com`,
+            email: `${seed.firstName.toLowerCase()}.sample@example.com`,
             phone: '(555) 012-3456',
             insuranceProvider: seed.insuranceProvider,
             isDemo: true,
@@ -1509,11 +1517,11 @@ export async function executeTool(
         // and Calendar both have content. Status mix: completed past, active
         // today, scheduled future.
         const apptSeeds: Array<{ patientIdx: number; date: Date; hour: number; status: string; title: string }> = [
-          { patientIdx: 0, date: yesterday, hour: 10, status: 'completed', title: 'DEMO - OT Session' },
-          { patientIdx: 6, date: yesterday, hour: 14, status: 'completed', title: 'DEMO - PT Session' },
-          { patientIdx: 1, date: today,     hour: 11, status: 'in_session', title: 'DEMO - OT Session' },
-          { patientIdx: 5, date: tomorrow,  hour: 9,  status: 'scheduled', title: 'DEMO - SLP Session' },
-          { patientIdx: 1, date: tomorrow,  hour: 14, status: 'scheduled', title: 'DEMO - OT Follow-up' },
+          { patientIdx: 0, date: yesterday, hour: 10, status: 'completed', title: 'OT Session' },
+          { patientIdx: 6, date: yesterday, hour: 14, status: 'completed', title: 'PT Session' },
+          { patientIdx: 1, date: today,     hour: 11, status: 'in_session', title: 'OT Session' },
+          { patientIdx: 5, date: tomorrow,  hour: 9,  status: 'scheduled', title: 'SLP Session' },
+          { patientIdx: 1, date: tomorrow,  hour: 14, status: 'scheduled', title: 'OT Follow-up' },
         ];
         const createdAppointments: any[] = [];
         for (const seed of apptSeeds) {
@@ -1622,12 +1630,12 @@ export async function executeTool(
             claims: createdClaims.length,
           },
           message:
-            `Demo mode enabled. Created ${createdPatients.length} sample patients (DEMO- prefix), ` +
-            `${createdAppointments.length} appointments (yesterday/today/tomorrow), and ` +
+            `Demo mode enabled. Created ${createdPatients.length} sample patients with realistic names (Aaron Sample, Bella Sample, etc.) — ` +
+            `the yellow DEMO badge in lists is the marker. ${createdAppointments.length} appointments (yesterday/today/tomorrow) and ` +
             `${createdClaims.length} claims across draft/submitted/paid/denied/held states. ` +
-            `Every row is firewalled — submission and sending tools will refuse to act on demo data, and analytics excludes them. ` +
+            `Every row is firewalled — submission and sending tools refuse to act on demo data, and analytics excludes them. ` +
             `Walk a prospect through the Dashboard, Front Desk, Claims, and Appeals pages — there's enough variety to demonstrate the full revenue cycle. ` +
-            `Call clear_demo_data when you're done.`,
+            `Call clear_demo_data when you're done; it only removes rows created in the last 14 days so any permanent showcase data you've hand-tagged (via mark_patients_as_demo) stays put.`,
         });
       }
 
@@ -1635,25 +1643,48 @@ export async function executeTool(
         // Bulk-delete in dependency-safe order: claims → appointments → patients.
         // Drizzle inferred type doesn't expose `isDemo` consistently across all
         // table records yet, hence the `as any` casts on the where clauses.
+        //
+        // Recency filter: only removes rows created in the last RECENCY_DAYS.
+        // This preserves "permanent showcase" patients the user has hand-tagged
+        // via mark_patients_as_demo (which they're not deleting after each demo)
+        // while still cleaning up the on-demand batches that enable_demo_mode
+        // generates for a single demo session. The cutoff is generous enough
+        // for a multi-day demo cycle.
+        const RECENCY_DAYS = 14;
+        const cutoff = new Date(Date.now() - RECENCY_DAYS * 86400_000);
+
         const { db } = await import('../db');
         const { patients, claims, appointments } = await import('@shared/schema');
-        const { and, eq } = await import('drizzle-orm');
+        const { and, eq, gte } = await import('drizzle-orm');
 
         const claimsResult = await db
           .delete(claims)
-          .where(and(eq(claims.practiceId, practiceId), eq((claims as any).isDemo, true)))
+          .where(and(
+            eq(claims.practiceId, practiceId),
+            eq((claims as any).isDemo, true),
+            gte(claims.createdAt, cutoff),
+          ))
           .returning({ id: claims.id });
         const appointmentsResult = await db
           .delete(appointments)
-          .where(and(eq(appointments.practiceId, practiceId), eq((appointments as any).isDemo, true)))
+          .where(and(
+            eq(appointments.practiceId, practiceId),
+            eq((appointments as any).isDemo, true),
+            gte(appointments.createdAt, cutoff),
+          ))
           .returning({ id: appointments.id });
         const patientsResult = await db
           .delete(patients)
-          .where(and(eq(patients.practiceId, practiceId), eq((patients as any).isDemo, true)))
+          .where(and(
+            eq(patients.practiceId, practiceId),
+            eq((patients as any).isDemo, true),
+            gte(patients.createdAt, cutoff),
+          ))
           .returning({ id: patients.id });
 
         logger.info('Blanche cleared demo data', {
           practiceId,
+          recencyDays: RECENCY_DAYS,
           claims: claimsResult.length,
           appointments: appointmentsResult.length,
           patients: patientsResult.length,
@@ -1667,9 +1698,10 @@ export async function executeTool(
             patients: patientsResult.length,
           },
           message:
-            `Cleared all demo data — removed ${patientsResult.length} patients, ` +
-            `${appointmentsResult.length} appointments, and ${claimsResult.length} claims. ` +
-            `Your real data is untouched.`,
+            `Cleared recent demo data — removed ${patientsResult.length} patients, ` +
+            `${appointmentsResult.length} appointments, and ${claimsResult.length} claims ` +
+            `created in the last ${RECENCY_DAYS} days. Any demo rows older than that ` +
+            `(hand-tagged permanent showcase patients) are preserved. Your real data is untouched.`,
         });
       }
 

@@ -58,15 +58,16 @@ describe('summarizeProposal — Phase 5 tools', () => {
   it('describes enable_demo_mode with what it will create', () => {
     const summary = summarizeProposal('enable_demo_mode', {});
     expect(summary).toMatch(/demo mode/i);
-    expect(summary).toMatch(/8 DEMO-/);
     expect(summary).toMatch(/5 appointments/);
     expect(summary).toMatch(/5 claims/);
     expect(summary).toMatch(/draft\/submitted\/paid\/denied\/held/);
   });
 
-  it('flags clear_demo_data as irreversible', () => {
+  it('flags clear_demo_data as irreversible AND explains the 14-day recency filter', () => {
     const summary = summarizeProposal('clear_demo_data', {});
-    expect(summary).toMatch(/clear ALL demo/i);
+    expect(summary).toMatch(/clear recent demo/i);
+    expect(summary).toMatch(/last 14 days/i);
+    expect(summary).toMatch(/permanent showcase/i);
     expect(summary).toMatch(/irreversible/i);
   });
 
