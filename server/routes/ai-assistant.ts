@@ -755,6 +755,10 @@ BAD opener examples (do NOT use):
 
 The user cannot tell from your text whether an action ran. They can only tell from (a) seeing the Confirm card, (b) clicking it, and (c) seeing the result message. Celebrating before any of that happens makes them think it's done when it isn't.
 
+**Rule 6: Do NOT over-promise multi-step actions.** Today the chat does not auto-continue after a Confirm. If you intend to do a sequence of mutations (e.g. create a patient AND schedule an appointment for them), you can either (a) propose BOTH tools in your CURRENT turn — they both create Confirm cards — OR (b) propose ONLY the first one and explicitly tell the user the next step. DO NOT promise "I'll immediately schedule X after you confirm" — you cannot continue automatically. Instead say "Step 1 is creating Janet. After you confirm that, ask me to schedule the 4 PM appointment and I'll propose it as step 2." Be explicit that the user must prompt you again for the next step.
+
+If you've already called the first tool (proposal queued) and want to also queue the second one in the same turn, you may need to use a placeholder/recent-patient reference — for create_appointment, the patient must exist first, so multi-step really does need two turns. Default approach: do one mutation per turn; tell the user what's next.
+
 **Rule 4: If you didn't call a tool, say so.** If the user asks you to do something and for some reason you don't call the tool (e.g. you're unsure of the IDs, you need clarification), say so explicitly: "I haven't done this yet — I need you to confirm X first" or "I'm not sure which patients to mark — can you confirm the IDs?" Never fake-execute a request by describing what would happen as if it happened.
 
 **Rule 5: When the user reports they don't see the result of an action you "did," APOLOGIZE for the likely tool-skip and try again with the actual tool call.** Do not double down. Do not invent reasons the action might not be visible. Acknowledge the failure and retry with the real tool.
@@ -798,8 +802,29 @@ const ROLE_OPENERS: Record<string, string> = {
 export function buildSystemPrompt(opts: {
   role?: string | null;
   pageContext?: { path?: string | null; title?: string | null } | null;
+  /** Override for tests; defaults to new Date() at call time. */
+  now?: Date;
 }): string {
   const parts: string[] = [];
+
+  // ALWAYS inject today's date so Blanche can interpret "today", "tomorrow",
+  // "this week", etc. without asking the user for YYYY-MM-DD. Critical for
+  // scheduling and "what's on the calendar today" type questions.
+  const now = opts.now ?? new Date();
+  const isoDate = now.toISOString().split('T')[0];
+  const friendly = now.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'America/New_York',
+  });
+  parts.push('## Today');
+  parts.push(`- Date: ${isoDate} (${friendly}, Eastern Time)`);
+  parts.push(
+    `- When the user says "today" or omits a date, use ${isoDate}. When they say "tomorrow", use ${new Date(now.getTime() + 86400_000).toISOString().split('T')[0]}. Never ask the user for today's date — you already have it.`,
+  );
+  parts.push('');
 
   const role = (opts.role ?? '').toLowerCase();
   const roleOpener = ROLE_OPENERS[role];
@@ -822,7 +847,7 @@ export function buildSystemPrompt(opts: {
     parts.push('');
   }
 
-  return parts.length ? `${parts.join('\n')}\n${BASE_SYSTEM_PROMPT}` : BASE_SYSTEM_PROMPT;
+  return `${parts.join('\n')}\n${BASE_SYSTEM_PROMPT}`;
 }
 
 // Tool definitions for Claude function calling
