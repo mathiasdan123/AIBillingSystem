@@ -123,42 +123,75 @@ describe('detectSuccessClaim', () => {
   });
 });
 
-describe('augmentIfHallucinatedSuccess', () => {
-  it('prepends a warning when success claim is present and zero mutations called', () => {
-    const result = augmentIfHallucinatedSuccess(
-      "I've marked all 7 patients as demo data.",
-      0,
-    );
-    expect(result).toContain('Heads up');
-    expect(result).toContain('I may have skipped a tool call');
-    expect(result).toContain('Nothing was actually changed');
-    expect(result).toContain("I've marked"); // original text preserved below the warning
+describe('augmentIfHallucinatedSuccess (two-mode)', () => {
+  describe('no tool called — flag both strong claims AND theatre openers', () => {
+    it('prepends "skipped tool call" warning for strong success claim', () => {
+      const result = augmentIfHallucinatedSuccess("I've marked all 7 patients as demo data.", 0);
+      expect(result).toContain('Heads up');
+      expect(result).toContain('skipped a tool call');
+      expect(result).toContain('Nothing was actually changed');
+      expect(result).toContain("I've marked"); // original preserved
+    });
+
+    it('prepends warning for theatre opener even with no real claim', () => {
+      const result = augmentIfHallucinatedSuccess("Perfect! Here's what I'll do.", 0);
+      expect(result).toContain('Heads up');
+      expect(result).toContain('skipped a tool call');
+    });
+
+    it('does NOT prepend when text is neutral intent phrasing', () => {
+      const original = "I'm proposing to mark these patients as demo — confirm below.";
+      expect(augmentIfHallucinatedSuccess(original, 0)).toBe(original);
+    });
   });
 
-  it('does NOT prepend when a mutation was actually called', () => {
-    const original = "I've marked all 7 patients as demo data.";
-    const result = augmentIfHallucinatedSuccess(original, 1);
-    expect(result).toBe(original);
+  describe('tool WAS called — only flag STRONG claims, tolerate theatre openers', () => {
+    it('prepends "action not done yet" warning for strong claim (premature completion)', () => {
+      const result = augmentIfHallucinatedSuccess("I've marked all 7 patients.", 1);
+      expect(result).toContain('past-tense language');
+      expect(result).toContain("hasn't run yet");
+      expect(result).toContain('Confirm/Cancel card');
+      expect(result).not.toContain('skipped a tool call'); // different warning variant
+    });
+
+    it('does NOT warn on cringe theatre opener when tool was called', () => {
+      // Production case from 2026-05-18: "Perfect! I'm proposing to create Janet Doe"
+      // + actual create_patient tool call. The user is shown a Confirm card; the
+      // "Perfect!" is suboptimal but not deceptive — system prompt handles it.
+      const original = "Perfect! I'm proposing to create Janet Doe as a new patient.";
+      expect(augmentIfHallucinatedSuccess(original, 1)).toBe(original);
+    });
+
+    it('does NOT warn on neutral intent phrasing with tool call', () => {
+      const original = "I'd like to create Janet Doe — please confirm below.";
+      expect(augmentIfHallucinatedSuccess(original, 1)).toBe(original);
+    });
   });
 
-  it('does NOT prepend when no success claim is present', () => {
-    const original = "I'm proposing to mark these patients as demo — confirm below.";
-    const result = augmentIfHallucinatedSuccess(original, 0);
-    expect(result).toBe(original);
-  });
-
-  it('warning includes the matched phrase for debuggability', () => {
-    const result = augmentIfHallucinatedSuccess("Done!", 0);
-    expect(result).toContain('Done!');
+  describe('detectSuccessClaim modes', () => {
+    it("strong-only mode does NOT match 'Perfect!'", () => {
+      // Imported separately to test the mode parameter.
+      expect(detectSuccessClaim("Perfect! Here's what I'll do.", 'strong-only')).toBeNull();
+    });
+    it("'all' mode DOES match 'Perfect!'", () => {
+      expect(detectSuccessClaim("Perfect! Here's what I'll do.", 'all')).not.toBeNull();
+    });
+    it("'all' mode catches 'Great!' opener", () => {
+      expect(detectSuccessClaim("Great! Let me create that.", 'all')).not.toBeNull();
+    });
+    it("'all' mode catches 'Excellent!' opener", () => {
+      expect(detectSuccessClaim("Excellent! I'll handle that now.", 'all')).not.toBeNull();
+    });
+    it('default mode is "all"', () => {
+      expect(detectSuccessClaim('Perfect! ')).not.toBeNull();
+    });
   });
 
   it('regression: the exact production failure mode from 2026-05-18', () => {
-    // Verbatim shape of the production reply that misled the user.
     const productionFailure = `Perfect! I've successfully marked all 7 legacy patients as demo data:
 
 **Patients Now Flagged as Demo:**
 - Emma Johnson (ID: 56)
-- Zara Lindqvist (ID: 54)
 
 **What this means:**
 ✅ All these patients now have "DEMO" badges in your UI`;
