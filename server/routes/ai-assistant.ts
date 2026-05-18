@@ -15,6 +15,7 @@ import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import { assessUnderpayment, analyzeAdjustment } from '../services/underpaymentAnalyzer';
 import * as stripeService from '../services/stripeService';
 import { db } from '../db';
+import { getRedisClient, isRedisReady } from '../services/redisClient';
 import {
   remittanceAdvice,
   remittanceLineItems,
@@ -152,10 +153,16 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
  * In-memory proposal store. Keyed by random uuid. TTL of 5 minutes — older
  * entries are cleared on each access. Per-process; on multi-task ECS the
  * confirm request must land on the same task. ALB session affinity isn't
- * configured today; if a confirm hits the wrong task it'll 404 and the user
- * sees "proposal expired" — they can retry, Blanche will re-propose.
- * Acceptable for v1; a Redis-backed store can replace this when the issue
- * actually bites.
+ * configured today; the in-memory fallback below would 404 a Confirm landing
+ * on a different task than the original chat message. Redis path fixes that —
+ * any task can read/delete any proposal because the store is shared.
+ *
+ * Production runs 2 ECS tasks behind ALB. Without affinity, the first message
+ * lands on task A (creates proposal in A's memory) and the Confirm click lands
+ * on task B (which doesn't have it → 404). This was a real bug observed in prod
+ * 2026-05-18. Redis fixes it.
+ *
+ * Falls back to in-memory Map when Redis isn't configured (local dev, tests).
  */
 interface StoredProposal {
   id: string;
@@ -167,16 +174,19 @@ interface StoredProposal {
   createdAt: number;
 }
 const PROPOSAL_TTL_MS = 5 * 60_000;
+const PROPOSAL_TTL_S = PROPOSAL_TTL_MS / 1000;
+const PROPOSAL_REDIS_PREFIX = 'blanche:proposal:';
 const proposalStore = new Map<string, StoredProposal>();
 
 function pruneStaleProposals() {
+  // Only relevant for the in-memory fallback; Redis handles TTL natively.
   const cutoff = Date.now() - PROPOSAL_TTL_MS;
   proposalStore.forEach((p, id) => {
     if (p.createdAt < cutoff) proposalStore.delete(id);
   });
 }
 
-function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 'summary'> & { summary?: string }): StoredProposal {
+async function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 'summary'> & { summary?: string }): Promise<StoredProposal> {
   pruneStaleProposals();
   const id = (globalThis.crypto?.randomUUID?.() ??
     `${Date.now()}-${Math.random().toString(36).slice(2)}`) as string;
@@ -189,15 +199,57 @@ function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 'summary
     summary: opts.summary ?? summarizeProposal(opts.toolName, opts.args),
     createdAt: Date.now(),
   };
+  try {
+    if (isRedisReady()) {
+      const redis = getRedisClient()!;
+      await redis.set(
+        PROPOSAL_REDIS_PREFIX + id,
+        JSON.stringify(proposal),
+        'EX',
+        PROPOSAL_TTL_S,
+      );
+      return proposal;
+    }
+  } catch (err) {
+    logger.warn('Redis proposal store failed; falling back to in-memory', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   proposalStore.set(id, proposal);
   return proposal;
 }
 
-function takeProposal(id: string): StoredProposal | null {
+async function takeProposal(id: string): Promise<StoredProposal | null> {
+  try {
+    if (isRedisReady()) {
+      const redis = getRedisClient()!;
+      // Use GETDEL when available (Redis 6.2+) for atomicity; fall back to
+      // GET then DEL on older Redis. A double-confirm race window of <1ms is
+      // acceptable — second call sees null on the GET.
+      const key = PROPOSAL_REDIS_PREFIX + id;
+      let raw: string | null;
+      try {
+        raw = await (redis as any).getdel(key);
+      } catch {
+        raw = await redis.get(key);
+        if (raw) await redis.del(key);
+      }
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as StoredProposal;
+      } catch {
+        return null;
+      }
+    }
+  } catch (err) {
+    logger.warn('Redis proposal lookup failed; falling back to in-memory', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   pruneStaleProposals();
   const proposal = proposalStore.get(id);
   if (!proposal) return null;
-  proposalStore.delete(id); // one-shot; can't re-confirm
+  proposalStore.delete(id);
   return proposal;
 }
 
@@ -286,18 +338,26 @@ export function rejectIfDemoData(
 }
 
 // Test-only access. Internal; do not import from runtime code.
+// `seed` is sync for test convenience because Redis is never available in
+// vitest — it goes straight to the in-memory Map fallback.
 export const __proposalStoreTest = {
   size: () => proposalStore.size,
   clear: () => proposalStore.clear(),
   has: (id: string) => proposalStore.has(id),
-  seed: (proposal: Omit<StoredProposal, 'id' | 'createdAt' | 'summary'> & { id?: string; summary?: string }) =>
-    createProposal({
+  seed: (proposal: Omit<StoredProposal, 'id' | 'createdAt' | 'summary'> & { id?: string; summary?: string }): StoredProposal => {
+    const id = proposal.id ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`) as string;
+    const stored: StoredProposal = {
+      id,
       userId: proposal.userId,
       practiceId: proposal.practiceId,
       toolName: proposal.toolName,
       args: proposal.args,
-      summary: proposal.summary,
-    }),
+      summary: proposal.summary ?? summarizeProposal(proposal.toolName, proposal.args),
+      createdAt: Date.now(),
+    };
+    proposalStore.set(id, stored);
+    return stored;
+  },
 };
 
 // Keywords that indicate a complex query requiring Sonnet
@@ -4428,7 +4488,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
           // a synthetic tool_result so she can continue the turn (e.g. say
           // "I'd like to do X — please confirm below").
           if (MUTATION_TOOLS.has(block.name)) {
-            const proposal = createProposal({
+            const proposal = await createProposal({
               userId,
               practiceId,
               toolName: block.name,
@@ -4646,7 +4706,7 @@ router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) =>
       return res.status(401).json({ message: 'Not authenticated' });
     }
 
-    const proposal = takeProposal(proposalId);
+    const proposal = await takeProposal(proposalId);
     if (!proposal) {
       return res.status(404).json({
         message: 'Proposal not found or expired. Ask Blanche to propose again.',
