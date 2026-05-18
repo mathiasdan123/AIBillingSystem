@@ -9,10 +9,30 @@ import { vi } from 'vitest';
 import { buildSystemPrompt } from '../routes/ai-assistant';
 
 describe('buildSystemPrompt', () => {
-  it('returns the base prompt unchanged when neither role nor pageContext is supplied', () => {
+  it('always includes the base prompt and the Today block', () => {
     const prompt = buildSystemPrompt({});
     expect(prompt).toMatch(/Your name is Blanche\./);
+    expect(prompt).toMatch(/## Today/);
+    // No user context block when neither role nor pageContext is supplied.
     expect(prompt).not.toMatch(/## User Context/);
+  });
+
+  describe('Today block (date awareness)', () => {
+    it('injects today\'s date in YYYY-MM-DD format', () => {
+      const fixed = new Date('2026-05-18T15:00:00Z');
+      const prompt = buildSystemPrompt({ now: fixed });
+      expect(prompt).toMatch(/Date: 2026-05-18/);
+    });
+
+    it('tells Blanche not to ask the user for today\'s date', () => {
+      const prompt = buildSystemPrompt({ now: new Date('2026-05-18T15:00:00Z') });
+      expect(prompt).toMatch(/Never ask the user for today's date/);
+    });
+
+    it('computes "tomorrow" relative to "now" so Blanche can resolve "tomorrow" correctly', () => {
+      const prompt = buildSystemPrompt({ now: new Date('2026-05-18T15:00:00Z') });
+      expect(prompt).toMatch(/tomorrow.*2026-05-19/);
+    });
   });
 
   it('injects an admin-specific opener for role=admin', () => {
