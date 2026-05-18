@@ -202,6 +202,67 @@ function takeProposal(id: string): StoredProposal | null {
 }
 
 /**
+ * Hallucinated-success detector (Layer 2 of the Phase 4 trust defense).
+ *
+ * Catches the case where Claude (Blanche) writes a confident "Done!" / "I've
+ * marked them" / "Successfully created" reply WITHOUT actually calling the
+ * relevant mutation tool. That pattern shipped a real production bug —
+ * Blanche told the user 7 patients were tagged as demo; zero tool calls
+ * happened; user reasonably trusted her and was misled.
+ *
+ * This is a heuristic, not a parser — over-flag is acceptable; under-flag
+ * is the failure mode we're guarding against.
+ *
+ * Returns the first matching phrase, or null if none.
+ */
+export function detectSuccessClaim(text: string): string | null {
+  if (!text) return null;
+  // Strip markdown emphasis so "**Done!**" matches "done!".
+  const normalized = text.toLowerCase().replace(/[*_`]/g, '');
+  const patterns: Array<{ re: RegExp; example: string }> = [
+    // Past-tense action verbs in first-person.
+    { re: /\bi['']?ve\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated)/, example: "I've marked" },
+    { re: /\bi\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated)\s+(?!.*\bif\b)/, example: 'I marked' },
+    // "Successfully X-ed" framing.
+    { re: /\bsuccessfully\s+(?:marked|created|sent|submitted|charged|cancelled|canceled|deleted|cleared|scheduled|rescheduled|updated|saved|added|flagged|tagged|invited|generated|completed)/, example: 'successfully marked' },
+    // "All set" / "All done" / "Done!" closers — only when standalone.
+    { re: /^\s*(?:all\s+(?:set|done)|done!?|that['']?s\s+(?:done|all\s+set))(?:\s|[.!])/m, example: 'Done!' },
+    { re: /(?:^|\n)\s*(?:perfect[!.]|all\s+set[!.])\s/m, example: 'Perfect!' },
+    // Bullet-list of past-tense items framed as completion.
+    { re: /(?:^|\n)\s*[-*•]\s*[^\n]{0,100}(?:marked|tagged|flagged|created|sent|submitted)\s+(?:as|to)/m, example: '- marked as ...' },
+    // ASCII check-mark "what was done" lists.
+    { re: /(?:^|\n)\s*(?:✅|☑|✓)\s+(?:all|the)?\s*(?:these\s+)?(?:patients|claims|appointments|records|items)/m, example: '✅ patients ...' },
+  ];
+  for (const { re, example } of patterns) {
+    if (re.test(normalized)) return example;
+  }
+  return null;
+}
+
+/**
+ * If Claude's final response makes a past-tense success claim but she didn't
+ * call any mutation tool this turn, prepend a warning. This is a safety net —
+ * stronger system-prompt rules (Rule 1–5 in the prompt above) handle the
+ * primary prevention; this catches her when she goes off-script anyway.
+ */
+export function augmentIfHallucinatedSuccess(
+  text: string,
+  mutationsCalledCount: number,
+): string {
+  if (mutationsCalledCount > 0) return text; // She actually did call one.
+  const matched = detectSuccessClaim(text);
+  if (!matched) return text;
+  return (
+    `⚠️ **Heads up — I may have skipped a tool call.** I claimed an action was done ` +
+    `(based on phrasing like "${matched}") but didn't invoke the corresponding tool. ` +
+    `**Nothing was actually changed.** Please ask me again to perform the action — ` +
+    `I'll call the tool this time and you'll see a Confirm/Cancel card before it runs. ` +
+    `(This warning is a safeguard against the assistant claiming actions that didn't happen.)\n\n---\n\n` +
+    text
+  );
+}
+
+/**
  * Phase 5 guard — refuse mutation/send/charge operations when the target row
  * (patient, claim, appointment) is a demo row. Returns a JSON-stringified
  * error message ready to be returned directly from a tool executor, or null
@@ -566,8 +627,21 @@ Demo and real data live side-by-side — they can't be confused because every de
 
 If a user mentions they have OLD test/demo/seed patients from before demo mode existed (or they want to use existing patients as "showcase data" when demoing the product to prospects), use find_legacy_demo_candidates to spot them by their telltales (@example.* email domains, 555 area codes, DEMO/TEST/SAMPLE in name). Show the list to the user, let THEM pick which IDs to mark, then call mark_patients_as_demo with the chosen IDs. The mark cascades to those patients' appointments and claims so the firewall stays consistent. If the user accidentally marks the wrong patient, unmark_demo_patients undoes it cleanly.
 
-## Action Confirmation
-In the TherapyBill web chat (where the user is right now), every action that changes data — creating patients, sending invites, submitting claims, scheduling appointments — generates a Confirm/Cancel card before it runs. You should briefly explain what you're proposing each time so the user knows what they're approving. Do NOT promise that an action is done until they click Confirm and you see the result.
+## Action Confirmation — STRICT RULES (read carefully)
+
+This is the most important section of these instructions. Violating these rules causes a critical trust failure with the user.
+
+**Rule 1: You MUST CALL THE TOOL to perform any action.** When the user asks you to mark, create, send, submit, charge, cancel, delete, update, schedule, or any other action that changes data — you MUST invoke the corresponding tool. There is no substitute for actually calling the tool. Narrating in prose that you've done something does NOT do it. The user's data only changes when a tool runs.
+
+**Rule 2: NEVER claim an action has been performed.** When you call a mutation tool, the server will return status "awaiting_user_confirmation" — it is NOT executed yet; it is queued for the user to confirm via a Confirm/Cancel card in the chat. Until the user clicks Confirm AND you see the tool's actual result returned in a follow-up turn, the action HAS NOT HAPPENED. Frame your reply as **intent**, not as completion. Use phrasing like "I'm proposing to mark these 7 patients as demo — click Confirm below to do it" — never "I've marked them" or "Successfully marked" or "All set" or "Here's what I did" or "Done!" or any past-tense success phrasing.
+
+**Rule 3: No checkmark theatre.** Do not use ✅, "successfully", "done", "all set", "perfect" or similar success-y language when proposing a mutation. Use only neutral framing about what you're about to do.
+
+**Rule 4: If you didn't call a tool, say so.** If the user asks you to do something and for some reason you don't call the tool (e.g. you're unsure of the IDs, you need clarification), say so explicitly: "I haven't done this yet — I need you to confirm X first" or "I'm not sure which patients to mark — can you confirm the IDs?" Never fake-execute a request by describing what would happen as if it happened.
+
+**Rule 5: When the user reports they don't see the result of an action you "did," APOLOGIZE for the likely tool-skip and try again with the actual tool call.** Do not double down. Do not invent reasons the action might not be visible. Acknowledge the failure and retry with the real tool.
+
+The web-chat UI surfaces a Confirm/Cancel card for every mutation tool you call. The user sees that card. If you say "Done!" without calling the tool, no card appears and the user is misled. That is the failure mode we are preventing.
 
 If a user is an admin and asks about safety, AI permissions, or how to make Claude Desktop ALSO require a second confirmation, tell them: "By default, when you (or anyone on your team) uses Claude Desktop, Claude Desktop's own 'Allow tool call?' prompt is the safety check. If you want belt-and-suspenders confirmation at the TherapyBill server level too — useful if anyone might click 'Always allow' in Claude Desktop — your admin can enable it with: PATCH /api/practices/<your-practice-id> with body { \"mcpRequiresConfirmation\": true }. With that on, mutation tools via Claude Desktop will refuse to run and direct the user back to the web chat (where the Confirm card still works)."
 
@@ -4480,7 +4554,21 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     }
 
     // Clean content of action tags for display
-    const cleanContent = content.replace(/\[Action:\s*[^\]]+\]/g, '').trim();
+    let cleanContent = content.replace(/\[Action:\s*[^\]]+\]/g, '').trim();
+
+    // Layer-2 trust safeguard: if Blanche claimed success in prose but didn't
+    // actually call any mutation tool this turn, prepend a warning so the user
+    // is told they may have been misled. `pendingProposals.length === 0` means
+    // no mutation tool was invoked (mutation tool calls always queue a proposal).
+    const augmented = augmentIfHallucinatedSuccess(cleanContent, pendingProposals.length);
+    if (augmented !== cleanContent) {
+      logger.warn('Blanche hallucinated-success detected; prepending warning', {
+        practiceId,
+        userId,
+        originalLength: cleanContent.length,
+      });
+      cleanContent = augmented;
+    }
 
     // Increment rate limit counter on successful response
     incrementPracticeUsage(practiceId);
