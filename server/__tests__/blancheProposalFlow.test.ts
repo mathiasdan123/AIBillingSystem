@@ -116,6 +116,42 @@ describe('POST /api/ai/confirm-tool', () => {
     );
   });
 
+  it('confirm response includes autoContinue.suggestedFollowup for the client to send back to /assistant', async () => {
+    const proposal = __proposalStoreTest.seed({
+      userId: 'user-a',
+      practiceId: 7,
+      toolName: 'create_patient',
+      args: { firstName: 'Jane', lastName: 'Doe' },
+    });
+
+    const res = await request(makeApp())
+      .post('/api/ai/confirm-tool')
+      .send({ proposalId: proposal.id, action: 'confirm' })
+      .expect(200);
+
+    expect(res.body.autoContinue).toBeDefined();
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/\[Auto-continue\]/);
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/create_patient/);
+    expect(res.body.autoContinue.suggestedFollowup).toMatch(/next logical step/);
+  });
+
+  it('cancel response does NOT include autoContinue (nothing to continue from)', async () => {
+    const proposal = __proposalStoreTest.seed({
+      userId: 'user-a',
+      practiceId: 7,
+      toolName: 'create_patient',
+      args: { firstName: 'X', lastName: 'Y' },
+    });
+
+    const res = await request(makeApp())
+      .post('/api/ai/confirm-tool')
+      .send({ proposalId: proposal.id, action: 'cancel' })
+      .expect(200);
+
+    expect(res.body.status).toBe('cancelled');
+    expect(res.body.autoContinue).toBeUndefined();
+  });
+
   it('cancel records cancellation and does NOT execute the tool', async () => {
     const proposal = __proposalStoreTest.seed({
       userId: 'user-a',

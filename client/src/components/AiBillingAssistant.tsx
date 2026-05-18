@@ -20,6 +20,11 @@ interface ChatMessage {
   suggestedActions?: { label: string; path: string }[];
   // Phase 4: deferred mutations Blanche queued, awaiting Confirm/Cancel.
   proposals?: BlancheProposal[];
+  // Auto-continuation (post-#122): synthetic [Auto-continue] follow-ups
+  // sent to Blanche after a Confirm succeeds. They live in conversation
+  // history so Blanche has context, but are NOT rendered in the chat —
+  // showing them would surface implementation detail to the user.
+  hidden?: boolean;
   timestamp: number;
 }
 
@@ -329,21 +334,27 @@ export default function AiBillingAssistant() {
     };
   }, []);
 
-  const handleSend = useCallback(async (overrideText?: string) => {
+  const handleSend = useCallback(async (overrideText?: string, options?: { hidden?: boolean }) => {
     // Allow callers (e.g., welcome suggestion buttons) to send a specific
     // message without first setting input state — avoids the async-setState
     // race where reading `input` right after `setInput()` sees the old value.
+    //
+    // options.hidden: marks the user message as not-rendered (used by the
+    // auto-continuation feature to send synthetic [Auto-continue] follow-ups
+    // after a Confirm. The message is in conversation history so Blanche has
+    // context, but the UI skips it on render).
     const trimmed = (overrideText ?? input).trim();
     if (!trimmed || isLoading) return;
 
     const userMsg: ChatMessage = {
       role: "user",
       content: trimmed,
+      hidden: !!options?.hidden,
       timestamp: Date.now(),
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    setInput("");
+    if (!options?.hidden) setInput("");
     setIsLoading(true);
 
     try {
@@ -517,6 +528,15 @@ export default function AiBillingAssistant() {
                 },
           ),
         );
+
+        // Auto-continuation: after a successful Confirm, send a hidden
+        // follow-up so Blanche can propose the next step (or just say
+        // "done"). Without this, multi-step intents like "create patient
+        // then schedule appointment" die after step 1 because the chat
+        // has no way to know the user expects more.
+        if (action === "confirm" && data?.autoContinue?.suggestedFollowup) {
+          await handleSend(data.autoContinue.suggestedFollowup, { hidden: true });
+        }
       } catch (err: any) {
         const message =
           err instanceof Error ? err.message : "Could not contact the server.";
@@ -536,6 +556,11 @@ export default function AiBillingAssistant() {
         );
       }
     },
+    // handleSend isn't in deps because it's defined later in the same render
+    // and the stale-closure risk is low (it always reads current state via
+    // setState callbacks). The auto-continue path is robust to a stale
+    // handleSend reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -825,8 +850,10 @@ export default function AiBillingAssistant() {
               </div>
             )}
 
-            {/* Message bubbles */}
-            {messages.map((msg, i) => (
+            {/* Message bubbles. Hidden messages (auto-continuation
+                follow-ups) are kept in state for conversation history but
+                skipped here so the chat stays clean. */}
+            {messages.filter((m) => !m.hidden).map((msg, i) => (
               <div
                 key={`${msg.timestamp}-${i}`}
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
