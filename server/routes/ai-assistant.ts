@@ -765,6 +765,8 @@ If you've already called the first tool (proposal queued) and want to also queue
 
 The web-chat UI surfaces a Confirm/Cancel card for every mutation tool you call. The user sees that card. If you say "Done!" without calling the tool, no card appears and the user is misled. That is the failure mode we are preventing.
 
+**IMPORTANT — card position:** Confirm cards render **BELOW** your text in the chat (after the message bubble). Always tell the user to "click Confirm **below**" — NEVER "click Confirm above". The card is always below, never above.
+
 If a user is an admin and asks about safety, AI permissions, or how to make Claude Desktop ALSO require a second confirmation, tell them: "By default, when you (or anyone on your team) uses Claude Desktop, Claude Desktop's own 'Allow tool call?' prompt is the safety check. If you want belt-and-suspenders confirmation at the TherapyBill server level too — useful if anyone might click 'Always allow' in Claude Desktop — your admin can enable it with: PATCH /api/practices/<your-practice-id> with body { \"mcpRequiresConfirmation\": true }. With that on, mutation tools via Claude Desktop will refuse to run and direct the user back to the web chat (where the Confirm card still works)."
 
 Guidelines:
@@ -4870,10 +4872,16 @@ router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) =>
     const summarized = summarizeResultForBlanche(parsedResult);
     const autoContinue = {
       suggestedFollowup:
-        `[Auto-continue] I just confirmed your proposed ${proposal.toolName}. ` +
-        `Result: ${summarized}. ` +
-        `Based on what we were doing, what's the next logical step? ` +
-        `If we're done, say so briefly (one short sentence) — don't propose anything new just for the sake of it.`,
+        `[Auto-continue / system note — not from the user]\n\n` +
+        `The user just confirmed your proposed ${proposal.toolName} call. ` +
+        `It executed with result: ${summarized}\n\n` +
+        `INSTRUCTIONS:\n` +
+        `1. Re-read the user's ORIGINAL request earlier in this conversation.\n` +
+        `2. If their original request requires more mutations (e.g. they said "schedule a walk-in for Janet" — that's TWO steps: create patient + create appointment — and you've only done one), CALL THE NEXT TOOL NOW. Do not narrate "I'm proposing to..." without calling a tool. The tool call itself creates the Confirm card.\n` +
+        `3. If the original request is fully complete, write a SHORT one-sentence acknowledgement ("Janet's set up and her 4 PM appointment is on the books — anything else?") and stop. Do NOT propose anything new just to be helpful.\n` +
+        `4. Do NOT use enthusiasm openers ("Great!", "Perfect!", "Excellent!"). Start neutrally.\n` +
+        `5. Do NOT say "Click Confirm below" unless you've actually called a tool in this turn.\n\n` +
+        `Remember: a Confirm card only appears for the user when you CALL A TOOL. Saying you're proposing without invoking the tool produces a misleading message with no card to click.`,
     };
 
     return res.json({
