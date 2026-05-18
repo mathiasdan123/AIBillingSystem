@@ -71,8 +71,31 @@ describe('detectSuccessClaim', () => {
     it('detects ✅ patients line', () => {
       expect(detectSuccessClaim('Here is what changed:\n✅ All these patients are now demo')).not.toBeNull();
     });
-    it('detects bullet of "marked as"', () => {
-      expect(detectSuccessClaim('Result:\n- Patient Jane Doe marked as demo')).not.toBeNull();
+    it('detects bullet where the verb is the first word', () => {
+      expect(detectSuccessClaim('Result:\n- Marked all 7 patients as demo')).not.toBeNull();
+      expect(detectSuccessClaim('Result:\n- **Created** patient Aaron Sample')).not.toBeNull();
+      expect(detectSuccessClaim('Result:\n- Sent portal invite to Jane')).not.toBeNull();
+    });
+  });
+
+  describe('regression: bullet rule does NOT false-positive on future-intent phrasing', () => {
+    // 2026-05-18: prior regex matched "[anything] created as|to" inside a
+    // bullet. That made Blanche's legitimate "X needs to be created as Y"
+    // intent statements look like success claims. Tightened to require the
+    // verb at the start of the bullet content.
+    it('does NOT match "needs to be created as a patient"', () => {
+      expect(detectSuccessClaim(
+        '**Current status:**\n- Janet Doe needs to be created as a patient first',
+      )).toBeNull();
+    });
+    it('does NOT match "will be marked as"', () => {
+      expect(detectSuccessClaim('- The patient will be marked as demo once you confirm')).toBeNull();
+    });
+    it('does NOT match "should be sent to"', () => {
+      expect(detectSuccessClaim('- The invite should be sent to the parent')).toBeNull();
+    });
+    it('does NOT match "to be cancelled"', () => {
+      expect(detectSuccessClaim('- The appointment is to be cancelled if no show')).toBeNull();
     });
   });
 
