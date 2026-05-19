@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS blanche_conversations (
   practice_id INTEGER NOT NULL REFERENCES practices(id) ON DELETE CASCADE,
   messages    JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at  TIMESTAMP DEFAULT NOW(),
-  updated_at  TIMESTAMP DEFAULT NOW()
+  updated_at  TIMESTAMP DEFAULT NOW(),
+  -- Real UNIQUE constraint (not just a unique index) so Drizzle's
+  -- onConflictDoUpdate target is unambiguous and stable.
+  CONSTRAINT blanche_conversations_user_practice_uq UNIQUE (user_id, practice_id)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS blanche_conversations_user_practice_idx
-  ON blanche_conversations (user_id, practice_id);

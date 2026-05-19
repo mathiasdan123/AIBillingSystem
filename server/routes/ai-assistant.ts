@@ -4992,12 +4992,18 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       toolRounds,
     });
 
-    // Persist the updated conversation server-side so it syncs across
-    // devices/browsers. We load the authoritative server-side history and
-    // append the new turn rather than trusting the client-supplied
-    // conversationHistory — otherwise a tampered client could rewrite the
-    // canonical record served back to every device. Best-effort: a save
-    // failure must not break the chat response.
+    // devices/browsers. We DO NOT trust the client-supplied
+    // conversationHistory for persistence — a malicious or buggy client
+    // could drop prior assistant refusals or inject fake turns, and once
+    // saved that tampered history would become the canonical record served
+    // back to every device. Instead we load the authoritative server-side
+    // history, append the user's new message and Blanche's reply, and
+    // write that back. (The model still receives the client-supplied
+    // history for the current turn — that's a separate pre-existing
+    // decision and a separate trust boundary.)
+    //
+    // Best-effort: a save failure must not break the chat response. Skip
+    // when we don't have a userId (anonymous / dev fallback).
     if (userId) {
       try {
         const serverPrior = await storage.getBlancheConversation(userId, practiceId);

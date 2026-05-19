@@ -119,7 +119,11 @@ export default function AiBillingAssistant() {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(loadLegacyHistoryOnce);
-  const [conversationLoaded, setConversationLoaded] = useState(false);
+  // Tracks which userId's conversation is currently loaded. Switching users
+  // (sign-out + sign-in as someone else on the same tab) changes `userId`,
+  // which invalidates this and forces a re-fetch — preventing the previous
+  // user's history from leaking into the new user's chat.
+  const [loadedForUserId, setLoadedForUserId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<AssistantStatus | null>(null);
@@ -326,7 +330,13 @@ export default function AiBillingAssistant() {
   // server has nothing (new user) but localStorage had legacy state, we keep
   // the local state — the next POST /api/ai/assistant turn will persist it.
   useEffect(() => {
-    if (!isAuthenticated || !userId || conversationLoaded) return;
+    if (!isAuthenticated || !userId) return;
+    if (loadedForUserId === userId) return;
+    // The user just changed (or this is the first load). Clear any in-memory
+    // state from the previous user before fetching — otherwise their messages
+    // would briefly be visible to the new user while the fetch is in flight.
+    setMessages([]);
+    try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch {}
     let cancelled = false;
     (async () => {
       try {
@@ -335,16 +345,15 @@ export default function AiBillingAssistant() {
         if (cancelled) return;
         if (Array.isArray(data?.messages) && data.messages.length > 0) {
           setMessages(data.messages as ChatMessage[]);
-          try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch {}
         }
       } catch {
-        // Non-fatal: fall back to whatever's in state (legacy seed or empty).
+        // Non-fatal: fall back to empty (we already cleared above).
       } finally {
-        if (!cancelled) setConversationLoaded(true);
+        if (!cancelled) setLoadedForUserId(userId);
       }
     })();
     return () => { cancelled = true; };
-  }, [isAuthenticated, userId, conversationLoaded]);
+  }, [isAuthenticated, userId, loadedForUserId]);
 
   // Focus input when opening
   useEffect(() => {
@@ -462,7 +471,8 @@ export default function AiBillingAssistant() {
       let errorMessage = "Sorry, something went wrong. Please try again.";
       if (err instanceof Error) {
         const raw = err.message;
-        const bodyMatch = raw.match(/^\d+:\s*(.+)$/s);
+        // `s` flag (dotall) needs ES2018 — emulate with [\s\S]+
+        const bodyMatch = raw.match(/^\d+:\s*([\s\S]+)$/);
         if (bodyMatch) {
           try {
             const parsed = JSON.parse(bodyMatch[1]);
@@ -507,9 +517,18 @@ export default function AiBillingAssistant() {
   const handleClearHistory = async () => {
     setMessages([]);
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
-    // Server-side wipe — fire-and-forget; a failure here is non-fatal
-    // (the next persist will overwrite anyway).
-    try { await apiRequest("DELETE", "/api/ai/conversation"); } catch {}
+    try {
+      await apiRequest("DELETE", "/api/ai/conversation");
+    } catch {
+      // If the server-side wipe fails, tell the user — the next chat message
+      // would otherwise overwrite their (deleted from view) history with the
+      // saved server copy, and they'd be confused why "Clear" didn't stick.
+      toast({
+        title: "Couldn't clear server history",
+        description: "Your chat is hidden locally but is still saved on the server. Try again in a moment.",
+        variant: "destructive",
+      });
+    }
   };
 
   const startListening = useCallback(() => {
