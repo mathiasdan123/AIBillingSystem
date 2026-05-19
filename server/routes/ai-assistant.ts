@@ -4646,9 +4646,14 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       // Add tool results as user message
       messages.push({ role: 'user', content: toolResults });
 
-      // Get next response (may now be upgraded to Sonnet) with timeout and fallback
+      // Get next response (may now be upgraded to Sonnet) with timeout and fallback.
+      // 60s ceiling: enough headroom for multi-round tool use (Rule 7 means
+      // mutations now do a read-tool lookup first, which adds 5-10s of
+      // latency to any "cancel/reschedule by description" turn). The
+      // previous 30s cap was clipping legitimate multi-action requests.
+      const ANTHROPIC_TIMEOUT_MS = 60_000;
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('API timeout')), 30000)
+        setTimeout(() => reject(new Error('API timeout')), ANTHROPIC_TIMEOUT_MS)
       );
       try {
         response = await Promise.race([
