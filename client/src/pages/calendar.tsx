@@ -894,8 +894,8 @@ export default function CalendarPage() {
                   <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => setCurrentDate(new Date())}>Today</Button>
                 </div>
                 <div className="flex items-center gap-1.5 sm:hidden">
-                  <Button variant={view === "week" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("week")}>Week</Button>
                   <Button variant={view === "day" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("day")}>Day</Button>
+                  <Button variant={view === "week" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("week")}>Week</Button>
                   <Button variant={view === "month" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("month")}>Month</Button>
                 </div>
               </div>
@@ -907,8 +907,8 @@ export default function CalendarPage() {
                     : formatDateFull(currentDate)}
               </h2>
               <div className="hidden sm:flex items-center gap-2">
-                <Button variant={view === "week" ? "default" : "outline"} size="sm" onClick={() => setView("week")}>Week</Button>
                 <Button variant={view === "day" ? "default" : "outline"} size="sm" onClick={() => setView("day")}>Day</Button>
+                <Button variant={view === "week" ? "default" : "outline"} size="sm" onClick={() => setView("week")}>Week</Button>
                 <Button variant={view === "month" ? "default" : "outline"} size="sm" onClick={() => setView("month")}>Month</Button>
               </div>
             </div>
