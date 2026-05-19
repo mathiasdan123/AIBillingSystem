@@ -33,6 +33,22 @@ describe('buildSystemPrompt', () => {
       const prompt = buildSystemPrompt({ now: new Date('2026-05-18T15:00:00Z') });
       expect(prompt).toMatch(/tomorrow.*2026-05-19/);
     });
+
+    it('uses the client-supplied local date when provided (TZ-aware)', () => {
+      // Server-UTC clock has rolled into May 19, but the user (PDT) is still
+      // on May 18. clientDate=2026-05-18 should override the server clock so
+      // Blanche says "today = May 18, tomorrow = May 19".
+      const serverUtc = new Date('2026-05-19T03:00:00Z');
+      const prompt = buildSystemPrompt({ now: serverUtc, clientDate: '2026-05-18' });
+      expect(prompt).toMatch(/Date: 2026-05-18/);
+      expect(prompt).toMatch(/tomorrow.*2026-05-19/);
+    });
+
+    it('ignores a malformed clientDate and falls back to server time', () => {
+      const fixed = new Date('2026-05-18T15:00:00Z');
+      const prompt = buildSystemPrompt({ now: fixed, clientDate: 'not-a-date' });
+      expect(prompt).toMatch(/Date: 2026-05-18/);
+    });
   });
 
   it('injects an admin-specific opener for role=admin', () => {

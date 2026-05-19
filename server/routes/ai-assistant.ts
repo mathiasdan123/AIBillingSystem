@@ -763,6 +763,8 @@ If you've already called the first tool (proposal queued) and want to also queue
 
 **Rule 5: When the user reports they don't see the result of an action you "did," APOLOGIZE for the likely tool-skip and try again with the actual tool call.** Do not double down. Do not invent reasons the action might not be visible. Acknowledge the failure and retry with the real tool.
 
+**Rule 7: NEVER guess an ID. Look it up first.** When the user references an entity by description rather than by number ("the appointment tomorrow at 4 PM", "Janet's claim", "Aaron's session"), you MUST call a read tool to find the actual ID before proposing any mutation. For appointments use get_appointments; for patients use search_patients; for claims use get_claim_status or the relevant claims tool. Never pass a made-up ID to cancel_appointment, reschedule_appointment, submit_claim, or any other tool — that produces "Appointment N not found" errors and looks broken. If you cannot find a unique match (zero results, or multiple equally-plausible candidates), tell the user what you found and ask which one — do not pick one at random.
+
 The web-chat UI surfaces a Confirm/Cancel card for every mutation tool you call. The user sees that card. If you say "Done!" without calling the tool, no card appears and the user is misled. That is the failure mode we are preventing.
 
 **IMPORTANT — card position:** Confirm cards render **BELOW** your text in the chat (after the message bubble). Always tell the user to "click Confirm **below**" — NEVER "click Confirm above". The card is always below, never above.
@@ -806,6 +808,14 @@ export function buildSystemPrompt(opts: {
   pageContext?: { path?: string | null; title?: string | null } | null;
   /** Override for tests; defaults to new Date() at call time. */
   now?: Date;
+  /**
+   * Client-supplied "today" in the user's local timezone (YYYY-MM-DD). The
+   * server runs in UTC, so deriving "today" from `new Date()` can be off by
+   * one day for users west of UTC in the evening (the ECS host's "today"
+   * is already the user's tomorrow). Prefer this when supplied; fall back
+   * to UTC-derived only if missing.
+   */
+  clientDate?: string | null;
 }): string {
   const parts: string[] = [];
 
@@ -813,18 +823,30 @@ export function buildSystemPrompt(opts: {
   // "this week", etc. without asking the user for YYYY-MM-DD. Critical for
   // scheduling and "what's on the calendar today" type questions.
   const now = opts.now ?? new Date();
-  const isoDate = now.toISOString().split('T')[0];
-  const friendly = now.toLocaleDateString('en-US', {
+  const clientDateValid =
+    typeof opts.clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(opts.clientDate);
+  // Anchor "today" to the user's local date if the client sent one. Otherwise
+  // fall back to the server's UTC date (legacy behaviour; off-by-one for
+  // western timezones late in the day).
+  const isoDate = clientDateValid ? opts.clientDate! : now.toISOString().split('T')[0];
+  // Derive "tomorrow" by parsing the anchor date as UTC noon and adding 24h —
+  // noon-anchoring avoids DST/midnight edge cases that would push the result
+  // back to the same day.
+  const anchorMs = clientDateValid
+    ? Date.parse(`${opts.clientDate}T12:00:00Z`)
+    : now.getTime();
+  const tomorrow = new Date(anchorMs + 86400_000).toISOString().split('T')[0];
+  const friendly = new Date(`${isoDate}T12:00:00Z`).toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-    timeZone: 'America/New_York',
+    timeZone: 'UTC',
   });
   parts.push('## Today');
-  parts.push(`- Date: ${isoDate} (${friendly}, Eastern Time)`);
+  parts.push(`- Date: ${isoDate} (${friendly})`);
   parts.push(
-    `- When the user says "today" or omits a date, use ${isoDate}. When they say "tomorrow", use ${new Date(now.getTime() + 86400_000).toISOString().split('T')[0]}. Never ask the user for today's date — you already have it.`,
+    `- When the user says "today" or omits a date, use ${isoDate}. When they say "tomorrow", use ${tomorrow}. Never ask the user for today's date — you already have it.`,
   );
   parts.push('');
 
@@ -4422,7 +4444,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       });
     }
 
-    const { message, conversationHistory, pageContext } = req.body;
+    const { message, conversationHistory, pageContext, clientDate } = req.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ error: 'Message is required.' });
@@ -4447,7 +4469,15 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
             title: typeof pageContext.title === 'string' ? pageContext.title : null,
           }
         : null;
-    const systemPrompt = buildSystemPrompt({ role: userRole, pageContext: safePageContext });
+    const safeClientDate =
+      typeof clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDate)
+        ? clientDate
+        : null;
+    const systemPrompt = buildSystemPrompt({
+      role: userRole,
+      pageContext: safePageContext,
+      clientDate: safeClientDate,
+    });
 
     // --- Cost Optimization #3: Check per-practice rate limit ---
     let billingPlan: string | null = null;
