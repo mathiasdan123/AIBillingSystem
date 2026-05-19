@@ -231,9 +231,10 @@ export function encryptBlancheMessages(messages: any[]): any {
 
 export function decryptBlancheMessages(encrypted: any): any[] {
   if (encrypted === null || encrypted === undefined) return [];
-  // Backwards-compat: if the row was written as a plain array (e.g. early dev
-  // before encryption was wired), return it as-is.
-  if (Array.isArray(encrypted)) return encrypted;
+  // The table is new in this release — there should never be a plaintext
+  // array on disk. If we ever see one, treat it as corrupt and return [] so
+  // unencrypted PHI is not silently accepted and served back to the client.
+  if (Array.isArray(encrypted)) return [];
   const value = decryptValue(encrypted, true);
   return Array.isArray(value) ? value : [];
 }

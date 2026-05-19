@@ -5,6 +5,7 @@ import {
   timestamp,
   jsonb,
   index,
+  unique,
   uniqueIndex,
   serial,
   decimal,
@@ -4123,7 +4124,7 @@ export const blancheConversations = pgTable("blanche_conversations", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
-  userPracticeIdx: uniqueIndex("blanche_conversations_user_practice_idx").on(table.userId, table.practiceId),
+  userPracticeUq: unique("blanche_conversations_user_practice_uq").on(table.userId, table.practiceId),
 }));
 
 export const insertBlancheConversationSchema = createInsertSchema(blancheConversations).omit({
