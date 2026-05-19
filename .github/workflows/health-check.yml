@@ -2,8 +2,11 @@ name: Production Health Check
 
 on:
   schedule:
-    # Run every 6 hours
+    # Every 6 hours for ongoing coverage, plus 11:00 UTC (7 AM ET) as the
+    # pre-demo readiness check that replaces the laptop-bound Claude
+    # Desktop routine that was being "Skipped" when the Mac was asleep.
     - cron: '0 */6 * * *'
+    - cron: '0 11 * * *'
   workflow_dispatch: # Allow manual trigger
   push:
     branches: [main]
@@ -36,9 +39,11 @@ jobs:
             exit 1
           fi
 
-      - name: Test Demo Login
+      - name: Test Demo Login (save session cookie)
         run: |
-          response=$(curl -s -w "\n%{http_code}" -X POST "$PROD_URL/api/demo-login" \
+          # -c writes Set-Cookie headers to cookies.txt so the patients
+          # and Blanche steps below can reuse the demo session.
+          response=$(curl -s -w "\n%{http_code}" -c cookies.txt -X POST "$PROD_URL/api/demo-login" \
             -H "Content-Type: application/json" \
             -d '{"email":"demo@therapybill.com","password":"demo1234"}')
           status=$(echo "$response" | tail -1)
@@ -48,6 +53,41 @@ jobs:
           else
             echo "❌ Demo login returned HTTP $status"
             echo "$response" | head -1
+            exit 1
+          fi
+
+      - name: Test Patients API returns demo data (>= 6 patients)
+        run: |
+          # Demo readiness signal — if the demo account shows 0 patients,
+          # a live customer demo will look broken. The seed expects 6+.
+          body=$(curl -s -b cookies.txt "$PROD_URL/api/patients")
+          count=$(echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); print(len(d) if isinstance(d, list) else len(d.get('patients', [])))" 2>/dev/null || echo "0")
+          echo "Patient count: $count"
+          if [ "$count" -ge 6 ]; then
+            echo "✅ Demo patients present ($count)"
+          else
+            echo "❌ Expected >= 6 demo patients but found $count"
+            echo "First 500 chars of response:"
+            echo "$body" | head -c 500
+            exit 1
+          fi
+
+      - name: Test Blanche assistant responds
+        run: |
+          # Smallest possible turn — just "hello", no tool use. Confirms the
+          # Anthropic API key, rate-limit middleware, and assistant route
+          # are all wired up. We don't assert on response content; we only
+          # require a 200 with a non-empty `response` field.
+          body=$(curl -s -b cookies.txt -X POST "$PROD_URL/api/ai/assistant" \
+            -H "Content-Type: application/json" \
+            -d '{"message":"hello","conversationHistory":[]}')
+          has_response=$(echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); print('yes' if isinstance(d.get('response'), str) and len(d['response']) > 0 else 'no')" 2>/dev/null || echo "no")
+          if [ "$has_response" = "yes" ]; then
+            echo "✅ Blanche responded"
+          else
+            echo "❌ Blanche did not respond"
+            echo "First 500 chars of response:"
+            echo "$body" | head -c 500
             exit 1
           fi
 
