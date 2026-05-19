@@ -89,9 +89,18 @@ function summarizeResult(result: unknown): string {
   return "Done.";
 }
 
-function loadHistory(): ChatMessage[] {
+// Browser-local chat history was removed in favour of server-side storage
+// (GET/DELETE /api/ai/conversation, persisted on every POST /api/ai/assistant
+// turn). This lets a user sign in on a different browser/device and pick up
+// where they left off, and keeps PHI out of localStorage. We still seed from
+// localStorage if it's present so users with mid-conversation state at
+// rollout time don't lose it on the first load — that seed runs once.
+
+const LEGACY_STORAGE_KEY = STORAGE_KEY;
+
+function loadLegacyHistoryOnce(): ChatMessage[] {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed)) return parsed;
@@ -102,16 +111,6 @@ function loadHistory(): ChatMessage[] {
   return [];
 }
 
-function saveHistory(messages: ChatMessage[]) {
-  try {
-    // Keep only last 50 messages to avoid bloating localStorage
-    const trimmed = messages.slice(-50);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {
-    // ignore
-  }
-}
-
 export default function AiBillingAssistant() {
   const { isAuthenticated, user } = useAuth();
   const queryClient = useQueryClient();
@@ -119,7 +118,8 @@ export default function AiBillingAssistant() {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
+  const [messages, setMessages] = useState<ChatMessage[]>(loadLegacyHistoryOnce);
+  const [conversationLoaded, setConversationLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<AssistantStatus | null>(null);
@@ -320,10 +320,31 @@ export default function AiBillingAssistant() {
     return () => clearTimeout(id);
   }, [isOpen]);
 
-  // Save history when messages change
+  // One-shot: fetch the server-persisted conversation when the signed-in
+  // user becomes known. We replace the local seeded state with the server
+  // copy so a sign-in on a different browser still picks up history. If the
+  // server has nothing (new user) but localStorage had legacy state, we keep
+  // the local state — the next POST /api/ai/assistant turn will persist it.
   useEffect(() => {
-    saveHistory(messages);
-  }, [messages]);
+    if (!isAuthenticated || !userId || conversationLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/ai/conversation");
+        const data = await res.json();
+        if (cancelled) return;
+        if (Array.isArray(data?.messages) && data.messages.length > 0) {
+          setMessages(data.messages as ChatMessage[]);
+          try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch {}
+        }
+      } catch {
+        // Non-fatal: fall back to whatever's in state (legacy seed or empty).
+      } finally {
+        if (!cancelled) setConversationLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated, userId, conversationLoaded]);
 
   // Focus input when opening
   useEffect(() => {
@@ -483,9 +504,12 @@ export default function AiBillingAssistant() {
     }
   };
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     setMessages([]);
-    localStorage.removeItem(STORAGE_KEY);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    // Server-side wipe — fire-and-forget; a failure here is non-fatal
+    // (the next persist will overwrite anyway).
+    try { await apiRequest("DELETE", "/api/ai/conversation"); } catch {}
   };
 
   const startListening = useCallback(() => {
@@ -758,8 +782,8 @@ export default function AiBillingAssistant() {
                 <button
                   onClick={handleClearHistory}
                   className="p-1.5 hover:bg-blue-500 rounded-md transition-colors"
-                  title="Clear chat history"
-                  aria-label="Clear chat history"
+                  title="New conversation"
+                  aria-label="New conversation"
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
