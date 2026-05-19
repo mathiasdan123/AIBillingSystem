@@ -392,10 +392,23 @@ export default function AiBillingAssistant() {
             }
           : null;
 
+      // Send the user's LOCAL date so Blanche's "today/tomorrow" is anchored
+      // to what the user sees on their wall clock, not the UTC date on the
+      // server. Otherwise a Pacific-time user in the evening would have
+      // "tomorrow" silently shifted forward by one day.
+      const localDate = (() => {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      })();
+
       const res = await apiRequest("POST", "/api/ai/assistant", {
         message: trimmed,
         conversationHistory,
         pageContext,
+        clientDate: localDate,
       });
 
       const data = await res.json();
