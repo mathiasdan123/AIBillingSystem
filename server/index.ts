@@ -443,7 +443,18 @@ app.use((req, res, next) => {
     startScheduler();
   });
 
-  // Graceful shutdown handlers
+  // Graceful shutdown handlers.
+  //
+  // Grace period must accommodate the longest legitimate in-flight request.
+  // The Blanche assistant route holds the request open for up to 60s while
+  // it talks to the Anthropic API (server/routes/ai-assistant.ts —
+  // ANTHROPIC_TIMEOUT_MS). 75s gives that call its full budget plus
+  // ~15s of headroom for response serialization and connection teardown.
+  //
+  // This MUST stay below the ECS task definition `stopTimeout` (currently
+  // 80s) — otherwise ECS sends SIGKILL before Node exits cleanly, which
+  // looks like a hard crash in logs.
+  const SHUTDOWN_GRACE_MS = 75_000;
   const shutdown = async (signal: string) => {
     log(`${signal} received, starting graceful shutdown...`);
     server.close(() => {
@@ -454,7 +465,7 @@ app.use((req, res, next) => {
     setTimeout(() => {
       log('Forcing shutdown after timeout');
       process.exit(1);
-    }, 10000).unref();
+    }, SHUTDOWN_GRACE_MS).unref();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
