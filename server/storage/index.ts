@@ -17,6 +17,7 @@ export * from "./appointments";
 export * from "./insurance";
 export * from "./analytics";
 export * from "./audit";
+export * from "./blancheConversations";
 
 // Re-export all domain functions as methods on a storage object for backwards compatibility
 import * as userFns from "./users";
@@ -29,8 +30,14 @@ import * as appointmentFns from "./appointments";
 import * as insuranceFns from "./insurance";
 import * as analyticsFns from "./analytics";
 import * as auditFns from "./audit";
+import * as blancheConversationFns from "./blancheConversations";
 
 export const storage = {
+  // ==================== BLANCHE CHAT ====================
+  getBlancheConversation: blancheConversationFns.getBlancheConversation,
+  saveBlancheConversation: blancheConversationFns.saveBlancheConversation,
+  clearBlancheConversation: blancheConversationFns.clearBlancheConversation,
+
   // ==================== USERS ====================
   getUser: userFns.getUser,
   upsertUser: userFns.upsertUser,

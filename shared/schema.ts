@@ -4102,3 +4102,34 @@ export const insertMaintenanceWindowSchema = createInsertSchema(maintenanceWindo
 });
 export type MaintenanceWindow = typeof maintenanceWindows.$inferSelect;
 export type InsertMaintenanceWindow = z.infer<typeof insertMaintenanceWindowSchema>;
+
+// Server-side persistence for Blanche chat history. One row per user; the
+// `messages` array holds the entire visible conversation (text + tool calls +
+// proposal stubs). PHI inside `messages` is encrypted at rest — see
+// server/services/phiEncryptionService.ts (BLANCHE_CONVERSATION_PHI_FIELDS).
+//
+// Why one row keyed by (userId, practiceId): chat history is per-user (not
+// shared across the practice), and we only need the latest state — there's no
+// product reason to keep historical snapshots. Upserts replace the messages
+// array each turn. A "New Conversation" action clears the row.
+export const blancheConversations = pgTable("blanche_conversations", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  practiceId: integer("practice_id").notNull().references(() => practices.id, { onDelete: "cascade" }),
+  // jsonb array of { role, content, hidden?, proposal? } — same shape the
+  // client renders. Stored encrypted (per-message text/content fields are
+  // wrapped by phiEncryptionService before write).
+  messages: jsonb("messages").notNull().default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userPracticeIdx: uniqueIndex("blanche_conversations_user_practice_idx").on(table.userId, table.practiceId),
+}));
+
+export const insertBlancheConversationSchema = createInsertSchema(blancheConversations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type BlancheConversation = typeof blancheConversations.$inferSelect;
+export type InsertBlancheConversation = z.infer<typeof insertBlancheConversationSchema>;

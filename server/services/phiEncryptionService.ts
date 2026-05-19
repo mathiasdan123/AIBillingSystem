@@ -220,6 +220,24 @@ export function decryptPatientRecord(patient: Record<string, any> | null | undef
   return decrypted;
 }
 
+// Blanche chat history: the messages array is treated as a single PHI blob.
+// Chat content can contain anything the user typed (patient names, complaints,
+// claim details, etc.) so we encrypt the whole array rather than trying to
+// classify individual messages. Stored as an encrypted JSON object in the
+// `messages` jsonb column.
+export function encryptBlancheMessages(messages: any[]): any {
+  return encryptValue(messages);
+}
+
+export function decryptBlancheMessages(encrypted: any): any[] {
+  if (encrypted === null || encrypted === undefined) return [];
+  // Backwards-compat: if the row was written as a plain array (e.g. early dev
+  // before encryption was wired), return it as-is.
+  if (Array.isArray(encrypted)) return encrypted;
+  const value = decryptValue(encrypted, true);
+  return Array.isArray(value) ? value : [];
+}
+
 export function encryptSoapNoteRecord(note: Record<string, any>): Record<string, any> {
   const encrypted = { ...note };
   for (const field of SOAP_NOTE_PHI_FIELDS) {
