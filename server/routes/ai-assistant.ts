@@ -4905,17 +4905,41 @@ router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) =>
     // continuation, not a real user message — and the client hides it from
     // the rendered chat.
     const summarized = summarizeResultForBlanche(parsedResult);
+    // Pull out an authoritative id/name pair the model MUST use verbatim. This
+    // prevents the classic auto-continue bug where Blanche says "now I'll
+    // schedule for Janet" and then passes the wrong patientId (often the most
+    // recently mentioned demo patient) to create_appointment.
+    const r = (parsedResult && typeof parsedResult === 'object') ? (parsedResult as any) : {};
+    const newPatient = r.patient && typeof r.patient === 'object' ? r.patient : null;
+    const newAppointment = r.appointment && typeof r.appointment === 'object' ? r.appointment : null;
+    const idHints: string[] = [];
+    if (newPatient && typeof newPatient.id === 'number') {
+      const name = `${newPatient.firstName ?? ''} ${newPatient.lastName ?? ''}`.trim() || 'the patient';
+      idHints.push(
+        `AUTHORITATIVE IDS FROM THIS EXECUTION (use these EXACTLY, do not substitute):\n` +
+        `  - ${name} → patientId = ${newPatient.id}\n` +
+        `If the next step needs a patientId for ${name}, you MUST pass patientId=${newPatient.id}. Do NOT call search_patients first and do NOT reuse an id from earlier in the conversation.`
+      );
+    }
+    if (newAppointment && typeof newAppointment.id === 'number') {
+      idHints.push(
+        `AUTHORITATIVE IDS FROM THIS EXECUTION (use these EXACTLY, do not substitute):\n` +
+        `  - new appointment → appointmentId = ${newAppointment.id}`
+      );
+    }
     const autoContinue = {
       suggestedFollowup:
         `[Auto-continue / system note — not from the user]\n\n` +
         `The user just confirmed your proposed ${proposal.toolName} call. ` +
         `It executed with result: ${summarized}\n\n` +
+        (idHints.length ? idHints.join('\n\n') + '\n\n' : '') +
         `INSTRUCTIONS:\n` +
         `1. Re-read the user's ORIGINAL request earlier in this conversation.\n` +
         `2. If their original request requires more mutations (e.g. they said "schedule a walk-in for Janet" — that's TWO steps: create patient + create appointment — and you've only done one), CALL THE NEXT TOOL NOW. Do not narrate "I'm proposing to..." without calling a tool. The tool call itself creates the Confirm card.\n` +
         `3. If the original request is fully complete, write a SHORT one-sentence acknowledgement ("Janet's set up and her 4 PM appointment is on the books — anything else?") and stop. Do NOT propose anything new just to be helpful.\n` +
         `4. Do NOT use enthusiasm openers ("Great!", "Perfect!", "Excellent!"). Start neutrally.\n` +
-        `5. Do NOT say "Click Confirm below" unless you've actually called a tool in this turn.\n\n` +
+        `5. Do NOT say "Click Confirm below" unless you've actually called a tool in this turn.\n` +
+        `6. When the next mutation needs an id for the entity you just created, use the AUTHORITATIVE IDS block above. Never guess or reuse an id from earlier patients/appointments mentioned in the conversation.\n\n` +
         `Remember: a Confirm card only appears for the user when you CALL A TOOL. Saying you're proposing without invoking the tool produces a misleading message with no card to click.`,
     };
 
