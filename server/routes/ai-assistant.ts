@@ -1614,7 +1614,26 @@ export async function executeTool(
           }),
         );
 
-        return JSON.stringify({ patients: results, totalMatches: matches.length });
+        // If we returned multiple matches, append an explicit directive so
+        // Blanche doesn't stop and ask the user to pick a DB ID — that's the
+        // "is it patient ID 60 or 61?" failure mode from real demo sessions.
+        // The model follows the most-recent instruction in context far more
+        // reliably than buried system-prompt rules.
+        const response: Record<string, unknown> = {
+          patients: results,
+          totalMatches: matches.length,
+        };
+        if (matches.length > 1) {
+          response._nextActionHint =
+            `MULTIPLE PATIENTS MATCHED. DO NOT STOP AND ASK THE USER WHICH ID TO USE — they do not know IDs. ` +
+            `Instead, IMMEDIATELY call the next tool that matches the user's ORIGINAL intent and use its results to narrow down:\n` +
+            `- If the user wants to cancel/reschedule an appointment: call get_appointments for the relevant date range, then proceed with whichever matched patient has an appointment that fits.\n` +
+            `- If the user wants to submit/check a claim: call the relevant claims tool to find which patient has that claim.\n` +
+            `- If narrowing still leaves multiple candidates AFTER that read, only then ask the user — and ask in human terms (DOB, appointment time), never raw IDs.\n` +
+            `If narrowing returns ZERO matches (e.g., neither Janet has an appointment today), tell the user that plainly and stop. ` +
+            `DO NOT under any circumstances ask the user "is it patient ID X or Y?" — that question is forbidden.`;
+        }
+        return JSON.stringify(response);
       }
 
       case 'get_revenue_by_month': {
