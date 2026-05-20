@@ -92,7 +92,7 @@ ${isPositive ? 'This is a positive review - express genuine gratitude.' : ''}`;
       return { success: false, error: 'Anthropic not configured' };
     }
     const completion = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 300,
       temperature: 0.7,
       system: systemPrompt,
@@ -399,7 +399,7 @@ ${practiceEmail ? `Practice email: ${practiceEmail}` : ''}`;
         throw new Error('Anthropic not configured');
       }
       const completion = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5',
         max_tokens: 400,
         temperature: 0.7,
         system: systemPrompt,

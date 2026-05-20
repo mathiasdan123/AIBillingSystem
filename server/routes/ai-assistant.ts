@@ -40,8 +40,13 @@ const router = Router();
 // Cost Optimization #1: Smart Model Routing
 // Use cheaper Haiku for simple queries, Sonnet for complex ones
 // ---------------------------------------------------------------------------
-const MODEL_HAIKU = 'claude-haiku-4-20250414';
-const MODEL_SONNET = 'claude-sonnet-4-20250514';
+// Haiku 4.5 (released Oct 2025) — the previous ID `claude-haiku-4-20250414`
+// was invalid and would have 404ed if requests ever reached the dispatch
+// branches that used it. Pinned by date to avoid silent rollover.
+const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
+// Sonnet 4.5 (alias) — `claude-sonnet-4-5` retires June 15, 2026.
+// Using the dated alias for stability.
+const MODEL_SONNET = 'claude-sonnet-4-5';
 
 // Tools that require Sonnet's stronger reasoning capabilities
 const SONNET_TOOLS = new Set([
@@ -811,22 +816,46 @@ const ROLE_OPENERS: Record<string, string> = {
  * Pass null/undefined for either field if not available — the prompt degrades
  * gracefully (omits the block rather than emitting a placeholder).
  */
+/**
+ * Returns the system prompt as an array of typed text blocks so we can place
+ * a prompt-cache breakpoint on the large, stable BASE_SYSTEM_PROMPT and let
+ * the volatile per-request preamble (today's date, user role, current page)
+ * sit AFTER the breakpoint — where it doesn't invalidate the cached prefix.
+ *
+ * Render order on the API side is: tools → system → messages. Inside `system`,
+ * the array order is the byte order. So:
+ *
+ *   [0] BASE_SYSTEM_PROMPT     ← cached (cache_control on this block)
+ *   [1] Today + User Context   ← changes every request, NOT cached
+ *
+ * Anything before the marker is the cached prefix; anything after it is
+ * uncached but doesn't invalidate the prefix. See shared/prompt-caching.md.
+ *
+ * Tests still get a single string by passing `asString: true`.
+ */
+// Overloads: tests / callers passing `asString: true` get a plain string;
+// the default returns the cache-friendly array form.
 export function buildSystemPrompt(opts: {
   role?: string | null;
   pageContext?: { path?: string | null; title?: string | null } | null;
-  /** Override for tests; defaults to new Date() at call time. */
   now?: Date;
-  /**
-   * Client-supplied "today" in the user's local timezone (YYYY-MM-DD). The
-   * server runs in UTC, so deriving "today" from `new Date()` can be off by
-   * one day for users west of UTC in the evening (the ECS host's "today"
-   * is already the user's tomorrow). Prefer this when supplied; fall back
-   * to UTC-derived only if missing.
-   */
   clientDate?: string | null;
-}): string {
-  const parts: string[] = [];
-
+  asString: true;
+}): string;
+export function buildSystemPrompt(opts: {
+  role?: string | null;
+  pageContext?: { path?: string | null; title?: string | null } | null;
+  now?: Date;
+  clientDate?: string | null;
+  asString?: false;
+}): Array<Anthropic.TextBlockParam>;
+export function buildSystemPrompt(opts: {
+  role?: string | null;
+  pageContext?: { path?: string | null; title?: string | null } | null;
+  now?: Date;
+  clientDate?: string | null;
+  asString?: boolean;
+}): string | Array<Anthropic.TextBlockParam> {
   // ALWAYS inject today's date so Blanche can interpret "today", "tomorrow",
   // "this week", etc. without asking the user for YYYY-MM-DD. Critical for
   // scheduling and "what's on the calendar today" type questions.
@@ -851,12 +880,14 @@ export function buildSystemPrompt(opts: {
     day: 'numeric',
     timeZone: 'UTC',
   });
-  parts.push('## Today');
-  parts.push(`- Date: ${isoDate} (${friendly})`);
-  parts.push(
+
+  const volatileParts: string[] = [];
+  volatileParts.push('## Today');
+  volatileParts.push(`- Date: ${isoDate} (${friendly})`);
+  volatileParts.push(
     `- When the user says "today" or omits a date, use ${isoDate}. When they say "tomorrow", use ${tomorrow}. Never ask the user for today's date — you already have it.`,
   );
-  parts.push('');
+  volatileParts.push('');
 
   const role = (opts.role ?? '').toLowerCase();
   const roleOpener = ROLE_OPENERS[role];
@@ -864,22 +895,43 @@ export function buildSystemPrompt(opts: {
   const pageDesc = page?.title?.trim() || page?.path?.trim();
 
   if (roleOpener || pageDesc) {
-    parts.push('## User Context');
-    if (roleOpener) parts.push(`- Role guidance: ${roleOpener}`);
+    volatileParts.push('## User Context');
+    if (roleOpener) volatileParts.push(`- Role guidance: ${roleOpener}`);
     if (pageDesc) {
-      parts.push(
+      volatileParts.push(
         `- Current page: ${page?.title?.trim() || 'unknown'}${
           page?.path?.trim() ? ` (${page?.path?.trim()})` : ''
         }`,
       );
-      parts.push(
+      volatileParts.push(
         '- Tailor your guidance to what is on this screen. If the user asks "what can I do here?", explain the features of this page specifically.',
       );
     }
-    parts.push('');
+    volatileParts.push('');
   }
 
-  return `${parts.join('\n')}\n${BASE_SYSTEM_PROMPT}`;
+  const volatileText = volatileParts.join('\n');
+
+  if (opts.asString) {
+    // Tests + any caller that wants a single string get BASE first (stable),
+    // then volatile — same order as the cached array form.
+    return `${BASE_SYSTEM_PROMPT}\n\n${volatileText}`;
+  }
+
+  // Stable block first, with the cache marker. Volatile block second — its
+  // bytes change every request, but that no longer invalidates the cached
+  // prefix because the marker is placed on the stable block above it.
+  return [
+    {
+      type: 'text',
+      text: BASE_SYSTEM_PROMPT,
+      cache_control: { type: 'ephemeral' },
+    },
+    {
+      type: 'text',
+      text: volatileText,
+    },
+  ];
 }
 
 // Tool definitions for Claude function calling
@@ -1436,6 +1488,13 @@ const assistantTools: Anthropic.Tool[] = [
       },
       required: [],
     },
+    // Cache breakpoint on the last tool definition: tools render BEFORE
+    // `system` in the request prefix, so marking the last tool caches the
+    // entire tools array as part of the cached prefix. Combined with the
+    // system-prompt breakpoint on BASE_SYSTEM_PROMPT, this means every
+    // request after the first reads tools+BASE from cache (~0.1× cost)
+    // instead of paying full input price (~1×).
+    cache_control: { type: 'ephemeral' },
   },
 ];
 
@@ -4798,6 +4857,23 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       cacheResponse(cacheKey, cleanContent, suggestedActions);
     }
 
+    // Log cache hit/miss for every turn so we can verify caching is actually
+    // working in production. If cacheReadInputTokens stays at 0 over many
+    // requests, a silent invalidator slipped into the prompt prefix — see
+    // shared/prompt-caching.md for the audit checklist.
+    const cacheReadInputTokens = (response.usage as any)?.cache_read_input_tokens || 0;
+    const cacheCreationInputTokens = (response.usage as any)?.cache_creation_input_tokens || 0;
+    logger.info('Blanche turn usage', {
+      practiceId,
+      userId,
+      model: currentModel,
+      inputTokens: response.usage?.input_tokens || 0,
+      outputTokens: response.usage?.output_tokens || 0,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      toolRounds,
+    });
+
     res.json({
       response: cleanContent,
       suggestedActions,
@@ -4805,7 +4881,13 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       // when Blanche didn't propose anything (or only did reads). Client
       // renders each as a Confirm/Cancel card; POSTs back to /api/ai/confirm-tool.
       proposals: pendingProposals,
-      tokensUsed: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
+      tokensUsed:
+        (response.usage?.input_tokens || 0) +
+        (response.usage?.output_tokens || 0) +
+        cacheReadInputTokens +
+        cacheCreationInputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
       model: currentModel,
     });
   } catch (error) {

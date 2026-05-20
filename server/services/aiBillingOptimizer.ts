@@ -172,11 +172,19 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
       throw new Error("Anthropic API key not configured");
     }
     const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 4096,
       temperature: 0.3,
-      system:
-        "You are a medical billing compliance expert. Always recommend billing that is accurate, defensible, and follows payer guidelines. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+      // See aiDenialPredictor for the same caching pattern + caveat: the
+      // marker is here for when the prompt grows; today it sits under the
+      // 1024-token caching minimum and will be a no-op until that changes.
+      system: [
+        {
+          type: "text",
+          text: "You are a medical billing compliance expert. Always recommend billing that is accurate, defensible, and follows payer guidelines. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 

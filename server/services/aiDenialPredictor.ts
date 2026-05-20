@@ -376,8 +376,18 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
       temperature: 0.3,
-      system:
-        "You are a medical billing denial prediction system. Respond with ONLY a valid JSON object, no markdown fencing or commentary. Be specific and actionable in your suggestions.",
+      // Cache the system prompt as a text-block array. The current prompt
+      // body is well under the 1024-token caching minimum so the API will
+      // not actually cache it today — the marker is in place so that if the
+      // prompt is later extended past the threshold (rule library, payer
+      // playbooks, etc.) it caches automatically without another code change.
+      system: [
+        {
+          type: "text",
+          text: "You are a medical billing denial prediction system. Respond with ONLY a valid JSON object, no markdown fencing or commentary. Be specific and actionable in your suggestions.",
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 

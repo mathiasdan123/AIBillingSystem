@@ -231,7 +231,7 @@ If a rate is not specified, use null. Be precise with the numbers found in the d
       throw new Error("Anthropic API key not configured");
     }
     const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 4096,
       temperature: 0.1,
       system:
@@ -331,7 +331,7 @@ If a rate is not specified, use null. Be precise with the numbers found in the d
     }
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 4096,
       temperature: 0.1,
       system:

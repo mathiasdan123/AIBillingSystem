@@ -37,7 +37,7 @@ async function callClaudeForJson(
   }
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
     max_tokens: 4096,
     temperature: 0.1,
     system: systemPrompt,
@@ -239,7 +239,7 @@ export async function parsePlanDocumentFromPDF(
 
     // Claude supports native PDF input via the document content block.
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 4096,
       temperature: 0.1,
       system: systemPrompt,
