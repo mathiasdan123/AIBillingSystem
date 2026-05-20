@@ -1637,6 +1637,49 @@ export async function executeTool(
           return JSON.stringify({ message: 'No patients found matching that name.' });
         }
 
+        // When duplicate-name matches exist (the "two Janet Does" case), the
+        // prior tool-result hint telling Blanche to call get_appointments
+        // wasn't reliable enough — she ignored it or called the wrong tool
+        // (suggest_appointment_slot). Stronger fix: pre-fetch each matched
+        // patient's next upcoming appointment HERE and include it inline.
+        // The disambiguating data is then sitting in the same tool result
+        // she's already reading, no second tool call required, no chance to
+        // pick the wrong tool.
+        const nowMs = Date.now();
+        const upcomingByPatientId = new Map<
+          number,
+          { startTime: string; title: string | null }
+        >();
+        if (matches.length > 1) {
+          try {
+            const rangeStart = new Date(nowMs);
+            rangeStart.setHours(0, 0, 0, 0);
+            const rangeEnd = new Date(nowMs + 90 * 24 * 60 * 60 * 1000);
+            const upcoming = await storage.getAppointmentsByDateRange(
+              practiceId,
+              rangeStart,
+              rangeEnd,
+            );
+            for (const a of upcoming) {
+              if (a.status === 'cancelled') continue;
+              if (!a.patientId) continue;
+              const existing = upcomingByPatientId.get(a.patientId);
+              const start = new Date(a.startTime as unknown as string);
+              if (
+                !existing ||
+                start.getTime() < new Date(existing.startTime).getTime()
+              ) {
+                upcomingByPatientId.set(a.patientId, {
+                  startTime: start.toISOString(),
+                  title: (a as any).title ?? null,
+                });
+              }
+            }
+          } catch {
+            // Non-fatal: fall back to the prior hint-only behavior.
+          }
+        }
+
         // Return limited info (HIPAA-conscious: no full DOB, SSN, or member IDs)
         const results = await Promise.all(
           matches.slice(0, 5).map(async (p) => {
@@ -1663,34 +1706,35 @@ export async function executeTool(
               // Non-blocking
             }
 
+            const next = upcomingByPatientId.get(p.id) ?? null;
             return {
               id: p.id,
               firstName: p.firstName,
               lastName: p.lastName,
               insuranceProvider: p.insuranceProvider,
+              dateOfBirth: p.dateOfBirth ?? null,
               visitInfo,
+              nextUpcomingAppointment: next,
             };
           }),
         );
 
-        // If we returned multiple matches, append an explicit directive so
-        // Blanche doesn't stop and ask the user to pick a DB ID — that's the
-        // "is it patient ID 60 or 61?" failure mode from real demo sessions.
-        // The model follows the most-recent instruction in context far more
-        // reliably than buried system-prompt rules.
+        // Hint is now an instruction to USE the inline data rather than to
+        // call another tool. The data Blanche needs is sitting next to her —
+        // no choice of tool to make, no order-of-operations confusion.
         const response: Record<string, unknown> = {
           patients: results,
           totalMatches: matches.length,
         };
         if (matches.length > 1) {
           response._nextActionHint =
-            `MULTIPLE PATIENTS MATCHED. DO NOT STOP AND ASK THE USER WHICH ID TO USE — they do not know IDs. ` +
-            `Instead, IMMEDIATELY call the next tool that matches the user's ORIGINAL intent and use its results to narrow down:\n` +
-            `- If the user wants to cancel/reschedule an appointment: call get_appointments for the relevant date range, then proceed with whichever matched patient has an appointment that fits.\n` +
-            `- If the user wants to submit/check a claim: call the relevant claims tool to find which patient has that claim.\n` +
-            `- If narrowing still leaves multiple candidates AFTER that read, only then ask the user — and ask in human terms (DOB, appointment time), never raw IDs.\n` +
-            `If narrowing returns ZERO matches (e.g., neither Janet has an appointment today), tell the user that plainly and stop. ` +
-            `DO NOT under any circumstances ask the user "is it patient ID X or Y?" — that question is forbidden.`;
+            `MULTIPLE PATIENTS MATCHED. DO NOT ASK THE USER FOR A PATIENT ID — they do not know IDs. ` +
+            `Each result above already includes a nextUpcomingAppointment field. Use that to pick the right patient FOR YOURSELF:\n` +
+            `- If the user wants to cancel/reschedule "today's" or "tomorrow's" appointment, pick the patient whose nextUpcomingAppointment.startTime falls on that date.\n` +
+            `- If exactly one matched patient has an appointment that fits the user's description, that's the patient — proceed with that patientId in your next mutation.\n` +
+            `- If NONE of the matched patients have a fitting appointment, tell the user plainly ("Neither Janet Doe has an appointment today") and stop. Do NOT ask which ID.\n` +
+            `- If MULTIPLE patients have an appointment that fits (true ambiguity), ask the user in human terms — DOB, appointment time — never IDs.\n` +
+            `The question "is it patient ID X or Y?" is forbidden. The data needed to avoid asking it is in the result above.`;
         }
         return JSON.stringify(response);
       }
