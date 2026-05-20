@@ -145,6 +145,36 @@ describe('augmentIfHallucinatedSuccess (two-mode)', () => {
     });
   });
 
+  describe('READ tool called but no mutation (production false-positive fix)', () => {
+    // Real case from 2026-05-20: user asked "walk me through onboarding".
+    // Blanche correctly called get_practice_setup_status (a read tool — not
+    // a mutation), then summarized practice state with "Great! I can see..."
+    // The old detector flagged the "Great!" as a hallucination warning even
+    // though the answer was grounded in real data. anyToolsCalledCount > 0
+    // means we trust the response.
+    it('does NOT warn on theatre opener when a READ tool was called', () => {
+      const original = "Great! I can see your practice has 13 patients and 12 claims.";
+      // mutations=0, anyTools=1 (read tool ran). Should NOT warn.
+      expect(augmentIfHallucinatedSuccess(original, 0, 1)).toBe(original);
+    });
+
+    it('STILL warns on a strong false claim even when a read tool was called', () => {
+      // Read tool ran but text claims a mutation that didn't happen.
+      // Strong claims are flagged regardless of whether read tools ran.
+      const result = augmentIfHallucinatedSuccess(
+        "I've marked all 7 patients as demo data.",
+        0,
+        2,
+      );
+      expect(result).toContain('skipped a tool call');
+    });
+
+    it('does NOT warn on neutral language when a read tool was called', () => {
+      const original = "Your practice has 13 patients and 12 claims so far.";
+      expect(augmentIfHallucinatedSuccess(original, 0, 1)).toBe(original);
+    });
+  });
+
   describe('tool WAS called — only flag STRONG claims, tolerate theatre openers', () => {
     it('prepends "action not done yet" warning for strong claim (premature completion)', () => {
       const result = augmentIfHallucinatedSuccess("I've marked all 7 patients.", 1);
