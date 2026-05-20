@@ -4912,6 +4912,21 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
           message: "Blanche is experiencing high demand right now. Please try again in a moment — it usually clears up within a minute or two!",
         });
       }
+      // Anthropic returns a 400 with the literal text "credit balance is too
+      // low" when the organization runs out of API credits. Surface that
+      // distinctly so the admin knows to top up at console.anthropic.com,
+      // and the user understands this isn't a transient failure to retry —
+      // previously this fell through to the generic 500 and looked like a
+      // random "Sorry, something went wrong" for every Blanche call.
+      if (error.message.toLowerCase().includes('credit balance is too low')) {
+        return res.status(503).json({
+          message:
+            "Blanche is temporarily unavailable — the AI provider account is out of credits. " +
+            "Admin: please top up at https://console.anthropic.com/settings/billing. " +
+            "Once credits land, Blanche will work again immediately (no redeploy needed).",
+          requiresConfig: true,
+        });
+      }
     }
 
     res.status(500).json({
