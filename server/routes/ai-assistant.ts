@@ -4992,6 +4992,38 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       toolRounds,
     });
 
+    // devices/browsers. We DO NOT trust the client-supplied
+    // conversationHistory for persistence — a malicious or buggy client
+    // could drop prior assistant refusals or inject fake turns, and once
+    // saved that tampered history would become the canonical record served
+    // back to every device. Instead we load the authoritative server-side
+    // history, append the user's new message and Blanche's reply, and
+    // write that back. (The model still receives the client-supplied
+    // history for the current turn — that's a separate pre-existing
+    // decision and a separate trust boundary.)
+    //
+    // Best-effort: a save failure must not break the chat response. Skip
+    // when we don't have a userId (anonymous / dev fallback).
+    if (userId) {
+      try {
+        const serverPrior = await storage.getBlancheConversation(userId, practiceId);
+        const updated = [
+          ...serverPrior,
+          { role: 'user' as const, content: message.trim() },
+          { role: 'assistant' as const, content: cleanContent },
+        ];
+        // Cap at the last 200 messages — same intent as the localStorage cap.
+        const trimmed = updated.slice(-200);
+        await storage.saveBlancheConversation(userId, practiceId, trimmed as any);
+      } catch (persistErr) {
+        logger.warn('Blanche conversation persist failed (non-fatal)', {
+          error: persistErr instanceof Error ? persistErr.message : String(persistErr),
+          userId,
+          practiceId,
+        });
+      }
+    }
+
     res.json({
       response: cleanContent,
       suggestedActions,
@@ -5222,6 +5254,44 @@ function summarizeResultForBlanche(result: unknown): string {
   const json = JSON.stringify(r);
   return json.length > 300 ? json.slice(0, 297) + '...' : json;
 }
+
+// GET /api/ai/conversation — load the saved Blanche chat history for the
+// signed-in user in the current practice. Returns { messages: [...] } where
+// each message is the shape the client renders (role, content, optional
+// hidden/proposal). Empty array if there's no saved history yet.
+router.get('/conversation', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const context = await getUserPracticeContext(req);
+    if (!context?.userId || !context?.practiceId) {
+      return res.json({ messages: [] });
+    }
+    const messages = await storage.getBlancheConversation(context.userId, context.practiceId);
+    return res.json({ messages });
+  } catch (error) {
+    logger.error('Failed to load Blanche conversation', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({ message: 'Failed to load conversation.' });
+  }
+});
+
+// DELETE /api/ai/conversation — wipe the saved Blanche chat history for the
+// signed-in user (the "New Conversation" button).
+router.delete('/conversation', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const context = await getUserPracticeContext(req);
+    if (!context?.userId || !context?.practiceId) {
+      return res.json({ ok: true });
+    }
+    await storage.clearBlancheConversation(context.userId, context.practiceId);
+    return res.json({ ok: true });
+  } catch (error) {
+    logger.error('Failed to clear Blanche conversation', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({ message: 'Failed to clear conversation.' });
+  }
+});
 
 // GET /api/ai/assistant/status - Check if AI assistant is available
 router.get('/assistant/status', (req, res) => {
