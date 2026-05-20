@@ -434,12 +434,34 @@ export default function AiBillingAssistant() {
 
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error && err.message.includes("503")
-          ? "The AI assistant requires an OpenAI API key to be configured. Please contact your administrator."
-          : err instanceof Error && err.message.includes("429")
-            ? "Too many requests. Please wait a moment and try again."
-            : "Sorry, something went wrong. Please try again.";
+      // apiRequest throws with the shape "STATUS: BODY" — try to extract the
+      // server's actual `message` field so the user sees the real cause (e.g.
+      // "AI provider account is out of credits") instead of a generic
+      // "something went wrong" that obscures the diagnosis.
+      let errorMessage = "Sorry, something went wrong. Please try again.";
+      if (err instanceof Error) {
+        const raw = err.message;
+        const bodyMatch = raw.match(/^\d+:\s*(.+)$/s);
+        if (bodyMatch) {
+          try {
+            const parsed = JSON.parse(bodyMatch[1]);
+            if (parsed && typeof parsed.message === "string" && parsed.message.length > 0) {
+              errorMessage = parsed.message;
+            }
+          } catch {
+            // Body wasn't JSON — fall through to status-based fallback below
+          }
+        }
+        // Status-based fallbacks if we couldn't parse a specific message
+        if (errorMessage === "Sorry, something went wrong. Please try again.") {
+          if (raw.includes("429")) {
+            errorMessage = "Too many requests. Please wait a moment and try again.";
+          } else if (raw.includes("503")) {
+            errorMessage =
+              "The AI assistant is temporarily unavailable. Please contact your administrator.";
+          }
+        }
+      }
 
       setMessages((prev) => [
         ...prev,
