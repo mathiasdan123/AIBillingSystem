@@ -1395,11 +1395,41 @@ export default function CalendarPage() {
         <Dialog open={showCancelDialog} onOpenChange={(open) => { setShowCancelDialog(open); if (!open) { delete (window as any).__cancelSeriesId; } }}>
           <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Cancel Appointment</DialogTitle>
+              <DialogTitle>
+                {(() => {
+                  if (!selectedAppointment) return "Cancel Appointment";
+                  const patient = patients.find((p: any) => p.id === selectedAppointment.patientId);
+                  const patientName = patient
+                    ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                    : null;
+                  return patientName
+                    ? `Cancel ${patientName}'s appointment`
+                    : "Cancel Appointment";
+                })()}
+              </DialogTitle>
               <DialogDescription>
-                {selectedAppointment && (
-                  <>Cancel appointment: {selectedAppointment.title} on {new Date(selectedAppointment.startTime).toLocaleDateString()} at {formatTime(selectedAppointment.startTime)}</>
-                )}
+                {selectedAppointment && (() => {
+                  const patient = patients.find((p: any) => p.id === selectedAppointment.patientId);
+                  const patientName = patient
+                    ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                    : null;
+                  const date = new Date(selectedAppointment.startTime).toLocaleDateString();
+                  const time = formatTime(selectedAppointment.startTime);
+                  // Patient name first (the question every user asks when
+                  // they click an appointment is "whose appointment is
+                  // this?"). Type ("Walk-in" / "Therapy Session") is
+                  // secondary context.
+                  if (patientName) {
+                    return (
+                      <>
+                        {patientName} — {selectedAppointment.title || "Appointment"} on {date} at {time}
+                      </>
+                    );
+                  }
+                  return (
+                    <>Cancel appointment: {selectedAppointment.title} on {date} at {time}</>
+                  );
+                })()}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
