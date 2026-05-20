@@ -31,7 +31,7 @@ function getAnthropic(): Anthropic | null {
   return anthropicClient;
 }
 
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = 'claude-sonnet-4-5';
 const MAX_TOKENS = 400;
 const POLL_INTERVAL_MS = 20_000; // 20s
 const MAX_WAIT_MS = 25 * 60_000; // 25 min hard cap
@@ -60,12 +60,23 @@ export async function generateInsightNarrativesBatch(
   const client = getAnthropic();
   if (!client) return result;
 
+  // The SYSTEM_PROMPT is identical across every item in this batch (only the
+  // user content varies), so marking it as cacheable means every request after
+  // the first within a 5-minute window pays ~0.1× for that prefix. Prompt is
+  // currently small (~250 tokens — below the 1024-token minimum) so it's a
+  // no-op today; the marker is staged for when the style rules grow.
   const requests = items.map((item) => ({
     custom_id: item.customId,
     params: {
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
+      system: [
+        {
+          type: 'text' as const,
+          text: SYSTEM_PROMPT,
+          cache_control: { type: 'ephemeral' as const },
+        },
+      ],
       messages: [
         {
           role: 'user' as const,

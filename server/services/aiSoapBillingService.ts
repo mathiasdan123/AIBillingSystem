@@ -176,7 +176,7 @@ export async function generateSoapNoteAndBilling(
     // timeout. Streaming gives us continuous progress signals and faster
     // failure on real errors.
     const stream = client.messages.stream({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 6000,
       temperature: 0.5,
       system:

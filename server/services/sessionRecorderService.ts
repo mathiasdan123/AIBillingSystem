@@ -142,7 +142,7 @@ IMPORTANT DOCUMENTATION GUIDELINES:
       throw new Error("Anthropic not configured");
     }
     const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 4096,
       temperature: 0.3,
       system:
@@ -278,7 +278,7 @@ RESPOND WITH JSON:
     throw new Error("Anthropic not configured");
   }
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 2048,
     temperature: 0.3,
     system:

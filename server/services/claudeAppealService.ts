@@ -549,7 +549,7 @@ export async function generateClaudeAppeal(
 
     // Call Claude API
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       system: systemPrompt,
       messages: [
         {
