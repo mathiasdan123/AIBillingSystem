@@ -46,6 +46,96 @@ interface EligibilityCheck {
   checkDate: string;
 }
 
+/**
+ * Compact "upcoming appointments" summary shown at the top of the patient
+ * details modal. Solves the "which Janet has an appointment today?"
+ * problem — clicking each duplicate patient now immediately shows their
+ * schedule. Loads a 90-day forward window from /api/appointments on demand.
+ */
+function UpcomingAppointmentsSummary({ patientId }: { patientId: number }) {
+  // Use a date range query so we don't pull the entire practice's history.
+  // 90 days forward from today is plenty to see "anything coming up?".
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 90);
+
+  const { data: appointments = [], isLoading } = useQuery<any[]>({
+    queryKey: [
+      "/api/appointments",
+      `?start=${start.toISOString()}&end=${end.toISOString()}&forPatient=${patientId}`,
+    ],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/appointments?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
+      );
+      const all = await res.json();
+      const list = Array.isArray(all) ? all : all?.data || [];
+      return list
+        .filter((a: any) => a.patientId === patientId && a.status !== "cancelled")
+        .sort(
+          (a: any, b: any) =>
+            new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+        );
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="mt-2 text-sm text-muted-foreground">
+        Loading upcoming appointments…
+      </div>
+    );
+  }
+
+  if (appointments.length === 0) {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Calendar className="w-4 h-4" />
+        No upcoming appointments
+      </div>
+    );
+  }
+
+  const next = appointments[0];
+  const nextDate = new Date(next.startTime);
+  const isToday = nextDate.toDateString() === new Date().toDateString();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = nextDate.toDateString() === tomorrow.toDateString();
+  const dayLabel = isToday
+    ? "Today"
+    : isTomorrow
+      ? "Tomorrow"
+      : nextDate.toLocaleDateString(undefined, {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        });
+  const timeLabel = nextDate.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  return (
+    <div className="mt-2 flex items-center gap-2 text-sm">
+      <Calendar className="w-4 h-4 text-blue-600 shrink-0" />
+      <span className={isToday ? "font-medium text-blue-700" : "text-foreground"}>
+        Next: {dayLabel} at {timeLabel}
+      </span>
+      {next.title && (
+        <span className="text-muted-foreground">· {next.title}</span>
+      )}
+      {appointments.length > 1 && (
+        <span className="text-muted-foreground">
+          (+{appointments.length - 1} more upcoming)
+        </span>
+      )}
+    </div>
+  );
+}
+
 // Helper component to display intake data from the patient portal
 function PatientIntakeDataView({ patient }: { patient: any }) {
   const { toast } = useToast();
@@ -1241,6 +1331,11 @@ export default function Patients() {
                 </Button>
               </div>
             </DialogHeader>
+            {/* Upcoming appointments — surfaced above the tabs so users can
+                see at-a-glance "this is the Janet who has an appointment
+                today" when there are duplicate patients. Loads on demand
+                when the modal opens. */}
+            <UpcomingAppointmentsSummary patientId={selectedPatient.id} />
             <Tabs defaultValue="details" className="w-full">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="details">Details</TabsTrigger>
