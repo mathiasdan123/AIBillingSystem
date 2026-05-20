@@ -1157,8 +1157,34 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'get_appointments',
+    description: 'List existing appointments over a date range, optionally filtered to a single patient. Use this whenever the user references an existing appointment by description ("Janet\'s 4 PM today", "tomorrow\'s appointments", "what\'s on the calendar this week") and you need the actual appointment ID before you can cancel, reschedule, or otherwise act on it. NOT the same as suggest_appointment_slot (which finds OPEN slots) — this returns EXISTING appointments.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        startDate: {
+          type: 'string' as const,
+          description: 'Start of date range, YYYY-MM-DD. Defaults to today.',
+        },
+        endDate: {
+          type: 'string' as const,
+          description: 'End of date range, YYYY-MM-DD inclusive. Defaults to startDate (single day).',
+        },
+        patientId: {
+          type: 'number' as const,
+          description: 'Optional — limit results to this patient.',
+        },
+        includeCancelled: {
+          type: 'boolean' as const,
+          description: 'Include cancelled appointments. Default false.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'suggest_appointment_slot',
-    description: 'Find open appointment slots over the next N days based on existing scheduled appointments. Returns up to 5 suggested start times. Use when a user wants to know "when can I fit Jane in" or "find me an open slot next week". Considers existing scheduled (non-cancelled) appointments as conflicts.',
+    description: 'Find OPEN/available slots over the next N days for booking a NEW appointment. NOT for finding existing appointments — use get_appointments for that. Returns up to 5 suggested start times based on what is already booked.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -2253,6 +2279,54 @@ export async function executeTool(
           success: true,
           appointment: { id: cancelled.id, status: cancelled.status },
           message: `Appointment ${apptId} cancelled.`,
+        });
+      }
+
+      case 'get_appointments': {
+        // List existing appointments over a date range, optionally filtered
+        // to a single patient. This is the tool Blanche needs whenever the
+        // user references an existing appointment by description rather
+        // than ID — until now, the prompts and tool-result hints told her
+        // to "call get_appointments" but the tool did not exist, so she
+        // either invented a behavior or fell back to asking the user.
+        const todayIso = new Date().toISOString().split('T')[0];
+        const rawStart = typeof args.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.startDate as string)
+          ? (args.startDate as string)
+          : todayIso;
+        const rawEnd = typeof args.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.endDate as string)
+          ? (args.endDate as string)
+          : rawStart;
+        const start = new Date(`${rawStart}T00:00:00`);
+        const end = new Date(`${rawEnd}T23:59:59`);
+        const includeCancelled = args.includeCancelled === true;
+        const filterPatientId = typeof args.patientId === 'number' ? args.patientId : null;
+
+        const appts = await storage.getAppointmentsByDateRange(practiceId, start, end);
+        const allPatients = await storage.getPatients(practiceId);
+        const patientById = new Map(allPatients.map((p) => [p.id, p]));
+
+        const out = appts
+          .filter((a) => includeCancelled || a.status !== 'cancelled')
+          .filter((a) => filterPatientId == null || a.patientId === filterPatientId)
+          .map((a) => {
+            const p = a.patientId ? patientById.get(a.patientId) : null;
+            return {
+              appointmentId: a.id,
+              patientId: a.patientId,
+              patientName: p ? `${p.firstName} ${p.lastName}` : null,
+              patientDateOfBirth: p?.dateOfBirth ?? null,
+              startTime: new Date(a.startTime as unknown as string).toISOString(),
+              endTime: a.endTime ? new Date(a.endTime as unknown as string).toISOString() : null,
+              title: (a as any).title ?? null,
+              status: a.status,
+            };
+          })
+          .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+        return JSON.stringify({
+          appointments: out,
+          dateRange: { startDate: rawStart, endDate: rawEnd },
+          totalReturned: out.length,
         });
       }
 
