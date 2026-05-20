@@ -336,9 +336,18 @@ export function detectSuccessClaim(text: string, mode: DetectorMode = 'all'): st
 export function augmentIfHallucinatedSuccess(
   text: string,
   mutationsCalledCount: number,
+  /**
+   * Total tool rounds in this turn — including read tools like
+   * get_practice_setup_status, get_appointments, search_patient, etc.
+   * A read-only summary that opens with "Great!" is not a hallucination —
+   * the model legitimately fetched data and is reporting on it. The old
+   * detector flagged these as false positives.
+   */
+  anyToolsCalledCount: number = 0,
 ): string {
   if (mutationsCalledCount > 0) {
-    // Tool WAS called. Only flag STRONG success claims (not theatre openers).
+    // Mutation WAS proposed. Only flag STRONG success claims (not theatre
+    // openers) — past-tense language on a queued-but-unconfirmed mutation.
     const matched = detectSuccessClaim(text, 'strong-only');
     if (!matched) return text;
     return (
@@ -348,9 +357,13 @@ export function augmentIfHallucinatedSuccess(
       text
     );
   }
-  // No tool called. Flag both strong claims AND theatre openers — both are
-  // load-bearing on a non-action.
-  const matched = detectSuccessClaim(text, 'all');
+  // No mutation was called. Still flag STRONG claims aggressively (Blanche
+  // saying "I've marked them all" without invoking any tool is a clear
+  // hallucination). Theatre openers are only suspicious when NO tool was
+  // called at all — if a read tool ran, an enthusiastic opener is just
+  // narration of real data, not a false claim of action.
+  const mode = anyToolsCalledCount > 0 ? 'strong-only' : 'all';
+  const matched = detectSuccessClaim(text, mode);
   if (!matched) return text;
   return (
     `⚠️ **Heads up — I may have skipped a tool call.** I claimed an action was done ` +
@@ -4663,6 +4676,10 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     const practiceId = context?.practiceId || 1;
     const userId = context?.userId;
     const userRole = context?.role;
+    // Skip server-side chat persistence for shared "Try Demo" accounts so
+    // each demo visitor sees a clean slate and prior visitors' questions
+    // (which may include PHI-shaped test data) don't leak to the next one.
+    const persistConversation = !!userId && !context?.isDemoUser;
 
     // Build a per-request system prompt: role-specific opener + current page.
     // Falls back to the base prompt when either is missing.
@@ -4956,7 +4973,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // actually call any mutation tool this turn, prepend a warning so the user
     // is told they may have been misled. `pendingProposals.length === 0` means
     // no mutation tool was invoked (mutation tool calls always queue a proposal).
-    const augmented = augmentIfHallucinatedSuccess(cleanContent, pendingProposals.length);
+    const augmented = augmentIfHallucinatedSuccess(cleanContent, pendingProposals.length, toolRounds);
     if (augmented !== cleanContent) {
       logger.warn('Blanche hallucinated-success detected; prepending warning', {
         practiceId,
@@ -5003,10 +5020,11 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // decision and a separate trust boundary.)
     //
     // Best-effort: a save failure must not break the chat response. Skip
-    // when we don't have a userId (anonymous / dev fallback).
-    if (userId) {
+    // when we don't have a userId, and also skip for the shared "Try Demo"
+    // accounts (see persistConversation above).
+    if (persistConversation) {
       try {
-        const serverPrior = await storage.getBlancheConversation(userId, practiceId);
+        const serverPrior = await storage.getBlancheConversation(userId!, practiceId);
         const updated = [
           ...serverPrior,
           { role: 'user' as const, content: message.trim() },
@@ -5014,7 +5032,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
         ];
         // Cap at the last 200 messages — same intent as the localStorage cap.
         const trimmed = updated.slice(-200);
-        await storage.saveBlancheConversation(userId, practiceId, trimmed as any);
+        await storage.saveBlancheConversation(userId!, practiceId, trimmed as any);
       } catch (persistErr) {
         logger.warn('Blanche conversation persist failed (non-fatal)', {
           error: persistErr instanceof Error ? persistErr.message : String(persistErr),
@@ -5265,6 +5283,12 @@ router.get('/conversation', isAuthenticated, async (req: any, res: Response) => 
     if (!context?.userId || !context?.practiceId) {
       return res.json({ messages: [] });
     }
+    // Demo users always start fresh — they share one DB userId across all
+    // anonymous "Try Demo" visitors, so persisted history would leak between
+    // them. Return empty so the client renders a clean slate.
+    if (context.isDemoUser) {
+      return res.json({ messages: [] });
+    }
     const messages = await storage.getBlancheConversation(context.userId, context.practiceId);
     return res.json({ messages });
   } catch (error) {
@@ -5283,6 +5307,9 @@ router.delete('/conversation', isAuthenticated, async (req: any, res: Response) 
     if (!context?.userId || !context?.practiceId) {
       return res.json({ ok: true });
     }
+    // Demo users: nothing to clear in the persistence layer (we skip writes
+    // for them), but always clear anyway in case stale data exists from
+    // before this safeguard shipped.
     await storage.clearBlancheConversation(context.userId, context.practiceId);
     return res.json({ ok: true });
   } catch (error) {
