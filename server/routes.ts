@@ -11,7 +11,7 @@ import {
   appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter,
   treatmentPlansRouter, locationsRouter, aiInsightsRouter, customReportsRouter, cannedReportsRouter,
   exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
-  messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter,
+  messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter, costDashboardRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
@@ -199,6 +199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', appealsRouter);
   // Admin routes: /api/admin/*
   app.use('/api', adminRouter);
+  app.use('/api', costDashboardRouter);
   // Reviews & feedback routes: /api/reviews/*, /api/feedback/*, /api/public/feedback/*
   app.use('/api', reviewsRouter);
   // Public portal routes: /api/public/book/*, /api/public/portal/*, /api/patient-portal/*

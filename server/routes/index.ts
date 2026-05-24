@@ -40,6 +40,7 @@ export { default as waitlistRouter } from './waitlist';
 
 export { default as appealsRouter } from './appeals';
 export { default as adminRouter } from './admin';
+export { default as costDashboardRouter } from './cost-dashboard';
 export { default as reviewsRouter } from './reviews';
 export { default as publicPortalRouter } from './public-portal';
 export { default as patientIntakeRouter } from './patient-intake';
