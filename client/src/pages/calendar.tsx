@@ -731,26 +731,38 @@ export default function CalendarPage() {
                         </div>
                       </div>
                     ) : (
-                      <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                      // Patient picker. Two fixes for the reviewer-reported "nothing in the dropdown":
+                      //  1. modal={false} on Popover — shadcn/Radix bug: a Popover inside a Dialog
+                      //     renders behind the Dialog overlay, making contents invisible.
+                      //     modal={false} + explicit z-[60] escapes that.
+                      //  2. Stronger affordance on the trigger button — explicit "Click to select
+                      //     patient (N available)" label + bigger chevron — so it's obvious it's
+                      //     interactive, not just placeholder text.
+                      <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen} modal={false}>
                         <PopoverTrigger asChild>
                           <Button
                             variant="outline"
                             role="combobox"
                             aria-expanded={patientSearchOpen}
-                            className="w-full justify-between font-normal"
+                            className="w-full justify-between font-normal h-10"
+                            data-testid="button-patient-picker"
                           >
                             {newAppointment.patientId
                               ? (() => {
                                   const p = patients.find((p: any) => String(p.id) === newAppointment.patientId);
-                                  return p ? `${(p as any).firstName} ${(p as any).lastName}` : "Select a patient";
+                                  return p ? `${(p as any).firstName} ${(p as any).lastName}` : "Click to select patient";
                                 })()
                               : (isNewPatient && newPatientData.firstName)
                                 ? `${newPatientData.firstName} ${newPatientData.lastName} (new)`
-                                : "Search or type patient name..."}
-                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                : `Click to select patient (${patients.length} available)`}
+                            <ChevronsUpDown className="ml-2 h-5 w-5 shrink-0 opacity-70" />
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                        <PopoverContent
+                          className="w-[--radix-popover-trigger-width] p-0 z-[60]"
+                          align="start"
+                          sideOffset={4}
+                        >
                           <Command>
                             <CommandInput
                               placeholder="Type a name to search..."
