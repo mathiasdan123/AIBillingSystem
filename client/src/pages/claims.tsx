@@ -1646,6 +1646,24 @@ export default function Claims() {
                                       value={`${p.firstName} ${p.lastName}`}
                                       onSelect={() => {
                                         field.onChange(p.id.toString());
+                                        // Reviewer fix: "Insurance gets updated in patient intake
+                                        // but doesn't auto-populate into claim details." Look up
+                                        // the patient's recorded insurance provider in the payer
+                                        // catalog and pre-select the matching insuranceId so the
+                                        // user doesn't have to remember to re-pick it. Case-
+                                        // insensitive name match; falls back to leaving the field
+                                        // blank if no match (a warning renders under the dropdown).
+                                        const providerName = (p.insuranceProvider || '').trim().toLowerCase();
+                                        if (providerName && insurances) {
+                                          const match = (insurances as any[]).find(
+                                            (ins) => (ins.name || '').trim().toLowerCase() === providerName,
+                                          );
+                                          if (match) {
+                                            form.setValue('insuranceId', match.id.toString(), { shouldDirty: true });
+                                          } else {
+                                            form.setValue('insuranceId', '', { shouldDirty: true });
+                                          }
+                                        }
                                         setClaimPatientSearchOpen(false);
                                       }}
                                     >
@@ -1671,26 +1689,47 @@ export default function Claims() {
                 <FormField
                   control={form.control}
                   name="insuranceId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Insurance Provider</FormLabel>
-                      <FormControl>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select insurance" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {insurances?.map((insurance) => (
-                              <SelectItem key={insurance.id} value={insurance.id.toString()}>
-                                {insurance.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  render={({ field }) => {
+                    // Inline diagnostic: when the chosen patient has an
+                    // insurance string on file but no matching row in the
+                    // payer catalog, the auto-populate above can't help and
+                    // the user has to either add the payer or leave the
+                    // claim insurance-less (which will fail the scrubber).
+                    const selectedPatient = (patients as any[] | undefined)?.find(
+                      (p) => String(p.id) === String(form.watch('patientId')),
+                    );
+                    const patientProvider = (selectedPatient?.insuranceProvider || '').trim();
+                    const catalogMatch = patientProvider && (insurances as any[] | undefined)?.find(
+                      (ins) => (ins.name || '').trim().toLowerCase() === patientProvider.toLowerCase(),
+                    );
+                    const showMissingPayerWarning = !!patientProvider && !catalogMatch;
+                    return (
+                      <FormItem>
+                        <FormLabel>Insurance Provider</FormLabel>
+                        <FormControl>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select insurance" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {insurances?.map((insurance) => (
+                                <SelectItem key={insurance.id} value={insurance.id.toString()}>
+                                  {insurance.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        {showMissingPayerWarning && (
+                          <p className="text-xs text-amber-700 mt-1" data-testid="warning-payer-not-in-catalog">
+                            Patient's insurance "<strong>{patientProvider}</strong>" isn't in your payer list.
+                            Add it under Payer Management, or pick the closest match above.
+                          </p>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
                 />
 
                 <FormField
