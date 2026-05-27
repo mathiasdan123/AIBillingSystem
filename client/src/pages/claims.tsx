@@ -33,6 +33,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { DemoBadge } from "@/components/DemoBadge";
+import InsuranceEditDialog from "@/components/InsuranceEditDialog";
 
 const claimSchema = z.object({
   patientId: z.string().min(1, "Patient is required"),
@@ -662,6 +663,9 @@ export default function Claims() {
   const [denialPredictionResult, setDenialPredictionResult] = useState<Claim["denialPrediction"]>(null);
   const [predictingDenial, setPredictingDenial] = useState(false);
   const [preSubmitClaimId, setPreSubmitClaimId] = useState<number | null>(null); // set when Submit triggers denial check
+  // Holds the patient ID whose insurance the user is fixing inline from the
+  // scrub-error dialog. Null = the fix-insurance dialog is closed.
+  const [insuranceFixPatientId, setInsuranceFixPatientId] = useState<number | null>(null);
 
   // Authorization / scrub state
   const [showAuthDialog, setShowAuthDialog] = useState(false);
@@ -2982,11 +2986,59 @@ export default function Claims() {
               </div>
             )}
           </div>
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {(() => {
+              // Show "Fix insurance" shortcut when at least one error mentions
+              // insurance/member/policy/effective and we can identify the patient.
+              // Saves the user from hunting for the patient in the Patients tab.
+              const insurancePat = /insurance|member id|policy|effective|termination/i;
+              const hasInsuranceError = scrubErrors.some((e) => insurancePat.test(e));
+              const claim = preSubmitClaimId
+                ? (claims as any[] | undefined)?.find((c) => c.id === preSubmitClaimId)
+                : null;
+              const patientId = claim?.patientId ?? null;
+              if (!hasInsuranceError || !patientId) return null;
+              return (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setInsuranceFixPatientId(patientId);
+                    setShowScrubResults(false);
+                  }}
+                  data-testid="button-fix-insurance"
+                >
+                  Fix insurance
+                </Button>
+              );
+            })()}
             <Button onClick={() => setShowScrubResults(false)}>Close</Button>
           </div>
         </DialogContent>
       </Dialog>
+
+      {(() => {
+        if (!insuranceFixPatientId) return null;
+        const patient = (patients as any[] | undefined)?.find((p) => p.id === insuranceFixPatientId);
+        if (!patient) return null;
+        return (
+          <InsuranceEditDialog
+            open={!!insuranceFixPatientId}
+            onOpenChange={(open) => { if (!open) setInsuranceFixPatientId(null); }}
+            patientId={patient.id}
+            patientName={`${patient.firstName} ${patient.lastName}`}
+            initialValues={patient}
+            onSaved={() => {
+              // After save, prompt the user to retry by reopening the submit
+              // confirmation modal. We deliberately don't auto-submit — the user
+              // may have other fields to review.
+              toast({
+                title: 'Insurance updated',
+                description: 'Click Submit on the claim to retry.',
+              });
+            }}
+          />
+        );
+      })()}
 
       {/* Hidden Superbill Print Trigger */}
       <div style={{ display: "none" }}>

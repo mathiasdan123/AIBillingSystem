@@ -76,7 +76,7 @@ export default function CalendarPage() {
     recurrenceEndDate: "",
   });
   const [isNewPatient, setIsNewPatient] = useState(false);
-  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "" });
+  const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "", insuranceProvider: "", insuranceId: "", policyNumber: "", groupNumber: "", effectiveDate: "" });
   const [patientSearchOpen, setPatientSearchOpen] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [showSeriesActionDialog, setShowSeriesActionDialog] = useState(false);
@@ -182,7 +182,7 @@ export default function CalendarPage() {
       toast({ title: "Appointment Scheduled", description: desc });
       setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
       setIsNewPatient(false);
-      setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+      setNewPatientData({ firstName: "", lastName: "", phone: "", email: "", insuranceProvider: "", insuranceId: "", policyNumber: "", groupNumber: "", effectiveDate: "" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -317,6 +317,14 @@ export default function CalendarPage() {
           email: newPatientData.email.trim() || null,
           dateOfBirth: "2000-01-01",
           practiceId: 1,
+          // Optional insurance — only sent if the user filled them in.
+          // Blank strings would otherwise persist as "" and confuse the
+          // claim scrubber's "missing insurance" check.
+          insuranceProvider: newPatientData.insuranceProvider.trim() || null,
+          insuranceId: newPatientData.insuranceId.trim() || null,
+          policyNumber: newPatientData.policyNumber.trim() || null,
+          groupNumber: newPatientData.groupNumber.trim() || null,
+          effectiveDate: newPatientData.effectiveDate || null,
         });
         const created = await res.json();
         patientId = String(created.id);
@@ -588,7 +596,7 @@ export default function CalendarPage() {
                           if (!isNewPatient) {
                             setNewAppointment({ ...newAppointment, patientId: "" });
                           } else {
-                            setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
+                            setNewPatientData({ firstName: "", lastName: "", phone: "", email: "", insuranceProvider: "", insuranceId: "", policyNumber: "", groupNumber: "", effectiveDate: "" });
                           }
                         }}
                       >
@@ -630,6 +638,55 @@ export default function CalendarPage() {
                               placeholder="Email address"
                               value={newPatientData.email}
                               onChange={(e) => setNewPatientData({ ...newPatientData, email: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        {/* Insurance fields — captured at scheduling time so the
+                            patient is claim-ready from minute one. All optional;
+                            blank values won't be sent. */}
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t mt-2">
+                          <div>
+                            <Label className="text-xs">Insurance Provider</Label>
+                            <Input
+                              placeholder="e.g. Aetna"
+                              value={newPatientData.insuranceProvider}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, insuranceProvider: e.target.value })}
+                              data-testid="input-new-patient-insurance-provider"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Member ID</Label>
+                            <Input
+                              placeholder="Member ID"
+                              value={newPatientData.insuranceId}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, insuranceId: e.target.value })}
+                              data-testid="input-new-patient-insurance-id"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <Label className="text-xs">Policy #</Label>
+                            <Input
+                              placeholder="Policy"
+                              value={newPatientData.policyNumber}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, policyNumber: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Group #</Label>
+                            <Input
+                              placeholder="Group"
+                              value={newPatientData.groupNumber}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, groupNumber: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Effective Date</Label>
+                            <Input
+                              type="date"
+                              value={newPatientData.effectiveDate}
+                              onChange={(e) => setNewPatientData({ ...newPatientData, effectiveDate: e.target.value })}
                             />
                           </div>
                         </div>

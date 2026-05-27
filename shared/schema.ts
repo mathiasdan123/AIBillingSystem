@@ -189,6 +189,12 @@ export const patients = pgTable("patients", {
   insuranceId: varchar("insurance_id"),
   policyNumber: varchar("policy_number"),
   groupNumber: varchar("group_number"),
+  // Primary-insurance effective / termination dates. Nullable; set by users
+  // via the patient detail page or the inline fix-from-claim-error modal.
+  // patient_plan_benefits has richer dated benefits data populated via OCR;
+  // these two are the user-editable basics.
+  effectiveDate: date("effective_date"),
+  terminationDate: date("termination_date"),
   // Secondary insurance fields
   secondaryInsuranceProvider: varchar("secondary_insurance_provider"),
   secondaryInsurancePolicyNumber: varchar("secondary_insurance_policy_number"),

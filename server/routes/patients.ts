@@ -320,6 +320,69 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
   }
 });
 
+/**
+ * PATCH /api/patients/:id/insurance
+ *
+ * Edit a patient's primary + secondary insurance fields. This is the gap
+ * the reviewer hit: previously the patient detail page only displayed
+ * insurance info — there was no way to update member ID / policy / effective
+ * dates after the initial intake form, which meant claims would fail the
+ * pre-submission scrub with no obvious recovery path.
+ *
+ * Field allowlist below — anything else in the body is dropped silently
+ * so a caller can't sneak in non-insurance updates through this endpoint.
+ */
+const INSURANCE_FIELDS = new Set([
+  'insuranceProvider',
+  'insuranceId',
+  'policyNumber',
+  'groupNumber',
+  'effectiveDate',
+  'terminationDate',
+  'secondaryInsuranceProvider',
+  'secondaryInsuranceMemberId',
+  'secondaryInsurancePolicyNumber',
+  'secondaryInsuranceGroupNumber',
+  'secondaryInsuranceRelationship',
+  'secondaryInsuranceSubscriberName',
+  'secondaryInsuranceSubscriberDob',
+]);
+
+router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid patient id' });
+
+    const existing = await storage.getPatient(id);
+    if (!existing) return res.status(404).json({ error: 'Patient not found' });
+
+    // Tenant isolation — admins can cross practices when explicitly asked
+    // elsewhere, but insurance edits stay scoped to the user's practice.
+    const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
+    if (userPracticeId && existing.practiceId !== userPracticeId) {
+      return res.status(403).json({ error: 'Patient is not in your practice' });
+    }
+
+    const patch: Record<string, any> = {};
+    for (const [k, v] of Object.entries(req.body ?? {})) {
+      if (!INSURANCE_FIELDS.has(k)) continue;
+      // Normalize empty strings to null so the form's "Clear" gesture
+      // actually clears the column instead of writing "" into a date.
+      patch[k] = v === '' ? null : v;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'No insurance fields supplied' });
+    }
+
+    const updated = await storage.updatePatient(id, patch as any);
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error updating patient insurance', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to update insurance' });
+  }
+});
+
 // ==================== INTAKE INVITE (Slice β) ====================
 // POST /api/patients/:id/send-intake-invite
 // Generates a 15-minute magic link that lands the patient directly in the
