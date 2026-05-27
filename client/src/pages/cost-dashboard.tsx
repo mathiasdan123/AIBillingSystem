@@ -17,6 +17,7 @@ import {
 
 interface SummaryResponse {
   generatedAt: string;
+  scope?: { kind: 'workspace'; workspaceId: string } | { kind: 'org' };
   mtd: { spendUsd: number; budgetUsd: number; usedPct: number; warnPct: number; warning: boolean };
   dailyTrend: Array<{ date: string; usd: number }>;
   spendByModel: Array<{ model: string; usd: number }>;
@@ -27,6 +28,7 @@ interface SummaryResponse {
     uncachedInputTokens: number;
     hitRatePct: number;
   }>;
+  spendByWorkspace?: Array<{ workspaceId: string; usd: number; isScopedWorkspace: boolean }>;
   cacheTtlSeconds: number;
 }
 
@@ -86,6 +88,18 @@ export default function CostDashboard() {
           Anthropic API spend and prompt-cache health. Updated every 5 min ·{' '}
           last fetch {new Date(summary.generatedAt).toLocaleString()}
         </p>
+        {/* Scope subtitle — makes it obvious whether headline numbers are
+            production-only or the whole org (which includes personal/dev work). */}
+        {summary.scope?.kind === 'workspace' ? (
+          <p className="text-xs text-muted-foreground mt-1">
+            Scoped to production workspace <code>{summary.scope.workspaceId}</code>. Org-wide breakdown below.
+          </p>
+        ) : (
+          <p className="text-xs text-amber-700 mt-1">
+            Showing <strong>org-wide</strong> spend (no production-workspace filter configured).
+            Set <code>ANTHROPIC_PROD_WORKSPACE_ID</code> to scope to just TherapyBill production.
+          </p>
+        )}
       </div>
 
       {/* MTD spend vs budget */}
@@ -239,6 +253,46 @@ export default function CostDashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* Org-wide spend by workspace — always shows the full picture even
+          when the headline numbers above are workspace-scoped. */}
+      {summary.spendByWorkspace && summary.spendByWorkspace.length > 0 && (
+        <Card data-testid="card-spend-by-workspace">
+          <CardHeader>
+            <CardTitle>Spend by workspace (MTD, org-wide)</CardTitle>
+            <CardDescription>
+              All workspaces under the Anthropic organization. The highlighted row is the
+              production workspace the headline numbers are scoped to.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <table className="text-sm w-full">
+              <thead>
+                <tr className="text-left text-muted-foreground border-b">
+                  <th className="py-2">Workspace ID</th>
+                  <th className="py-2 text-right">USD (MTD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.spendByWorkspace.map((r) => (
+                  <tr
+                    key={r.workspaceId}
+                    className={`border-b ${r.isScopedWorkspace ? 'bg-blue-50 font-medium' : ''}`}
+                  >
+                    <td className="py-2 font-mono text-xs">
+                      {r.workspaceId}
+                      {r.isScopedWorkspace && (
+                        <span className="ml-2 text-blue-700 text-[10px] uppercase tracking-wide">production</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">${r.usd.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Per-practice attribution (placeholder) */}
       <Card>
