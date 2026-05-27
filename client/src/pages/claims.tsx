@@ -85,7 +85,7 @@ interface Claim {
 }
 
 // Comprehensive claim detail component with tabs for billing, payments, and status
-function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation }: {
+function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance }: {
   claim: any;
   lineItems: any[];
   loadingLineItems: boolean;
@@ -96,6 +96,9 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   getStatusBadge: (status: string) => string;
   submitSecondaryMutation: any;
   regenerateAppealMutation: any;
+  /** Reviewer fix: opens the InsuranceEditDialog for this claim's patient
+   *  so insurance can be updated without leaving the claim screen. */
+  onEditInsurance?: (patientId: number) => void;
 }) {
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const { toast } = useToast();
@@ -138,7 +141,19 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
             <p className="font-medium">{getPatientName(claim.patientId)}</p>
           </div>
           <div>
-            <Label className="text-slate-500 text-xs">Insurance</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-500 text-xs">Insurance</Label>
+              {onEditInsurance && (
+                <button
+                  type="button"
+                  className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                  onClick={() => onEditInsurance(claim.patientId)}
+                  data-testid="button-edit-insurance-from-claim"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
             <p className="font-medium">{getInsuranceName(claim.insuranceId)}</p>
           </div>
           <div>
@@ -2578,6 +2593,7 @@ export default function Claims() {
               getStatusBadge={getStatusBadge}
               submitSecondaryMutation={submitSecondaryMutation}
               regenerateAppealMutation={regenerateAppealMutation}
+              onEditInsurance={(patientId) => setInsuranceFixPatientId(patientId)}
             />
 
           )}
