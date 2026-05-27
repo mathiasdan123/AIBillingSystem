@@ -109,11 +109,16 @@ async function adminGet<T>(path: string, params: Record<string, string | string[
   return json;
 }
 
+/** group_by options valid on /usage_report/messages */
+export type UsageGroupBy = 'model' | 'workspace_id' | 'api_key_id' | 'service_tier' | 'context_window';
+/** group_by options valid on /cost_report (Anthropic does NOT accept "model" here). */
+export type CostGroupBy = 'description' | 'workspace_id';
+
 export interface FetchOpts {
   startingAt: Date;
   endingAt: Date;
   bucketWidth: '1m' | '1h' | '1d';
-  groupBy?: Array<'model' | 'workspace_id' | 'api_key_id' | 'service_tier' | 'context_window'>;
+  groupBy?: UsageGroupBy[];
 }
 
 export async function fetchMessagesUsage(opts: FetchOpts): Promise<UsageResponse> {
@@ -127,7 +132,12 @@ export async function fetchMessagesUsage(opts: FetchOpts): Promise<UsageResponse
   return adminGet<UsageResponse>('/usage_report/messages', params);
 }
 
-export async function fetchCost(opts: Omit<FetchOpts, 'bucketWidth'> & { bucketWidth?: '1d' }): Promise<CostResponse> {
+export async function fetchCost(opts: {
+  startingAt: Date;
+  endingAt: Date;
+  bucketWidth?: '1d';
+  groupBy?: CostGroupBy[];
+}): Promise<CostResponse> {
   const params: Record<string, string | string[]> = {
     starting_at: opts.startingAt.toISOString(),
     ending_at: opts.endingAt.toISOString(),
