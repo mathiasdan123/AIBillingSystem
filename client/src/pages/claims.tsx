@@ -103,6 +103,28 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const { toast } = useToast();
 
+  // Reviewer fix #11: surface the patient's outstanding balance on the claim
+  // screen so it doesn't take a separate trip into the patient detail
+  // Billing tab to find it. Backend already has GET /api/patients/:id/balance.
+  const { data: patientBalanceData } = useQuery<{ patientId: number; balance: any }>({
+    queryKey: [`/api/patients/${claim.patientId}/balance`],
+    enabled: !!claim.patientId,
+    retry: false,
+  });
+  const patientBalance = (() => {
+    const b: any = patientBalanceData?.balance;
+    if (b == null) return null;
+    // balance can be a number, a stringified decimal, or an object with a
+    // `balance` / `currentBalance` / `totalBalance` field depending on
+    // how storage.getPatientBalance shapes it. Try the common ones.
+    const candidates = [b?.balance, b?.currentBalance, b?.totalBalance, b];
+    for (const c of candidates) {
+      const n = typeof c === 'string' ? parseFloat(c) : typeof c === 'number' ? c : null;
+      if (n != null && !isNaN(n)) return n;
+    }
+    return null;
+  })();
+
   // Fetch payment postings for this claim
   const { data: paymentPostings = [] } = useQuery<any[]>({
     queryKey: [`/api/payment-postings/claim/${claim.id}`],
@@ -166,6 +188,17 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
               {paid > 0 ? `$${paid.toFixed(2)}` : '—'}
             </p>
           </div>
+          {patientBalance !== null && (
+            <div>
+              <Label className="text-slate-500 text-xs">Patient Balance</Label>
+              <p
+                className={`font-medium text-lg ${patientBalance > 0 ? 'text-amber-700' : 'text-slate-400'}`}
+                data-testid="text-patient-balance-on-claim"
+              >
+                {patientBalance > 0 ? `$${patientBalance.toFixed(2)}` : '$0.00'}
+              </p>
+            </div>
+          )}
           {claim.aiReviewScore && (
             <div>
               <Label className="text-slate-500 text-xs">AI Review Score</Label>
