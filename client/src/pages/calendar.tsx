@@ -68,6 +68,11 @@ export default function CalendarPage() {
     date: new Date().toISOString().split("T")[0],
     startTime: "09:00",
     type: "Individual Therapy",
+    // Optional FK to appointmentTypes catalog. Empty string = no catalog row;
+    // legacy behavior preserved (type string + 60min default).
+    appointmentTypeId: "",
+    // Minutes. String to match Select value contract; coerced to number on POST.
+    durationMinutes: "60",
     notes: "",
     locationId: "",
     recurrencePattern: "none" as "none" | "weekly" | "biweekly" | "monthly",
@@ -108,6 +113,19 @@ export default function CalendarPage() {
     queryKey: ["/api/locations"],
     queryFn: async () => {
       const res = await fetch('/api/locations');
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  // Fetch the practice's configured appointment types for the Session Type
+  // dropdown. Falls back to the legacy hardcoded list when none are configured
+  // (rendered inline below) so this PR doesn't break practices that never
+  // visited the booking-settings page.
+  const { data: appointmentTypeOptions = [] } = useQuery<any[]>({
+    queryKey: ["/api/booking/appointment-types"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/booking/appointment-types");
       if (!res.ok) return [];
       return res.json();
     },
@@ -180,7 +198,7 @@ export default function CalendarPage() {
         ? `Created ${data.seriesInfo.totalCreated} appointments (${data.seriesInfo.recurrenceDescription})`
         : "Appointment created successfully.";
       toast({ title: "Appointment Scheduled", description: desc });
-      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", appointmentTypeId: "", durationMinutes: "60", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
       setIsNewPatient(false);
       setNewPatientData({ firstName: "", lastName: "", phone: "", email: "" });
     },
@@ -330,17 +348,22 @@ export default function CalendarPage() {
       return;
     }
 
-    const sh = parseInt(newAppointment.startTime.split(":")[0]);
-    const endTime = String(sh + 1).padStart(2, "0") + ":00";
-
+    // Compute endTime from the chosen duration instead of the prior hardcoded
+    // +1 hour. Default 60 if a stale state somehow lands here without one.
+    const durationMin = parseInt(newAppointment.durationMinutes, 10) || 60;
     const startDt = new Date(`${newAppointment.date}T${newAppointment.startTime}:00`);
-    const endDt = new Date(`${newAppointment.date}T${endTime}:00`);
+    const endDt = new Date(startDt.getTime() + durationMin * 60_000);
 
     const payload: any = {
       practiceId: 1,
       patientId: parseInt(patientId),
       therapistId: newAppointment.therapistId || null,
       locationId: newAppointment.locationId ? parseInt(newAppointment.locationId) : null,
+      // Catalog FK (if the user picked from the configured types) so reports
+      // and analytics can roll up by canonical type. Null when the user used
+      // the legacy fallback dropdown.
+      appointmentTypeId: newAppointment.appointmentTypeId ? parseInt(newAppointment.appointmentTypeId, 10) : null,
+      durationMinutes: durationMin,
       title: newAppointment.type,
       startTime: startDt.toISOString(),
       endTime: endDt.toISOString(),
@@ -779,17 +802,66 @@ export default function CalendarPage() {
                       </Select>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Session Type</Label>
-                    <Select value={newAppointment.type} onValueChange={(v) => setNewAppointment({ ...newAppointment, type: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Individual Therapy">Individual Therapy</SelectItem>
-                        <SelectItem value="Family Therapy">Family Therapy</SelectItem>
-                        <SelectItem value="Group Therapy">Group Therapy</SelectItem>
-                        <SelectItem value="Initial Evaluation">Initial Evaluation</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2">
+                      <Label>Session Type</Label>
+                      {appointmentTypeOptions.length > 0 ? (
+                        <Select
+                          value={newAppointment.appointmentTypeId}
+                          onValueChange={(v) => {
+                            const chosen = appointmentTypeOptions.find((t: any) => String(t.id) === v);
+                            setNewAppointment({
+                              ...newAppointment,
+                              appointmentTypeId: v,
+                              // Mirror catalog name into the legacy title string so
+                              // existing list views (which read appointment.title)
+                              // keep showing something meaningful.
+                              type: chosen?.name ?? newAppointment.type,
+                              // Auto-set duration from the catalog row; user can
+                              // still override below.
+                              durationMinutes: chosen?.duration ? String(chosen.duration) : newAppointment.durationMinutes,
+                            });
+                          }}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                          <SelectContent>
+                            {appointmentTypeOptions.filter((t: any) => t.isActive !== false).map((t: any) => (
+                              <SelectItem key={t.id} value={String(t.id)}>
+                                {t.name}{t.duration ? ` · ${t.duration} min` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        // Fallback: no types configured in the practice yet.
+                        <Select value={newAppointment.type} onValueChange={(v) => setNewAppointment({ ...newAppointment, type: v })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Individual Therapy">Individual Therapy</SelectItem>
+                            <SelectItem value="Family Therapy">Family Therapy</SelectItem>
+                            <SelectItem value="Group Therapy">Group Therapy</SelectItem>
+                            <SelectItem value="Initial Evaluation">Initial Evaluation</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Duration</Label>
+                      <Select
+                        value={newAppointment.durationMinutes}
+                        onValueChange={(v) => setNewAppointment({ ...newAppointment, durationMinutes: v })}
+                      >
+                        <SelectTrigger data-testid="select-duration"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="15">15 min</SelectItem>
+                          <SelectItem value="30">30 min</SelectItem>
+                          <SelectItem value="45">45 min</SelectItem>
+                          <SelectItem value="60">60 min</SelectItem>
+                          <SelectItem value="90">90 min</SelectItem>
+                          <SelectItem value="120">120 min</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Notes (optional)</Label>

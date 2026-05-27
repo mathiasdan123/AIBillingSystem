@@ -130,6 +130,16 @@ router.post('/', isAuthenticated, async (req: any, res) => {
     appointmentData.startTime = new Date(appointmentData.startTime);
     appointmentData.endTime = new Date(appointmentData.endTime);
 
+    // Tenant guard: if the caller passed an appointmentTypeId, confirm it
+    // belongs to the same practice. Prevents a curl payload from referencing
+    // another practice's catalog row (FK lets it through, this stops it).
+    if (appointmentData.appointmentTypeId && appointmentData.practiceId) {
+      const aptType = await storage.getAppointmentType(appointmentData.appointmentTypeId);
+      if (!aptType || aptType.practiceId !== appointmentData.practiceId) {
+        return res.status(400).json({ message: 'Appointment type does not belong to this practice' });
+      }
+    }
+
     // If no recurrence, create a single appointment
     if (!recurrencePattern || recurrencePattern === 'none') {
       const appointment = await storage.createAppointment(appointmentData);

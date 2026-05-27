@@ -235,6 +235,12 @@ export const createAppointmentSchema = z.object({
     .transform((s) => s.trim())
     .optional()
     .nullable(),
+  // Optional FK to the appointment_types catalog (calendar dialog uses
+  // this when the practice has configured types).
+  appointmentTypeId: z.number().int().positive().optional().nullable(),
+  // Minutes. Bounded to avoid silly inputs without being so tight it blocks
+  // long evals; the broader 8-hour cap is enforced via the refine below.
+  durationMinutes: z.number().int().min(5).max(480).optional().nullable(),
 }).refine(
   (data) => new Date(data.startTime) < new Date(data.endTime),
   { message: 'End time must be after start time', path: ['endTime'] }
