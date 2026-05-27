@@ -519,24 +519,40 @@ export default function CalendarPage() {
 
   const getStatusColor = (s: string) =>
     s === "completed" ? "bg-slate-200 text-slate-800" :
+    s === "checked-out" ? "bg-slate-200 text-slate-800" :
+    s === "in-session" ? "bg-amber-100 text-amber-900" :
     s === "checked_in" ? "bg-green-100 text-green-800" :
+    s === "checked-in" ? "bg-green-100 text-green-800" :
     s === "scheduled" ? "bg-gray-100 text-gray-800" :
     s === "cancelled" ? "bg-red-100 text-red-800" :
     s === "no_show" ? "bg-orange-100 text-orange-800" :
+    s === "no-show" ? "bg-orange-100 text-orange-800" :
     "bg-gray-100 text-gray-800";
 
+  // Reviewer fix #4: derive a single status label from the timestamps + status
+  // column so every view shows the same words. Includes in-session and no-show,
+  // which previously fell through to generic strings.
   const getStatusLabel = (apt: any) => {
+    if (apt.status === "cancelled") return "cancelled";
+    if (apt.status === "no_show") return "no-show";
     if (apt.checkedOutAt) return "checked-out";
+    if (apt.sessionStartedAt && !apt.sessionEndedAt) return "in-session";
     if (apt.checkedInAt) return "checked-in";
     return apt.status || "scheduled";
   };
 
+  // Reviewer fix #4: distinct color per state, including in-session (amber) and
+  // no-show (orange) which previously fell through to the generic scheduled
+  // blue. Cancelled cells also get reduced opacity + strikethrough text in the
+  // grid so they're obviously inactive without being invisible.
   const getCalendarBlockStyle = (apt: Appointment) => {
     const a = apt as any;
-    if (apt.status === "cancelled") return "bg-red-200 border-l-4 border-red-600 text-red-900";
-    if (a.checkedOutAt || apt.status === "completed") return "bg-slate-200 border-l-4 border-slate-500";
-    if (a.checkedInAt || apt.status === "checked_in") return "bg-green-100 border-l-4 border-green-500";
-    return "bg-blue-100 border-l-4 border-blue-500";
+    if (apt.status === "cancelled") return "bg-red-100 border-l-4 border-red-500 text-red-900 opacity-70 line-through";
+    if (apt.status === "no_show") return "bg-orange-100 border-l-4 border-orange-500 text-orange-900";
+    if (a.checkedOutAt || apt.status === "completed") return "bg-slate-200 border-l-4 border-slate-500 text-slate-700";
+    if (a.sessionStartedAt && !a.sessionEndedAt) return "bg-amber-100 border-l-4 border-amber-500 text-amber-900";
+    if (a.checkedInAt || apt.status === "checked_in") return "bg-green-100 border-l-4 border-green-500 text-green-900";
+    return "bg-blue-100 border-l-4 border-blue-500 text-blue-900";
   };
 
   const formatTime = (dt: string | Date) => {
@@ -1197,27 +1213,42 @@ export default function CalendarPage() {
                 {(view === "week" ? weekDates : [currentDate]).map((date, ci) => (
                   <div key={ci} className="relative border-r last:border-r-0">
                     {HOURS.map((h) => (<div key={h} className="h-16 border-b" />))}
-                    {getAppointmentsForDate(date).map((apt) => (
+                    {getAppointmentsForDate(date).map((apt) => {
+                      const statusLabel = getStatusLabel(apt as any);
+                      return (
                       <div
                         key={apt.id}
-                        className={"absolute left-1 right-1 rounded-lg p-2 cursor-pointer hover:opacity-90 " + getCalendarBlockStyle(apt)}
+                        className={"absolute left-1 right-1 rounded-lg p-2 cursor-pointer hover:ring-2 hover:ring-blue-300 transition " + getCalendarBlockStyle(apt)}
                         style={getAppointmentStyle(apt)}
                         onClick={() => {
+                          // Reviewer fix #4: open the unified actions dialog from
+                          // grid blocks too (was opening only the Cancel dialog).
+                          // Cancelled still gets a toast — no actions are available
+                          // on a cancelled appointment.
                           if (apt.status !== "cancelled") {
-                            openCancelDialog(apt);
+                            openAppointmentActions(apt);
                           } else {
                             toast({ title: apt.title || "Appointment", description: `Cancelled: ${apt.cancellationReason || "N/A"}` });
                           }
                         }}
+                        data-testid={`grid-cell-appointment-${apt.id}`}
                       >
-                        <div className="text-xs font-medium truncate flex items-center gap-1">
-                          {(apt as any).isRecurring && <Repeat className="w-3 h-3 flex-shrink-0" />}
-                          {(() => {
-                            const patient = patients.find((p: any) => p.id === apt.patientId);
-                            return patient
-                              ? `${(patient as any).firstName} ${(patient as any).lastName}`
-                              : (apt.title || "Appointment");
-                          })()}
+                        <div className="flex items-start justify-between gap-1">
+                          <div className="text-xs font-medium truncate flex items-center gap-1 min-w-0">
+                            {(apt as any).isRecurring && <Repeat className="w-3 h-3 flex-shrink-0" />}
+                            {(() => {
+                              const patient = patients.find((p: any) => p.id === apt.patientId);
+                              return patient
+                                ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                                : (apt.title || "Appointment");
+                            })()}
+                          </div>
+                          {/* Status badge — always visible on the grid block so
+                              checked-in / in-session / cancelled / no-show are
+                              immediately distinguishable without hovering. */}
+                          <span className={"text-[9px] px-1.5 py-0.5 rounded-full font-semibold leading-tight flex-shrink-0 " + getStatusColor(statusLabel)}>
+                            {statusLabel}
+                          </span>
                         </div>
                         <div className="text-xs text-slate-600 truncate">
                           {formatTime(apt.startTime)}
@@ -1233,7 +1264,8 @@ export default function CalendarPage() {
                           {apt.status === "cancelled" && ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})`}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ))}
               </div>
