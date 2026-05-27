@@ -26,6 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PatientBillingTab from "@/components/PatientBillingTab";
 import PatientProgressNotesManager from "@/components/PatientProgressNotesManager";
 import { DemoBadge } from "@/components/DemoBadge";
+import InsuranceEditDialog from "@/components/InsuranceEditDialog";
 
 interface EligibilityCheck {
   id: number;
@@ -512,6 +513,7 @@ export default function Patients() {
   const [practiceId] = useState(user?.practiceId || 1);
   const [searchTerm, setSearchTerm] = useState("");
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
+  const [insuranceEditOpen, setInsuranceEditOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [eligibilityResults, setEligibilityResults] = useState<Record<number, EligibilityCheck>>({});
   const [checkingEligibility, setCheckingEligibility] = useState<number | null>(null);
@@ -1389,7 +1391,18 @@ export default function Patients() {
               </div>
               
               <div className="border-t pt-4">
-                <h4 className="font-medium text-foreground mb-2">Insurance Information</h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium text-foreground">Insurance Information</h4>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setInsuranceEditOpen(true)}
+                    data-testid="button-edit-insurance"
+                  >
+                    Edit insurance
+                  </Button>
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium text-foreground">Provider</label>
@@ -1410,6 +1423,18 @@ export default function Patients() {
                     <p className="text-sm text-muted-foreground">{selectedPatient.groupNumber || "Not provided"}</p>
                   </div>
                 </div>
+                {((selectedPatient as any).effectiveDate || (selectedPatient as any).terminationDate) && (
+                  <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div>
+                      <label className="text-sm font-medium text-foreground">Effective Date</label>
+                      <p className="text-sm text-muted-foreground">{(selectedPatient as any).effectiveDate || "—"}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-foreground">Termination Date</label>
+                      <p className="text-sm text-muted-foreground">{(selectedPatient as any).terminationDate || "—"}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Secondary Insurance */}
@@ -1722,6 +1747,30 @@ export default function Patients() {
             </Tabs>
           </DialogContent>
         </Dialog>
+      )}
+
+      {selectedPatient && (
+        <InsuranceEditDialog
+          open={insuranceEditOpen}
+          onOpenChange={setInsuranceEditOpen}
+          patientId={selectedPatient.id}
+          patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
+          initialValues={{
+            insuranceProvider: selectedPatient.insuranceProvider,
+            insuranceId: selectedPatient.insuranceId,
+            policyNumber: selectedPatient.policyNumber,
+            groupNumber: selectedPatient.groupNumber,
+            effectiveDate: (selectedPatient as any).effectiveDate,
+            terminationDate: (selectedPatient as any).terminationDate,
+            secondaryInsuranceProvider: selectedPatient.secondaryInsuranceProvider,
+            secondaryInsuranceMemberId: selectedPatient.secondaryInsuranceMemberId,
+            secondaryInsurancePolicyNumber: selectedPatient.secondaryInsurancePolicyNumber,
+            secondaryInsuranceGroupNumber: selectedPatient.secondaryInsuranceGroupNumber,
+            secondaryInsuranceRelationship: selectedPatient.secondaryInsuranceRelationship,
+            secondaryInsuranceSubscriberName: selectedPatient.secondaryInsuranceSubscriberName,
+            secondaryInsuranceSubscriberDob: selectedPatient.secondaryInsuranceSubscriberDob,
+          }}
+        />
       )}
     </div>
   );

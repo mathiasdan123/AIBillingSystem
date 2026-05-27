@@ -73,6 +73,16 @@ export const createPatientSchema = z.object({
     .transform((s) => s.trim())
     .optional()
     .nullable(),
+  // Primary-insurance dates (added with the insurance-edit dialog).
+  // Accepts YYYY-MM-DD; empty strings are coerced to null upstream.
+  effectiveDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Effective date must be YYYY-MM-DD')
+    .optional()
+    .nullable(),
+  terminationDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Termination date must be YYYY-MM-DD')
+    .optional()
+    .nullable(),
   // Secondary insurance fields
   secondaryInsuranceProvider: z.string()
     .max(200, 'Secondary insurance provider name must be 200 characters or less')
