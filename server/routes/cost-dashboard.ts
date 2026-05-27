@@ -39,10 +39,17 @@ const MONTHLY_BUDGET_USD = Number(process.env.ANTHROPIC_MONTHLY_BUDGET_USD || '5
 const BUDGET_WARN_PCT = Number(process.env.ANTHROPIC_BUDGET_WARN_PCT || '80');
 
 /**
- * Anthropic's cost_report returns `amount` in the report currency (usually
- * USD) as a decimal — we treat it as USD directly. If we ever see non-USD,
- * we log and skip the row rather than silently mixing currencies.
+ * Anthropic's cost_report returns `amount` in **minor units** (cents for USD).
+ * NOT decimal dollars. We divide by 100 to get USD. The previous version of
+ * this code treated cents as dollars, which made every dashboard number
+ * exactly 100× too high (e.g. $6.05 actual rendered as "$605, 120% of $500
+ * budget"). If you change this, lock down the units with the test in
+ * costDashboardCostUnits.test.ts.
+ *
+ * If we ever see non-USD, we log and skip the row rather than silently
+ * mixing currencies.
  */
+const CENTS_PER_DOLLAR = 100;
 function sumCostUsd(results: Array<{ amount?: number; currency?: string }>): number {
   let total = 0;
   for (const r of results) {
@@ -53,7 +60,7 @@ function sumCostUsd(results: Array<{ amount?: number; currency?: string }>): num
       logger.warn('cost-dashboard: skipping non-USD cost row', { currency: cur, amount: amt });
       continue;
     }
-    total += amt;
+    total += amt / CENTS_PER_DOLLAR;
   }
   return total;
 }
@@ -106,7 +113,8 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
         const cur = (r.currency || 'USD').toUpperCase();
         if (cur !== 'USD') continue;
         const model = extractModelFromDescription(r.description) || r.model || 'other';
-        byModelMap.set(model, (byModelMap.get(model) || 0) + Number(r.amount ?? 0));
+        // Same cents-to-dollars conversion as sumCostUsd above.
+        byModelMap.set(model, (byModelMap.get(model) || 0) + Number(r.amount ?? 0) / CENTS_PER_DOLLAR);
       }
     }
     const spendByModel = Array.from(byModelMap.entries())
