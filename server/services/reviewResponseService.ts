@@ -4,8 +4,97 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { logger } from './logger';
 
 let anthropicClient: Anthropic | null = null;
+
+/**
+ * Crisis-language patterns. If any patient feedback matches these, we bypass
+ * Claude entirely and send a static, human-reviewed crisis-resources template.
+ *
+ * Substring match (case-insensitive). We deliberately err on the side of
+ * over-triggering: a false positive sends helpful crisis resources; a false
+ * negative could route a patient in danger to an AI-generated apology email.
+ */
+export const CRISIS_KEYWORDS: readonly string[] = [
+  // Suicidal ideation
+  'suicide',
+  'suicidal',
+  'kill myself',
+  'killing myself',
+  'end my life',
+  'ending my life',
+  'want to die',
+  'wanna die',
+  'end it all',
+  // Self-harm
+  'self-harm',
+  'self harm',
+  'selfharm',
+  'hurt myself',
+  'hurting myself',
+  'cut myself',
+  'cutting myself',
+  // Overdose
+  'overdose',
+  "od'd",
+  'took too many pills',
+  // Abuse
+  'abuse',
+  'abused',
+  'abusing me',
+  'hurting me',
+  'hitting me',
+  'being beaten',
+  // Acute emergency
+  'emergency',
+  '911',
+  'urgent help',
+];
+
+/**
+ * Forbidden output patterns. If Claude's response contains any of these
+ * (case-insensitive), we discard the AI output and fall back to the static
+ * generic template — these phrases shade into medical advice that
+ * TherapyBill AI is not permitted to send to consumers.
+ */
+export const FORBIDDEN_OUTPUT_PATTERNS: readonly string[] = [
+  'diagnose',
+  'diagnosis',
+  'medication',
+  'dosage',
+  'you should take',
+  'you have ',
+  'this means you have',
+  'i prescribe',
+  'treatment plan',
+];
+
+/**
+ * System prompt for the negative-feedback follow-up email.
+ * Exported so tests (and reviewers) can verify the guardrail language verbatim.
+ */
+export const NEGATIVE_FEEDBACK_SYSTEM_PROMPT = (practiceName: string, rating: number) => `You are writing a brief follow-up email on behalf of ${practiceName}, a therapy/healthcare practice, to a patient who submitted negative feedback (${rating} out of 5 stars).
+
+ABSOLUTE PROHIBITIONS — violating any of these is a critical failure:
+- DO NOT provide medical advice, symptom interpretation, diagnosis, treatment recommendations, medication guidance, dosage instructions, or any clinical opinion of any kind.
+- DO NOT provide legal advice, statements about liability, or financial advice.
+- DO NOT repeat, quote, paraphrase, or reference any clinical or personal details the patient may have included in their feedback. Acknowledging the patient by first name is fine. Refer to their feedback only in generic terms such as "your experience" or "your concerns" — never echo specifics from the message body.
+- DO NOT make promises about specific outcomes (e.g. "we will refund you", "we will fire your therapist", "we will change our policy", "this will not happen again"). Offer only to discuss further.
+- DO NOT admit fault, accept liability, or use language that could be construed as an admission (e.g. "we were negligent", "we failed you", "this was our mistake"). Empathy and apology for the experience are fine ("we're sorry your experience fell short"); admission of wrongdoing is not.
+- DO NOT diagnose the situation, speculate about what went wrong, or offer clinical interpretation of the feedback.
+
+REQUIRED TONE AND FORMAT:
+- Empathetic, warm, human — not corporate.
+- 3 to 5 sentences total. No paragraphs longer than two sentences.
+- Address the patient by first name once.
+- Apologize sincerely that their experience did not meet expectations.
+- Offer ONE clear next step: invite them to call the office or reply to the email to discuss further.
+- Do NOT include a subject line, greeting block, or signature — just the body paragraphs.
+- Do NOT include any disclaimers or AI-attribution language; those are added downstream.`;
+
+const AI_DISCLAIMER =
+  'This message was prepared with AI assistance. For urgent concerns please call our office directly, or call 988 if you are in crisis.';
 
 function getAnthropic(): Anthropic | null {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
@@ -359,7 +448,118 @@ export function generateGooglePostRequestMessage(
 }
 
 /**
- * Generate a personalized follow-up email for negative feedback (AI-powered)
+ * Returns true if the patient feedback text contains language suggesting
+ * a crisis (suicide, self-harm, overdose, abuse, acute emergency).
+ *
+ * Case-insensitive substring match against CRISIS_KEYWORDS. We choose
+ * substring (not word-boundary) deliberately: a false positive routes the
+ * patient to crisis resources, which is the safer error.
+ */
+export function detectCrisisLanguage(text?: string | null): { matched: boolean; keyword?: string } {
+  if (!text) return { matched: false };
+  const lower = text.toLowerCase();
+  for (const kw of CRISIS_KEYWORDS) {
+    if (lower.includes(kw)) {
+      return { matched: true, keyword: kw };
+    }
+  }
+  return { matched: false };
+}
+
+/**
+ * Returns the first forbidden phrase found in the AI output (case-insensitive),
+ * or null if the output is clean.
+ */
+export function findForbiddenOutput(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const pat of FORBIDDEN_OUTPUT_PATTERNS) {
+    if (lower.includes(pat)) return pat;
+  }
+  return null;
+}
+
+/**
+ * Build the static crisis-resources email. This is human-reviewed copy and is
+ * sent verbatim — no AI in the path. Intentionally reads as if written by a
+ * person at the practice; no AI-assistance disclaimer.
+ */
+export function buildCrisisTemplateEmail(options: {
+  patientFirstName: string;
+  practiceName: string;
+  practicePhone?: string;
+  practiceEmail?: string;
+}): { subject: string; body: string } {
+  const { patientFirstName, practiceName, practicePhone, practiceEmail } = options;
+  const contactLine =
+    practicePhone || practiceEmail
+      ? `You can reach our office${practicePhone ? ` at ${practicePhone}` : ''}${practiceEmail ? ` or ${practiceEmail}` : ''}.`
+      : 'Please reach out to our office directly.';
+
+  const body = `Dear ${patientFirstName},
+
+Thank you for sharing this with us. Your safety and wellbeing matter, and we want to make sure you have immediate support available.
+
+If you are in crisis or thinking about harming yourself, please use one of these resources right now:
+
+- Call or text 988 — the Suicide & Crisis Lifeline (24/7, free, confidential)
+- Text HOME to 741741 — Crisis Text Line (24/7)
+- If you are in immediate danger, call 911 or go to your nearest emergency room
+
+${contactLine} A member of our team will follow up with you personally as soon as possible.
+
+You are not alone, and help is available right now.
+
+Warmly,
+The ${practiceName} Team`;
+
+  return {
+    subject: `${patientFirstName}, please read — immediate support resources`,
+    body: formatNegativeFeedbackEmail(patientFirstName, practiceName, body),
+  };
+}
+
+/**
+ * Generic fallback template used when AI is unavailable OR when the AI output
+ * fails the post-generation safety check. Carries the AI-assistance disclaimer
+ * since it sits in the same channel as the AI-generated email.
+ */
+function buildGenericFallbackEmail(options: {
+  patientFirstName: string;
+  practiceName: string;
+  practicePhone?: string;
+  practiceEmail?: string;
+  hasFeedbackText: boolean;
+  includeDisclaimer: boolean;
+}): { subject: string; body: string } {
+  const { patientFirstName, practiceName, practicePhone, practiceEmail, hasFeedbackText, includeDisclaimer } = options;
+
+  const fallbackBody = `Dear ${patientFirstName},
+
+Thank you for taking the time to share your feedback with us. We're truly sorry to hear that your recent experience at ${practiceName} didn't meet your expectations.
+
+Your feedback is important to us, and we take it seriously. ${hasFeedbackText ? 'We would like to learn more so we can make things right.' : 'We would love to learn more about your experience so we can make things right.'}
+
+${practicePhone || practiceEmail ? `Please reach out to us directly${practicePhone ? ` at ${practicePhone}` : ''}${practiceEmail ? ` or ${practiceEmail}` : ''} if you'd like to discuss this further.` : 'Please reply to this email if you would like to discuss this further.'}
+
+Warm regards,
+The ${practiceName} Team${includeDisclaimer ? `\n\n${AI_DISCLAIMER}` : ''}`;
+
+  return {
+    subject: `We're sorry to hear about your experience, ${patientFirstName}`,
+    body: formatNegativeFeedbackEmail(patientFirstName, practiceName, fallbackBody),
+  };
+}
+
+/**
+ * Generate a personalized follow-up email for negative feedback (AI-powered),
+ * with multiple guardrail layers:
+ *   1. Pre-flight crisis-language check  → static crisis template, no AI call
+ *   2. AI generation with hardened system prompt
+ *   3. Post-generation forbidden-keyword scan → static generic fallback
+ *   4. AI-assistance disclaimer appended to AI-generated emails
+ *
+ * Returned shape adds `crisisFlagged` so the caller can flag the feedback row
+ * for immediate practice-staff review.
  */
 export async function generateNegativeFeedbackResponse(options: {
   patientFirstName: string;
@@ -368,31 +568,37 @@ export async function generateNegativeFeedbackResponse(options: {
   practiceEmail?: string;
   rating: number;
   feedbackText?: string;
-}): Promise<{ subject: string; body: string }> {
+}): Promise<{ subject: string; body: string; crisisFlagged: boolean; usedAi: boolean }> {
   const { patientFirstName, practiceName, practicePhone, practiceEmail, rating, feedbackText } = options;
 
-  // If Anthropic is configured, generate a personalized response
+  // Layer 1 — pre-flight crisis-language detection. Never call the model on
+  // crisis content; route directly to human-reviewed crisis resources.
+  const crisis = detectCrisisLanguage(feedbackText);
+  if (crisis.matched) {
+    logger.warn('Negative-feedback crisis bypass triggered; skipping AI and sending crisis template', {
+      matchedKeyword: crisis.keyword,
+      rating,
+    });
+    const crisisEmail = buildCrisisTemplateEmail({ patientFirstName, practiceName, practicePhone, practiceEmail });
+    return { ...crisisEmail, crisisFlagged: true, usedAi: false };
+  }
+
+  // Layer 2 — AI generation. Falls through to the generic template if the AI
+  // is not configured or errors.
   if (hasAnthropicKey()) {
     try {
-      const systemPrompt = `You are writing a follow-up email on behalf of ${practiceName}, a therapy/healthcare practice.
-A patient has submitted negative feedback (${rating} out of 5 stars).
-Write a sincere, empathetic email that:
-- Thanks them for their honest feedback
-- Acknowledges their concerns without being defensive
-- Apologizes for their experience
-- Expresses genuine desire to improve
-- Invites them to discuss further (phone/email provided)
-- Keeps HIPAA compliance - never mention specific treatments or health details
-- Is warm and human, not corporate
-- Is concise (3-4 short paragraphs max)
+      const systemPrompt = NEGATIVE_FEEDBACK_SYSTEM_PROMPT(practiceName, rating);
 
-Do NOT include a subject line - just the email body.`;
-
-      const userPrompt = `Patient name: ${patientFirstName}
+      // Note: we intentionally do NOT pass the patient's raw feedback text into
+      // the user prompt. The model has no need-to-know for the body content and
+      // we want zero risk of it echoing PHI. It only sees the first name,
+      // rating, and practice contact info.
+      const userPrompt = `Patient first name: ${patientFirstName}
 Rating: ${rating}/5
-${feedbackText ? `Their feedback: "${feedbackText}"` : 'No written feedback provided.'}
 ${practicePhone ? `Practice phone: ${practicePhone}` : ''}
-${practiceEmail ? `Practice email: ${practiceEmail}` : ''}`;
+${practiceEmail ? `Practice email: ${practiceEmail}` : ''}
+
+Write the email body now, following every rule in the system prompt.`;
 
       const client = getAnthropic();
       if (!client) {
@@ -412,36 +618,40 @@ ${practiceEmail ? `Practice email: ${practiceEmail}` : ''}`;
       const aiBody = textBlock?.text?.trim() || '';
 
       if (aiBody) {
-        return {
-          subject: `We're sorry to hear about your experience, ${patientFirstName}`,
-          body: formatNegativeFeedbackEmail(patientFirstName, practiceName, aiBody),
-        };
+        // Layer 3 — post-generation safety scan.
+        const banned = findForbiddenOutput(aiBody);
+        if (banned) {
+          logger.warn('Negative-feedback AI output failed safety scan; falling back to template', {
+            matchedPhrase: banned,
+          });
+          // Fall through to generic fallback below.
+        } else {
+          // Layer 4 — disclaimer appended to AI output only.
+          const withDisclaimer = `${aiBody}\n\n${AI_DISCLAIMER}`;
+          return {
+            subject: `We're sorry to hear about your experience, ${patientFirstName}`,
+            body: formatNegativeFeedbackEmail(patientFirstName, practiceName, withDisclaimer),
+            crisisFlagged: false,
+            usedAi: true,
+          };
+        }
       }
     } catch (error) {
-      console.error('AI response generation failed, using template:', error);
+      logger.warn('Negative-feedback AI generation failed; falling back to template', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  // Fallback template if AI is not available
-  const fallbackBody = `Dear ${patientFirstName},
-
-Thank you for taking the time to share your feedback with us. We're truly sorry to hear that your recent experience at ${practiceName} didn't meet your expectations.
-
-Your feedback is incredibly valuable to us, and we take it seriously. We're committed to providing the best possible care, and hearing where we fell short helps us improve.
-
-${feedbackText ? `We've carefully reviewed your comments and are taking steps to address the concerns you raised.` : `We would love to learn more about your experience so we can make things right.`}
-
-${practicePhone || practiceEmail ? `Please don't hesitate to reach out to us directly${practicePhone ? ` at ${practicePhone}` : ''}${practiceEmail ? ` or ${practiceEmail}` : ''} if you'd like to discuss this further.` : ''}
-
-We truly appreciate you giving us the opportunity to improve and hope we can serve you better in the future.
-
-Warm regards,
-The ${practiceName} Team`;
-
-  return {
-    subject: `We're sorry to hear about your experience, ${patientFirstName}`,
-    body: formatNegativeFeedbackEmail(patientFirstName, practiceName, fallbackBody),
-  };
+  const fallback = buildGenericFallbackEmail({
+    patientFirstName,
+    practiceName,
+    practicePhone,
+    practiceEmail,
+    hasFeedbackText: Boolean(feedbackText),
+    includeDisclaimer: false,
+  });
+  return { ...fallback, crisisFlagged: false, usedAi: false };
 }
 
 function formatNegativeFeedbackEmail(patientFirstName: string, practiceName: string, bodyContent: string): string {
