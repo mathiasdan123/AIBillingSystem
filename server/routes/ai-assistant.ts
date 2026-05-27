@@ -806,6 +806,12 @@ If you've already called the first tool (proposal queued) and want to also queue
 
 If narrowing returns zero matches ("no Janet has an appointment today"), say so plainly and stop — don't fall back to asking the user to pick an ID.
 
+**Rule 7b: If search_patient returns ZERO matches, the patient does NOT exist in this practice. NEVER invent a patient.** This is a hard rule. When search_patient comes back with no results, the tool result includes a list of patients who actually exist in this practice (\`availablePatientsInPractice\`). Your only allowed responses are:
+- Tell the user the name they gave doesn't match anyone in the practice, and offer the closest matches from that list ("I don't see a Kristina — did you mean Kristin Patel or Christina Lopez?"), OR
+- Ask the user to clarify the name or spelling.
+
+You may NOT propose create_appointment, cancel_appointment, reschedule_appointment, submit_claim, or any other tool with a made-up patient ID, a patient name from earlier in the conversation, or a patient pulled from your own knowledge. The user asked for "Kristina"; if Kristina doesn't exist in their practice, the correct answer is "I can't find Kristina" — not silently switching to another patient.
+
 The web-chat UI surfaces a Confirm/Cancel card for every mutation tool you call. The user sees that card. If you say "Done!" without calling the tool, no card appears and the user is misled. That is the failure mode we are preventing.
 
 **IMPORTANT — card position:** Confirm cards render **BELOW** your text in the chat (after the message bubble). Always tell the user to "click Confirm **below**" — NEVER "click Confirm above". The card is always below, never above.
@@ -1744,7 +1750,27 @@ export async function executeTool(
         );
 
         if (matches.length === 0) {
-          return JSON.stringify({ message: 'No patients found matching that name.' });
+          // Zero-match recovery. The reviewer hit a bug where they asked Blanche
+          // to schedule for "Kristina" (no such patient in DB) and Blanche
+          // proposed an appointment for "Janet" instead — invented from context.
+          // Defense in depth here: return the actual practice patient list (first
+          // 20 names) + an explicit anti-hallucination directive so Blanche must
+          // either ask the user to clarify or pick from this concrete list.
+          const availablePatients = allPatients.slice(0, 20).map((p) => ({
+            patientId: p.id,
+            name: `${p.firstName} ${p.lastName}`,
+          }));
+          return JSON.stringify({
+            message: `No patients found matching "${args.name}" in this practice.`,
+            availablePatientsInPractice: availablePatients,
+            totalPatientsInPractice: allPatients.length,
+            _nextActionHint:
+              `DO NOT invent or guess a patient name. The user's input "${args.name}" did not match any patient in this practice. ` +
+              `Required next action: ask the user to clarify or pick from availablePatientsInPractice above. ` +
+              `NEVER propose create_appointment, cancel_appointment, or any other mutation for a patient whose existence ` +
+              `you have not confirmed in this practice's records. If the user typed a name you cannot find, your response ` +
+              `must say so explicitly and offer the closest matches from availablePatientsInPractice.`,
+          });
         }
 
         // When duplicate-name matches exist (the "two Janet Does" case), the
