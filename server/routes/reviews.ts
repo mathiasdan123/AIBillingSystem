@@ -490,13 +490,31 @@ router.post('/public/feedback/:token', async (req: any, res) => {
             html: emailContent.body,
           });
 
-          // Mark as automatically addressed
-          await storage.updatePatientFeedback(feedback.id, {
-            isAddressed: true,
-            addressedAt: new Date(),
-            addressedBy: 'AI_AUTOMATED',
-            addressNotes: 'Automated AI-generated follow-up email sent to patient.',
-          });
+          // If the crisis-language guardrail fired, flag the feedback row for
+          // immediate practice-staff review and log a high-visibility warning.
+          // The crisis email was already sent above (static, human-reviewed
+          // template — no AI in the path), but staff should follow up directly.
+          if (emailContent.crisisFlagged) {
+            logger.warn(`[AUTO][CRISIS] Negative feedback #${feedback.id} matched crisis language; static crisis-resources email sent and flagged for immediate staff review`, {
+              feedbackId: feedback.id,
+              practiceId: reviewRequest.practiceId,
+            });
+            await storage.updatePatientFeedback(feedback.id, {
+              isAddressed: false,
+              addressedBy: 'CRISIS_FLAGGED',
+              addressNotes: 'CRISIS LANGUAGE DETECTED — static crisis-resources email sent to patient. Requires immediate practice-staff follow-up.',
+            });
+          } else {
+            // Mark as automatically addressed
+            await storage.updatePatientFeedback(feedback.id, {
+              isAddressed: true,
+              addressedAt: new Date(),
+              addressedBy: 'AI_AUTOMATED',
+              addressNotes: emailContent.usedAi
+                ? 'Automated AI-generated follow-up email sent to patient.'
+                : 'Automated template follow-up email sent to patient (AI fallback).',
+            });
+          }
 
           logger.info(`[AUTO] Negative feedback #${feedback.id}: AI follow-up email sent to ${patient.email}`);
         }
