@@ -87,6 +87,11 @@ const MUTATION_TOOLS = new Set<string>([
   'create_appointment',
   'reschedule_appointment',
   'cancel_appointment',
+  'check_in_appointment',
+  'session_start',
+  'session_end',
+  'check_out_appointment',
+  'mark_no_show',
   'send_patient_portal_invite',
   'send_appointment_reminder',
   'submit_claim',
@@ -125,6 +130,16 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Reschedule appointment ${args.appointmentId ?? ''} to ${args.newStartTime ?? 'a new time'}`.trim();
     case 'cancel_appointment':
       return `Cancel appointment ${args.appointmentId ?? ''}${args.reason ? ` (reason: ${args.reason})` : ''}`.trim();
+    case 'check_in_appointment':
+      return `Check in appointment ${args.appointmentId ?? ''}`.trim();
+    case 'session_start':
+      return `Start session for appointment ${args.appointmentId ?? ''}`.trim();
+    case 'session_end':
+      return `End session for appointment ${args.appointmentId ?? ''}`.trim();
+    case 'check_out_appointment':
+      return `Check out appointment ${args.appointmentId ?? ''}`.trim();
+    case 'mark_no_show':
+      return `Mark appointment ${args.appointmentId ?? ''} as no-show`.trim();
     case 'send_patient_portal_invite':
       return `Send portal invite${name ? ` to ${name}` : ''}${args.email ? ` (${args.email})` : ''}`;
     case 'send_appointment_reminder':
@@ -1167,6 +1182,62 @@ const assistantTools: Anthropic.Tool[] = [
         notes: { type: 'string' as const, description: 'Optional free-text notes about the cancellation' },
       },
       required: ['appointmentId', 'reason'],
+    },
+  },
+  {
+    name: 'check_in_appointment',
+    description: 'Mark a patient as checked in / arrived for their appointment. Use when the front-desk user says things like "check Jane in", "she\'s here", "mark them as arrived". This sets the check-in timestamp and moves the appointment to status "checked_in". Requires the appointment ID — call get_appointments first if you only have a patient name or time.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to check in' },
+      },
+      required: ['appointmentId'],
+    },
+  },
+  {
+    name: 'session_start',
+    description: 'Mark that the clinical session has started — the therapist has begun working with the patient. The patient must already be checked in. Use for "we\'re starting", "session started", "begin session".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment whose session is starting' },
+      },
+      required: ['appointmentId'],
+    },
+  },
+  {
+    name: 'session_end',
+    description: 'Mark that the clinical session has ended. Session must have been started first. Use for "session ended", "we\'re wrapping up".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment whose session is ending' },
+      },
+      required: ['appointmentId'],
+    },
+  },
+  {
+    name: 'check_out_appointment',
+    description: 'Check a patient out at the end of their visit. This sets the check-out timestamp and moves the appointment to status "completed". Patient must already be checked in. Use for "check her out", "she\'s leaving", "mark complete".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to check out' },
+      },
+      required: ['appointmentId'],
+    },
+  },
+  {
+    name: 'mark_no_show',
+    description: 'Mark an appointment as a no-show — the patient did not arrive. This cancels the appointment with reason "no-show" so it is tracked for the no-show report and any practice late-cancellation policy. Use for "she didn\'t show", "no show", "patient never arrived".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The ID of the appointment to mark as no-show' },
+        notes: { type: 'string' as const, description: 'Optional free-text notes (e.g. "called twice, no answer")' },
+      },
+      required: ['appointmentId'],
     },
   },
   {
@@ -2292,6 +2363,111 @@ export async function executeTool(
           success: true,
           appointment: { id: cancelled.id, status: cancelled.status },
           message: `Appointment ${apptId} cancelled.`,
+        });
+      }
+
+      case 'check_in_appointment': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (existing.status === 'cancelled') return JSON.stringify({ error: 'Cannot check in a cancelled appointment.' });
+        if ((existing as any).checkedInAt) {
+          return JSON.stringify({ success: true, alreadyCheckedIn: true, message: `Appointment ${apptId} was already checked in.` });
+        }
+        const updated = await storage.updateAppointment(apptId, {
+          checkedInAt: new Date(),
+          checkedInBy: userId,
+          status: 'checked_in',
+        } as any);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: updated.id, status: updated.status },
+          message: `Appointment ${apptId} checked in.`,
+        });
+      }
+
+      case 'session_start': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (!(existing as any).checkedInAt) {
+          return JSON.stringify({ error: 'Patient must be checked in before starting the session. Call check_in_appointment first.' });
+        }
+        if ((existing as any).sessionStartedAt) {
+          return JSON.stringify({ success: true, alreadyStarted: true, message: `Session for appointment ${apptId} was already started.` });
+        }
+        const updated = await storage.updateAppointment(apptId, {
+          sessionStartedAt: new Date(),
+          status: 'in_progress',
+        } as any);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: updated.id, status: updated.status },
+          message: `Session started for appointment ${apptId}.`,
+        });
+      }
+
+      case 'session_end': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (!(existing as any).sessionStartedAt) {
+          return JSON.stringify({ error: 'Session has not been started. Call session_start first.' });
+        }
+        if ((existing as any).sessionEndedAt) {
+          return JSON.stringify({ success: true, alreadyEnded: true, message: `Session for appointment ${apptId} was already ended.` });
+        }
+        const updated = await storage.updateAppointment(apptId, {
+          sessionEndedAt: new Date(),
+        } as any);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: updated.id, status: updated.status },
+          message: `Session ended for appointment ${apptId}. Check the patient out when they leave.`,
+        });
+      }
+
+      case 'check_out_appointment': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (!(existing as any).checkedInAt) {
+          return JSON.stringify({ error: 'Patient must be checked in before checking out.' });
+        }
+        if ((existing as any).checkedOutAt) {
+          return JSON.stringify({ success: true, alreadyCheckedOut: true, message: `Appointment ${apptId} was already checked out.` });
+        }
+        const updated = await storage.updateAppointment(apptId, {
+          checkedOutAt: new Date(),
+          status: 'completed',
+        } as any);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: updated.id, status: updated.status },
+          message: `Appointment ${apptId} checked out and marked complete.`,
+        });
+      }
+
+      case 'mark_no_show': {
+        const apptId = args.appointmentId as number;
+        const existing = await storage.getAppointment(apptId);
+        if (!existing) return JSON.stringify({ error: `Appointment ${apptId} not found.` });
+        if (existing.practiceId !== practiceId) return JSON.stringify({ error: 'Appointment not found in this practice.' });
+        if (existing.status === 'cancelled') {
+          return JSON.stringify({ success: true, alreadyCancelled: true, message: `Appointment ${apptId} was already cancelled.` });
+        }
+        const notes = (args.notes as string) || undefined;
+        // Routes the no-show through the same cancellation path used by cancel_appointment so the
+        // no-show report (which filters by cancellationReason) picks it up.
+        const cancelled = await storage.cancelAppointment(apptId, 'no-show', notes, userId);
+        return JSON.stringify({
+          success: true,
+          appointment: { id: cancelled.id, status: cancelled.status },
+          message: `Appointment ${apptId} marked as no-show.`,
         });
       }
 
