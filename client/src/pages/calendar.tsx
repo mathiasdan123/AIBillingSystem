@@ -85,6 +85,11 @@ export default function CalendarPage() {
   const [patientSearchOpen, setPatientSearchOpen] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [showSeriesActionDialog, setShowSeriesActionDialog] = useState(false);
+  // Appointment-actions dialog opened when the user clicks an appointment cell.
+  // Wraps the existing per-cell buttons (Check In, Check Out, Cancel) in one
+  // discoverable place — solves the original reviewer complaint that the small
+  // in-cell Check In button was easy to miss.
+  const [showApptActionsDialog, setShowApptActionsDialog] = useState(false);
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
 
@@ -414,6 +419,17 @@ export default function CalendarPage() {
       notes: cancelNotes || undefined,
       cancelledBy: cancelledBy || undefined,
     });
+  };
+
+  /**
+   * Open the unified Appointment Actions dialog. Triggered when the user
+   * clicks the body of an appointment cell. Avoids the recurring-series
+   * "this one vs all future" prompt that openCancelDialog uses, because
+   * check-in is a per-instance action.
+   */
+  const openAppointmentActions = (apt: Appointment) => {
+    setSelectedAppointment(apt);
+    setShowApptActionsDialog(true);
   };
 
   const openCancelDialog = (apt: Appointment) => {
@@ -1259,7 +1275,9 @@ export default function CalendarPage() {
                       return (
                       <div
                         key={apt.id}
-                        className={`rounded-lg p-3 ${getCalendarBlockStyle(apt)}`}
+                        className={`rounded-lg p-3 cursor-pointer hover:ring-2 hover:ring-blue-300 transition ${getCalendarBlockStyle(apt)}`}
+                        onClick={() => openAppointmentActions(apt)}
+                        data-testid={`appointment-cell-${apt.id}`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 min-w-0">
@@ -1367,7 +1385,12 @@ export default function CalendarPage() {
                     const patient = patients.find((p: any) => p.id === apt.patientId);
                     const patientName = patient ? `${patient.firstName} ${patient.lastName}` : (apt.title || "Appointment");
                     return (
-                      <div key={apt.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border gap-2">
+                      <div
+                        key={apt.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border gap-2 cursor-pointer hover:ring-2 hover:ring-blue-300 transition"
+                        onClick={() => openAppointmentActions(apt)}
+                        data-testid={`appointment-row-${apt.id}`}
+                      >
                         <div className="flex items-center gap-3">
                           <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
                             a.checkedOutAt ? "bg-slate-200" :
@@ -1402,7 +1425,7 @@ export default function CalendarPage() {
                             <Button
                               size="sm"
                               className="h-8 text-xs bg-green-600 hover:bg-green-700"
-                              onClick={() => startCheckIn(apt.id)}
+                              onClick={(e) => { e.stopPropagation(); startCheckIn(apt.id); }}
                               disabled={checkInMutation.isPending}
                             >
                               <LogIn className="w-3.5 h-3.5 mr-1" />Check In
@@ -1412,7 +1435,7 @@ export default function CalendarPage() {
                             <Button
                               size="sm"
                               className="h-8 text-xs bg-blue-600 hover:bg-blue-700"
-                              onClick={() => checkOutMutation.mutate(apt.id)}
+                              onClick={(e) => { e.stopPropagation(); checkOutMutation.mutate(apt.id); }}
                               disabled={checkOutMutation.isPending}
                             >
                               <LogOut className="w-3.5 h-3.5 mr-1" />Check Out
@@ -1485,17 +1508,17 @@ export default function CalendarPage() {
                     <div className="flex items-center gap-2 ml-12 sm:ml-0">
                       <Badge className={`${getStatusColor(statusLabel)} text-[10px] md:text-xs`}>{statusLabel}</Badge>
                       {!a.checkedInAt && apt.status === "scheduled" && (
-                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-green-600 hover:bg-green-700" onClick={() => startCheckIn(apt.id)} disabled={checkInMutation.isPending}>
+                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-green-600 hover:bg-green-700" onClick={(e) => { e.stopPropagation(); startCheckIn(apt.id); }} disabled={checkInMutation.isPending}>
                           <LogIn className="w-4 h-4 mr-1" />Check In
                         </Button>
                       )}
                       {a.checkedInAt && !a.checkedOutAt && (
-                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-blue-600 hover:bg-blue-700" onClick={() => checkOutMutation.mutate(apt.id)} disabled={checkOutMutation.isPending}>
+                        <Button size="sm" className="min-h-[44px] sm:min-h-0 bg-blue-600 hover:bg-blue-700" onClick={(e) => { e.stopPropagation(); checkOutMutation.mutate(apt.id); }} disabled={checkOutMutation.isPending}>
                           <LogOut className="w-4 h-4 mr-1" />Check Out
                         </Button>
                       )}
                       {!a.checkedOutAt && (
-                        <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => openCancelDialog(apt)}>
+                        <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={(e) => { e.stopPropagation(); openCancelDialog(apt); }}>
                           <XCircle className="w-4 h-4 mr-1" />Cancel
                         </Button>
                       )}
@@ -1519,6 +1542,94 @@ export default function CalendarPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Appointment Actions Dialog — opens when the user clicks an
+            appointment cell. Surfaces Check In / Check Out / Cancel in one
+            obvious place, solving the original reviewer complaint that the
+            per-cell Check In button was easy to miss. */}
+        <Dialog open={showApptActionsDialog} onOpenChange={setShowApptActionsDialog}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {(() => {
+                  if (!selectedAppointment) return "Appointment";
+                  const patient = patients.find((p: any) => p.id === selectedAppointment.patientId);
+                  return patient
+                    ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                    : (selectedAppointment.title || "Appointment");
+                })()}
+              </DialogTitle>
+              <DialogDescription>
+                {selectedAppointment && (() => {
+                  const date = new Date(selectedAppointment.startTime).toLocaleDateString();
+                  const time = formatTime(selectedAppointment.startTime);
+                  const title = selectedAppointment.title ? ` · ${selectedAppointment.title}` : '';
+                  const a = selectedAppointment as any;
+                  const status = a.checkedOutAt ? 'Completed'
+                    : a.sessionEndedAt ? 'Session ended'
+                    : a.sessionStartedAt ? 'In session'
+                    : a.checkedInAt ? 'Checked in'
+                    : selectedAppointment.status === 'cancelled' ? 'Cancelled'
+                    : 'Scheduled';
+                  return <>{date} at {time}{title} · <strong>{status}</strong></>;
+                })()}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              {selectedAppointment && (() => {
+                const a = selectedAppointment as any;
+                const isCancelled = selectedAppointment.status === 'cancelled';
+                const canCheckIn = !isCancelled && !a.checkedInAt;
+                const canCheckOut = !isCancelled && a.checkedInAt && !a.checkedOutAt;
+                return (
+                  <>
+                    {canCheckIn && (
+                      <Button
+                        size="lg"
+                        className="w-full bg-green-600 hover:bg-green-700 text-base"
+                        onClick={() => { setShowApptActionsDialog(false); startCheckIn(selectedAppointment.id); }}
+                        disabled={checkInMutation.isPending}
+                        data-testid="button-actions-check-in"
+                      >
+                        <LogIn className="w-5 h-5 mr-2" />Check In
+                      </Button>
+                    )}
+                    {canCheckOut && (
+                      <Button
+                        size="lg"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-base"
+                        onClick={() => { setShowApptActionsDialog(false); checkOutMutation.mutate(selectedAppointment.id); }}
+                        disabled={checkOutMutation.isPending}
+                        data-testid="button-actions-check-out"
+                      >
+                        <LogOut className="w-5 h-5 mr-2" />Check Out
+                      </Button>
+                    )}
+                    {a.checkedInAt && (
+                      <div className="text-xs text-slate-500 px-1">
+                        Checked in at {new Date(a.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {a.checkedOutAt && ` · Checked out at ${new Date(a.checkedOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                      </div>
+                    )}
+                    {!isCancelled && !a.checkedOutAt && (
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => { setShowApptActionsDialog(false); openCancelDialog(selectedAppointment); }}
+                        data-testid="button-actions-cancel-appointment"
+                      >
+                        <XCircle className="w-4 h-4 mr-2" />Cancel Appointment
+                      </Button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setShowApptActionsDialog(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Cancel Appointment Dialog */}
         <Dialog open={showCancelDialog} onOpenChange={(open) => { setShowCancelDialog(open); if (!open) { delete (window as any).__cancelSeriesId; } }}>
