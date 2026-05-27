@@ -625,6 +625,14 @@ export const appointments = pgTable("appointments", {
   isDemo: boolean("is_demo").notNull().default(false),
   therapistId: varchar("therapist_id").references(() => users.id),
   locationId: integer("location_id").references(() => practiceLocations.id),
+  // Optional link to the practice's configured appointment_types catalog.
+  // Lets the calendar dialog use the real dropdown instead of a hardcoded
+  // 4-string list. Nullable so existing rows + legacy create paths work.
+  appointmentTypeId: integer("appointment_type_id").references(() => appointmentTypes.id),
+  // Cached duration in minutes. Derived from appointmentTypes.duration when
+  // appointmentTypeId is set, but stored here so historical durations stay
+  // stable even if the catalog row is later edited or deactivated.
+  durationMinutes: integer("duration_minutes"),
   title: varchar("title"),
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time").notNull(),
