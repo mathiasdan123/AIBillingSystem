@@ -119,6 +119,13 @@ export interface FetchOpts {
   endingAt: Date;
   bucketWidth: '1m' | '1h' | '1d';
   groupBy?: UsageGroupBy[];
+  /**
+   * Optional workspace scoping. Anthropic's Admin API accepts a
+   * `workspace_ids[]` filter that limits the report to a subset of the org's
+   * workspaces. When omitted, results cover the entire org (which mixes
+   * production usage with personal/dev work in one-person orgs).
+   */
+  workspaceIds?: string[];
 }
 
 export async function fetchMessagesUsage(opts: FetchOpts): Promise<UsageResponse> {
@@ -129,6 +136,7 @@ export async function fetchMessagesUsage(opts: FetchOpts): Promise<UsageResponse
     limit: '31',
   };
   if (opts.groupBy?.length) params['group_by[]'] = opts.groupBy;
+  if (opts.workspaceIds?.length) params['workspace_ids[]'] = opts.workspaceIds;
   return adminGet<UsageResponse>('/usage_report/messages', params);
 }
 
@@ -137,6 +145,7 @@ export async function fetchCost(opts: {
   endingAt: Date;
   bucketWidth?: '1d';
   groupBy?: CostGroupBy[];
+  workspaceIds?: string[];
 }): Promise<CostResponse> {
   const params: Record<string, string | string[]> = {
     starting_at: opts.startingAt.toISOString(),
@@ -146,6 +155,7 @@ export async function fetchCost(opts: {
     limit: '31',
   };
   if (opts.groupBy?.length) params['group_by[]'] = opts.groupBy;
+  if (opts.workspaceIds?.length) params['workspace_ids[]'] = opts.workspaceIds;
   return adminGet<CostResponse>('/cost_report', params);
 }
 

@@ -39,6 +39,18 @@ const MONTHLY_BUDGET_USD = Number(process.env.ANTHROPIC_MONTHLY_BUDGET_USD || '5
 const BUDGET_WARN_PCT = Number(process.env.ANTHROPIC_BUDGET_WARN_PCT || '80');
 
 /**
+ * When set, scope the headline numbers (MTD spend, daily trend, by-model,
+ * cache efficiency) to this Anthropic workspace. The Admin API returns
+ * org-wide data by default, which on a one-person org mixes production
+ * usage with personal/dev work. Set this env var to the workspace ID of
+ * the production workspace to filter everything down to actual prod spend.
+ * The org-wide breakdown card (added below) intentionally bypasses this
+ * filter so admins can still see the full picture.
+ */
+const PROD_WORKSPACE_ID = (process.env.ANTHROPIC_PROD_WORKSPACE_ID || '').trim() || undefined;
+const WORKSPACE_FILTER = PROD_WORKSPACE_ID ? [PROD_WORKSPACE_ID] : undefined;
+
+/**
  * Anthropic's cost_report returns `amount` in **minor units** (cents for USD).
  * NOT decimal dollars. We divide by 100 to get USD. The previous version of
  * this code treated cents as dollars, which made every dashboard number
@@ -82,14 +94,18 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
     const monthStart = startOfMonthUtc(now);
     const thirtyDaysAgo = nDaysAgoUtc(30, now);
 
-    // Fetch all four datasets in parallel. Each is cached server-side for 5 min.
+    // Fetch all datasets in parallel. Each is cached server-side for 5 min.
     // NOTE: cost_report only supports group_by = description | workspace_id (NOT model).
     // We group by description and parse the model out of the description string.
-    const [mtdCost, dailyCost, modelCost, dailyUsage] = await Promise.all([
-      fetchCost({ startingAt: monthStart, endingAt: now }),
-      fetchCost({ startingAt: thirtyDaysAgo, endingAt: now }),
-      fetchCost({ startingAt: monthStart, endingAt: now, groupBy: ['description'] }),
-      fetchMessagesUsage({ startingAt: thirtyDaysAgo, endingAt: now, bucketWidth: '1d' }),
+    // First four queries are workspace-scoped (when ANTHROPIC_PROD_WORKSPACE_ID is set);
+    // the fifth deliberately ignores the filter so admins can still see org-wide breakdown.
+    const [mtdCost, dailyCost, modelCost, dailyUsage, orgByWorkspace] = await Promise.all([
+      fetchCost({ startingAt: monthStart, endingAt: now, workspaceIds: WORKSPACE_FILTER }),
+      fetchCost({ startingAt: thirtyDaysAgo, endingAt: now, workspaceIds: WORKSPACE_FILTER }),
+      fetchCost({ startingAt: monthStart, endingAt: now, groupBy: ['description'], workspaceIds: WORKSPACE_FILTER }),
+      fetchMessagesUsage({ startingAt: thirtyDaysAgo, endingAt: now, bucketWidth: '1d', workspaceIds: WORKSPACE_FILTER }),
+      // Org-wide MTD by workspace — bypasses scope filter on purpose.
+      fetchCost({ startingAt: monthStart, endingAt: now, groupBy: ['workspace_id'] }),
     ]);
 
     // 1) MTD spend
@@ -121,6 +137,27 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
       .map(([model, usd]) => ({ model, usd: Number(usd.toFixed(4)) }))
       .sort((a, b) => b.usd - a.usd);
 
+    // 4b) Org-wide MTD broken out by workspace. Always shows the full picture
+    // even when the headline numbers are workspace-scoped, so an admin can
+    // see "you're spending X on prod and Y on personal/dev".
+    const byWorkspaceMap = new Map<string, number>();
+    for (const bucket of orgByWorkspace.data) {
+      for (const r of bucket.results) {
+        const cur = (r.currency || 'USD').toUpperCase();
+        if (cur !== 'USD') continue;
+        const ws = r.workspace_id || 'default';
+        // Same cents-to-dollars conversion as sumCostUsd. cost_report amounts are cents.
+        byWorkspaceMap.set(ws, (byWorkspaceMap.get(ws) || 0) + Number(r.amount ?? 0) / CENTS_PER_DOLLAR);
+      }
+    }
+    const spendByWorkspace = Array.from(byWorkspaceMap.entries())
+      .map(([workspaceId, usd]) => ({
+        workspaceId,
+        usd: Number(usd.toFixed(4)),
+        isScopedWorkspace: PROD_WORKSPACE_ID ? workspaceId === PROD_WORKSPACE_ID : false,
+      }))
+      .sort((a, b) => b.usd - a.usd);
+
     // 4) Cache efficiency over time
     const cacheEfficiency = dailyUsage.data.map((b) => {
       let cacheRead = 0;
@@ -144,6 +181,12 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
 
     res.json({
       generatedAt: now.toISOString(),
+      // Scope tells the UI whether the headline numbers are workspace-scoped
+      // (production only) or full org. Drives a subtitle on the page so the
+      // viewer understands what these numbers represent.
+      scope: PROD_WORKSPACE_ID
+        ? { kind: 'workspace', workspaceId: PROD_WORKSPACE_ID }
+        : { kind: 'org' },
       mtd: {
         spendUsd: Number(mtdSpendUsd.toFixed(2)),
         budgetUsd: MONTHLY_BUDGET_USD,
@@ -154,6 +197,7 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
       dailyTrend,
       spendByModel,
       cacheEfficiency,
+      spendByWorkspace,
       cacheTtlSeconds: 300,
     });
   } catch (error) {
