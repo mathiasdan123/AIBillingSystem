@@ -14,6 +14,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { fetchCost, fetchMessagesUsage, clearAdminApiCache } from '../services/anthropicAdminApi';
+import { extractModelFromDescription } from '../services/anthropicModelDescriptionParser';
 import logger from '../services/logger';
 
 const router = Router();
@@ -75,10 +76,12 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
     const thirtyDaysAgo = nDaysAgoUtc(30, now);
 
     // Fetch all four datasets in parallel. Each is cached server-side for 5 min.
+    // NOTE: cost_report only supports group_by = description | workspace_id (NOT model).
+    // We group by description and parse the model out of the description string.
     const [mtdCost, dailyCost, modelCost, dailyUsage] = await Promise.all([
       fetchCost({ startingAt: monthStart, endingAt: now }),
       fetchCost({ startingAt: thirtyDaysAgo, endingAt: now }),
-      fetchCost({ startingAt: monthStart, endingAt: now, groupBy: ['model'] }),
+      fetchCost({ startingAt: monthStart, endingAt: now, groupBy: ['description'] }),
       fetchMessagesUsage({ startingAt: thirtyDaysAgo, endingAt: now, bucketWidth: '1d' }),
     ]);
 
@@ -94,12 +97,15 @@ router.get('/admin/cost-dashboard/summary', isAuthenticated, isAdmin, async (_re
     }));
 
     // 3) Spend by model (MTD)
+    // cost_report rows come back per `description` (e.g. "claude-sonnet-4-5 input tokens"
+    // or "Claude Sonnet 4.5 Cache read"). We extract the model family+version with a
+    // tolerant regex and roll everything we can't parse into "other".
     const byModelMap = new Map<string, number>();
     for (const bucket of modelCost.data) {
       for (const r of bucket.results) {
         const cur = (r.currency || 'USD').toUpperCase();
         if (cur !== 'USD') continue;
-        const model = r.model || 'unknown';
+        const model = extractModelFromDescription(r.description) || r.model || 'other';
         byModelMap.set(model, (byModelMap.get(model) || 0) + Number(r.amount ?? 0));
       }
     }
