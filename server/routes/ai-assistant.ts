@@ -87,6 +87,7 @@ const MUTATION_TOOLS = new Set<string>([
   'update_patient_insurance',
   'sign_soap_note',
   'add_claim_line_item',
+  'create_appointment_self_pay_invoice',
   'create_appointment',
   'reschedule_appointment',
   'cancel_appointment',
@@ -164,6 +165,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Submit claim${args.claimId ? ` #${args.claimId}` : ''} to the clearinghouse`;
     case 'create_patient_invoice':
       return `Create invoice${args.amount ? ` for $${args.amount}` : ''}${name ? ` to ${name}` : ''}`;
+    case 'create_appointment_self_pay_invoice':
+      return `Create self-pay invoice for appointment ${args.appointmentId ?? ''}${args.amount ? ` ($${args.amount})` : ''}`.trim();
     case 'send_patient_payment_link':
       return `Send payment link${name ? ` to ${name}` : ''}${args.amount ? ` for $${args.amount}` : ''}`;
     case 'get_prior_session_notes':
@@ -1606,6 +1609,19 @@ const assistantTools: Anthropic.Tool[] = [
         claimNumber: { type: 'string' as const, description: 'Claim number (e.g. "CLM-...") — used if claimId is not provided.' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'create_appointment_self_pay_invoice',
+    description: 'Generate a self-pay Stripe payment link for a specific appointment — for sessions billed directly to the parent/caregiver instead of through insurance. Auto-computes the amount from the appointment type\'s rate × duration when no amount is supplied. Use when a therapist says "this session is self-pay, send the invoice", "Sarah\'s parent is paying cash, generate the link", or similar. Does NOT create a claim; this is the explicit skip-the-claim path. Returns a Stripe payment link the practice can text/email to the parent.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        appointmentId: { type: 'number' as const, description: 'The appointment to bill self-pay' },
+        amount: { type: 'number' as const, description: 'Override amount in dollars. If omitted, computed from appointment_type.duration × rate. Max $10,000 from the assistant.' },
+        description: { type: 'string' as const, description: 'Free-text invoice description (e.g. "OT session 2026-05-29"). Auto-generated from session details if omitted.' },
+      },
+      required: ['appointmentId'],
     },
   },
   {
@@ -4440,6 +4456,76 @@ export async function executeTool(
             error: `Failed to check claim status: ${sanitizeExternalError(err?.message)}`,
           });
         }
+      }
+
+      case 'create_appointment_self_pay_invoice': {
+        // P0.4: explicit self-pay (skip-claim) path. Reuses createPatientPaymentLink
+        // — no new Stripe primitive needed. Tenant-guards through the appointment;
+        // auto-computes amount from appointmentType.price/duration when not supplied.
+        if (!stripeService.isStripeConfigured()) {
+          return JSON.stringify({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable self-pay invoicing.' });
+        }
+        const appointmentId = args.appointmentId as number;
+        if (!Number.isFinite(appointmentId)) {
+          return JSON.stringify({ error: 'appointmentId is required and must be a number.' });
+        }
+        const appt = await storage.getAppointment(appointmentId);
+        if (!appt) return JSON.stringify({ error: `Appointment ${appointmentId} not found.` });
+        if (appt.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Appointment is not in this practice.' });
+        }
+        const apptPatient = appt.patientId ? await storage.getPatient(appt.patientId) : null;
+        if (!apptPatient) return JSON.stringify({ error: 'Appointment has no associated patient — cannot generate invoice.' });
+        // Compute the amount.
+        // Priority: explicit arg → appointmentType.price → fallback flat rate.
+        let amountDollars = args.amount as number | undefined;
+        if (typeof amountDollars !== 'number' || !Number.isFinite(amountDollars)) {
+          const apptTypeId = (appt as any).appointmentTypeId as number | null | undefined;
+          if (apptTypeId) {
+            const aptType = await storage.getAppointmentType(apptTypeId);
+            // appointmentTypes.price is the catalog rate per session (already a session-total decimal).
+            const rate = aptType?.price ? parseFloat(aptType.price as any) : NaN;
+            if (Number.isFinite(rate) && rate > 0) {
+              amountDollars = rate;
+            }
+          }
+        }
+        if (typeof amountDollars !== 'number' || !Number.isFinite(amountDollars) || amountDollars <= 0) {
+          return JSON.stringify({
+            error: 'Could not determine an invoice amount. Either supply `amount` explicitly, or configure a price on the appointment type.',
+          });
+        }
+        if (amountDollars > 10000) {
+          return JSON.stringify({ error: 'Self-pay invoice amount exceeds the $10,000 cap from the assistant.' });
+        }
+        const startTimeIso = (appt as any).startTime
+          ? new Date((appt as any).startTime).toISOString().split('T')[0]
+          : '';
+        const description = (args.description as string)
+          || `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+        const paymentLink = await stripeService.createPatientPaymentLink({
+          amount: Math.round(amountDollars * 100), // cents
+          patientName: `${apptPatient.firstName} ${apptPatient.lastName}`,
+          practiceId,
+          patientId: apptPatient.id,
+          description,
+        });
+        return JSON.stringify({
+          success: true,
+          appointment: {
+            id: appt.id,
+            patient: `${apptPatient.firstName} ${apptPatient.lastName}`,
+            date: startTimeIso,
+          },
+          invoice: {
+            amount: amountDollars.toFixed(2),
+            currency: 'USD',
+            description,
+            paymentLinkUrl: paymentLink.url,
+            paymentLinkId: paymentLink.id,
+          },
+          message: `Self-pay invoice for $${amountDollars.toFixed(2)} created. Share this link with the parent: ${paymentLink.url}`,
+        });
       }
 
       case 'create_patient_invoice': {
