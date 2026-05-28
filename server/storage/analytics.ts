@@ -29,65 +29,40 @@ export async function getDashboardStats(practiceId: number): Promise<{
   denialRate: number;
   pendingClaims: number;
 }> {
+  // P1.1 perf: collapse what used to be 7 sequential aggregate queries
+  // (totalClaims, paid, denied, pending, totalRevenue, monthlyClaims,
+  // monthlyRevenue) into a single round-trip using Postgres FILTER
+  // aggregates. The (practice_id, status, created_at) composite index
+  // services the entire query without a table scan.
   const currentMonth = new Date();
   currentMonth.setDate(1);
+  currentMonth.setHours(0, 0, 0, 0);
 
-  const [totalClaimsResult] = await db
-    .select({ count: count() })
+  const [row] = await db
+    .select({
+      totalClaims: sql<number>`COUNT(*)::int`,
+      paidClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
+      deniedClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'denied')::int`,
+      pendingClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'submitted')::int`,
+      totalRevenue: sql<string>`COALESCE(SUM(${claims.paidAmount}) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
+      monthlyClaimsCount: sql<number>`COUNT(*) FILTER (WHERE ${claims.createdAt} >= ${currentMonth})::int`,
+      monthlyRevenue: sql<string>`COALESCE(SUM(${claims.paidAmount}) FILTER (WHERE ${claims.status} = 'paid' AND ${claims.paidAt} >= ${currentMonth}), 0)`,
+    })
     .from(claims)
     .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM));
 
-  const [paidClaimsResult] = await db
-    .select({ count: count() })
-    .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "paid")));
-
-  const [deniedClaimsResult] = await db
-    .select({ count: count() })
-    .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "denied")));
-
-  const [pendingClaimsResult] = await db
-    .select({ count: count() })
-    .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "submitted")));
-
-  const [totalRevenueResult] = await db
-    .select({ total: sum(claims.paidAmount) })
-    .from(claims)
-    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, eq(claims.status, "paid")));
-
-  const [monthlyClaimsResult] = await db
-    .select({ count: count() })
-    .from(claims)
-    .where(and(
-      eq(claims.practiceId, practiceId),
-      NOT_DEMO_CLAIM,
-      gte(claims.createdAt, currentMonth)
-    ));
-
-  const [monthlyRevenueResult] = await db
-    .select({ total: sum(claims.paidAmount) })
-    .from(claims)
-    .where(and(
-      eq(claims.practiceId, practiceId),
-      NOT_DEMO_CLAIM,
-      eq(claims.status, "paid"),
-      gte(claims.paidAt, currentMonth)
-    ));
-
-  const totalClaims = totalClaimsResult.count;
-  const paidClaims = paidClaimsResult.count;
-  const deniedClaims = deniedClaimsResult.count;
-  const pendingClaims = pendingClaimsResult.count;
+  const totalClaims = Number(row?.totalClaims) || 0;
+  const paidClaims = Number(row?.paidClaims) || 0;
+  const deniedClaims = Number(row?.deniedClaims) || 0;
+  const pendingClaims = Number(row?.pendingClaims) || 0;
 
   return {
     totalClaims,
     successRate: totalClaims > 0 ? (paidClaims / totalClaims) * 100 : 0,
-    totalRevenue: Number(totalRevenueResult.total) || 0,
+    totalRevenue: Number(row?.totalRevenue) || 0,
     avgDaysToPayment: 14.2,
-    monthlyClaimsCount: monthlyClaimsResult.count,
-    monthlyRevenue: Number(monthlyRevenueResult.total) || 0,
+    monthlyClaimsCount: Number(row?.monthlyClaimsCount) || 0,
+    monthlyRevenue: Number(row?.monthlyRevenue) || 0,
     denialRate: totalClaims > 0 ? (deniedClaims / totalClaims) * 100 : 0,
     pendingClaims,
   };
@@ -333,77 +308,75 @@ export async function getDaysInAR(practiceId: number): Promise<{
   byBucket: { bucket: string; count: number; amount: number }[];
   byInsurance: { name: string; avgDays: number; outstanding: number }[];
 }> {
-  const now = new Date();
+  // P1.1 perf: push bucketing and aggregation into SQL instead of
+  // SELECT * + bucketing in JS. Two parallel aggregate queries — one for
+  // bucket totals + overall average, one for per-insurance stats.
+  const daysInArExpr = sql<number>`EXTRACT(DAY FROM NOW() - COALESCE(${claims.submittedAt}, ${claims.createdAt}))::int`;
+  const bucketExpr = sql<string>`
+    CASE
+      WHEN ${daysInArExpr} <= 30 THEN '0-30'
+      WHEN ${daysInArExpr} <= 60 THEN '31-60'
+      WHEN ${daysInArExpr} <= 90 THEN '61-90'
+      WHEN ${daysInArExpr} <= 120 THEN '91-120'
+      ELSE '120+'
+    END
+  `;
 
-  const unpaidClaims = await db
-    .select()
-    .from(claims)
-    .where(and(
-      eq(claims.practiceId, practiceId),
-      or(
-        eq(claims.status, 'submitted'),
-        eq(claims.status, 'pending')
-      )
-    ));
+  const unpaidWhere = and(
+    eq(claims.practiceId, practiceId),
+    or(eq(claims.status, 'submitted'), eq(claims.status, 'pending')),
+  );
 
-  const claimsWithDays = unpaidClaims.map((claim: any) => {
-    const submitDate = new Date(claim.submittedAt || claim.createdAt);
-    const days = Math.floor((now.getTime() - submitDate.getTime()) / (1000 * 60 * 60 * 24));
-    return { ...claim, daysInAR: days };
+  const [bucketRows, insuranceRows] = await Promise.all([
+    db
+      .select({
+        bucket: bucketExpr,
+        count: sql<number>`COUNT(*)::int`,
+        amount: sql<string>`COALESCE(SUM(${claims.totalAmount}), 0)`,
+        totalDays: sql<number>`COALESCE(SUM(${daysInArExpr}), 0)::int`,
+      })
+      .from(claims)
+      .where(unpaidWhere)
+      .groupBy(bucketExpr),
+    db
+      .select({
+        insuranceId: claims.insuranceId,
+        count: sql<number>`COUNT(*)::int`,
+        totalDays: sql<number>`COALESCE(SUM(${daysInArExpr}), 0)::int`,
+        outstanding: sql<string>`COALESCE(SUM(${claims.totalAmount}), 0)`,
+      })
+      .from(claims)
+      .where(unpaidWhere)
+      .groupBy(claims.insuranceId),
+  ]);
+
+  // Ensure every bucket appears in the output even when empty, to preserve
+  // the previous response shape.
+  const bucketOrder = ['0-30', '31-60', '61-90', '91-120', '120+'];
+  const bucketMap = new Map<string, { count: number; amount: string | number }>(
+    bucketRows.map((r: any) => [r.bucket as string, { count: r.count, amount: r.amount }]),
+  );
+  const byBucket = bucketOrder.map((name) => {
+    const row = bucketMap.get(name);
+    return {
+      bucket: name,
+      count: row ? Number(row.count) : 0,
+      amount: row ? Number(row.amount) : 0,
+    };
   });
 
-  const totalDays = claimsWithDays.reduce((sum: number, c: any) => sum + c.daysInAR, 0);
-  const averageDays = claimsWithDays.length > 0 ? Math.round(totalDays / claimsWithDays.length) : 0;
+  let totalClaims = 0;
+  let totalDays = 0;
+  for (const r of bucketRows) {
+    totalClaims += Number(r.count);
+    totalDays += Number(r.totalDays);
+  }
+  const averageDays = totalClaims > 0 ? Math.round(totalDays / totalClaims) : 0;
 
-  const buckets: Record<string, { count: number; amount: number }> = {
-    '0-30': { count: 0, amount: 0 },
-    '31-60': { count: 0, amount: 0 },
-    '61-90': { count: 0, amount: 0 },
-    '91-120': { count: 0, amount: 0 },
-    '120+': { count: 0, amount: 0 },
-  };
-
-  claimsWithDays.forEach((claim: any) => {
-    const amount = Number(claim.totalAmount) || 0;
-    if (claim.daysInAR <= 30) {
-      buckets['0-30'].count++;
-      buckets['0-30'].amount += amount;
-    } else if (claim.daysInAR <= 60) {
-      buckets['31-60'].count++;
-      buckets['31-60'].amount += amount;
-    } else if (claim.daysInAR <= 90) {
-      buckets['61-90'].count++;
-      buckets['61-90'].amount += amount;
-    } else if (claim.daysInAR <= 120) {
-      buckets['91-120'].count++;
-      buckets['91-120'].amount += amount;
-    } else {
-      buckets['120+'].count++;
-      buckets['120+'].amount += amount;
-    }
-  });
-
-  const byBucket = Object.entries(buckets).map(([bucket, data]) => ({
-    bucket,
-    count: data.count,
-    amount: data.amount,
-  }));
-
-  const insuranceStats: Record<string, { totalDays: number; count: number; outstanding: number }> = {};
-  claimsWithDays.forEach((claim: any) => {
-    const insurance = claim.insuranceId ? `Insurance ${claim.insuranceId}` : 'Unknown';
-    if (!insuranceStats[insurance]) {
-      insuranceStats[insurance] = { totalDays: 0, count: 0, outstanding: 0 };
-    }
-    insuranceStats[insurance].totalDays += claim.daysInAR;
-    insuranceStats[insurance].count++;
-    insuranceStats[insurance].outstanding += Number(claim.totalAmount) || 0;
-  });
-
-  const byInsurance = Object.entries(insuranceStats).map(([name, stats]) => ({
-    name,
-    avgDays: stats.count > 0 ? Math.round(stats.totalDays / stats.count) : 0,
-    outstanding: stats.outstanding,
+  const byInsurance = insuranceRows.map((r: any) => ({
+    name: r.insuranceId ? `Insurance ${r.insuranceId}` : 'Unknown',
+    avgDays: Number(r.count) > 0 ? Math.round(Number(r.totalDays) / Number(r.count)) : 0,
+    outstanding: Number(r.outstanding),
   }));
 
   return {

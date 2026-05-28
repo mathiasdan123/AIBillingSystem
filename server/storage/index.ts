@@ -340,6 +340,7 @@ export const storage = {
   getAppointments: appointmentFns.getAppointments,
   countAppointments: appointmentFns.countAppointments,
   getAppointmentsByDateRange: appointmentFns.getAppointmentsByDateRange,
+  getAppointmentsFiltered: appointmentFns.getAppointmentsFiltered,
   countAppointmentsByDateRange: appointmentFns.countAppointmentsByDateRange,
   getAppointment: appointmentFns.getAppointment,
   updateAppointment: appointmentFns.updateAppointment,

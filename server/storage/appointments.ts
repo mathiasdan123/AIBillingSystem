@@ -74,6 +74,36 @@ export async function getAppointments(practiceId: number, opts?: { limit?: numbe
   return await query;
 }
 
+/**
+ * P1.1 perf: filtered appointment lookup used by the get_appointments MCP
+ * tool. Pushes startDate/endDate/status into SQL instead of pulling every
+ * row and filtering in JS. The (practice_id, start_time) index services
+ * the date predicates.
+ *
+ * Default limit of 500 keeps a chatty agent from accidentally pulling
+ * the whole table. Caller can raise it explicitly.
+ */
+export async function getAppointmentsFiltered(
+  practiceId: number,
+  opts: { startDate?: Date; endDate?: Date; status?: string; limit?: number; offset?: number } = {},
+): Promise<Appointment[]> {
+  const where = [eq(appointments.practiceId, practiceId)];
+  if (opts.startDate) where.push(gte(appointments.startTime, opts.startDate));
+  if (opts.endDate) where.push(lte(appointments.startTime, opts.endDate));
+  if (opts.status) where.push(eq(appointments.status, opts.status));
+
+  let query = db
+    .select()
+    .from(appointments)
+    .where(and(...where))
+    .orderBy(desc(appointments.startTime))
+    .$dynamic();
+
+  query = query.limit(opts.limit ?? 500);
+  if (opts.offset) query = query.offset(opts.offset);
+  return await query;
+}
+
 export async function countAppointments(practiceId: number): Promise<number> {
   const [result] = await db
     .select({ total: sql<number>`count(*)::int` })
