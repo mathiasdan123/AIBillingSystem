@@ -3175,6 +3175,47 @@ export const practiceLocations = pgTable("practice_locations", {
   index("idx_practice_locations_practice").on(table.practiceId),
 ]);
 
+/**
+ * Practice-customizable notification templates.
+ *
+ * Currently the appointment reminder / confirmation / cancellation emails
+ * and SMS use hardcoded templates in server/services/emailTemplates.ts and
+ * server/services/smsService.ts. This table lets a practice override the
+ * default for any (notification_type, channel) pair — fallback to default
+ * when no row exists.
+ *
+ * Templates support `{{variable}}` substitution. Variables available per
+ * notification_type are documented in the rendering helper.
+ *
+ * Unique on (practice_id, notification_type, channel) — one custom
+ * template per practice per (type, channel) pair.
+ */
+export const notificationTemplates = pgTable("notification_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  notificationType: varchar("notification_type").notNull(),
+  channel: varchar("channel").notNull(),
+  subject: text("subject"),
+  body: text("body").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("notification_templates_practice_type_channel_uq").on(
+    table.practiceId,
+    table.notificationType,
+    table.channel,
+  ),
+]);
+
+export const insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type NotificationTemplate = typeof notificationTemplates.$inferSelect;
+export type InsertNotificationTemplate = z.infer<typeof insertNotificationTemplateSchema>;
+
 // User-Location assignments - links therapists/staff to locations
 export const userLocations = pgTable("user_locations", {
   id: serial("id").primaryKey(),

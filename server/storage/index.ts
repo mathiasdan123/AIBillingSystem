@@ -90,6 +90,11 @@ export const storage = {
   getSsoConfigByEmailDomain: practiceFns.getSsoConfigByEmailDomain,
   upsertSsoConfig: practiceFns.upsertSsoConfig,
   updateSsoConfig: practiceFns.updateSsoConfig,
+  // Notification templates (P0.5)
+  getNotificationTemplates: practiceFns.getNotificationTemplates,
+  getNotificationTemplate: practiceFns.getNotificationTemplate,
+  upsertNotificationTemplate: practiceFns.upsertNotificationTemplate,
+  deleteNotificationTemplate: practiceFns.deleteNotificationTemplate,
 
   // ==================== PATIENTS ====================
   createPatient: patientFns.createPatient,
