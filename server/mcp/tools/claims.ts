@@ -180,4 +180,86 @@ export function registerClaimTools(
     },
     (input) => getOverdueClaims(input, context),
   );
+
+  // ── add_claim_line_item ───────────────────────────────────────────────
+  // Mirrors the in-app dispatcher case + POST /api/claims/:id/line-items.
+  // Status guard: only draft claims accept new line items. Total
+  // recomputed from all line items after the add so subsequent queries
+  // reflect the new amount.
+  const addClaimLineItem = withAudit(
+    'add_claim_line_item',
+    'claim',
+    false,
+    withMcpMutationGate(
+      async (
+        input: {
+          claimId: number;
+          cptCodeId: number;
+          units?: number;
+          icd10CodeId?: number;
+          dateOfService?: string;
+          modifier?: string;
+          notes?: string;
+        },
+        ctx: McpPracticeContext,
+      ) => {
+        const claim = await storage.getClaim(input.claimId);
+        if (!claim) throw new Error(`Claim ${input.claimId} not found`);
+        if ((claim as any).practiceId !== ctx.practiceId) {
+          throw new Error('Access denied: claim belongs to a different practice');
+        }
+        if ((claim as any).status && (claim as any).status !== 'draft') {
+          throw new Error(
+            `Cannot add line items to a claim in status "${(claim as any).status}". Only draft claims accept new line items. If this claim was denied and needs correction, draft a corrected claim instead.`,
+          );
+        }
+        const cptCodes = await storage.getCptCodes();
+        const cptCode: any = cptCodes.find((c: any) => c.id === input.cptCodeId);
+        if (!cptCode) throw new Error(`CPT code id ${input.cptCodeId} not found in catalog`);
+        const rate = parseFloat(cptCode.baseRate || '289.00');
+        const lineUnits = input.units || 1;
+        const amount = (rate * lineUnits).toFixed(2);
+        const lineItem = await storage.createClaimLineItem({
+          claimId: input.claimId,
+          cptCodeId: input.cptCodeId,
+          icd10CodeId: input.icd10CodeId || null,
+          units: lineUnits,
+          rate: rate.toFixed(2),
+          amount,
+          dateOfService: input.dateOfService || new Date().toISOString().split('T')[0],
+          modifier: input.modifier || null,
+          notes: input.notes || null,
+        } as any);
+        const allLineItems = await storage.getClaimLineItems(input.claimId);
+        const newTotal = allLineItems.reduce(
+          (sum: number, li: any) => sum + parseFloat(li.amount || '0'),
+          0,
+        );
+        await storage.updateClaim(input.claimId, { totalAmount: newTotal.toFixed(2) } as any);
+        return {
+          lineItem: {
+            id: lineItem.id, cptCode: cptCode.code, units: lineUnits, rate: rate.toFixed(2), amount,
+          },
+          claim: {
+            id: input.claimId, newTotalAmount: newTotal.toFixed(2), lineItemCount: allLineItems.length,
+          },
+        };
+      },
+    ),
+  );
+
+  server.tool(
+    'add_claim_line_item',
+    'Append a single CPT line item to an existing DRAFT claim. The claim total auto-recalculates after the add. Per-line-item EDIT/DELETE not yet supported via this tool. Use when a therapist wants to add a missed CPT code to a claim before submission.',
+    {
+      claimId: z.number().describe('The ID of the draft claim to add a line item to'),
+      cptCodeId: z.number().describe('The CPT code id (look up by code if you only have the string)'),
+      units: z.number().optional().describe('Billing units (default 1)'),
+      icd10CodeId: z.number().optional().describe('Optional ICD-10 code id for this line item'),
+      dateOfService: z.string().optional().describe('Date of service YYYY-MM-DD (default today)'),
+      modifier: z.string().optional().describe('Optional CPT modifier'),
+      notes: z.string().optional().describe('Optional free-text notes'),
+    },
+    (input) => addClaimLineItem(input, context),
+  );
 }
