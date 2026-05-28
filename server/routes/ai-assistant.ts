@@ -86,6 +86,7 @@ const MUTATION_TOOLS = new Set<string>([
   'create_patient',
   'update_patient_insurance',
   'sign_soap_note',
+  'add_claim_line_item',
   'create_appointment',
   'reschedule_appointment',
   'cancel_appointment',
@@ -137,6 +138,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       const fieldList = fields.length > 0 ? fields.join(', ') : 'insurance fields';
       return `Update patient ${args.patientId} insurance: ${fieldList}`;
     }
+    case 'add_claim_line_item':
+      return `Add CPT line item to claim ${args.claimId ?? ''}${args.cptCodeId ? ` (CPT id ${args.cptCodeId}` : ''}${args.units ? `, ${args.units} units)` : args.cptCodeId ? ')' : ''}`.trim();
     case 'create_appointment':
       return `Create an appointment${args.startTime ? ` at ${args.startTime}` : ''}${name ? ` for ${name}` : ''}`;
     case 'reschedule_appointment':
@@ -1406,6 +1409,23 @@ const assistantTools: Anthropic.Tool[] = [
         totalAmount: { type: 'number' as const, description: 'Total billed amount in dollars' },
       },
       required: ['patientId', 'serviceDate', 'cptCodes'],
+    },
+  },
+  {
+    name: 'add_claim_line_item',
+    description: 'Append a single CPT line item to an existing draft claim. Use when a therapist wants to add a missed CPT code to a claim — e.g., "add 97530 for 4 units to claim 123" or "I also did neuromuscular re-ed, add it to today\'s claim". Requires the claim id and the CPT code id (call list_cpt_codes if you only have the CPT string). The claim\'s total amount auto-recalculates from the sum of all line items after the add. Per-line-item EDIT and DELETE are not yet supported via Blanche — for those, the user must use the claim UI directly.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: { type: 'number' as const, description: 'The ID of the claim to add a line item to' },
+        cptCodeId: { type: 'number' as const, description: 'The ID of the CPT code (not the CPT string itself — look up by code if needed)' },
+        units: { type: 'number' as const, description: 'Number of billing units (default 1)' },
+        icd10CodeId: { type: 'number' as const, description: 'Optional ICD-10 diagnosis code ID for this line item' },
+        dateOfService: { type: 'string' as const, description: 'Date of service in YYYY-MM-DD format (default today)' },
+        modifier: { type: 'string' as const, description: 'Optional CPT modifier (e.g., "59", "GP")' },
+        notes: { type: 'string' as const, description: 'Optional free-text notes on the line item' },
+      },
+      required: ['claimId', 'cptCodeId'],
     },
   },
   {
@@ -2838,6 +2858,72 @@ export async function executeTool(
             status: 'draft',
           },
           message: `Claim ${claim.claimNumber} created for ${patient.firstName} ${patient.lastName}. The claim is in draft status — please review it in the Claims page and submit when ready. [Action: View Claims]`,
+        });
+      }
+
+      case 'add_claim_line_item': {
+        // Mirror of POST /api/claims/:id/line-items. Looks up the claim
+        // first to tenant-guard (claims have practiceId directly), then
+        // resolves the CPT code's base rate and creates the line item.
+        // Recomputes the claim total from all line items afterward so
+        // billing totals stay correct.
+        const claimId = args.claimId as number;
+        const cptCodeId = args.cptCodeId as number;
+        if (!Number.isFinite(claimId)) {
+          return JSON.stringify({ error: 'claimId is required and must be a number.' });
+        }
+        if (!Number.isFinite(cptCodeId)) {
+          return JSON.stringify({ error: 'cptCodeId is required and must be a number. If you only have the CPT string (e.g., "97530"), look it up first.' });
+        }
+        const claim = await storage.getClaim(claimId);
+        if (!claim) return JSON.stringify({ error: `Claim ${claimId} not found.` });
+        if (claim.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Claim is not in this practice.' });
+        }
+        if (claim.status && claim.status !== 'draft') {
+          return JSON.stringify({
+            error: `Cannot add line items to a claim in status "${claim.status}". Only draft claims accept new line items. If this claim was denied and needs correction, the right path is to draft a corrected claim, not edit the submitted one.`,
+          });
+        }
+        const cptCodes = await storage.getCptCodes();
+        const cptCode = cptCodes.find((c: any) => c.id === cptCodeId);
+        if (!cptCode) return JSON.stringify({ error: `CPT code id ${cptCodeId} not found in catalog.` });
+        const rate = parseFloat((cptCode as any).baseRate || '289.00');
+        const lineUnits = (args.units as number) || 1;
+        const amount = (rate * lineUnits).toFixed(2);
+        const lineItem = await storage.createClaimLineItem({
+          claimId,
+          cptCodeId,
+          icd10CodeId: (args.icd10CodeId as number) || null,
+          units: lineUnits,
+          rate: rate.toFixed(2),
+          amount,
+          dateOfService: (args.dateOfService as string) || new Date().toISOString().split('T')[0],
+          modifier: (args.modifier as string) || null,
+          notes: (args.notes as string) || null,
+        } as any);
+        // Recompute claim total from all line items (matches HTTP route).
+        const allLineItems = await storage.getClaimLineItems(claimId);
+        const newTotal = allLineItems.reduce(
+          (sum: number, item: any) => sum + parseFloat(item.amount || '0'),
+          0,
+        );
+        await storage.updateClaim(claimId, { totalAmount: newTotal.toFixed(2) } as any);
+        return JSON.stringify({
+          success: true,
+          lineItem: {
+            id: lineItem.id,
+            cptCode: (cptCode as any).code,
+            units: lineUnits,
+            rate: rate.toFixed(2),
+            amount,
+          },
+          claim: {
+            id: claimId,
+            newTotalAmount: newTotal.toFixed(2),
+            lineItemCount: allLineItems.length,
+          },
+          message: `Added ${(cptCode as any).code} (${lineUnits} unit${lineUnits === 1 ? '' : 's'}, $${amount}) to claim ${claimId}. Claim total now $${newTotal.toFixed(2)}.`,
         });
       }
 
