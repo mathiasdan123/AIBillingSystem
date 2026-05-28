@@ -248,6 +248,7 @@ export const storage = {
   getSoapNotes: clinicalFns.getSoapNotes,
   getSoapNote: clinicalFns.getSoapNote,
   getSoapNoteBySession: clinicalFns.getSoapNoteBySession,
+  getRecentSoapNotesForPatient: clinicalFns.getRecentSoapNotesForPatient,
   getSoapDraftForTherapistPatient: clinicalFns.getSoapDraftForTherapistPatient,
   upsertSoapDraft: clinicalFns.upsertSoapDraft,
   deleteSoapDraft: clinicalFns.deleteSoapDraft,

@@ -115,6 +115,62 @@ export async function getSoapNote(id: number): Promise<SoapNote | undefined> {
   return soapNote ? decryptSoapNoteRecord(soapNote) as SoapNote : undefined;
 }
 
+/**
+ * Pre-charting helper: return the N most recent SOAP notes for a patient,
+ * scoped to a practice (tenant guard happens here, not at the route).
+ *
+ * Used by both the SOAP-creation UI (side panel showing prior session
+ * context) and the get_prior_session_notes Blanche tool. Joins through
+ * treatment_sessions because soap_notes itself has no patientId column
+ * (FK chain: soap_note → treatment_session → patient).
+ *
+ * Returns the notes ordered by session date desc, so index 0 is the most
+ * recent. Signed and unsigned notes both included — the caller decides
+ * whether to filter (pre-charting often wants the LAST SIGNED note as
+ * the canonical "what we did last time").
+ */
+export async function getRecentSoapNotesForPatient(
+  patientId: number,
+  practiceId: number,
+  limit = 5,
+): Promise<SoapNote[]> {
+  const rows = await db
+    .select({
+      id: soapNotes.id,
+      sessionId: soapNotes.sessionId,
+      subjective: soapNotes.subjective,
+      objective: soapNotes.objective,
+      assessment: soapNotes.assessment,
+      plan: soapNotes.plan,
+      location: soapNotes.location,
+      sessionType: soapNotes.sessionType,
+      interventions: soapNotes.interventions,
+      progressNotes: soapNotes.progressNotes,
+      homeProgram: soapNotes.homeProgram,
+      aiSuggestedCptCodes: soapNotes.aiSuggestedCptCodes,
+      originalCptCode: soapNotes.originalCptCode,
+      optimizedCptCode: soapNotes.optimizedCptCode,
+      cptOptimizationReason: soapNotes.cptOptimizationReason,
+      dataSource: soapNotes.dataSource,
+      therapistId: soapNotes.therapistId,
+      therapistSignedAt: soapNotes.therapistSignedAt,
+      therapistSignedName: soapNotes.therapistSignedName,
+      createdAt: soapNotes.createdAt,
+      updatedAt: soapNotes.updatedAt,
+    })
+    .from(soapNotes)
+    .innerJoin(treatmentSessions, eq(soapNotes.sessionId, treatmentSessions.id))
+    .where(
+      and(
+        eq(treatmentSessions.patientId, patientId),
+        eq(treatmentSessions.practiceId, practiceId),
+      ),
+    )
+    .orderBy(desc(treatmentSessions.sessionDate), desc(soapNotes.createdAt))
+    .limit(Math.max(1, Math.min(limit, 20))); // bound 1..20 — defensive
+  return rows.map((r: any) => decryptSoapNoteRecord(r) as SoapNote);
+}
+
 export async function getSoapNoteBySession(sessionId: number): Promise<SoapNote | undefined> {
   const [soapNote] = await db.select().from(soapNotes).where(eq(soapNotes.sessionId, sessionId));
   return soapNote ? decryptSoapNoteRecord(soapNote) as SoapNote : undefined;

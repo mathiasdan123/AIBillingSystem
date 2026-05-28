@@ -166,6 +166,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Create invoice${args.amount ? ` for $${args.amount}` : ''}${name ? ` to ${name}` : ''}`;
     case 'send_patient_payment_link':
       return `Send payment link${name ? ` to ${name}` : ''}${args.amount ? ` for $${args.amount}` : ''}`;
+    case 'get_prior_session_notes':
+      return `Get prior session notes for patient ${args.patientId ?? ''} (limit ${args.limit ?? 5})`.trim();
     case 'generate_soap_note':
       return `Generate & save SOAP note${name ? ` for ${name}` : ''}`;
     case 'enable_demo_mode':
@@ -1450,6 +1452,18 @@ const assistantTools: Anthropic.Tool[] = [
         patientName: { type: 'string' as const, description: 'Patient name to search for (if ID not known)' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'get_prior_session_notes',
+    description: 'Pre-charting helper: return the N most recent SOAP notes for a patient so the therapist can reference prior sessions when documenting today\'s. Use when a therapist says "what did we work on last time with Sarah", "remind me what I documented for her", "pull her last few notes before this session". Returns each note\'s subjective/objective/assessment/plan summaries, date, signed status, and therapist. Only returns notes from this practice. Default limit 5, max 20.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to fetch notes for' },
+        limit: { type: 'number' as const, description: 'How many of the most recent notes to return (default 5, max 20)' },
+      },
+      required: ['patientId'],
     },
   },
   {
@@ -3097,6 +3111,50 @@ export async function executeTool(
         return JSON.stringify({
           summary: lines.join('\n'),
           benefits,
+        });
+      }
+
+      case 'get_prior_session_notes': {
+        // Pre-charting read tool. Tenant guard happens in the storage
+        // helper itself (joins through treatment_session.practiceId).
+        // We still double-check the patient is in this practice so the
+        // model can't probe for the existence of out-of-practice patient
+        // ids via a "no notes found" response.
+        const patientId = args.patientId as number;
+        if (!Number.isFinite(patientId)) {
+          return JSON.stringify({ error: 'patientId is required and must be a number.' });
+        }
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: `Patient ${patientId} not found.` });
+        if (patient.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient is not in this practice.' });
+        }
+        const limit = typeof args.limit === 'number' ? args.limit : 5;
+        const notes = await storage.getRecentSoapNotesForPatient(patientId, practiceId, limit);
+        // Trim to a Blanche-friendly summary — full encrypted notes would
+        // blow context. Each section gets the first 600 chars (enough for
+        // pre-charting reference, not enough to ship a whole note back).
+        const trim = (s: any) => (typeof s === 'string' && s.length > 600 ? `${s.slice(0, 600)}…` : s);
+        const summary = notes.map((n: any) => ({
+          noteId: n.id,
+          sessionId: n.sessionId,
+          createdAt: n.createdAt,
+          signedAt: n.therapistSignedAt,
+          signedBy: n.therapistSignedName,
+          subjective: trim(n.subjective),
+          objective: trim(n.objective),
+          assessment: trim(n.assessment),
+          plan: trim(n.plan),
+          interventions: n.interventions,
+          location: n.location,
+        }));
+        return JSON.stringify({
+          patient: { id: patient.id, name: `${patient.firstName} ${patient.lastName}` },
+          noteCount: summary.length,
+          notes: summary,
+          message: summary.length === 0
+            ? `No prior SOAP notes on file for ${patient.firstName} ${patient.lastName}.`
+            : `Found ${summary.length} prior session note${summary.length === 1 ? '' : 's'} for ${patient.firstName} ${patient.lastName}.`,
         });
       }
 
