@@ -17,7 +17,7 @@ import { validate } from '../middleware/validate';
 import { createAppointmentSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
-import { chargeCopay } from '../services/stripeService';
+import { chargeCopay, isStripeConfigured, createPatientPaymentLink } from '../services/stripeService';
 
 const router = Router();
 
@@ -402,6 +402,80 @@ router.post('/:id/cancel', isAuthenticated, async (req: any, res) => {
 // ==================== CHECK-IN / CHECK-OUT ====================
 
 // Check in a patient for an appointment
+/**
+ * P0.4 self-pay (skip-the-claim path): generate a Stripe payment link for
+ * this appointment to bill the parent/caregiver directly. Identical logic
+ * to the create_appointment_self_pay_invoice Blanche tool — kept in sync
+ * deliberately so calendar UI and conversational entry produce the same
+ * outcome. Auto-computes amount from appointment_type.price when none
+ * supplied; caps at $10k.
+ */
+router.post('/:id/self-pay-invoice', isAuthenticated, async (req: any, res) => {
+  try {
+    if (!isStripeConfigured()) {
+      return res.status(400).json({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable self-pay invoicing.' });
+    }
+    const appointmentId = parseInt(req.params.id);
+    if (!Number.isFinite(appointmentId)) {
+      return res.status(400).json({ error: 'Invalid appointment id' });
+    }
+    const appt = await storage.getAppointment(appointmentId);
+    if (!appt) return res.status(404).json({ error: 'Appointment not found' });
+    const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
+    if (userPracticeId && appt.practiceId !== userPracticeId) {
+      return res.status(403).json({ error: 'Appointment is not in your practice' });
+    }
+    const patient = appt.patientId ? await storage.getPatient(appt.patientId) : null;
+    if (!patient) {
+      return res.status(400).json({ error: 'Appointment has no associated patient — cannot generate invoice.' });
+    }
+    let amountDollars = typeof req.body?.amount === 'number' ? req.body.amount : undefined;
+    if (typeof amountDollars !== 'number' || !Number.isFinite(amountDollars)) {
+      const apptTypeId = (appt as any).appointmentTypeId;
+      if (apptTypeId) {
+        const aptType = await storage.getAppointmentType(apptTypeId);
+        const rate = aptType?.price ? parseFloat(aptType.price as any) : NaN;
+        if (Number.isFinite(rate) && rate > 0) amountDollars = rate;
+      }
+    }
+    if (typeof amountDollars !== 'number' || !Number.isFinite(amountDollars) || amountDollars <= 0) {
+      return res.status(400).json({
+        error: 'Could not determine an invoice amount. Either supply `amount` explicitly in the request body, or configure a price on the appointment type.',
+      });
+    }
+    if (amountDollars > 10000) {
+      return res.status(400).json({ error: 'Self-pay invoice amount exceeds the $10,000 cap.' });
+    }
+    const startTimeIso = (appt as any).startTime
+      ? new Date((appt as any).startTime).toISOString().split('T')[0]
+      : '';
+    const description = typeof req.body?.description === 'string' && req.body.description.trim()
+      ? req.body.description.trim()
+      : `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+    const paymentLink = await createPatientPaymentLink({
+      amount: Math.round(amountDollars * 100),
+      patientName: `${patient.firstName} ${patient.lastName}`,
+      practiceId: appt.practiceId!,
+      patientId: patient.id,
+      description,
+    });
+    res.json({
+      success: true,
+      appointment: { id: appt.id, patient: `${patient.firstName} ${patient.lastName}`, date: startTimeIso },
+      invoice: {
+        amount: amountDollars.toFixed(2),
+        currency: 'USD',
+        description,
+        paymentLinkUrl: paymentLink.url,
+        paymentLinkId: paymentLink.id,
+      },
+    });
+  } catch (error) {
+    logger.error('Error creating self-pay invoice', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to create self-pay invoice' });
+  }
+});
+
 router.post('/:id/check-in', isAuthenticated, async (req: any, res) => {
   try {
     const appointmentId = parseInt(req.params.id);

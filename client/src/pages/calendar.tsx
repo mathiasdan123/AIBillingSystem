@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck, DollarSign } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 import CopayModal from "@/components/CopayModal";
@@ -90,6 +90,34 @@ export default function CalendarPage() {
   // discoverable place — solves the original reviewer complaint that the small
   // in-cell Check In button was easy to miss.
   const [showApptActionsDialog, setShowApptActionsDialog] = useState(false);
+  // P0.4 self-pay: short-lived state for the most recently generated payment link
+  // so we can show it inline in the actions dialog (copy-to-clipboard + URL).
+  const [selfPayLink, setSelfPayLink] = useState<{ appointmentId: number; url: string; amount: string } | null>(null);
+  const selfPayMutation = useMutation({
+    mutationFn: async (appointmentId: number) => {
+      const res = await apiRequest('POST', `/api/appointments/${appointmentId}/self-pay-invoice`, {});
+      return res.json();
+    },
+    onSuccess: (data, appointmentId) => {
+      if (data?.success && data?.invoice?.paymentLinkUrl) {
+        setSelfPayLink({
+          appointmentId,
+          url: data.invoice.paymentLinkUrl,
+          amount: data.invoice.amount,
+        });
+        toast({ title: 'Self-pay invoice created', description: `$${data.invoice.amount} link ready to share` });
+      } else {
+        toast({ title: 'Invoice created', description: data?.error || 'Done.' });
+      }
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Could not create self-pay invoice',
+        description: err?.message || 'Unknown error',
+        variant: 'destructive',
+      });
+    },
+  });
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
 
@@ -1653,6 +1681,44 @@ export default function CalendarPage() {
                       <div className="text-xs text-slate-500 px-1">
                         Checked in at {new Date(a.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         {a.checkedOutAt && ` · Checked out at ${new Date(a.checkedOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                      </div>
+                    )}
+                    {!isCancelled && (
+                      <Button
+                        variant="outline"
+                        className="w-full border-purple-200 hover:bg-purple-50 hover:border-purple-300 text-purple-900"
+                        onClick={() => selfPayMutation.mutate(selectedAppointment.id)}
+                        disabled={selfPayMutation.isPending}
+                        data-testid="button-actions-self-pay-invoice"
+                      >
+                        <DollarSign className="w-4 h-4 mr-2" />
+                        {selfPayMutation.isPending ? 'Generating…' : 'Send self-pay invoice'}
+                      </Button>
+                    )}
+                    {selfPayLink && selfPayLink.appointmentId === selectedAppointment.id && (
+                      <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs space-y-2">
+                        <div className="font-medium text-purple-900">
+                          Self-pay link ready · ${selfPayLink.amount}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            readOnly
+                            value={selfPayLink.url}
+                            className="flex-1 px-2 py-1 text-[11px] rounded border border-purple-200 bg-white font-mono"
+                            onFocus={(e) => e.currentTarget.select()}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(selfPayLink.url);
+                              toast({ title: 'Link copied to clipboard' });
+                            }}
+                          >
+                            Copy
+                          </Button>
+                        </div>
                       </div>
                     )}
                     {!isCancelled && !a.checkedOutAt && (
