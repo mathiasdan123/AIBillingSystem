@@ -125,6 +125,10 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
   switch (toolName) {
     case 'create_patient':
       return name ? `Create patient ${name}` : 'Create a new patient';
+    case 'update_soap_draft': {
+      const sections = Object.keys(args).filter((k) => k !== 'patientId' && args[k] !== undefined);
+      return `Save SOAP draft for patient ${args.patientId}${sections.length ? ` (${sections.join(', ')})` : ''}`;
+    }
     case 'update_patient_insurance': {
       const fields = Object.keys(args).filter((k) => k !== 'patientId' && args[k] !== undefined);
       const fieldList = fields.length > 0 ? fields.join(', ') : 'insurance fields';
@@ -1155,6 +1159,27 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'update_soap_draft',
+    description: 'Save changes to the therapist\'s in-progress SOAP note draft for a patient. Drafts are one-per-(therapist, patient) and auto-save as you go — this is the right tool when a therapist says "add an intervention to today\'s note", "update the subjective for Sarah", or "save what I just said about the assessment". Signed SOAP notes are immutable per HIPAA — once signed, use append_soap_note_addendum (separate tool). Each section field (subjective/objective/assessment/plan/interventions/etc.) is independent; only the fields you supply are updated, others are left as-is.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient the draft belongs to (one draft per therapist+patient pair)' },
+        subjective: { type: 'string' as const, description: 'Subjective section text — caregiver/parent report, patient mood, etc.' },
+        objective: { type: 'string' as const, description: 'Objective section text — activities, performance observations, assistance levels, duration' },
+        assessment: { type: 'string' as const, description: 'Assessment section text — clinical interpretation, medical necessity, skilled-service rationale' },
+        plan: { type: 'string' as const, description: 'Plan section text — next session focus, home program, treatment frequency, goals' },
+        interventions: { type: 'string' as const, description: 'Free-form interventions list (e.g. specific techniques used)' },
+        progressNotes: { type: 'string' as const, description: 'Free-form progress notes outside the SOAP structure' },
+        homeProgram: { type: 'string' as const, description: 'Home program details given to caregiver' },
+        location: { type: 'string' as const, description: 'Session location (e.g. "clinic", "home visit", "telehealth")' },
+        sessionType: { type: 'string' as const, description: 'Session type (e.g. "individual", "group")' },
+        sessionId: { type: 'number' as const, description: 'Optional treatment session id to associate the draft with' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
     name: 'update_patient_insurance',
     description: 'Update a patient\'s insurance information on file: primary and secondary insurance provider, member ID, policy number, group number, effective date, termination date. Use whenever the user reports new insurance, an effective/termination date, an updated member ID, or any insurance detail change for an existing patient. Only the fields explicitly supplied are changed; omitted fields are left as-is. Empty strings clear a field. Looks up the patient by ID first (call search_patient if you only have a name).',
     input_schema: {
@@ -2004,6 +2029,51 @@ export async function executeTool(
         if (args.insuranceProvider) patientData.insuranceProvider = args.insuranceProvider;
         const patient = await storage.createPatient(patientData);
         return JSON.stringify({ success: true, patient: { id: patient.id, firstName: patient.firstName, lastName: patient.lastName }, message: `Patient ${patient.firstName} ${patient.lastName} created successfully.` });
+      }
+
+      case 'update_soap_draft': {
+        // Mirror of PUT /api/soap-drafts upsert. Keyed on (therapistId,
+        // patientId). Deliberately NOT a MUTATION_TOOL (no confirm card)
+        // because draft saves are auto-save-style; the confirm gate fires
+        // at sign time via sign_soap_note. Field allowlist matches the
+        // HTTP route exactly so behavior is identical regardless of
+        // surface.
+        const SOAP_DRAFT_FIELDS = new Set([
+          'subjective', 'objective', 'assessment', 'plan',
+          'interventions', 'progressNotes', 'homeProgram',
+          'location', 'sessionType', 'sessionId',
+        ]);
+        const patientId = args.patientId as number;
+        if (!Number.isFinite(patientId)) {
+          return JSON.stringify({ error: 'patientId is required and must be a number.' });
+        }
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: `Patient ${patientId} not found.` });
+        if (patient.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient is not in this practice.' });
+        }
+        const draftPayload: Record<string, any> = {
+          practiceId,
+          therapistId: userId,
+          patientId,
+        };
+        const updatedFields: string[] = [];
+        for (const [k, v] of Object.entries(args)) {
+          if (k === 'patientId') continue;
+          if (!SOAP_DRAFT_FIELDS.has(k)) continue;
+          draftPayload[k] = v;
+          updatedFields.push(k);
+        }
+        if (updatedFields.length === 0) {
+          return JSON.stringify({ error: 'No SOAP draft fields supplied.' });
+        }
+        const draft = await storage.upsertSoapDraft(draftPayload as any);
+        return JSON.stringify({
+          success: true,
+          draft: { id: draft.id, patientId: draft.patientId, lastSavedAt: draft.lastSavedAt },
+          updatedFields,
+          message: `SOAP draft saved for ${patient.firstName} ${patient.lastName} (${updatedFields.length} field${updatedFields.length === 1 ? '' : 's'}).`,
+        });
       }
 
       case 'update_patient_insurance': {
