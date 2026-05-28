@@ -108,6 +108,86 @@ jobs:
             esac
           done
 
+      # Run pending schema migrations BEFORE rolling the app forward.
+      #
+      # Why this step exists: on 2026-05-27 PRs #149 and #150 added new
+      # nullable columns to `patients` and `appointments`. The app code
+      # deployed but the columns didn't, because nothing in this workflow
+      # was running migrations. The patients page returned 500 for the
+      # first few hours of the day because Drizzle's schema expected
+      # columns the DB didn't have. CLAUDE.md claimed there was a
+      # `therapybill-migrate` ECS task that ran migrations — there wasn't.
+      # This step is the real version of that claim.
+      #
+      # Mechanism: launch a one-off ECS task using the SAME task
+      # definition + image the app uses, but override its command to run
+      # `npm run db:push` (Drizzle Kit pushes pending schema changes).
+      # The override is non-interactive (drizzle-kit auto-applies safe
+      # changes in CI; destructive changes are blocked at PR-merge time
+      # by scripts/lint-migrations.sh, so we know the diff is safe here).
+      #
+      # We pull the network configuration from the existing app service
+      # so the migration task lands in the same VPC/subnets/SG and can
+      # reach RDS.
+      - name: Run pending DB migrations
+        run: |
+          set -euo pipefail
+
+          # Network config from the live service (avoids hardcoding subnets).
+          NET=$(aws ecs describe-services \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].networkConfiguration' \
+            --output json)
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          CONTAINER=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF" \
+            --query 'taskDefinition.containerDefinitions[0].name' \
+            --output text)
+          echo "Using task def $TASK_DEF, container $CONTAINER"
+
+          OVERRIDES=$(printf '{"containerOverrides":[{"name":"%s","command":["sh","-c","npm run db:push -- --force"]}]}' "$CONTAINER")
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --launch-type FARGATE \
+            --task-definition "$TASK_DEF" \
+            --network-configuration "$NET" \
+            --overrides "$OVERRIDES" \
+            --started-by "github-deploy-migrate-${{ github.run_id }}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          echo "Migration task: $TASK_ARN"
+
+          # Wait for the task to stop (success OR failure both count as stopped).
+          aws ecs wait tasks-stopped \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --tasks "$TASK_ARN"
+
+          # Inspect exit code — non-zero means the migration failed; halt the
+          # deploy here so the new app code never rolls against an un-migrated DB.
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+          REASON=$(aws ecs describe-tasks \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)
+          echo "Migration exit code: $EXIT_CODE  reason: $REASON"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "❌ Migration failed — halting deploy. App tasks NOT rolled forward."
+            exit 1
+          fi
+          echo "✅ Migrations applied successfully."
+
       - name: Force new ECS deployment
         run: |
           aws ecs update-service \

@@ -102,7 +102,9 @@ Use **expand → migrate → contract** for breaking changes:
 
 Override (rare, only with a planned maintenance window): add `-- migration-lint: ignore (reason: <why>)` to the SQL file.
 
-Migrations run as a separate ECS task (`therapybill-migrate`) **before** the app rolls out. The app deploy and migration deploy are deliberately decoupled — the migration completes (or fails fast) before any new app task is created.
+Migrations run as a one-off ECS Fargate task (Run pending DB migrations step in `.github/workflows/deploy.yml`) **after CodeBuild publishes the new image but before the app rollout**. The task uses the same task definition + image the app uses, with the container command overridden to `npm run db:push -- --force`. If the migration exits non-zero, the workflow halts and the app is never rolled forward — old tasks keep serving traffic against the un-migrated schema until you fix-forward.
+
+History: this step was added 2026-05-28 after a partial outage. Earlier docs claimed a separate `therapybill-migrate` task family handled migrations; that was aspirational, not real. PRs #149 and #150 ALTERed `patients` and `appointments` but Drizzle's schema diverged from the DB until a manual ECS-exec ran the migrations against prod.
 
 ## Authentication & Security
 - Session-based auth with 30-min rolling idle timeout in production, 1-week in development (`express-session` `maxAge` in `server/replitAuth.ts`)
