@@ -89,6 +89,7 @@ export { default as payerCrosswalkRouter } from './payer-crosswalk';
 export { default as payerEnrollmentsRouter } from './payer-enrollments';
 export { default as soapInterventionTemplatesRouter } from './soap-intervention-templates';
 export { default as maintenanceWindowsRouter } from './maintenance-windows';
+export { default as notificationTemplatesRouter } from './notification-templates';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

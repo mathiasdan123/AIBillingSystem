@@ -21,6 +21,7 @@ import { registerAppealTools } from './tools/appeals';
 import { registerDenialTools } from './tools/denials';
 import { registerBillingTools } from './tools/billing';
 import { registerSoapTools } from './tools/soap';
+import { registerNotificationTools } from './tools/notifications';
 
 export function createMcpServer(context: McpPracticeContext): McpServer {
   const server = new McpServer(
@@ -63,6 +64,9 @@ export function createMcpServer(context: McpPracticeContext): McpServer {
   registerDenialTools(server, context);
   registerBillingTools(server, context);
   registerSoapTools(server, context);
+
+  // Practice configuration (no PHI)
+  registerNotificationTools(server, context);
 
   return server;
 }

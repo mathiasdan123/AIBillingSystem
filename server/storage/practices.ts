@@ -3,13 +3,16 @@ import {
   payerCredentials,
   payerIntegrations,
   ssoConfigurations,
+  notificationTemplates,
   type Practice,
   type InsertPractice,
   type SsoConfiguration,
   type InsertSsoConfiguration,
+  type NotificationTemplate,
+  type InsertNotificationTemplate,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import {
   encryptPracticeRecord,
   decryptPracticeRecord,
@@ -202,4 +205,92 @@ export async function updateSsoConfig(id: number, config: Partial<InsertSsoConfi
     .where(eq(ssoConfigurations.id, id))
     .returning();
   return updated || undefined;
+}
+
+// ==================== NOTIFICATION TEMPLATES (P0.5) ====================
+
+/**
+ * Practice-customizable notification templates. Layered on top of the
+ * hardcoded defaults in emailTemplates.ts / smsService.ts — if a practice
+ * has a custom row for (notification_type, channel), it wins; otherwise
+ * the default is used.
+ *
+ * The unique constraint (practice_id, notification_type, channel) means
+ * at most one custom template per pair. Upsert is the natural pattern.
+ */
+
+export async function getNotificationTemplates(practiceId: number): Promise<NotificationTemplate[]> {
+  return db
+    .select()
+    .from(notificationTemplates)
+    .where(eq(notificationTemplates.practiceId, practiceId))
+    .orderBy(desc(notificationTemplates.updatedAt));
+}
+
+export async function getNotificationTemplate(
+  practiceId: number,
+  notificationType: string,
+  channel: string,
+): Promise<NotificationTemplate | undefined> {
+  const [row] = await db
+    .select()
+    .from(notificationTemplates)
+    .where(
+      and(
+        eq(notificationTemplates.practiceId, practiceId),
+        eq(notificationTemplates.notificationType, notificationType),
+        eq(notificationTemplates.channel, channel),
+        eq(notificationTemplates.isActive, true),
+      ),
+    )
+    .limit(1);
+  return row;
+}
+
+export async function upsertNotificationTemplate(
+  template: InsertNotificationTemplate,
+): Promise<NotificationTemplate> {
+  // Try to update first (covers the common "edit existing" path).
+  const existing = await getNotificationTemplate(
+    template.practiceId,
+    template.notificationType,
+    template.channel,
+  );
+  if (existing) {
+    const [updated] = await db
+      .update(notificationTemplates)
+      .set({
+        subject: template.subject ?? null,
+        body: template.body,
+        isActive: template.isActive ?? true,
+        updatedAt: new Date(),
+      })
+      .where(eq(notificationTemplates.id, existing.id))
+      .returning();
+    return updated;
+  }
+  const [created] = await db
+    .insert(notificationTemplates)
+    .values({ ...template, updatedAt: new Date() } as any)
+    .returning();
+  return created;
+}
+
+export async function deleteNotificationTemplate(
+  practiceId: number,
+  templateId: number,
+): Promise<boolean> {
+  // Soft delete via isActive=false so the fallback to default kicks in
+  // without losing the body for audit/restore.
+  const [updated] = await db
+    .update(notificationTemplates)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(notificationTemplates.id, templateId),
+        eq(notificationTemplates.practiceId, practiceId),
+      ),
+    )
+    .returning();
+  return !!updated;
 }

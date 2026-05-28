@@ -88,6 +88,7 @@ const MUTATION_TOOLS = new Set<string>([
   'sign_soap_note',
   'add_claim_line_item',
   'create_appointment_self_pay_invoice',
+  'update_notification_template',
   'create_appointment',
   'reschedule_appointment',
   'cancel_appointment',
@@ -167,6 +168,10 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Create invoice${args.amount ? ` for $${args.amount}` : ''}${name ? ` to ${name}` : ''}`;
     case 'create_appointment_self_pay_invoice':
       return `Create self-pay invoice for appointment ${args.appointmentId ?? ''}${args.amount ? ` ($${args.amount})` : ''}`.trim();
+    case 'update_notification_template':
+      return `Update ${args.channel ?? 'email'} template for "${args.notificationType ?? 'notification'}"`;
+    case 'list_notification_templates':
+      return 'List custom notification templates';
     case 'send_patient_payment_link':
       return `Send payment link${name ? ` to ${name}` : ''}${args.amount ? ` for $${args.amount}` : ''}`;
     case 'get_prior_session_notes':
@@ -1378,6 +1383,38 @@ const assistantTools: Anthropic.Tool[] = [
         },
       },
       required: ['appointmentId'],
+    },
+  },
+  {
+    name: 'update_notification_template',
+    description: 'Customize the email or SMS template for an automated patient notification (appointment reminders, confirmations, cancellations) for this practice. The new body+subject overrides the default. Supports {{variable}} substitution — variables available depend on the notification_type (e.g., appointment_reminder supports patientName, appointmentDate, appointmentTime, practiceName, practicePhone, providerName). Use when an admin says "change the reminder text", "update our cancellation email to say…", or similar. Upsert — calling again with the same (type, channel) updates the existing row.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        notificationType: {
+          type: 'string' as const,
+          enum: ['appointment_reminder', 'appointment_confirmation', 'appointment_cancellation'],
+          description: 'Which notification this template controls',
+        },
+        channel: {
+          type: 'string' as const,
+          enum: ['email', 'sms'],
+          description: 'Which channel — email or sms',
+        },
+        body: { type: 'string' as const, description: 'Template body. {{variable}} placeholders are substituted at send time.' },
+        subject: { type: 'string' as const, description: 'Email subject line. Ignored for SMS.' },
+        isActive: { type: 'boolean' as const, description: 'Default true. Set false to fall back to the default template without losing your custom body.' },
+      },
+      required: ['notificationType', 'channel', 'body'],
+    },
+  },
+  {
+    name: 'list_notification_templates',
+    description: 'List all custom notification templates configured for this practice. Returns notification type, channel, subject (for email), body, and active flag. Use when a user asks "what custom messages do we send?" or before editing one.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
     },
   },
   {
@@ -2812,6 +2849,59 @@ export async function executeTool(
           message: suggestions.length
             ? `Found ${suggestions.length} open slot(s) over the next ${daysAhead} day(s).`
             : `No open slots found in the next ${daysAhead} day(s) within ${startHour}:00-${endHour}:00.`,
+        });
+      }
+
+      case 'update_notification_template': {
+        // P0.5 — practice-customizable notification templates.
+        // Allowlist validated here; mirrors the HTTP route guard.
+        const ALLOWED_TYPES = new Set(['appointment_reminder', 'appointment_confirmation', 'appointment_cancellation']);
+        const ALLOWED_CHANNELS = new Set(['email', 'sms']);
+        const notificationType = args.notificationType as string;
+        const channel = args.channel as string;
+        const body = args.body as string;
+        if (!ALLOWED_TYPES.has(notificationType)) {
+          return JSON.stringify({ error: `notificationType must be one of: ${Array.from(ALLOWED_TYPES).join(', ')}` });
+        }
+        if (!ALLOWED_CHANNELS.has(channel)) {
+          return JSON.stringify({ error: `channel must be one of: ${Array.from(ALLOWED_CHANNELS).join(', ')}` });
+        }
+        if (typeof body !== 'string' || !body.trim()) {
+          return JSON.stringify({ error: 'body is required' });
+        }
+        const upserted = await storage.upsertNotificationTemplate({
+          practiceId,
+          notificationType,
+          channel,
+          subject: channel === 'email' ? (args.subject as string | undefined) ?? null : null,
+          body,
+          isActive: args.isActive !== false,
+        } as any);
+        return JSON.stringify({
+          success: true,
+          template: {
+            id: upserted.id,
+            notificationType: upserted.notificationType,
+            channel: upserted.channel,
+            isActive: upserted.isActive,
+          },
+          message: `Saved custom ${channel} template for ${notificationType}.`,
+        });
+      }
+
+      case 'list_notification_templates': {
+        const templates = await storage.getNotificationTemplates(practiceId);
+        return JSON.stringify({
+          count: templates.length,
+          templates: templates.map((t) => ({
+            id: t.id,
+            notificationType: t.notificationType,
+            channel: t.channel,
+            subject: t.subject,
+            body: t.body,
+            isActive: t.isActive,
+            updatedAt: t.updatedAt,
+          })),
         });
       }
 

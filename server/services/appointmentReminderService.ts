@@ -19,7 +19,13 @@ interface ReminderResult {
 }
 
 /**
- * Send appointment reminder email using the centralized email service and templates
+ * Send appointment reminder email using the centralized email service and templates.
+ *
+ * P0.5: when `practiceId` is supplied and the practice has an active custom
+ * notification_template row for ('appointment_reminder', 'email'), the
+ * custom body+subject is used instead of the default — with the same
+ * {{variable}} substitution. Falls back to the hardcoded default
+ * automatically when no custom row exists.
  */
 async function sendAppointmentReminderEmail(
   to: string,
@@ -31,13 +37,14 @@ async function sendAppointmentReminderEmail(
     practiceAddress?: string;
     practicePhone?: string;
     therapistName?: string;
+    practiceId?: number;
   }
 ): Promise<{ success: boolean; error?: string }> {
   if (!isEmailConfigured()) {
     return { success: false, error: 'Email not configured' };
   }
 
-  const { subject, html, text } = appointmentReminder({
+  const defaultRendered = appointmentReminder({
     patientName: data.patientName,
     appointmentDate: data.appointmentDate,
     appointmentTime: data.appointmentTime,
@@ -46,6 +53,46 @@ async function sendAppointmentReminderEmail(
     practiceAddress: data.practiceAddress,
     practicePhone: data.practicePhone,
   });
+
+  let subject = defaultRendered.subject;
+  let html = defaultRendered.html;
+  let text = defaultRendered.text;
+
+  if (data.practiceId) {
+    try {
+      const { renderNotification } = await import('./notificationTemplateRenderer');
+      const formattedDate = data.appointmentDate.toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric',
+      });
+      const custom = await renderNotification({
+        practiceId: data.practiceId,
+        type: 'appointment_reminder',
+        channel: 'email',
+        defaultSubject: defaultRendered.subject,
+        defaultBody: defaultRendered.text,
+        variables: {
+          patientName: data.patientName,
+          appointmentDate: formattedDate,
+          appointmentTime: data.appointmentTime,
+          practiceName: data.practiceName,
+          practicePhone: data.practicePhone,
+          providerName: data.therapistName,
+        },
+      });
+      if (custom.customTemplateUsed) {
+        subject = custom.subject ?? subject;
+        // Custom templates are plain-text bodies; we send the same body
+        // as both html and text so it renders identically in either
+        // client. A future iteration could let practices supply an HTML
+        // body too if needed.
+        text = custom.body;
+        html = custom.body;
+      }
+    } catch {
+      // Renderer failures fall through to the default — never block a
+      // reminder over a custom-template issue.
+    }
+  }
 
   return sendEmail({
     to,
@@ -125,6 +172,7 @@ export async function processAppointmentReminders(
             practiceName: practice.name || 'Your Practice',
             practiceAddress: practice.address || undefined,
             practicePhone: practice.phone || undefined,
+            practiceId, // P0.5: enables custom-template lookup
           });
           result.emailSent = emailResult.success;
           if (!emailResult.success) {
@@ -244,6 +292,7 @@ export async function sendAppointmentReminders(): Promise<ReminderResult[]> {
               practiceName,
               practiceAddress: practice?.address || undefined,
               practicePhone: practice?.phone || undefined,
+              practiceId: appointment.practiceId ?? undefined, // P0.5: custom-template lookup
             });
             result.emailSent = emailResult.success;
             if (!emailResult.success) {
