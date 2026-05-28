@@ -35,3 +35,10 @@ aws iam get-role-policy \
   `deploy.yml`. First run of that step failed on 2026-05-27 with
   `AccessDeniedException` on `ecs:DescribeTaskDefinition` — this update
   closes the gap. See also the migration step's full context in CLAUDE.md.
+- **2026-05-29**: split `ecs:DescribeTaskDefinition` into its own statement
+  (`DescribeTaskDefinitionForMigration`) with `Resource: "*"`. That action
+  does NOT support resource-level permissions per AWS docs, so scoping it
+  to a specific task-definition ARN caused IAM to silently deny the call.
+  Also removed the `ecs:cluster` Condition from that Sid — DescribeTaskDefinition
+  has no cluster context, and the Condition was filtering the action out.
+  Deploy pipeline migration step verified end-to-end on run 26551038... .
