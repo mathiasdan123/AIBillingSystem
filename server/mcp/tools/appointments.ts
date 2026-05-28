@@ -15,27 +15,14 @@ export function registerAppointmentTools(
     'appointment',
     true,
     async (input: { startDate?: string; endDate?: string; status?: string }) => {
-      const appointments = await storage.getAppointments(context.practiceId);
-
-      let filtered = appointments;
-
-      if (input.startDate) {
-        const start = new Date(input.startDate);
-        filtered = filtered.filter(
-          (a: any) => new Date(a.startTime) >= start,
-        );
-      }
-      if (input.endDate) {
-        const end = new Date(input.endDate);
-        filtered = filtered.filter(
-          (a: any) => new Date(a.startTime) <= end,
-        );
-      }
-      if (input.status) {
-        filtered = filtered.filter((a: any) => a.status === input.status);
-      }
-
-      return filtered;
+      // P1.1 perf: filter in SQL, not JS. Default limit caps response size
+      // and prevents the "fetch every appointment, then filter" pattern
+      // that caused MCP timeouts on busy practices.
+      return storage.getAppointmentsFiltered(context.practiceId, {
+        startDate: input.startDate ? new Date(input.startDate) : undefined,
+        endDate: input.endDate ? new Date(input.endDate) : undefined,
+        status: input.status,
+      });
     },
   );
 
