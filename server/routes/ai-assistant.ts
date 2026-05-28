@@ -84,6 +84,7 @@ const SONNET_TOOLS = new Set([
  */
 const MUTATION_TOOLS = new Set<string>([
   'create_patient',
+  'update_patient_insurance',
   'create_appointment',
   'reschedule_appointment',
   'cancel_appointment',
@@ -124,6 +125,11 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
   switch (toolName) {
     case 'create_patient':
       return name ? `Create patient ${name}` : 'Create a new patient';
+    case 'update_patient_insurance': {
+      const fields = Object.keys(args).filter((k) => k !== 'patientId' && args[k] !== undefined);
+      const fieldList = fields.length > 0 ? fields.join(', ') : 'insurance fields';
+      return `Update patient ${args.patientId} insurance: ${fieldList}`;
+    }
     case 'create_appointment':
       return `Create an appointment${args.startTime ? ` at ${args.startTime}` : ''}${name ? ` for ${name}` : ''}`;
     case 'reschedule_appointment':
@@ -1149,6 +1155,30 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'update_patient_insurance',
+    description: 'Update a patient\'s insurance information on file: primary and secondary insurance provider, member ID, policy number, group number, effective date, termination date. Use whenever the user reports new insurance, an effective/termination date, an updated member ID, or any insurance detail change for an existing patient. Only the fields explicitly supplied are changed; omitted fields are left as-is. Empty strings clear a field. Looks up the patient by ID first (call search_patient if you only have a name).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'The ID of the patient whose insurance is being updated' },
+        insuranceProvider: { type: 'string' as const, description: 'Primary insurance company name (e.g. "Aetna", "Cigna"). Empty string to clear.' },
+        insuranceId: { type: 'string' as const, description: 'Primary insurance member ID. Empty string to clear.' },
+        policyNumber: { type: 'string' as const, description: 'Primary insurance policy number. Empty string to clear.' },
+        groupNumber: { type: 'string' as const, description: 'Primary insurance group number. Empty string to clear.' },
+        effectiveDate: { type: 'string' as const, description: 'Primary insurance effective date, YYYY-MM-DD. Empty string to clear.' },
+        terminationDate: { type: 'string' as const, description: 'Primary insurance termination date, YYYY-MM-DD. Empty string to clear (open-ended coverage).' },
+        secondaryInsuranceProvider: { type: 'string' as const, description: 'Secondary insurance company name. Empty string to clear.' },
+        secondaryInsuranceMemberId: { type: 'string' as const, description: 'Secondary insurance member ID. Empty string to clear.' },
+        secondaryInsurancePolicyNumber: { type: 'string' as const, description: 'Secondary insurance policy number. Empty string to clear.' },
+        secondaryInsuranceGroupNumber: { type: 'string' as const, description: 'Secondary insurance group number. Empty string to clear.' },
+        secondaryInsuranceRelationship: { type: 'string' as const, description: 'Secondary subscriber relationship to patient: self, spouse, child, other. Empty string to clear.' },
+        secondaryInsuranceSubscriberName: { type: 'string' as const, description: 'Secondary insurance subscriber full name. Empty string to clear.' },
+        secondaryInsuranceSubscriberDob: { type: 'string' as const, description: 'Secondary insurance subscriber DOB, YYYY-MM-DD. Empty string to clear.' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
     name: 'create_appointment',
     description: 'Schedule an appointment for a patient. Use this when a user wants to create their first appointment or schedule a session.',
     input_schema: {
@@ -1974,6 +2004,47 @@ export async function executeTool(
         if (args.insuranceProvider) patientData.insuranceProvider = args.insuranceProvider;
         const patient = await storage.createPatient(patientData);
         return JSON.stringify({ success: true, patient: { id: patient.id, firstName: patient.firstName, lastName: patient.lastName }, message: `Patient ${patient.firstName} ${patient.lastName} created successfully.` });
+      }
+
+      case 'update_patient_insurance': {
+        // Mirror of PATCH /api/patients/:id/insurance (server/routes/patients.ts).
+        // Same field allowlist, same tenant guard, same empty-string → null
+        // coercion. Kept in sync deliberately so the tool's behavior matches
+        // what a user would see in the Edit Insurance dialog on the patient
+        // detail page or the Fix Insurance shortcut on the claim screen.
+        const INSURANCE_FIELDS = new Set([
+          'insuranceProvider', 'insuranceId', 'policyNumber', 'groupNumber',
+          'effectiveDate', 'terminationDate',
+          'secondaryInsuranceProvider', 'secondaryInsuranceMemberId',
+          'secondaryInsurancePolicyNumber', 'secondaryInsuranceGroupNumber',
+          'secondaryInsuranceRelationship', 'secondaryInsuranceSubscriberName',
+          'secondaryInsuranceSubscriberDob',
+        ]);
+        const patientId = args.patientId as number;
+        if (!Number.isFinite(patientId)) {
+          return JSON.stringify({ error: 'patientId is required and must be a number.' });
+        }
+        const existing = await storage.getPatient(patientId);
+        if (!existing) return JSON.stringify({ error: `Patient ${patientId} not found.` });
+        if (existing.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient is not in this practice.' });
+        }
+        const patch: Record<string, any> = {};
+        for (const [k, v] of Object.entries(args)) {
+          if (k === 'patientId') continue;
+          if (!INSURANCE_FIELDS.has(k)) continue;
+          patch[k] = v === '' ? null : v;
+        }
+        if (Object.keys(patch).length === 0) {
+          return JSON.stringify({ error: 'No insurance fields supplied.' });
+        }
+        const updated = await storage.updatePatient(patientId, patch as any);
+        return JSON.stringify({
+          success: true,
+          patient: { id: updated.id, firstName: updated.firstName, lastName: updated.lastName },
+          updatedFields: Object.keys(patch),
+          message: `Updated insurance for ${updated.firstName} ${updated.lastName} (${Object.keys(patch).length} field${Object.keys(patch).length === 1 ? '' : 's'}).`,
+        });
       }
 
       case 'enable_demo_mode': {
