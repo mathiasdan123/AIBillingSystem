@@ -85,6 +85,7 @@ const SONNET_TOOLS = new Set([
 const MUTATION_TOOLS = new Set<string>([
   'create_patient',
   'update_patient_insurance',
+  'sign_soap_note',
   'create_appointment',
   'reschedule_appointment',
   'cancel_appointment',
@@ -129,6 +130,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       const sections = Object.keys(args).filter((k) => k !== 'patientId' && args[k] !== undefined);
       return `Save SOAP draft for patient ${args.patientId}${sections.length ? ` (${sections.join(', ')})` : ''}`;
     }
+    case 'sign_soap_note':
+      return `Sign SOAP note ${args.noteId ?? ''} (becomes immutable after signing)`.trim();
     case 'update_patient_insurance': {
       const fields = Object.keys(args).filter((k) => k !== 'patientId' && args[k] !== undefined);
       const fieldList = fields.length > 0 ? fields.join(', ') : 'insurance fields';
@@ -1446,6 +1449,17 @@ const assistantTools: Anthropic.Tool[] = [
         location: { type: 'string' as const, description: 'Treatment location (clinic, telehealth, home)' },
       },
       required: ['patientId', 'activities'],
+    },
+  },
+  {
+    name: 'sign_soap_note',
+    description: 'Apply the therapist\'s digital signature to a SOAP note, finalizing it. After signing, the note becomes immutable per HIPAA — further changes require an addendum (not yet supported via Blanche). Use when a therapist says "sign that note", "finalize Sarah\'s SOAP from today", or "lock the note for billing". Requires the note id; if you only have a patient + date, look it up first. Therapist must have a digital signature on file in Settings → Therapist Profile; if not, returns an error pointing to that page. The therapist signing IS the authenticated user — Blanche cannot sign on behalf of another therapist.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        noteId: { type: 'number' as const, description: 'The ID of the SOAP note to sign' },
+      },
+      required: ['noteId'],
     },
   },
   {
@@ -3104,6 +3118,66 @@ export async function executeTool(
           totalReimbursement: soapResult.totalReimbursement,
           billingRationale: soapResult.billingRationale,
           disclaimer: 'All coding decisions must be reviewed and approved by the treating provider.',
+        });
+      }
+
+      case 'sign_soap_note': {
+        // Mirror of POST /api/soap-notes/:id/sign. Requires the authed
+        // therapist to have a digital signature on file (set up via
+        // Settings → Therapist Profile). Tenant-guards via the linked
+        // treatment session's practiceId since soap_notes itself has
+        // no practiceId column (FK chain: soap_note → treatment_session
+        // → practice).
+        const noteId = args.noteId as number;
+        if (!Number.isFinite(noteId)) {
+          return JSON.stringify({ error: 'noteId is required and must be a number.' });
+        }
+        if (!userId) {
+          // Defensive: dispatcher signature allows undefined userId but
+          // signing without an authenticated identity is meaningless.
+          return JSON.stringify({ error: 'Cannot sign a SOAP note without an authenticated therapist.' });
+        }
+        const note = await storage.getSoapNote(noteId);
+        if (!note) return JSON.stringify({ error: `SOAP note ${noteId} not found.` });
+        const session = await storage.getTreatmentSession((note as any).sessionId);
+        if (!session || session.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'SOAP note is not in this practice.' });
+        }
+        if ((note as any).therapistSignedAt) {
+          return JSON.stringify({
+            success: true,
+            alreadySigned: true,
+            signedAt: (note as any).therapistSignedAt,
+            signedBy: (note as any).therapistSignedName,
+            message: `SOAP note ${noteId} was already signed by ${(note as any).therapistSignedName} on ${(note as any).therapistSignedAt}.`,
+          });
+        }
+        const therapist: any = await storage.getUser(userId);
+        if (!therapist) return JSON.stringify({ error: 'Therapist account not found.' });
+        if (!therapist.digitalSignature) {
+          return JSON.stringify({
+            error: 'No digital signature on file. Go to Settings → Therapist Profile and upload your signature before signing notes.',
+          });
+        }
+        const updated = await storage.signSoapNote(noteId, {
+          therapistId: userId,
+          therapistSignature: therapist.digitalSignature,
+          therapistSignedAt: new Date(),
+          therapistSignedName: `${therapist.firstName ?? ''} ${therapist.lastName ?? ''}`.trim() || 'Unknown therapist',
+          therapistCredentials: therapist.credentials || '',
+          // Marker for audit trail — distinguishes Blanche-driven signing
+          // from web-UI signing (which records the request IP).
+          signatureIpAddress: 'blanche',
+        });
+        if (!updated) return JSON.stringify({ error: 'SOAP note disappeared during signing — please retry.' });
+        return JSON.stringify({
+          success: true,
+          note: {
+            id: updated.id,
+            signedAt: (updated as any).therapistSignedAt,
+            signedBy: (updated as any).therapistSignedName,
+          },
+          message: `SOAP note ${noteId} signed by ${(updated as any).therapistSignedName}. Note is now immutable.`,
         });
       }
 
