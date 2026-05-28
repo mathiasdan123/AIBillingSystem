@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
+import PriorSessionNotesPanel from "@/components/PriorSessionNotesPanel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -1332,6 +1333,15 @@ export default function SoapNotes() {
                     </div>
                   )}
                 </div>
+
+                {/* Pre-charting: prior session SOAP notes for the chosen patient.
+                    Renders nothing if no patient selected. Reviewer ask: lets the
+                    therapist see context before documenting today's session. */}
+                {selectedPatient && (
+                  <div className="mt-3">
+                    <PriorSessionNotesPanel patientId={selectedPatient} limit={5} />
+                  </div>
+                )}
 
                 {/* Billing Summary - Admin Only */}
                 {isAdmin && (

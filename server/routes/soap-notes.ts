@@ -102,6 +102,34 @@ router.get('/', isAuthenticated, async (req: any, res) => {
   }
 });
 
+/**
+ * Pre-charting: get the N most recent SOAP notes for a patient so the
+ * therapist (or Blanche) can reference prior sessions when documenting
+ * today's. Tenant-guarded in the storage layer via the treatment_session
+ * → practiceId join.
+ *
+ * GET /api/soap-notes/recent?patientId=42&limit=5
+ */
+router.get('/recent', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.query.patientId as string);
+    if (!Number.isFinite(patientId)) {
+      return res.status(400).json({ error: 'patientId query param is required' });
+    }
+    const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
+    if (!userPracticeId) {
+      return res.status(400).json({ error: 'User has no practice context' });
+    }
+    const rawLimit = req.query.limit ? parseInt(req.query.limit as string) : 5;
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 5;
+    const notes = await storage.getRecentSoapNotesForPatient(patientId, userPracticeId, limit);
+    res.json(notes);
+  } catch (error) {
+    logger.error('Error fetching recent SOAP notes', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to fetch recent SOAP notes' });
+  }
+});
+
 // Create SOAP note with AI-assisted billing
 router.post('/', isAuthenticated, async (req: any, res) => {
   try {
