@@ -24,12 +24,14 @@ export function withAudit<TInput, TOutput>(
     context: McpPracticeContext,
   ): Promise<{ content: Array<{ type: 'text'; text: string }> }> => {
     const start = Date.now();
+    let handlerEnd = start;
     let success = true;
     let errorMessage: string | undefined;
     let result: TOutput | undefined;
 
     try {
       result = await handler(input, context);
+      handlerEnd = Date.now();
       return {
         content: [
           {
@@ -43,6 +45,7 @@ export function withAudit<TInput, TOutput>(
         ],
       };
     } catch (err: any) {
+      handlerEnd = Date.now();
       success = false;
       errorMessage = err.message || 'Unknown error';
       logger.error(`MCP tool ${toolName} failed`, {
@@ -59,7 +62,8 @@ export function withAudit<TInput, TOutput>(
         ],
       };
     } finally {
-      const durationMs = Date.now() - start;
+      const handlerDurationMs = handlerEnd - start;
+      const auditStart = Date.now();
       try {
         await logAuditEvent({
           eventCategory: 'mcp_tool_call',
@@ -67,7 +71,7 @@ export function withAudit<TInput, TOutput>(
           resourceType,
           userId: context.userId,
           practiceId: context.practiceId,
-          details: { durationMs, success, error: errorMessage },
+          details: { durationMs: handlerDurationMs, success, error: errorMessage },
           success,
         });
       } catch (auditErr: any) {
@@ -75,6 +79,16 @@ export function withAudit<TInput, TOutput>(
           error: auditErr.message,
         });
       }
+      const auditDurationMs = Date.now() - auditStart;
+      const totalDurationMs = Date.now() - start;
+      logger.info('MCP tool timing', {
+        tool: toolName,
+        practiceId: context.practiceId,
+        handlerDurationMs,
+        auditDurationMs,
+        totalDurationMs,
+        success,
+      });
     }
   };
 }
