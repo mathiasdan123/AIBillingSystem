@@ -35,6 +35,8 @@ import {
   ClipboardList,
   LogIn,
   AlertTriangle,
+  Bell,
+  Mail,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -142,6 +144,15 @@ export const navigationSections: NavSection[] = [
         children: [
           { nameKey: 'nav.dataImport', href: '/data-import', icon: Upload, adminOnly: true },
           { nameKey: 'nav.dataExport', href: '/data-export', icon: Download, adminOnly: true },
+        ],
+      },
+      {
+        nameKey: 'nav.notificationsGroup',
+        icon: Bell,
+        adminOnly: false,
+        children: [
+          { nameKey: 'nav.notificationTemplates', href: '/notification-templates', icon: Mail, adminOnly: true },
+          { nameKey: 'nav.notificationPreferences', href: '/notification-settings', icon: Bell, adminOnly: false },
         ],
       },
       { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
