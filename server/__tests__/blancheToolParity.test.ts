@@ -165,7 +165,7 @@ const SURFACE_ONLY_REASONS: Record<string, string> = {
   get_claim_status: '[rename-debt] MCP name; in-app uses check_claim_status',
   generate_appeal_letter: '[rename-debt] MCP name; in-app uses draft_appeal_letter',
   create_invoice: '[rename-debt] MCP name; in-app uses create_patient_invoice',
-  optimize_billing_codes: '⚠ COMPLIANCE — MCP name violates CLAUDE.md ("optimize" not allowed); should be rename to billing_code_accuracy_review',
+  billing_code_accuracy_review: 'MCP only: AI billing-code accuracy review; in-app exposes the same primitive via the SOAP-note submission flow (no direct chat tool)',
   predict_denial_risk: 'MCP only: AI denial risk score; in-app does not expose a direct equivalent',
 };
 

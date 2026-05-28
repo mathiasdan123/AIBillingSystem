@@ -12,8 +12,14 @@ export function registerBillingTools(
   server: McpServer,
   context: McpPracticeContext,
 ) {
-  const optimizeCodes = withAudit(
-    'optimize_billing_codes',
+  // ── billing_code_accuracy_review ──────────────────────────────────────
+  // Public MCP tool name uses the "accuracy" framing required by
+  // CLAUDE.md. The underlying internal service is still called
+  // `optimizeBillingCodes` (server/services/aiBillingOptimizer.ts) —
+  // renaming the implementation is a larger blast-radius change tracked
+  // as separate debt; this PR is the compliance-critical public rename.
+  const billingCodeAccuracyReview = withAudit(
+    'billing_code_accuracy_review',
     'claim',
     false,
     async (input: {
@@ -60,7 +66,7 @@ export function registerBillingTools(
   );
 
   server.tool(
-    'optimize_billing_codes',
+    'billing_code_accuracy_review',
     'AI-assisted billing code accuracy review. Suggests CPT codes and units based on session details and insurance rules. IMPORTANT: All coding decisions must be reviewed and approved by the treating provider.',
     {
       sessionDuration: z.number().describe('Session duration in minutes'),
@@ -92,6 +98,6 @@ export function registerBillingTools(
         .optional()
         .describe('ICD-10 code description'),
     },
-    (input) => optimizeCodes(input, context),
+    (input) => billingCodeAccuracyReview(input, context),
   );
 }
