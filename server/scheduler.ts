@@ -1170,6 +1170,26 @@ export function startScheduler() {
     });
   }, 30_000);
 
+  // Claim status reaper — runs daily at 6:00 AM (after the 5 AM eligibility
+  // sweep and the 4 AM enrollment sync). Symmetrical follow-on to the
+  // eligibility sweep: same architecture pattern, different transaction
+  // type (276/277 instead of 270/271). Polls every claim still in
+  // 'submitted' status with submittedAt older than 24h and auto-transitions
+  // it to 'paid' / 'denied' / 'pending' based on the Stedi response. Per-
+  // claim errors are tolerated; one bad poll does NOT abort the run.
+  const claimStatusReaperTask = cron.schedule('0 6 * * *', async () => {
+    try {
+      const { runClaimStatusReap } = await import('./services/claimStatusReaperService');
+      const result = await runClaimStatusReap({ olderThanHours: 24 });
+      logger.info('Claim status reaper cron complete', { totals: result.totals });
+    } catch (error: any) {
+      logger.error('Claim status reaper cron failed', { error: error?.message ?? String(error) });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('claimStatusReaper', claimStatusReaperTask);
+
   // Automated review requests - runs daily at 10:00 AM
   // Sends review requests to patients 24-48 hours after completed appointments
   const automatedReviewRequestTask = cron.schedule('0 10 * * *', async () => {

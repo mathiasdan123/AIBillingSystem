@@ -11,7 +11,7 @@ import {
   appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter,
   treatmentPlansRouter, locationsRouter, aiInsightsRouter, customReportsRouter, cannedReportsRouter,
   exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
-  messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter, costDashboardRouter,
+  messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter, claimStatusReaperRouter, costDashboardRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
@@ -200,6 +200,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', appealsRouter);
   // Admin routes: /api/admin/*
   app.use('/api', adminRouter);
+  // Claim status reaper admin route: /api/admin/claim-status-reaper/run
+  app.use('/api', claimStatusReaperRouter);
   app.use('/api', costDashboardRouter);
   // Reviews & feedback routes: /api/reviews/*, /api/feedback/*, /api/public/feedback/*
   app.use('/api', reviewsRouter);
