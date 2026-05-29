@@ -71,7 +71,7 @@ interface BillingRecommendation {
   reimbursementOptimized: boolean; // indicates if reimbursement data was used
 }
 
-export async function optimizeBillingCodes(
+export async function reviewBillingCodeAccuracy(
   sessionDetails: SessionDetails,
   availableCptCodes: CptCode[],
   insuranceName: string,
@@ -257,7 +257,7 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
         cptCode: defaultCode.code,
         description: defaultCode.description,
         units: Math.min(totalAvailableUnits, 2),
-        reasoning: "Default billing - AI optimization unavailable",
+        reasoning: "Default billing - AI accuracy review unavailable",
         reimbursementRate: undefined
       }],
       totalUnits: Math.min(totalAvailableUnits, 2),
