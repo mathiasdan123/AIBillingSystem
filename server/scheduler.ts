@@ -1409,8 +1409,31 @@ export function startScheduler() {
   });
   scheduledTasks.set('claimFollowUpGeneration', claimFollowUpTask);
 
+  // Stedi enrollment sync — daily at 4 AM (one hour before the 5 AM
+  // eligibility sweep so that fresh enrollment status is in place
+  // before the sweep tries to use it). Pulls Stedi's source-of-truth
+  // enrollment list and reconciles into our payer_enrollments table
+  // so /stedi-readiness reflects reality when operators forget to
+  // mirror Stedi-side changes locally.
+  const stediEnrollmentSyncTask = cron.schedule('0 4 * * *', async () => {
+    try {
+      logger.info('Starting daily Stedi enrollment sync');
+      const { syncStediEnrollments } = await import('./services/stediEnrollmentSyncService');
+      const result = await syncStediEnrollments();
+      logger.info('Stedi enrollment sync completed', {
+        practicesProcessed: result.practices.length,
+        totals: result.totals,
+      });
+    } catch (error: any) {
+      logger.error('Stedi enrollment sync task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('stediEnrollmentSync', stediEnrollmentSyncTask);
+
   logger.info('Scheduler started', {
-    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis', 'claimFollowUpGeneration'],
+    tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis', 'claimFollowUpGeneration', 'stediEnrollmentSync'],
   });
 }
 
