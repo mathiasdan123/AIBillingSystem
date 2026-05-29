@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { storage } from '../../storage';
 import { withAudit } from '../audit';
+import { withMcpMutationGate } from '../confirmation';
 import type { McpPracticeContext } from '../types';
 
 export function registerPatientTools(
@@ -146,5 +147,63 @@ export function registerPatientTools(
       secondaryInsuranceSubscriberDob: z.string().optional().describe('Secondary insurance subscriber DOB (YYYY-MM-DD)'),
     },
     (input) => updatePatientInsurance(input, context),
+  );
+
+  // ── create_patient ────────────────────────────────────────────────────
+  // Mirrors the in-app Blanche dispatcher case (server/routes/ai-assistant.ts).
+  // Same allowlist of optional fields; only firstName + lastName are required.
+  // Tenant scoping comes from ctx.practiceId — the caller can never write to
+  // another practice's patient list. Mutation gated via withMcpMutationGate.
+  const createPatient = withAudit(
+    'create_patient',
+    'patient',
+    true,
+    withMcpMutationGate(
+      async (
+        input: {
+          firstName: string;
+          lastName: string;
+          dateOfBirth?: string;
+          email?: string;
+          phone?: string;
+          insuranceProvider?: string;
+        },
+        ctx: McpPracticeContext,
+      ) => {
+        const patientData: any = {
+          practiceId: ctx.practiceId,
+          firstName: input.firstName,
+          lastName: input.lastName,
+        };
+        if (input.dateOfBirth) patientData.dateOfBirth = input.dateOfBirth;
+        if (input.email) patientData.email = input.email;
+        if (input.phone) patientData.phone = input.phone;
+        if (input.insuranceProvider) patientData.insuranceProvider = input.insuranceProvider;
+        const patient = await storage.createPatient(patientData);
+        return {
+          success: true,
+          patient: {
+            id: patient.id,
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+          },
+          message: `Patient ${patient.firstName} ${patient.lastName} created successfully.`,
+        };
+      },
+    ),
+  );
+
+  server.tool(
+    'create_patient',
+    'Create a new patient in the practice. Use this when a user wants to add their first patient or add a new patient through the assistant. Contains PHI.',
+    {
+      firstName: z.string().describe('Patient first name'),
+      lastName: z.string().describe('Patient last name'),
+      dateOfBirth: z.string().optional().describe('Date of birth in YYYY-MM-DD format'),
+      email: z.string().optional().describe('Patient or guardian email'),
+      phone: z.string().optional().describe('Phone number'),
+      insuranceProvider: z.string().optional().describe('Insurance company name'),
+    },
+    (input) => createPatient(input, context),
   );
 }
