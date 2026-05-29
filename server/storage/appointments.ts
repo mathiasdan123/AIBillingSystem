@@ -99,7 +99,13 @@ export async function getAppointmentsFiltered(
     .orderBy(desc(appointments.startTime))
     .$dynamic();
 
-  query = query.limit(opts.limit ?? 500);
+  // P1.1 follow-up: 500 was too generous for an MCP/AI caller — a chatty
+  // Blanche typically asks about "the next handful" of appointments, and
+  // 500 rows of full appointment data is a multi-MB JSON payload that
+  // tripped the MCP client timeout even with the right index. 50 is a
+  // realistic conversational chunk; callers that genuinely need more can
+  // page via opts.offset or pass an explicit higher limit.
+  query = query.limit(opts.limit ?? 50);
   if (opts.offset) query = query.offset(opts.offset);
   return await query;
 }
