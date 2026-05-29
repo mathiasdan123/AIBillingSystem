@@ -99,6 +99,7 @@ vi.mock('../services/passwordService', async () => ({
 // Import router under test AFTER all mocks are declared
 // ---------------------------------------------------------------------------
 import authRouter from '../routes/auth';
+import { hashBackupCode } from '../services/mfaService';
 
 function buildApp(): Express {
   const app = express();
@@ -457,6 +458,79 @@ describe('auth routes (server/routes/auth.ts)', () => {
         .expect(400);
 
       expect(res.body.message).toMatch(/admin already exists/i);
+    });
+  });
+
+  // ---- MFA setup + backup codes ----
+
+  describe('POST /api/mfa/setup', () => {
+    it('persists HASHED backup codes and returns the raw codes once', async () => {
+      mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', email: 'admin@example.com', role: 'admin' });
+      mockStorage.updateUserMfa.mockResolvedValue({});
+
+      const res = await request(app).post('/api/mfa/setup').expect(200);
+
+      expect(res.body.uri).toBeTruthy();
+      expect(Array.isArray(res.body.backupCodes)).toBe(true);
+      expect(res.body.backupCodes).toHaveLength(10);
+
+      // updateUserMfa must be called with the secret AND the hashed backup codes
+      expect(mockStorage.updateUserMfa).toHaveBeenCalledOnce();
+      const [, payload] = mockStorage.updateUserMfa.mock.calls[0];
+      expect(payload.mfaSecret).toBeTruthy();
+      expect(Array.isArray(payload.mfaBackupCodes)).toBe(true);
+      expect(payload.mfaBackupCodes).toHaveLength(10);
+
+      // The stored codes must be the SHA-256 hashes of the raw codes (never the raw values)
+      expect(payload.mfaBackupCodes).not.toContain(res.body.backupCodes[0]);
+      expect(payload.mfaBackupCodes).toEqual(res.body.backupCodes.map(hashBackupCode));
+    });
+  });
+
+  describe('POST /api/mfa/challenge (backup code)', () => {
+    it('accepts a valid backup code and consumes it (single-use)', async () => {
+      const rawCodes = ['aaaa1111', 'bbbb2222', 'cccc3333'];
+      const hashedCodes = rawCodes.map(hashBackupCode);
+      mockStorage.getUser.mockResolvedValue({
+        id: 'admin-user-1',
+        role: 'admin',
+        mfaEnabled: true,
+        mfaSecret: 'JBSWY3DPEHPK3PXP',
+        mfaBackupCodes: hashedCodes,
+      });
+      mockStorage.updateUserMfa.mockResolvedValue({});
+
+      const res = await request(app)
+        .post('/api/mfa/challenge')
+        .send({ backupCode: 'bbbb2222' })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      // the used code must be removed from the persisted set, leaving the other two
+      expect(mockStorage.updateUserMfa).toHaveBeenCalledOnce();
+      const [, payload] = mockStorage.updateUserMfa.mock.calls[0];
+      expect(payload.mfaBackupCodes).toHaveLength(2);
+      expect(payload.mfaBackupCodes).not.toContain(hashBackupCode('bbbb2222'));
+      expect(payload.mfaBackupCodes).toContain(hashBackupCode('aaaa1111'));
+    });
+
+    it('rejects an invalid backup code without consuming anything', async () => {
+      const hashedCodes = ['aaaa1111', 'bbbb2222'].map(hashBackupCode);
+      mockStorage.getUser.mockResolvedValue({
+        id: 'admin-user-1',
+        role: 'admin',
+        mfaEnabled: true,
+        mfaSecret: 'JBSWY3DPEHPK3PXP',
+        mfaBackupCodes: hashedCodes,
+      });
+
+      const res = await request(app)
+        .post('/api/mfa/challenge')
+        .send({ backupCode: 'wrongwrong' })
+        .expect(400);
+
+      expect(res.body.message).toMatch(/invalid backup code/i);
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
     });
   });
 });
