@@ -2,8 +2,8 @@
  * Targeted regression tests for the high-risk Blanche tools.
  *
  * Locks down three behaviors from the PR #86 security review:
- *   1. check_claim_status rejects cross-practice access
- *   2. create_patient_invoice rejects amounts above the $10,000 cap
+ *   1. get_claim_status rejects cross-practice access
+ *   2. create_invoice rejects amounts above the $10,000 cap
  *   3. send_patient_payment_link rejects Stripe intents that lack our metadata
  *      (the cross-tenant bypass fix)
  *   4. bulk_eligibility_by_filter enforces the 200-patient cap and applies the
@@ -88,9 +88,9 @@ beforeEach(() => {
   mockStripe.isStripeConfigured.mockReturnValue(true);
 });
 
-// ---- 1. check_claim_status: cross-practice rejection ---------------------
+// ---- 1. get_claim_status: cross-practice rejection ---------------------
 
-describe('check_claim_status', () => {
+describe('get_claim_status', () => {
   it('rejects a claim that belongs to a different practice', async () => {
     mockStorage.getClaim.mockResolvedValue({
       id: 42,
@@ -101,7 +101,7 @@ describe('check_claim_status', () => {
       totalAmount: '150.00',
     });
 
-    const out = await executeTool('check_claim_status', { claimId: 42 }, PRACTICE_ID, 'user1');
+    const out = await executeTool('get_claim_status', { claimId: 42 }, PRACTICE_ID, 'user1');
     const parsed = JSON.parse(out);
 
     expect(parsed.error).toBeDefined();
@@ -112,17 +112,17 @@ describe('check_claim_status', () => {
 
   it('rejects when the claim id is unknown', async () => {
     mockStorage.getClaim.mockResolvedValue(undefined);
-    const out = await executeTool('check_claim_status', { claimId: 99999 }, PRACTICE_ID, 'user1');
+    const out = await executeTool('get_claim_status', { claimId: 99999 }, PRACTICE_ID, 'user1');
     expect(JSON.parse(out).error).toMatch(/not found/i);
   });
 });
 
-// ---- 2. create_patient_invoice: $10k cap ---------------------------------
+// ---- 2. create_invoice: $10k cap ---------------------------------
 
-describe('create_patient_invoice', () => {
+describe('create_invoice', () => {
   it('rejects amounts above $10,000', async () => {
     const out = await executeTool(
-      'create_patient_invoice',
+      'create_invoice',
       { patientId: 1, amount: 10001, description: 'oversized invoice' },
       PRACTICE_ID,
       'user1',
@@ -149,7 +149,7 @@ describe('create_patient_invoice', () => {
     });
 
     const out = await executeTool(
-      'create_patient_invoice',
+      'create_invoice',
       { patientId: 1, amount: 10000, description: 'at cap' },
       PRACTICE_ID,
       'user1',
