@@ -12,6 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
   Home,
   Users,
   FileText,
@@ -25,6 +33,8 @@ import {
   ChevronDown,
   Search,
   MessageSquare,
+  Settings,
+  ShieldCheck,
 } from "lucide-react";
 import { openBlanche } from "@/lib/blancheControl";
 import { useTheme } from "next-themes";
@@ -569,19 +579,61 @@ export default function SimpleNavigation() {
             <LanguageSwitcher compact />
           </div>
           <div className="flex items-center gap-2">
-            <Avatar className="h-7 w-7">
-              <AvatarImage src={(user as any)?.profileImageUrl} />
-              <AvatarFallback className="text-[10px]">{getUserInitials()}</AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <p className="text-[12px] font-medium text-foreground truncate leading-tight">
-                {(user as any)?.firstName && (user as any)?.lastName
-                  ? `${(user as any).firstName} ${(user as any).lastName}`
-                  : (user as any)?.email || 'User'
-                }
-              </p>
-              <p className="text-[10.5px] text-muted-foreground capitalize leading-tight">{currentRole}</p>
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-2 flex-1 min-w-0 rounded-md px-1 py-1 -mx-1 hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors text-left"
+                  aria-label={t('nav.accountMenu', 'Account menu')}
+                  data-testid="sidebar-account-menu"
+                >
+                  <Avatar className="h-7 w-7">
+                    <AvatarImage src={(user as any)?.profileImageUrl} />
+                    <AvatarFallback className="text-[10px]">{getUserInitials()}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[12px] font-medium text-foreground truncate leading-tight">
+                      {(user as any)?.firstName && (user as any)?.lastName
+                        ? `${(user as any).firstName} ${(user as any).lastName}`
+                        : (user as any)?.email || 'User'
+                      }
+                    </p>
+                    <p className="text-[10.5px] text-muted-foreground capitalize leading-tight">{currentRole}</p>
+                  </div>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-60">
+                <DropdownMenuLabel className="flex flex-col gap-0.5">
+                  <span className="text-[12px] font-medium text-foreground truncate">
+                    {(user as any)?.firstName && (user as any)?.lastName
+                      ? `${(user as any).firstName} ${(user as any).lastName}`
+                      : (user as any)?.email || 'User'}
+                  </span>
+                  {(user as any)?.email && (
+                    <span className="text-[11px] font-normal text-muted-foreground truncate">
+                      {(user as any).email}
+                    </span>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setLocation('/settings')} data-testid="account-menu-settings">
+                  <Settings className="w-3.5 h-3.5 mr-2" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  {t('nav.accountSettings', 'Account settings')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation('/settings')} data-testid="account-menu-security">
+                  <ShieldCheck className="w-3.5 h-3.5 mr-2" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  {t('nav.securityMfa', 'Security & MFA')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => { window.location.href = '/api/logout'; }}
+                  data-testid="account-menu-logout"
+                >
+                  <LogOut className="w-3.5 h-3.5 mr-2" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  {t('nav.logOut')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="ghost"
               size="sm"

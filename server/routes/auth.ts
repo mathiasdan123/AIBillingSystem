@@ -180,11 +180,16 @@ router.post('/setup/make-admin', isAuthenticated, async (req: any, res) => {
 
 router.post('/mfa/setup', isAuthenticated, async (req: any, res) => {
   try {
-    const { generateSecret } = await import('../services/mfaService');
+    const { generateSecret, hashBackupCode } = await import('../services/mfaService');
     const userId = req.user.claims.sub;
     const user = await storage.getUser(userId);
     const result = generateSecret(user?.email || 'user');
-    await storage.updateUserMfa(userId, { mfaSecret: result.secret });
+    // Persist the HASHED backup codes now so they can actually be redeemed later.
+    // The raw codes are returned to the user once here and never stored in the clear.
+    await storage.updateUserMfa(userId, {
+      mfaSecret: result.secret,
+      mfaBackupCodes: result.backupCodes.map(hashBackupCode),
+    });
     res.json({ uri: result.uri, backupCodes: result.backupCodes });
   } catch (error) {
     res.status(500).json({ message: 'MFA setup failed' });
@@ -233,7 +238,7 @@ router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
 // Rate limited to prevent brute force attacks on MFA codes
 router.post('/mfa/challenge', authLimiter, isAuthenticated, async (req: any, res) => {
   try {
-    const { verifyToken, verifyBackupCode } = await import('../services/mfaService');
+    const { verifyToken, verifyBackupCode, hashBackupCode } = await import('../services/mfaService');
     const userId = req.user?.claims?.sub;
     const { token, backupCode } = req.body;
 
@@ -257,6 +262,11 @@ router.post('/mfa/challenge', authLimiter, isAuthenticated, async (req: any, res
         logger.warn('MFA challenge failed: Invalid backup code', { userId });
         return res.status(400).json({ message: 'Invalid backup code' });
       }
+      // Backup codes are single-use: consume the redeemed code so it can't be replayed.
+      const usedHash = hashBackupCode(backupCode);
+      const remaining = codes.filter((c) => c !== usedHash);
+      await storage.updateUserMfa(userId, { mfaBackupCodes: remaining });
+      logger.info('MFA backup code redeemed and consumed', { userId, remaining: remaining.length });
     } else {
       return res.status(400).json({ message: 'Token or backup code required' });
     }
