@@ -91,6 +91,7 @@ export { default as payerEnrollmentsRouter } from './payer-enrollments';
 export { default as soapInterventionTemplatesRouter } from './soap-intervention-templates';
 export { default as maintenanceWindowsRouter } from './maintenance-windows';
 export { default as notificationTemplatesRouter } from './notification-templates';
+export { default as stediReadinessRouter } from './stedi-readiness';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

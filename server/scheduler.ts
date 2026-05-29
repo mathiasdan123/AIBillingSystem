@@ -1170,13 +1170,31 @@ export function startScheduler() {
     });
   }, 30_000);
 
-  // Claim status reaper — runs daily at 6:00 AM (after the 5 AM eligibility
-  // sweep and the 4 AM enrollment sync). Symmetrical follow-on to the
-  // eligibility sweep: same architecture pattern, different transaction
-  // type (276/277 instead of 270/271). Polls every claim still in
-  // 'submitted' status with submittedAt older than 24h and auto-transitions
-  // it to 'paid' / 'denied' / 'pending' based on the Stedi response. Per-
-  // claim errors are tolerated; one bad poll does NOT abort the run.
+  // Daily eligibility sweep — runs each morning at 5:00 AM local time and
+  // probes a 7-day forward window. Complements the 6h pre-appointment task
+  // by giving admins multi-day lead time to chase down inactive coverage.
+  // Per-patient errors are tolerated (logged + recorded as 'error' rows);
+  // one bad payer does NOT abort the sweep.
+  const dailyEligibilitySweepTask = cron.schedule('0 5 * * *', async () => {
+    try {
+      const { runDailyEligibilitySweep } = await import('./services/dailyEligibilitySweepService');
+      const result = await runDailyEligibilitySweep({ daysAhead: 7 });
+      logger.info('Daily eligibility sweep cron complete', { totals: result.totals });
+    } catch (error: any) {
+      logger.error('Daily eligibility sweep cron failed', { error: error?.message ?? String(error) });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('dailyEligibilitySweep', dailyEligibilitySweepTask);
+
+  // Claim status reaper — runs daily at 6:00 AM (one hour after the
+  // eligibility sweep). Symmetrical follow-on to the eligibility sweep:
+  // same architecture pattern, different transaction type (276/277 instead
+  // of 270/271). Polls every claim still in 'submitted' status with
+  // submittedAt older than 24h and auto-transitions it to 'paid' / 'denied'
+  // / 'pending' based on the Stedi response. Per-claim errors are tolerated;
+  // one bad poll does NOT abort the run.
   const claimStatusReaperTask = cron.schedule('0 6 * * *', async () => {
     try {
       const { runClaimStatusReap } = await import('./services/claimStatusReaperService');
