@@ -37,6 +37,7 @@ import {
   AlertTriangle,
   Bell,
   Mail,
+  Activity,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -125,6 +126,7 @@ export const navigationSections: NavSection[] = [
           { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
           { nameKey: 'nav.payerEnrollments', href: '/payer-enrollments', icon: Handshake, adminOnly: false },
           { nameKey: 'nav.credentialing', href: '/credentialing', icon: ShieldCheck, adminOnly: true },
+          { nameKey: 'nav.stediReadiness', href: '/stedi-readiness', icon: Activity, adminOnly: true },
         ],
       },
       {
