@@ -40,6 +40,7 @@ export { default as waitlistRouter } from './waitlist';
 
 export { default as appealsRouter } from './appeals';
 export { default as adminRouter } from './admin';
+export { default as claimStatusReaperRouter } from './claim-status-reaper';
 export { default as costDashboardRouter } from './cost-dashboard';
 export { default as reviewsRouter } from './reviews';
 export { default as publicPortalRouter } from './public-portal';
@@ -90,6 +91,7 @@ export { default as payerEnrollmentsRouter } from './payer-enrollments';
 export { default as soapInterventionTemplatesRouter } from './soap-intervention-templates';
 export { default as maintenanceWindowsRouter } from './maintenance-windows';
 export { default as notificationTemplatesRouter } from './notification-templates';
+export { default as stediReadinessRouter } from './stedi-readiness';
 
 // Existing routes (already modularized before this refactor)
 export { default as insuranceAuthorizationRoutes } from './insuranceAuthorizationRoutes';

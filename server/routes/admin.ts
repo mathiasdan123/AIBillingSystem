@@ -299,6 +299,45 @@ router.post('/admin/reset-demo-data', isAuthenticated, isAdminOrBilling, async (
   }
 });
 
+// ==================== ELIGIBILITY SWEEP ====================
+
+// POST /api/admin/eligibility-sweep/run
+// Manually trigger the daily eligibility sweep for the calling practice.
+// Useful for admins who don't want to wait for the 5am cron after they
+// add new appointments or update insurance records.
+router.post(
+  '/admin/eligibility-sweep/run',
+  isAuthenticated,
+  isAdminOrBilling,
+  async (req: any, res: Response) => {
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      const daysAheadRaw = req.body?.daysAhead;
+      const daysAhead =
+        typeof daysAheadRaw === 'number' && daysAheadRaw > 0 && daysAheadRaw <= 30
+          ? daysAheadRaw
+          : 7;
+
+      logger.info('Manual eligibility sweep triggered', {
+        practiceId,
+        userId: req.user?.claims?.sub,
+        daysAhead,
+      });
+
+      const { runDailyEligibilitySweep } = await import(
+        '../services/dailyEligibilitySweepService'
+      );
+      const summary = await runDailyEligibilitySweep({ practiceId, daysAhead });
+      res.json(summary);
+    } catch (error: any) {
+      logger.error('Manual eligibility sweep failed', {
+        error: error?.message || String(error),
+      });
+      res.status(500).json({ message: 'Eligibility sweep failed' });
+    }
+  },
+);
+
 // ==================== STEDI ENROLLMENT SYNC ====================
 
 // POST /api/admin/stedi-enrollment-sync/run
