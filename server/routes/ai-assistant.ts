@@ -1770,101 +1770,13 @@ const assistantTools: Anthropic.Tool[] = [
   },
 ];
 
-// Strip likely PHI from clearinghouse / API error strings before they reach the
-// assistant transcript. Stedi 270/271/276/277 errors echo the request payload,
-// which contains member ID, DOB, and patient name. The assistant transcript is
-// persisted, so raw error text is HIPAA-relevant.
-export function sanitizeExternalError(raw: string | undefined | null): string {
-  if (!raw) return 'unknown error';
-  let s = String(raw);
-  // SSN-like
-  s = s.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[redacted-id]');
-  // ISO and US dates (DOB / DOS)
-  s = s.replace(/\b\d{4}-\d{2}-\d{2}\b/g, '[redacted-date]');
-  s = s.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, '[redacted-date]');
-  // Long alphanumeric tokens (member IDs, policy numbers)
-  s = s.replace(/\b[A-Z0-9]{8,}\b/g, '[redacted-id]');
-  // Cap length so a verbose error can't dump a full payload into the transcript
-  if (s.length > 200) s = s.slice(0, 200) + '…';
-  return s;
-}
-
-function sanitizeExternalErrors(arr: string[] | undefined | null, max = 3): string[] {
-  if (!arr || arr.length === 0) return [];
-  return arr.slice(0, max).map(sanitizeExternalError);
-}
-
-// Shared helper: run eligibility checks for a list of patient IDs scoped to a practice.
-// Used by both batch_eligibility_check and bulk_eligibility_by_filter.
-type BulkEligibilityResult = {
-  checked: number;
-  eligible: number;
-  ineligible: number;
-  errors: number;
-  results: Array<{ patientName: string; insurance: string | null; status: string; eligible: boolean | null; error?: string }>;
-};
-
-async function runBulkEligibility(
-  practiceId: number,
-  patientIds: number[],
-): Promise<BulkEligibilityResult | { error: string }> {
-  const { checkEligibility: stediCheckEligibility, isStediConfigured, PAYER_IDS: payerIds } = await import('../services/stediService');
-  if (!isStediConfigured()) {
-    return { error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' };
-  }
-
-  const practice = await storage.getPractice(practiceId);
-
-  const results: BulkEligibilityResult['results'] = [];
-  let eligible = 0;
-  let ineligible = 0;
-  let errors = 0;
-
-  for (let i = 0; i < patientIds.length; i++) {
-    if (i > 0) await new Promise((resolve) => setTimeout(resolve, 200));
-    const pid = patientIds[i];
-    try {
-      const pat = await storage.getPatient(pid);
-      if (!pat) { errors++; results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not found' }); continue; }
-      // Guard: ensure patient belongs to this practice (defense in depth)
-      if (pat.practiceId !== practiceId) {
-        errors++;
-        results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: 'Patient not in practice' });
-        continue;
-      }
-      if (!pat.insuranceProvider && !pat.insuranceId && !pat.policyNumber) {
-        errors++;
-        results.push({ patientName: `${pat.firstName} ${pat.lastName}`, insurance: null, status: 'skipped', eligible: null, error: 'No insurance info' });
-        continue;
-      }
-
-      const insName = (pat.insuranceProvider || '').toLowerCase();
-      const pId = payerIds[insName] || pat.insuranceId || '60054';
-      const eligRes = await stediCheckEligibility({
-        payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
-        provider: { npi: practice?.npi || '', organizationName: practice?.name || undefined },
-        subscriber: { memberId: pat.insuranceId || pat.policyNumber || '', firstName: pat.firstName, lastName: pat.lastName, dateOfBirth: pat.dateOfBirth || '' },
-      }, practiceId);
-
-      const isElig = eligRes.status === 'active';
-      if (isElig) eligible++;
-      else if (eligRes.status === 'inactive') ineligible++;
-      else errors++;
-
-      results.push({
-        patientName: `${pat.firstName} ${pat.lastName}`,
-        insurance: pat.insuranceProvider || null,
-        status: eligRes.status,
-        eligible: isElig,
-      });
-    } catch (err) {
-      errors++;
-      results.push({ patientName: 'Unknown', insurance: null, status: 'error', eligible: null, error: sanitizeExternalError(err instanceof Error ? err.message : String(err)) });
-    }
-  }
-
-  return { checked: patientIds.length, eligible, ineligible, errors, results };
-}
+// PHI-safe error sanitizer + bulk eligibility now live in shared services
+// so the MCP layer can reuse them without importing this route module
+// (which pulls a heavy graph including the DB). Re-export sanitizeExternalError
+// here because external tests import it from this path.
+export { sanitizeExternalError, sanitizeExternalErrors } from '../services/errorSanitizer';
+import { sanitizeExternalError, sanitizeExternalErrors } from '../services/errorSanitizer';
+import { runBulkEligibility } from '../services/bulkEligibilityService';
 
 // Execute tool calls against the database
 export async function executeTool(

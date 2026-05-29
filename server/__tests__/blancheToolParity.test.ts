@@ -78,12 +78,15 @@ function extractMcpToolNames(): Set<string> {
  */
 const PARITY_TOOLS: ReadonlySet<string> = new Set([
   'add_claim_line_item',
+  'batch_eligibility_check',
+  'bulk_eligibility_by_filter',
   'cancel_appointment',
   'check_eligibility',
   'check_in_appointment',
   'check_out_appointment',
   'create_appointment_self_pay_invoice',
   'create_invoice',
+  'create_patient',
   'generate_appeal_letter',
   'generate_soap_note',
   'get_appointments',
@@ -98,6 +101,7 @@ const PARITY_TOOLS: ReadonlySet<string> = new Set([
   'mark_no_show',
   'reschedule_appointment',
   'search_patients',
+  'send_patient_payment_link',
   'session_end',
   'session_start',
   'sign_soap_note',
@@ -105,6 +109,7 @@ const PARITY_TOOLS: ReadonlySet<string> = new Set([
   'update_notification_template',
   'update_patient_insurance',
   'update_soap_draft',
+  'verify_benefits',
 ]);
 
 /**
@@ -148,11 +153,6 @@ const SURFACE_ONLY_REASONS: Record<string, string> = {
   create_appointment: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
   suggest_appointment_slot: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
   send_appointment_reminder: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
-  create_patient: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
-  send_patient_payment_link: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
-  verify_benefits: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
-  batch_eligibility_check: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
-  bulk_eligibility_by_filter: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
   review_denied_claims: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
   review_underpayments: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
   draft_underpayment_dispute: 'in-app only: BACKFILL CANDIDATE — should be on MCP',
