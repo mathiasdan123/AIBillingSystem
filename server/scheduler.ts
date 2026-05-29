@@ -1170,6 +1170,24 @@ export function startScheduler() {
     });
   }, 30_000);
 
+  // Daily eligibility sweep — runs each morning at 5:00 AM local time and
+  // probes a 7-day forward window. Complements the 6h pre-appointment task
+  // by giving admins multi-day lead time to chase down inactive coverage.
+  // Per-patient errors are tolerated (logged + recorded as 'error' rows);
+  // one bad payer does NOT abort the sweep.
+  const dailyEligibilitySweepTask = cron.schedule('0 5 * * *', async () => {
+    try {
+      const { runDailyEligibilitySweep } = await import('./services/dailyEligibilitySweepService');
+      const result = await runDailyEligibilitySweep({ daysAhead: 7 });
+      logger.info('Daily eligibility sweep cron complete', { totals: result.totals });
+    } catch (error: any) {
+      logger.error('Daily eligibility sweep cron failed', { error: error?.message ?? String(error) });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('dailyEligibilitySweep', dailyEligibilitySweepTask);
+
   // Automated review requests - runs daily at 10:00 AM
   // Sends review requests to patients 24-48 hours after completed appointments
   const automatedReviewRequestTask = cron.schedule('0 10 * * *', async () => {
