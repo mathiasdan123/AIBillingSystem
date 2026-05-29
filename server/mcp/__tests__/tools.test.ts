@@ -39,8 +39,8 @@ vi.mock('../../services/aiDenialPredictor', () => ({
   predictDenial: vi.fn(),
 }));
 
-vi.mock('../../services/aiBillingOptimizer', () => ({
-  optimizeBillingCodes: vi.fn(),
+vi.mock('../../services/aiBillingAccuracyReview', () => ({
+  reviewBillingCodeAccuracy: vi.fn(),
   getInsuranceBillingRules: vi.fn(),
 }));
 

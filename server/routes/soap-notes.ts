@@ -14,7 +14,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import * as crypto from 'crypto';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
-import { optimizeBillingCodes, getInsuranceBillingRules } from '../services/aiBillingOptimizer';
+import { reviewBillingCodeAccuracy, getInsuranceBillingRules } from '../services/aiBillingAccuracyReview';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 
@@ -174,7 +174,7 @@ router.post('/', isAuthenticated, async (req: any, res) => {
 
             logger.info(`AI reviewing billing accuracy for session ${session.id}, insurance: ${insuranceName}`);
 
-            const optimization = await optimizeBillingCodes(
+            const accuracyReview = await reviewBillingCodeAccuracy(
               {
                 duration: session.duration || 45,
                 subjective: soapNote.subjective,
@@ -196,7 +196,7 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               icd10Code ? { code: icd10Code.code, description: icd10Code.description } : undefined
             );
 
-            billingOptimization = optimization;
+            billingOptimization = accuracyReview;
 
             const claimNumber = generateSecureClaimNumber("SB");
 
@@ -206,13 +206,13 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               sessionId: session.id,
               insuranceId: null,
               claimNumber,
-              totalAmount: optimization.estimatedAmount.toFixed(2),
+              totalAmount: accuracyReview.estimatedAmount.toFixed(2),
               status: 'draft',
-              aiReviewNotes: `AI Billing Accuracy Review (${optimization.complianceScore}% compliance): ${optimization.optimizationNotes}`,
+              aiReviewNotes: `AI Billing Accuracy Review (${accuracyReview.complianceScore}% compliance): ${accuracyReview.optimizationNotes}`,
             });
 
             const createdLineItems = [];
-            for (const item of optimization.lineItems) {
+            for (const item of accuracyReview.lineItems) {
               const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
               const rate = parseFloat(cptCode?.baseRate || '289');
               const amount = rate * item.units;
@@ -239,16 +239,16 @@ router.post('/', isAuthenticated, async (req: any, res) => {
             generatedClaim = {
               id: claim.id,
               claimNumber: claim.claimNumber,
-              totalAmount: optimization.estimatedAmount.toFixed(2),
+              totalAmount: accuracyReview.estimatedAmount.toFixed(2),
               lineItems: createdLineItems,
               optimization: {
-                totalUnits: optimization.totalUnits,
-                complianceScore: optimization.complianceScore,
-                notes: optimization.optimizationNotes,
+                totalUnits: accuracyReview.totalUnits,
+                complianceScore: accuracyReview.complianceScore,
+                notes: accuracyReview.optimizationNotes,
               },
             };
 
-            logger.info(`AI-assisted superbill ${claim.claimNumber} for session ${session.id}: ${optimization.lineItems.length} codes, $${optimization.estimatedAmount.toFixed(2)}, ${optimization.complianceScore}% compliance`);
+            logger.info(`AI-assisted superbill ${claim.claimNumber} for session ${session.id}: ${accuracyReview.lineItems.length} codes, $${accuracyReview.estimatedAmount.toFixed(2)}, ${accuracyReview.complianceScore}% compliance`);
           }
         }
       } catch (claimError) {

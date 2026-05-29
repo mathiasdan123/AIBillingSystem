@@ -2,9 +2,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { storage } from '../../storage';
 import {
-  optimizeBillingCodes,
+  reviewBillingCodeAccuracy,
   getInsuranceBillingRules,
-} from '../../services/aiBillingOptimizer';
+} from '../../services/aiBillingAccuracyReview';
 import { withAudit } from '../audit';
 import type { McpPracticeContext } from '../types';
 
@@ -13,11 +13,9 @@ export function registerBillingTools(
   context: McpPracticeContext,
 ) {
   // ── billing_code_accuracy_review ──────────────────────────────────────
-  // Public MCP tool name uses the "accuracy" framing required by
-  // CLAUDE.md. The underlying internal service is still called
-  // `optimizeBillingCodes` (server/services/aiBillingOptimizer.ts) —
-  // renaming the implementation is a larger blast-radius change tracked
-  // as separate debt; this PR is the compliance-critical public rename.
+  // Public MCP tool name and internal service both use the "accuracy"
+  // framing required by CLAUDE.md. See
+  // server/services/aiBillingAccuracyReview.ts.
   const billingCodeAccuracyReview = withAudit(
     'billing_code_accuracy_review',
     'claim',
@@ -54,7 +52,7 @@ export function registerBillingTools(
         ? { code: input.icd10Code, description: input.icd10Description || '' }
         : undefined;
 
-      return optimizeBillingCodes(
+      return reviewBillingCodeAccuracy(
         sessionDetails as any,
         cptCodes as any[],
         input.insuranceName,
