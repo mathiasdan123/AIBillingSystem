@@ -34,11 +34,11 @@ export function withAudit<TInput, TOutput>(
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              { success: true, data: result, containsPhi },
-              null,
-              2,
-            ),
+            // P1.1 follow-up: no pretty-print indent. The MCP client (an
+            // LLM) never reads this with human eyes; the indent doubled
+            // payload size for nothing, contributing to client timeouts
+            // on list-returning tools.
+            text: JSON.stringify({ success: true, data: result, containsPhi }),
           },
         ],
       };
