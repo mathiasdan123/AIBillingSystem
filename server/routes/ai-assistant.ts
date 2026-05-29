@@ -53,7 +53,7 @@ const SONNET_TOOLS = new Set([
   'create_patient',
   'submit_claim',
   'generate_soap_note',
-  'draft_appeal_letter',
+  'generate_appeal_letter',
   'suggest_claim_correction',
   'create_appointment',
   'reschedule_appointment',
@@ -64,8 +64,8 @@ const SONNET_TOOLS = new Set([
   'draft_underpayment_dispute',
   'send_patient_portal_invite',
   'send_appointment_reminder',
-  'check_claim_status',
-  'create_patient_invoice',
+  'get_claim_status',
+  'create_invoice',
   'send_patient_payment_link',
   'summarize_recent_eobs',
   'check_plan_document_status',
@@ -79,7 +79,7 @@ const SONNET_TOOLS = new Set([
  * card; the user clicks Confirm or Cancel.
  *
  * Adding a new mutation tool? Put it in here. Drafts/reads/queries do NOT
- * belong (e.g. draft_appeal_letter returns text without persisting; it stays
+ * belong (e.g. generate_appeal_letter returns text without persisting; it stays
  * auto-execute). When in doubt, add it — the worst case is one extra click.
  */
 const MUTATION_TOOLS = new Set<string>([
@@ -100,7 +100,7 @@ const MUTATION_TOOLS = new Set<string>([
   'send_patient_portal_invite',
   'send_appointment_reminder',
   'submit_claim',
-  'create_patient_invoice',
+  'create_invoice',
   'send_patient_payment_link',
   'generate_soap_note',
   // Phase 5 — demo / practice mode
@@ -164,7 +164,7 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Send appointment reminder${args.appointmentId ? ` for #${args.appointmentId}` : ''} via ${args.channel ?? 'email'}`;
     case 'submit_claim':
       return `Submit claim${args.claimId ? ` #${args.claimId}` : ''} to the clearinghouse`;
-    case 'create_patient_invoice':
+    case 'create_invoice':
       return `Create invoice${args.amount ? ` for $${args.amount}` : ''}${name ? ` to ${name}` : ''}`;
     case 'create_appointment_self_pay_invoice':
       return `Create self-pay invoice for appointment ${args.appointmentId ?? ''}${args.amount ? ` ($${args.amount})` : ''}`.trim();
@@ -379,7 +379,7 @@ export function augmentIfHallucinatedSuccess(
   mutationsCalledCount: number,
   /**
    * Total tool rounds in this turn — including read tools like
-   * get_practice_setup_status, get_appointments, search_patient, etc.
+   * get_practice_setup_status, get_appointments, search_patients, etc.
    * A read-only summary that opens with "Great!" is not a hallucination —
    * the model legitimately fetched data and is reporting on it. The old
    * detector flagged these as false positives.
@@ -832,7 +832,7 @@ If you've already called the first tool (proposal queued) and want to also queue
 
 If narrowing returns zero matches ("no Janet has an appointment today"), say so plainly and stop — don't fall back to asking the user to pick an ID.
 
-**Rule 7b: If search_patient returns ZERO matches, the patient does NOT exist in this practice. NEVER invent a patient.** This is a hard rule. When search_patient comes back with no results, the tool result includes a list of patients who actually exist in this practice (\`availablePatientsInPractice\`). Your only allowed responses are:
+**Rule 7b: If search_patients returns ZERO matches, the patient does NOT exist in this practice. NEVER invent a patient.** This is a hard rule. When search_patients comes back with no results, the tool result includes a list of patients who actually exist in this practice (\`availablePatientsInPractice\`). Your only allowed responses are:
 - Tell the user the name they gave doesn't match anyone in the practice, and offer the closest matches from that list ("I don't see a Kristina — did you mean Kristin Patel or Christina Lopez?"), OR
 - Ask the user to clarify the name or spelling.
 
@@ -1033,7 +1033,7 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'search_patient',
+    name: 'search_patients',
       description: 'Search for a patient by name to get their information including visit counts and insurance details.',
       input_schema: {
         type: 'object' as const,
@@ -1197,7 +1197,7 @@ const assistantTools: Anthropic.Tool[] = [
   },
   {
     name: 'update_patient_insurance',
-    description: 'Update a patient\'s insurance information on file: primary and secondary insurance provider, member ID, policy number, group number, effective date, termination date. Use whenever the user reports new insurance, an effective/termination date, an updated member ID, or any insurance detail change for an existing patient. Only the fields explicitly supplied are changed; omitted fields are left as-is. Empty strings clear a field. Looks up the patient by ID first (call search_patient if you only have a name).',
+    description: 'Update a patient\'s insurance information on file: primary and secondary insurance provider, member ID, policy number, group number, effective date, termination date. Use whenever the user reports new insurance, an effective/termination date, an updated member ID, or any insurance detail change for an existing patient. Only the fields explicitly supplied are changed; omitted fields are left as-is. Empty strings clear a field. Looks up the patient by ID first (call search_patients if you only have a name).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -1546,7 +1546,7 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'draft_appeal_letter',
+    name: 'generate_appeal_letter',
     description: 'Draft an appeal letter for a denied claim. Looks up the claim details, denial reason, patient info, and service details, then generates a professional appeal letter with arguments for overturning the denial. Returns claim context and the generated appeal.',
     input_schema: {
       type: 'object' as const,
@@ -1637,7 +1637,7 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'check_claim_status',
+    name: 'get_claim_status',
     description: 'Check the live status of a specific submitted claim by polling the clearinghouse (Stedi) via X12 276/277. Returns the current payer-reported status (paid, pending, denied, rejected, etc.), the 277CA category code and description, last status date, and any payment/adjudication amounts. Use when a user asks for the latest status of a claim, whether a claim has paid, or wants to follow up on a submitted claim. Provide either claimId (preferred) or claimNumber.',
     input_schema: {
       type: 'object' as const,
@@ -1662,7 +1662,7 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'create_patient_invoice',
+    name: 'create_invoice',
     description: 'Create an invoice for a patient (typically for a copay, coinsurance, or self-pay balance) via Stripe. Amount is in dollars and capped at $10,000 from the assistant. Optionally link to an existing claim. Returns the Stripe payment intent details.',
     input_schema: {
       type: 'object' as const,
@@ -1895,7 +1895,7 @@ export async function executeTool(
         return JSON.stringify({ totalPatients: patients.length });
       }
 
-      case 'search_patient': {
+      case 'search_patients': {
         const searchName = String(args.name || '').toLowerCase();
         const allPatients = await storage.getPatients(practiceId);
         const matches = allPatients.filter(
@@ -3493,7 +3493,7 @@ export async function executeTool(
         });
       }
 
-      case 'draft_appeal_letter': {
+      case 'generate_appeal_letter': {
         const claimId = args.claimId as number;
         if (!claimId) return JSON.stringify({ error: 'Please provide a claim ID.' });
 
@@ -4425,7 +4425,7 @@ export async function executeTool(
         });
       }
 
-      case 'check_claim_status': {
+      case 'get_claim_status': {
         const claimIdArg = args.claimId as number | undefined;
         const claimNumberArg = args.claimNumber as string | undefined;
 
@@ -4512,7 +4512,7 @@ export async function executeTool(
 
           if (statusResult.errors && statusResult.errors.length > 0 && statusResult.status === 'unknown') {
             // Log the unredacted error for debugging; only return a sanitized version to the assistant.
-            logger.warn('check_claim_status: clearinghouse error', {
+            logger.warn('get_claim_status:clearinghouse error', {
               practiceId,
               claimId: claim.id,
               errors: statusResult.errors,
@@ -4542,7 +4542,7 @@ export async function executeTool(
             message: `Claim ${claim.claimNumber} status from ${insurance?.name || patient.insuranceProvider || 'payer'}: ${statusResult.statusCategoryValue || statusResult.status}.`,
           });
         } catch (err: any) {
-          logger.warn('check_claim_status: exception', {
+          logger.warn('get_claim_status:exception', {
             practiceId,
             claimId: claim.id,
             error: err?.message,
@@ -4623,7 +4623,7 @@ export async function executeTool(
         });
       }
 
-      case 'create_patient_invoice': {
+      case 'create_invoice': {
         if (!stripeService.isStripeConfigured()) {
           return JSON.stringify({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable patient invoicing.' });
         }

@@ -45,7 +45,7 @@ describe('search_patient zero-match anti-hallucination', () => {
       { id: 3, firstName: 'Aisha', lastName: 'Williams', practiceId: PRACTICE_ID },
     ]);
 
-    const out = JSON.parse(await executeTool('search_patient', { name: 'Kristina' }, PRACTICE_ID, USER_ID));
+    const out = JSON.parse(await executeTool('search_patients', { name: 'Kristina' }, PRACTICE_ID, USER_ID));
 
     expect(out.message).toContain('No patients found');
     expect(out.message).toContain('Kristina');
@@ -69,7 +69,7 @@ describe('search_patient zero-match anti-hallucination', () => {
     }));
     mockStorage.getPatients.mockResolvedValue(manyPatients);
 
-    const out = JSON.parse(await executeTool('search_patient', { name: 'NonexistentName' }, PRACTICE_ID, USER_ID));
+    const out = JSON.parse(await executeTool('search_patients', { name: 'NonexistentName' }, PRACTICE_ID, USER_ID));
     expect(out.availablePatientsInPractice).toHaveLength(20);
     expect(out.totalPatientsInPractice).toBe(50);
   });
@@ -80,7 +80,7 @@ describe('search_patient zero-match anti-hallucination', () => {
       { id: 2, firstName: 'Marcus', lastName: 'Patel', practiceId: PRACTICE_ID, dateOfBirth: '1990-01-01' },
     ]);
 
-    const out = JSON.parse(await executeTool('search_patient', { name: 'Kristina' }, PRACTICE_ID, USER_ID));
+    const out = JSON.parse(await executeTool('search_patients', { name: 'Kristina' }, PRACTICE_ID, USER_ID));
 
     // Should NOT take the zero-match path: no anti-hallucination payload.
     expect(out.availablePatientsInPractice).toBeUndefined();
