@@ -133,33 +133,47 @@ router.get('/checklist', isAuthenticated, async (req: any, res: Response) => {
       );
     const hasTherapist = (therapistResult?.total ?? 0) > 0;
 
-    // Check if at least one patient exists
+    // Check if at least one patient exists.
+    // Demo rows excluded — practices seeded with the 7 showcase patients
+    // were appearing 4/5 onboarded before entering any real data.
+    // Mirrors the NOT_DEMO_PATIENT pattern in server/storage/analytics.ts.
     const [patientResult] = await db
       .select({ total: count() })
       .from(patients)
       .where(
         and(
           eq(patients.practiceId, practiceId),
-          isNull(patients.deletedAt)
+          isNull(patients.deletedAt),
+          eq(patients.isDemo, false)
         )
       );
     const hasPatient = (patientResult?.total ?? 0) > 0;
 
-    // Check if insurance/payer configured (patient with insurance info)
+    // Check if insurance/payer configured (patient with insurance info).
+    // Same demo exclusion — insurance attached to a demo patient is not
+    // a real onboarding signal.
     const hasInsurance = Boolean(practice.npi); // Has NPI means payer-ready; more granular check below
     let hasPatientInsurance = false;
     if (hasPatient) {
       const patientsData = await storage.getPatients(practiceId);
       hasPatientInsurance = patientsData.some(
-        (p: any) => p.insuranceProvider || p.insuranceId || p.policyNumber
+        (p: any) =>
+          !p.isDemo &&
+          (p.insuranceProvider || p.insuranceId || p.policyNumber)
       );
     }
 
-    // Check if first claim created
+    // Check if first claim created. Demo claims (auto-generated for
+    // demo patients) are excluded — they don't represent real billing work.
     const [claimResult] = await db
       .select({ total: count() })
       .from(claims)
-      .where(eq(claims.practiceId, practiceId));
+      .where(
+        and(
+          eq(claims.practiceId, practiceId),
+          eq(claims.isDemo, false)
+        )
+      );
     const hasClaim = (claimResult?.total ?? 0) > 0;
 
     // Check payment settings (optional) - has Stripe configured

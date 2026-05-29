@@ -2070,9 +2070,14 @@ export async function executeTool(
         const claims = await storage.getClaims(practiceId);
         const appointments = await storage.getAppointments(practiceId);
 
-        const totalPatients = patients.length;
-        const totalClaims = claims.length;
-        const totalAppointments = appointments.length;
+        // Exclude demo rows from setup-progress signals. Practices seeded
+        // with the showcase demo data were otherwise being told they had
+        // patients/claims/appointments before any real work happened.
+        // Mirrors the NOT_DEMO_* pattern in server/storage/analytics.ts
+        // and the matching fix in server/routes/onboarding.ts.
+        const totalPatients = patients.filter((p: any) => !p.isDemo).length;
+        const totalClaims = claims.filter((c: any) => !c.isDemo).length;
+        const totalAppointments = appointments.filter((a: any) => !a.isDemo).length;
         const hasStediKey = !!(practice?.stediApiKey || process.env.STEDI_API_KEY);
 
         // Check MFA status if we have a userId
