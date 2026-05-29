@@ -338,4 +338,33 @@ router.post(
   },
 );
 
+// ==================== STEDI ENROLLMENT SYNC ====================
+
+// POST /api/admin/stedi-enrollment-sync/run
+// Manually pull Stedi's enrollment list and reconcile into our local
+// payer_enrollments table. Useful when an operator enrolled on Stedi's
+// UI and wants /stedi-readiness updated without waiting for the 4am cron.
+router.post(
+  '/admin/stedi-enrollment-sync/run',
+  isAuthenticated,
+  isAdminOrBilling,
+  async (req: any, res: Response) => {
+    try {
+      const practiceId = getAuthorizedPracticeId(req);
+      logger.info('Manual Stedi enrollment sync triggered', {
+        practiceId,
+        userId: req.user?.claims?.sub,
+      });
+      const { syncStediEnrollments } = await import('../services/stediEnrollmentSyncService');
+      const result = await syncStediEnrollments({ practiceId });
+      res.json(result);
+    } catch (error) {
+      logger.error('Manual Stedi enrollment sync failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ message: 'Failed to run Stedi enrollment sync' });
+    }
+  },
+);
+
 export default router;
