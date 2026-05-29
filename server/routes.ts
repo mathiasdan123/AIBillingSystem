@@ -41,6 +41,7 @@ import {
   soapInterventionTemplatesRouter,
   maintenanceWindowsRouter,
   notificationTemplatesRouter,
+  stediReadinessRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -268,6 +269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Maintenance window banner routes: /api/maintenance-windows/*
   app.use('/api/maintenance-windows', maintenanceWindowsRouter);
   app.use('/api/notification-templates', notificationTemplatesRouter);
+  app.use('/api/admin/stedi-readiness', stediReadinessRouter);
 
   // Slice C — Payer Enrollments: /api/payer-enrollments/*
   app.use('/api/payer-enrollments', payerEnrollmentsRouter);
