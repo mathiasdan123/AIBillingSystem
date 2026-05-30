@@ -19,6 +19,11 @@ import logger from '../services/logger';
 import { db } from '../db';
 import { payerEnrollments } from '@shared/schema';
 import { and, eq } from 'drizzle-orm';
+import { getStediApiKeyForPractice } from '../services/stediService';
+import {
+  createStediEnrollment,
+  mapTransactionTypeToStedi,
+} from '../services/stediEnrollmentService';
 
 const router = Router();
 
@@ -270,6 +275,143 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
       error: error instanceof Error ? error.message : String(error),
     });
     res.status(500).json({ message: 'Failed to save enrollment' });
+  }
+});
+
+/**
+ * POST /api/payer-enrollments/submit  (Phase 3 — Create-Enrollment WRITE path)
+ *
+ * Submits a real transaction enrollment request to Stedi and records the
+ * returned enrollment id + status locally. Gated on:
+ *   - the practice having a Stedi provider record (stediProviderId), and
+ *   - an explicit enrollment authorization on file (enrollmentAuthorizedAt).
+ *
+ * Body: { payerName, payerId, transactionType }
+ */
+router.post('/submit', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { payerName, payerId, transactionType } = req.body || {};
+
+    if (!payerName || typeof payerName !== 'string') {
+      return res.status(400).json({ message: 'payerName is required' });
+    }
+    if (!payerId || typeof payerId !== 'string') {
+      return res.status(400).json({ message: 'payerId (Stedi payer id) is required' });
+    }
+    if (!TRANSACTION_TYPES.includes(transactionType)) {
+      return res
+        .status(400)
+        .json({ message: `transactionType must be one of: ${TRANSACTION_TYPES.join(', ')}` });
+    }
+
+    const stediTransaction = mapTransactionTypeToStedi(transactionType);
+    if (!stediTransaction) {
+      return res.status(400).json({ message: 'Unsupported transaction type for enrollment' });
+    }
+
+    const practice = await storage.getPractice(practiceId);
+    if (!practice) return res.status(404).json({ message: 'Practice not found' });
+    if (!practice.stediProviderId) {
+      return res.status(412).json({
+        message: 'No Stedi provider record yet — create the provider record first (provider profile).',
+      });
+    }
+    if (!practice.enrollmentAuthorizedAt) {
+      return res.status(412).json({
+        message: 'Enrollment not authorized — record authorization before submitting.',
+      });
+    }
+
+    const userEmail =
+      practice.enrollmentNotificationEmail ||
+      practice.billingContactEmail ||
+      practice.email ||
+      undefined;
+    if (!userEmail) {
+      return res.status(412).json({
+        message: 'No notification email on file — set a billing/enrollment contact email first.',
+      });
+    }
+
+    const { apiKey } = await getStediApiKeyForPractice(practiceId);
+    const result = await createStediEnrollment(apiKey, {
+      providerId: practice.stediProviderId,
+      payerId,
+      transaction: stediTransaction,
+      userEmail,
+      aggregationPreference: 'NPI',
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({
+        message: 'Stedi enrollment submission failed',
+        error: result.error,
+        details: result.raw,
+      });
+    }
+
+    const now = new Date();
+    const localStatus = result.localStatus ?? 'pending';
+
+    // Upsert the local row to reflect the submitted request.
+    const [existing] = await db
+      .select()
+      .from(payerEnrollments)
+      .where(
+        and(
+          eq(payerEnrollments.practiceId, practiceId),
+          eq(payerEnrollments.payerName, payerName),
+          eq(payerEnrollments.transactionType, transactionType),
+        ),
+      )
+      .limit(1);
+
+    let row;
+    if (existing) {
+      const [updated] = await db
+        .update(payerEnrollments)
+        .set({
+          status: localStatus,
+          payerId,
+          stediEnrollmentId: result.enrollmentId ?? existing.stediEnrollmentId,
+          requestedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(payerEnrollments.id, existing.id))
+        .returning();
+      row = updated;
+    } else {
+      const [inserted] = await db
+        .insert(payerEnrollments)
+        .values({
+          practiceId,
+          payerName,
+          payerId,
+          transactionType,
+          status: localStatus,
+          stediEnrollmentId: result.enrollmentId ?? null,
+          requestedAt: now,
+        })
+        .returning();
+      row = inserted;
+    }
+
+    logger.info('Stedi enrollment submitted', {
+      practiceId,
+      payerName,
+      transactionType,
+      enrollmentId: result.enrollmentId,
+      stediStatus: result.status,
+      localStatus,
+    });
+
+    res.json({ ok: true, enrollment: row, stediStatus: result.status });
+  } catch (error) {
+    logger.error('Failed to submit Stedi enrollment', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to submit enrollment' });
   }
 });
 
