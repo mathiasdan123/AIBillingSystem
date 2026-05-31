@@ -42,6 +42,8 @@ import {
   maintenanceWindowsRouter,
   notificationTemplatesRouter,
   stediReadinessRouter,
+  providerProfileRouter,
+  enrollmentOpsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
@@ -275,6 +277,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Slice C — Payer Enrollments: /api/payer-enrollments/*
   app.use('/api/payer-enrollments', payerEnrollmentsRouter);
+
+  // Multi-practice enrollment (Phases 1-4): provider identity + ops overview
+  app.use('/api/provider-profile', providerProfileRouter);
+  app.use('/api/admin/enrollment-overview', enrollmentOpsRouter);
 
   // SOAP intervention templates (activity picker library) — /api/soap-intervention-templates/*
   app.use('/api/soap-intervention-templates', soapInterventionTemplatesRouter);

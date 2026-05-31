@@ -29,11 +29,18 @@ import { computeReadiness } from '../services/enrollmentReadiness';
 import { encryptField, decryptField } from '../services/phiEncryptionService';
 import { getStediApiKeyForPractice } from '../services/stediService';
 import { createStediProvider } from '../services/stediEnrollmentService';
+import { sanitizeExternalError } from '../services/errorSanitizer';
 
 const router = Router();
 
-const getPracticeId = (req: any): number =>
-  req.authorizedPracticeId ?? req.userPracticeId ?? 1;
+// Resolve the caller's practice. Returns null when no practice context is
+// present — callers MUST 400 rather than silently fall back to a real
+// practice. (A `?? 1` default here would route identity edits and live
+// enrollment submissions onto practice 1, the real billing entity.)
+const getPracticeId = (req: any): number | null =>
+  req.authorizedPracticeId ?? req.userPracticeId ?? null;
+
+const NO_PRACTICE = { message: 'No practice context for this user' };
 
 const US_STATE = /^[A-Za-z]{2}$/;
 const ZIP = /^\d{5}(-\d{4})?$/;
@@ -53,6 +60,7 @@ function maskTaxId(decrypted: string | null): string | null {
 router.get('/', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
+    if (!practiceId) return res.status(400).json(NO_PRACTICE);
     const p = await storage.getPractice(practiceId);
     if (!p) return res.status(404).json({ message: 'Practice not found' });
 
@@ -97,6 +105,7 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
 router.put('/', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
+    if (!practiceId) return res.status(400).json(NO_PRACTICE);
     const b = req.body || {};
     const update: Record<string, any> = {};
 
@@ -163,7 +172,14 @@ router.put('/', isAuthenticated, async (req: any, res: Response) => {
     const updated = await storage.updatePractice(practiceId, update);
     logger.info('Provider profile updated', { practiceId, fields: Object.keys(update) });
     res.json({ ok: true, readiness: computeReadiness(updated) });
-  } catch (error) {
+  } catch (error: any) {
+    // Postgres unique violation on practices.npi (23505) — another practice
+    // already registered this NPI. Surface a clear 409 instead of a 500.
+    if (error?.code === '23505') {
+      return res
+        .status(409)
+        .json({ message: 'That NPI is already registered to another practice.' });
+    }
     logger.error('Failed to update provider profile', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -190,6 +206,7 @@ router.get('/npi-lookup', isAuthenticated, async (req: any, res: Response) => {
 router.post('/authorize', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
+    if (!practiceId) return res.status(400).json(NO_PRACTICE);
     const { ownerName, ownerTitle, ownerSignature } = req.body || {};
     if (!ownerName || !ownerSignature) {
       return res
@@ -216,6 +233,7 @@ router.post('/authorize', isAuthenticated, async (req: any, res: Response) => {
 router.post('/stedi-provider', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
+    if (!practiceId) return res.status(400).json(NO_PRACTICE);
     const p = await storage.getPractice(practiceId);
     if (!p) return res.status(404).json({ message: 'Practice not found' });
 
@@ -247,10 +265,16 @@ router.post('/stedi-provider', isAuthenticated, async (req: any, res: Response) 
     });
 
     if (!result.ok || !result.providerId) {
+      // Log the raw Stedi response server-side only — it can echo provider
+      // identifiers and shouldn't reach the browser.
+      logger.warn('Stedi provider creation failed', {
+        practiceId,
+        error: result.error,
+        raw: result.raw,
+      });
       return res.status(502).json({
         message: 'Stedi provider creation failed',
-        error: result.error,
-        details: result.raw,
+        error: sanitizeExternalError(result.error),
       });
     }
 

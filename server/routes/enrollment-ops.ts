@@ -11,7 +11,7 @@
  * Read-only. Mounted at /api/admin/enrollment-overview.
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Response, type NextFunction } from 'express';
 import { isAuthenticated } from '../replitAuth';
 import { storage } from '../storage';
 import logger from '../services/logger';
@@ -21,6 +21,34 @@ import { eq } from 'drizzle-orm';
 import { isValidNpi } from '../services/npiValidation';
 
 const router = Router();
+
+/**
+ * Admin gate. This is a PLATFORM-OPERATOR view — it intentionally rolls up
+ * every practice in the account, so it must never be reachable by a regular
+ * authenticated user. Mirrors the inline isAdmin guard in stedi-readiness.
+ * Restricted to admin / billing / super_admin roles.
+ *
+ * NOTE (multi-tenant): today the platform operator IS the practice admin
+ * (single real practice + demo). When real third-party practices onboard,
+ * tighten this to super_admin only so one practice's admin can't enumerate
+ * other practices.
+ */
+const isAdmin = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.claims?.sub) return res.status(401).json({ message: 'Unauthorized' });
+    const user = await storage.getUser(req.user.claims.sub);
+    if (!user || !['admin', 'billing', 'super_admin'].includes(user.role)) {
+      return res.status(403).json({ message: 'Access denied. Admin role required.' });
+    }
+    (req as any).currentUser = user;
+    next();
+  } catch (error) {
+    logger.error('enrollment-ops: failed role check', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to verify permissions' });
+  }
+};
 
 const TX = ['eligibility', 'claims', 'era'] as const;
 const STATUSES = ['not_enrolled', 'pending', 'enrolled', 'rejected'] as const;
@@ -35,7 +63,7 @@ function emptyCounts(): Record<string, Record<string, number>> {
 }
 
 // GET /api/admin/enrollment-overview
-router.get('/', isAuthenticated, async (_req: any, res: Response) => {
+router.get('/', isAuthenticated, isAdmin, async (_req: any, res: Response) => {
   try {
     const practiceIds = await storage.getAllPracticeIds();
     const practices = await Promise.all(

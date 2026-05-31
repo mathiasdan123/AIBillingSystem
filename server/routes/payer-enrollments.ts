@@ -24,6 +24,7 @@ import {
   createStediEnrollment,
   mapTransactionTypeToStedi,
 } from '../services/stediEnrollmentService';
+import { sanitizeExternalError } from '../services/errorSanitizer';
 
 const router = Router();
 
@@ -344,10 +345,16 @@ router.post('/submit', isAuthenticated, async (req: any, res: Response) => {
     });
 
     if (!result.ok) {
+      logger.warn('Stedi enrollment submission failed', {
+        practiceId,
+        payerName,
+        transactionType,
+        error: result.error,
+        raw: result.raw,
+      });
       return res.status(502).json({
         message: 'Stedi enrollment submission failed',
-        error: result.error,
-        details: result.raw,
+        error: sanitizeExternalError(result.error),
       });
     }
 
