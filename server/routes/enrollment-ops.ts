@@ -37,7 +37,7 @@ const isAdmin = async (req: any, res: Response, next: NextFunction) => {
   try {
     if (!req.user?.claims?.sub) return res.status(401).json({ message: 'Unauthorized' });
     const user = await storage.getUser(req.user.claims.sub);
-    if (!user || !['admin', 'billing', 'super_admin'].includes(user.role)) {
+    if (!user || !['admin', 'billing', 'super_admin'].includes(user.role ?? '')) {
       return res.status(403).json({ message: 'Access denied. Admin role required.' });
     }
     (req as any).currentUser = user;
