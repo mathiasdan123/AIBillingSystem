@@ -883,4 +883,36 @@ function buildDailyInsightsEmailText(
 
 export { buildDailyInsightsEmailHtml, buildDailyInsightsEmailText };
 
+// ==================== RECOVERY LEDGER ====================
+// "Sheer for practices" — the payer-advocate wedge, quantified.
+// Financial surface → admin/billing only, like /dashboard.
+router.get('/recovery-ledger', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const user = await storage.getUser(req.user.claims.sub);
+    const isAdminOrBillingRole = user?.role === 'admin' || user?.role === 'billing';
+    if (!isAdminOrBillingRole) {
+      return res.status(403).json({
+        message: 'Access denied. Admin or billing role required for the recovery ledger.',
+      });
+    }
+
+    const start = validateDate(req.query.start as string | undefined);
+    const end = validateDate(req.query.end as string | undefined);
+    const hash = `${start ? start.toISOString().slice(0, 10) : 'all'}_${end ? end.toISOString().slice(0, 10) : 'all'}`;
+
+    const data = await cache.wrap(
+      CacheKeys.recoveryLedger(practiceId, hash),
+      CacheTTL.ANALYTICS,
+      () => storage.getRecoveryLedgerStats(practiceId, start ?? undefined, end ?? undefined),
+    );
+    res.json(data);
+  } catch (error) {
+    logger.error('Failed to build recovery ledger', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to build recovery ledger' });
+  }
+});
+
 export default router;

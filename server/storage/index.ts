@@ -29,6 +29,7 @@ import * as clinicalFns from "./clinical";
 import * as appointmentFns from "./appointments";
 import * as insuranceFns from "./insurance";
 import * as analyticsFns from "./analytics";
+import * as recoveryLedgerFns from "./recoveryLedger";
 import * as auditFns from "./audit";
 import * as blancheConversationFns from "./blancheConversations";
 
@@ -479,6 +480,7 @@ export const storage = {
   getTopReferringProviders: analyticsFns.getTopReferringProviders,
   getRevenueByLocationAndTherapist: analyticsFns.getRevenueByLocationAndTherapist,
   getWaitTimes: analyticsFns.getWaitTimes,
+  getRecoveryLedgerStats: recoveryLedgerFns.getRecoveryLedgerStats,
 
   // ==================== AUDIT / COMPLIANCE / PORTAL / MESSAGING ====================
   createAuditLog: auditFns.createAuditLog,
