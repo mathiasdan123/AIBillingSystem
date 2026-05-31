@@ -161,6 +161,24 @@ export const practices = pgTable("practices", {
   ownerTitle: varchar("owner_title"), // e.g. "Owner", "Practice Administrator"
   ownerSignature: text("owner_signature"), // typed signature (NUCC forms accept typed + date)
   enrollmentAuthorizedAt: timestamp("enrollment_authorized_at"),
+  // Multi-practice enrollment (2026-05-30). Structured billing address —
+  // Stedi provider records + payer enrollment forms need discrete
+  // street/city/state/zip rather than the legacy single-line `address`.
+  // All nullable (expand-only): existing practices keep using `address`
+  // until they re-save through the provider-profile form.
+  addressStreet: varchar("address_street"),
+  addressCity: varchar("address_city"),
+  addressState: varchar("address_state", { length: 2 }),
+  addressZip: varchar("address_zip", { length: 10 }),
+  // Organization (Type 2) vs Individual (Type 1) billing NPI. Drives the
+  // Stedi provider record + 837P billing-provider loop.
+  npiType: varchar("npi_type"), // 'organization' | 'individual'
+  // Email Stedi sends enrollment status notices to (CSV `userEmail`).
+  // Falls back to billingContactEmail if null.
+  enrollmentNotificationEmail: varchar("enrollment_notification_email"),
+  // Phase 2 — Stedi provider record id, returned by create-provider.
+  // Presence means the practice has a provider record in our Stedi account.
+  stediProviderId: varchar("stedi_provider_id"),
   // Front-desk copay collection (Phase 3 · Slice C).
   // Off by default so charging is explicitly opt-in per practice, even if
   // the Stripe integration is wired and keys are live.
@@ -1400,6 +1418,10 @@ export const payerEnrollments = pgTable("payer_enrollments", {
   practiceId: integer("practice_id").references(() => practices.id).notNull(),
   payerName: varchar("payer_name", { length: 200 }).notNull(),
   payerId: varchar("payer_id", { length: 50 }), // Stedi tradingPartnerServiceId
+  // Phase 3 — Stedi enrollment id returned by create-enrollment. Lets the
+  // sync reconcile this row to its Stedi-side request and lets us
+  // download enrollment documents / poll status for it specifically.
+  stediEnrollmentId: varchar("stedi_enrollment_id", { length: 100 }),
   transactionType: varchar("transaction_type", { length: 20 }).notNull(), // eligibility, claims, era
   status: varchar("status", { length: 20 }).default("not_enrolled").notNull(), // not_enrolled, pending, enrolled, rejected
   requestedAt: timestamp("requested_at"),

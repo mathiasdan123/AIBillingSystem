@@ -146,6 +146,32 @@ export default function PayerEnrollmentsPage() {
     },
   });
 
+  // Submit a real enrollment request to Stedi (Phase 3). Requires the
+  // practice to have a Stedi provider record + authorization on file —
+  // the server enforces this and returns a 412 with guidance if not.
+  const submitMutation = useMutation({
+    mutationFn: async (body: {
+      payerName: string;
+      payerId: string;
+      transactionType: TransactionType;
+    }) => {
+      const res = await apiRequest('POST', '/api/payer-enrollments/submit', body);
+      return res.json();
+    },
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/payer-enrollments'] });
+      toast({ title: 'Enrollment submitted to Stedi', description: `Status: ${r?.stediStatus ?? 'pending'}` });
+      setEditing(null);
+    },
+    onError: (e: any) => {
+      toast({
+        title: 'Could not submit enrollment',
+        description: e?.message || 'Check that your provider profile is complete and authorized.',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const openEdit = (payerName: string, payerId: string, cell: EnrollmentCell) => {
     setEditing({ payerName, payerId, cell });
     setForm({
@@ -173,6 +199,16 @@ export default function PayerEnrollmentsPage() {
       description="Track which payers you can submit to today. Some payers require separate enrollment approval per transaction type (eligibility checks, claims, or electronic remits)."
       isLoading={isLoading}
     >
+      {/* Toolbar */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <Link href="/provider-profile">
+          <Button variant="outline" size="sm">Provider profile & authorization</Button>
+        </Link>
+        <Link href="/enrollment-overview">
+          <Button variant="outline" size="sm">Cross-practice overview</Button>
+        </Link>
+      </div>
+
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <SummaryCard label="Enrolled" value={totals.enrolled} tone="success" />
@@ -316,7 +352,23 @@ export default function PayerEnrollmentsPage() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sm:justify-between">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!editing) return;
+                submitMutation.mutate({
+                  payerName: editing.payerName,
+                  payerId: editing.payerId,
+                  transactionType: editing.cell.transactionType,
+                });
+              }}
+              disabled={submitMutation.isPending}
+              title="Submit a real enrollment request to Stedi (requires a complete, authorized provider profile)"
+            >
+              {submitMutation.isPending ? 'Submitting…' : 'Submit to Stedi'}
+            </Button>
+            <div className="flex gap-2">
             <Button variant="outline" onClick={() => setEditing(null)}>
               Cancel
             </Button>
@@ -337,6 +389,7 @@ export default function PayerEnrollmentsPage() {
             >
               {upsertMutation.isPending ? 'Saving…' : 'Save'}
             </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

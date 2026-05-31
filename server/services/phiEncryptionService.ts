@@ -157,6 +157,8 @@ const USER_PHI_STRING_FIELDS = [
 const PRACTICE_PHI_STRING_FIELDS = [
   'taxId', 'phone', 'stediApiKey', 'stediPartnerId',
   'itContactPhone', 'billingContactPhone',
+  // Typed enrollment-authorization e-signature (legal attestation).
+  'ownerSignature',
 ] as const;
 
 // Patient insurance fields on the patients table are already covered in PATIENT_PHI_STRING_FIELDS.
