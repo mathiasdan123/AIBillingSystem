@@ -55,6 +55,12 @@ router.get('/patient-portal/intake/status', async (req, res) => {
     const hipaaConsent = consents.find(c => c.consentType === 'hipaa_privacy_practices');
     const waiverConsent = consents.find(c => c.consentType === 'waiver_release');
     const cardAuthConsent = consents.find(c => c.consentType === 'card_authorization');
+    // Payer-advocacy: Benefits Authorization step is signed when BOTH the
+    // assignment-of-benefits and authorized-representative consents exist.
+    // Gated by the practice flag benefitsAuthEnabled (default off).
+    const benefitsAuthEnabled = practice?.benefitsAuthEnabled === true;
+    const aobConsent = consents.find(c => c.consentType === 'assignment_of_benefits');
+    const authRepConsent = consents.find(c => c.consentType === 'authorized_representative');
 
     // Check if patient has a payment method
     const paymentMethods = await storage.getPatientPaymentMethods(patient.id);
@@ -76,6 +82,13 @@ router.get('/patient-portal/intake/status', async (req, res) => {
       waiverRelease: {
         completed: !!waiverConsent,
         signedAt: waiverConsent?.signatureDate || null,
+      },
+      benefitsAuth: {
+        // Only relevant when the practice has enabled the step. Completed when
+        // both AOB + authorized-representative consents are on file.
+        enabled: benefitsAuthEnabled,
+        completed: !!aobConsent && !!authRepConsent,
+        signedAt: aobConsent?.signatureDate || null,
       },
       creditCardAuth: {
         completed: hasPaymentMethod && !!cardAuthConsent,
@@ -112,6 +125,7 @@ router.get('/patient-portal/intake/status', async (req, res) => {
         secondaryColor: practice?.brandSecondaryColor || '#1e40af',
       },
       requireCardOnFile: practice?.requireCardOnFile !== false,
+      benefitsAuthEnabled,
     });
   } catch (error) {
     logger.error('Error fetching intake status', { error: error instanceof Error ? error.message : String(error) });

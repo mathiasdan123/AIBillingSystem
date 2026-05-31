@@ -178,3 +178,42 @@ I understand and agree to the following financial policies:
 
 By signing below, I acknowledge that I have read, understand, and agree to comply with these financial policies.
 `;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Benefits Authorization — Assignment of Benefits + Authorized Representative
+//
+// ⚠️ DRAFT LANGUAGE — PENDING HEALTH-LAW COUNSEL REVIEW.
+// This text powers the optional Benefits Authorization intake step, which is
+// gated behind the practice flag `benefitsAuthEnabled` (default OFF). It must
+// NOT be shown to real patients until counsel has reviewed/replaced it.
+// See ~/Desktop/payer-advocacy-attorney-questions.md.
+// ─────────────────────────────────────────────────────────────────────────
+export const BENEFITS_AUTHORIZATION_TEXT = `
+ASSIGNMENT OF BENEFITS & AUTHORIZED REPRESENTATIVE DESIGNATION
+
+(DRAFT — pending legal review)
+
+By signing below, I authorize the practice and its billing agent to:
+
+1. ASSIGNMENT OF BENEFITS. Receive payment of insurance benefits directly from
+   my health plan(s) for services rendered by the practice.
+
+2. BENEFIT & COVERAGE RETRIEVAL. Obtain my eligibility, coverage, claims,
+   explanation-of-benefit, and plan/benefit documents from my health plan(s)
+   and their authorized data interfaces (including patient-access APIs), for
+   the purpose of verifying benefits, ensuring billing accuracy, and pursuing
+   correct payment.
+
+3. AUTHORIZED REPRESENTATIVE. Act as my authorized representative in
+   communications, inquiries, and appeals with my health plan(s) regarding
+   claims for services rendered by the practice, including filing appeals on
+   my behalf.
+
+This authorization remains in effect for the duration of my care with the
+practice and for the period necessary to resolve associated claims, unless
+revoked by me in writing. I understand I may revoke this authorization at any
+time, except to the extent action has already been taken in reliance on it.
+
+I understand the practice and its billing agent will never ask for, and I will
+never provide, the password to my insurance company's online portal.
+`;

@@ -94,6 +94,12 @@ export const practices = pgTable("practices", {
   brandPrivacyPolicyUrl: varchar("brand_privacy_policy_url"),
   // Patient portal intake settings
   requireCardOnFile: boolean("require_card_on_file").default(true),
+  // Payer-advocacy (2026-05-31): when true, the patient intake flow shows the
+  // optional Benefits Authorization step (assignment_of_benefits +
+  // authorized_representative consents — the "Sheer for practices" legal key).
+  // Default OFF: the DRAFT consent language must be reviewed/replaced by
+  // health-law counsel before any real patient sees it. Expand-only.
+  benefitsAuthEnabled: boolean("benefits_auth_enabled").default(false),
   // Review collection settings
   googleReviewUrl: varchar("google_review_url"), // URL for Google Business Profile reviews
   // Additional practice fields
