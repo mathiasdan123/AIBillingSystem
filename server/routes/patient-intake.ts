@@ -222,6 +222,26 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
         info: 'Financial responsibility agreement',
         recipient: 'Practice billing department',
       },
+      // Payer-advocacy consent types (2026-05-31). DRAFT language — must be
+      // reviewed/replaced by health-law counsel before going live to real
+      // patients (see ~/Desktop/payer-advocacy-attorney-questions.md). These
+      // are the legal keys that let the practice (and its billing agent)
+      // retrieve benefit data and act as the patient's authorized
+      // representative in appeals — the "Sheer for practices" wedge.
+      assignment_of_benefits: {
+        purpose:
+          'Assignment of insurance benefits to the practice for services rendered (DRAFT — pending counsel review)',
+        info:
+          'Authorization for the health plan to pay benefits directly to the practice, and for the practice and its billing agent to obtain eligibility, coverage, claims, and explanation-of-benefit data for billing-accuracy purposes',
+        recipient: 'Patient health plan(s), practice billing, and authorized billing agent',
+      },
+      authorized_representative: {
+        purpose:
+          "Designation of the practice and its billing agent as the patient's authorized representative with the health plan, including appeals (DRAFT — pending counsel review)",
+        info:
+          'Authorization to communicate with the health plan and file appeals on the patient’s behalf regarding claims for services rendered by the practice',
+        recipient: 'Patient health plan(s), practice billing, and authorized billing agent',
+      },
     };
 
     const mapping = consentMappings[consentType];
