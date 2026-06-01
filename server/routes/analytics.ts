@@ -888,13 +888,35 @@ export { buildDailyInsightsEmailHtml, buildDailyInsightsEmailText };
 // Financial surface → admin/billing only, like /dashboard.
 router.get('/recovery-ledger', isAuthenticated, async (req: any, res) => {
   try {
-    const practiceId = getAuthorizedPracticeId(req);
     const user = await storage.getUser(req.user.claims.sub);
     const isAdminOrBillingRole = user?.role === 'admin' || user?.role === 'billing';
     if (!isAdminOrBillingRole) {
       return res.status(403).json({
         message: 'Access denied. Admin or billing role required for the recovery ledger.',
       });
+    }
+
+    // This is a financial surface, so resolve the practice explicitly rather
+    // than relying on the shared getAuthorizedPracticeId() helper, whose
+    // `|| 1` fallback would silently leak practice 1's recovery numbers to an
+    // admin who has no practice assignment and passes no ?practiceId. Require
+    // a concrete practice; otherwise return a clear 400.
+    const requestedPracticeId = req.query.practiceId
+      ? parseInt(req.query.practiceId as string, 10)
+      : undefined;
+    const practiceId = requestedPracticeId ?? req.userPracticeId ?? req.authorizedPracticeId;
+    if (!practiceId || Number.isNaN(practiceId)) {
+      return res.status(400).json({
+        message: 'No practice specified. Pass ?practiceId or use an account assigned to a practice.',
+      });
+    }
+    // Non-admins may only read their own practice's ledger.
+    if (
+      user?.role !== 'admin' &&
+      req.userPracticeId &&
+      practiceId !== req.userPracticeId
+    ) {
+      return res.status(403).json({ message: 'Access denied for the requested practice.' });
     }
 
     const start = validateDate(req.query.start as string | undefined);

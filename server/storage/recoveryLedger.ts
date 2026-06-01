@@ -67,8 +67,12 @@ export async function getRecoveryLedgerStats(
   const totalAppealed = Number(appealRow?.totalAppealed) || 0;
 
   // ── Pillar 2: Underpayments caught (HARD DOLLARS) ───────────────────
-  // claim_follow_ups rows of type 'underpayment' flag a measured gap. Sum the
-  // positive contract-vs-paid delta on the linked, non-demo claims.
+  // claim_follow_ups rows of type 'underpayment' flag a measured gap. The
+  // contract-vs-paid gap is a property of the CLAIM, but a single claim can
+  // have multiple 'underpayment' follow-ups (e.g. an earlier one was
+  // completed/dismissed and a later sweep re-flagged it). We must therefore
+  // dedupe to DISTINCT claims before summing — otherwise the same gap is
+  // counted once per follow-up row, inflating this money-claims surface.
   const underWhere = [
     eq(claimFollowUps.practiceId, practiceId),
     eq(claimFollowUps.followUpType, "underpayment"),
@@ -77,14 +81,24 @@ export async function getRecoveryLedgerStats(
   if (startDate) underWhere.push(gte(claimFollowUps.createdAt, startDate));
   if (endDate) underWhere.push(lte(claimFollowUps.createdAt, endDate));
 
-  const [underRow] = await db
-    .select({
-      count: sql<number>`COUNT(*)::int`,
-      amount: sql<string>`COALESCE(SUM(GREATEST(COALESCE(${claims.expectedAmount}, 0) - COALESCE(${claims.paidAmount}, 0), 0)), 0)`,
+  // One row per distinct claim that has at least one matching underpayment
+  // follow-up, carrying that claim's measured gap exactly once.
+  const distinctUnderpaidClaims = db
+    .selectDistinct({
+      claimId: claims.id,
+      gap: sql<string>`GREATEST(COALESCE(${claims.expectedAmount}, 0) - COALESCE(${claims.paidAmount}, 0), 0)`.as("gap"),
     })
     .from(claimFollowUps)
     .innerJoin(claims, eq(claimFollowUps.claimId, claims.id))
-    .where(and(...underWhere));
+    .where(and(...underWhere))
+    .as("distinct_underpaid_claims");
+
+  const [underRow] = await db
+    .select({
+      count: sql<number>`COUNT(*)::int`,
+      amount: sql<string>`COALESCE(SUM(${distinctUnderpaidClaims.gap}), 0)`,
+    })
+    .from(distinctUnderpaidClaims);
 
   const underpaymentCount = Number(underRow?.count) || 0;
   const underpaymentAmount = Number(underRow?.amount) || 0;
