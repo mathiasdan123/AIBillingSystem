@@ -46,7 +46,7 @@ A comprehensive AI-powered medical billing and practice management platform desi
 - **Backend**: Node.js 20+, Express.js, TypeScript
 - **Database**: PostgreSQL with Drizzle ORM (AWS RDS in production)
 - **Authentication**: Passport.js local strategy, Argon2 password hashing, express-session, MFA via TOTP
-- **AI Services**: Anthropic Claude (AI billing assistant, claim accuracy review, appeals); OpenAI optional (SOAP notes)
+- **AI Services**: Anthropic Claude (AI billing assistant, claim accuracy review, appeals, denial prediction, insights); OpenAI optional (SOAP note generation, voice transcription)
 - **Payments**: Stripe
 - **SMS/Email**: Twilio (optional), Nodemailer / SMTP
 - **Insurance APIs**: Stedi clearinghouse (eligibility 270/271, claims 837P, claim status 276/277)
