@@ -31,6 +31,7 @@ import * as insuranceFns from "./insurance";
 import * as analyticsFns from "./analytics";
 import * as recoveryLedgerFns from "./recoveryLedger";
 import * as billerCockpitFns from "./billerCockpit";
+import * as goalTemplateFns from "./goalTemplates";
 import * as auditFns from "./audit";
 import * as blancheConversationFns from "./blancheConversations";
 
@@ -483,6 +484,7 @@ export const storage = {
   getWaitTimes: analyticsFns.getWaitTimes,
   getRecoveryLedgerStats: recoveryLedgerFns.getRecoveryLedgerStats,
   getBillerCockpit: billerCockpitFns.getBillerCockpit,
+  getGoalTemplates: goalTemplateFns.getGoalTemplates,
 
   // ==================== AUDIT / COMPLIANCE / PORTAL / MESSAGING ====================
   createAuditLog: auditFns.createAuditLog,

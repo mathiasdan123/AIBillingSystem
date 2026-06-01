@@ -362,4 +362,20 @@ router.get('/soap-notes/:id/goal-progress', isAuthenticated, async (req: any, re
   }
 });
 
+// GET /api/goal-templates?discipline=OT|ST — the goal bank. Returns system
+// defaults + this practice's custom goal templates a therapist can pick from
+// when building a treatment plan (Fusion-parity goal bank).
+router.get('/goal-templates', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = req.authorizedPracticeId ?? req.userPracticeId ?? 1;
+    const discipline = typeof req.query.discipline === 'string' ? req.query.discipline.toUpperCase() : undefined;
+    const allowed = discipline === 'OT' || discipline === 'ST' ? discipline : undefined;
+    const templates = await storage.getGoalTemplates(practiceId, allowed);
+    res.json(templates);
+  } catch (error) {
+    logger.error('Error fetching goal templates', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch goal templates' });
+  }
+});
+
 export default router;

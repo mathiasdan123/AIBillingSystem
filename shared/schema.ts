@@ -440,6 +440,42 @@ export const insertSoapInterventionTemplateSchema = createInsertSchema(soapInter
 export type SoapInterventionTemplate = typeof soapInterventionTemplates.$inferSelect;
 export type InsertSoapInterventionTemplate = z.infer<typeof insertSoapInterventionTemplateSchema>;
 
+// Goal Bank — pre-written common peds OT/ST treatment goals a therapist can
+// pick from instead of hand-writing every goal (Fusion-parity: "pediatric
+// goal banks"). A pick prefills a new treatmentGoals row, which the therapist
+// then edits. System defaults have practiceId = NULL; practices add custom
+// rows with practiceId set + isCustom = true (same model as
+// soapInterventionTemplates). Starter content is clinician-reviewable; the
+// authoritative wording should get a clinical pass before being relied on.
+export const goalTemplates = pgTable("goal_templates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id), // NULL = system default
+  discipline: varchar("discipline", { length: 10 }).notNull(), // 'OT' | 'ST'
+  category: varchar("category", { length: 80 }).notNull(), // e.g. fine_motor, expressive_language
+  /** Long-term goal text, written with a {patient} placeholder the UI fills. */
+  goalText: text("goal_text").notNull(),
+  /** Suggested SMART objectives under this goal (string[]). */
+  suggestedObjectives: jsonb("suggested_objectives"),
+  /** Example measurable target criteria, prefilled into targetMeasure. */
+  commonMeasure: text("common_measure"),
+  isActive: boolean("is_active").default(true),
+  isCustom: boolean("is_custom").default(false),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_goal_templates_practice").on(table.practiceId, table.isActive),
+  index("idx_goal_templates_discipline").on(table.discipline),
+]);
+
+export const insertGoalTemplateSchema = createInsertSchema(goalTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type GoalTemplate = typeof goalTemplates.$inferSelect;
+export type InsertGoalTemplate = z.infer<typeof insertGoalTemplateSchema>;
+
 // Co-sign status enum values (for reference)
 export const COSIGN_STATUS = {
   NOT_REQUIRED: 'not_required',
