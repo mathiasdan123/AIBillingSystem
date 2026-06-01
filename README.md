@@ -42,20 +42,19 @@ A comprehensive AI-powered medical billing and practice management platform desi
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript, TailwindCSS, Radix UI
-- **Backend**: Node.js, Express.js, TypeScript
-- **Database**: PostgreSQL with Drizzle ORM
-- **Authentication**: Supabase Auth (OAuth/JWT)
-- **AI Services**: OpenAI GPT-4, Anthropic Claude
+- **Frontend**: React 18, TypeScript, TailwindCSS, Radix UI, Wouter (routing), React Query, React Hook Form + Zod
+- **Backend**: Node.js 20+, Express.js, TypeScript
+- **Database**: PostgreSQL with Drizzle ORM (AWS RDS in production)
+- **Authentication**: Passport.js local strategy, Argon2 password hashing, express-session, MFA via TOTP
+- **AI Services**: Anthropic Claude (AI billing assistant, claim accuracy review, appeals); OpenAI optional (SOAP notes)
 - **Payments**: Stripe
-- **SMS/Email**: Twilio, Nodemailer
-- **Insurance APIs**: Stedi (eligibility, claims)
+- **SMS/Email**: Twilio (optional), Nodemailer / SMTP
+- **Insurance APIs**: Stedi clearinghouse (eligibility 270/271, claims 837P, claim status 276/277)
 
 ## Prerequisites
 
 - Node.js 20+
 - PostgreSQL 15+
-- Supabase project (for authentication)
 
 ## Environment Variables
 
@@ -65,38 +64,41 @@ Create a `.env` file with the following variables:
 # Database
 DATABASE_URL=postgresql://user:password@host:5432/database
 
-# Authentication (Supabase)
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-# Session
+# Session (min 32 chars)
 SESSION_SECRET=your-session-secret
 
-# AI Services
-OPENAI_API_KEY=sk-your-openai-key
+# Encryption (64-char hex / 32 bytes)
+PHI_ENCRYPTION_KEY=your-64-char-hex-key
+
+# Environment
+NODE_ENV=development
+
+# AI (Anthropic required for the billing assistant; OpenAI optional for SOAP notes)
+ANTHROPIC_API_KEY=sk-ant-your-key
+OPENAI_API_KEY=sk-your-openai-key   # optional
 
 # Payments (Stripe)
 STRIPE_SECRET_KEY=sk_live_your-stripe-key
+STRIPE_PUBLISHABLE_KEY=pk_live_your-stripe-key
 STRIPE_WEBHOOK_SECRET=whsec_your-webhook-secret
 
 # Insurance (Stedi)
 STEDI_API_KEY=your-stedi-key
 
-# Notifications
+# Notifications (optional)
 TWILIO_ACCOUNT_SID=your-twilio-sid
 TWILIO_AUTH_TOKEN=your-twilio-token
 TWILIO_PHONE_NUMBER=+1234567890
 
-# Email
+# Email (optional)
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_USER=your-email
 SMTP_PASS=your-password
-
-# Encryption
-PHI_ENCRYPTION_KEY=32-byte-hex-key
 ```
+
+Authentication is handled in-app via Passport.js (local strategy, Argon2
+hashing) with MFA — no external auth provider is required.
 
 ## Installation
 
@@ -121,13 +123,16 @@ npm run build
 npm start
 ```
 
-### Railway Deployment
+### AWS Deployment
 
-The application is configured for Railway deployment:
+The application runs in production on AWS:
 
-1. Connect your GitHub repository
-2. Set environment variables in Railway dashboard
-3. Deploy automatically on push to main
+- **ECS Fargate** for app hosting (us-east-1), behind an **ALB** with SSL (ACM)
+- **RDS PostgreSQL** (encrypted, private subnet) for the database
+- **ECR** for the Docker image registry; **CodeBuild** builds images from source
+- Deploys via GitHub Actions on push to `main`: build image → push to ECR →
+  run pending DB migrations as a one-off ECS task → roll the ECS service
+- HIPAA BAA signed with AWS
 
 ### Health Check
 
