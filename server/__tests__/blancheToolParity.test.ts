@@ -163,6 +163,7 @@ const SURFACE_ONLY_REASONS: Record<string, string> = {
   get_era_summary: 'MCP only: dedicated ERA reader; in-app uses summarize_recent_eobs',
   billing_code_accuracy_review: 'MCP only: AI billing-code accuracy review; in-app exposes the same primitive via the SOAP-note submission flow (no direct chat tool)',
   predict_denial_risk: 'MCP only: AI denial risk score; in-app does not expose a direct equivalent',
+  get_recovery_summary: 'MCP only: payer-advocate recovery summary for the assistant voice; in-app equivalent is the Recovery Ledger page (/recovery-ledger), not a chat-parity tool',
 };
 
 // ── The tests ─────────────────────────────────────────────────────────
