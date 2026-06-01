@@ -307,6 +307,9 @@ export const CacheKeys = {
   practiceInfo: (practiceId: number) => `practice:${practiceId}:info`,
   telehealthSettings: (practiceId: number) => `practice:${practiceId}:telehealth-settings`,
 
+  recoveryLedger: (practiceId: number, hash: string) =>
+    `practice:${practiceId}:analytics:recovery-ledger:${hash}`,
+
   // Invalidation patterns
   analyticsPattern: (practiceId: number) => `practice:${practiceId}:analytics:*`,
   practicePattern: (practiceId: number) => `practice:${practiceId}:*`,

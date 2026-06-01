@@ -883,4 +883,58 @@ function buildDailyInsightsEmailText(
 
 export { buildDailyInsightsEmailHtml, buildDailyInsightsEmailText };
 
+// ==================== RECOVERY LEDGER ====================
+// "Sheer for practices" — the payer-advocate wedge, quantified.
+// Financial surface → admin/billing only, like /dashboard.
+router.get('/recovery-ledger', isAuthenticated, async (req: any, res) => {
+  try {
+    const user = await storage.getUser(req.user.claims.sub);
+    const isAdminOrBillingRole = user?.role === 'admin' || user?.role === 'billing';
+    if (!isAdminOrBillingRole) {
+      return res.status(403).json({
+        message: 'Access denied. Admin or billing role required for the recovery ledger.',
+      });
+    }
+
+    // This is a financial surface, so resolve the practice explicitly rather
+    // than relying on the shared getAuthorizedPracticeId() helper, whose
+    // `|| 1` fallback would silently leak practice 1's recovery numbers to an
+    // admin who has no practice assignment and passes no ?practiceId. Require
+    // a concrete practice; otherwise return a clear 400.
+    const requestedPracticeId = req.query.practiceId
+      ? parseInt(req.query.practiceId as string, 10)
+      : undefined;
+    const practiceId = requestedPracticeId ?? req.userPracticeId ?? req.authorizedPracticeId;
+    if (!practiceId || Number.isNaN(practiceId)) {
+      return res.status(400).json({
+        message: 'No practice specified. Pass ?practiceId or use an account assigned to a practice.',
+      });
+    }
+    // Non-admins may only read their own practice's ledger.
+    if (
+      user?.role !== 'admin' &&
+      req.userPracticeId &&
+      practiceId !== req.userPracticeId
+    ) {
+      return res.status(403).json({ message: 'Access denied for the requested practice.' });
+    }
+
+    const start = validateDate(req.query.start as string | undefined);
+    const end = validateDate(req.query.end as string | undefined);
+    const hash = `${start ? start.toISOString().slice(0, 10) : 'all'}_${end ? end.toISOString().slice(0, 10) : 'all'}`;
+
+    const data = await cache.wrap(
+      CacheKeys.recoveryLedger(practiceId, hash),
+      CacheTTL.ANALYTICS,
+      () => storage.getRecoveryLedgerStats(practiceId, start ?? undefined, end ?? undefined),
+    );
+    res.json(data);
+  } catch (error) {
+    logger.error('Failed to build recovery ledger', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to build recovery ledger' });
+  }
+});
+
 export default router;
