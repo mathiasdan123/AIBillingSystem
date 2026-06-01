@@ -90,17 +90,20 @@ export async function reviewBillingCodeAccuracy(
   // Build context about insurance rules
   const rulesContext = buildRulesContext(insuranceRules, insurancePreferences, insuranceName);
 
-  // Get reimbursement data for this payer to guide code selection
+  // Whether payer rate data exists for this insurer. NOTE: we deliberately do
+  // NOT feed payer rates into the code-SELECTION prompt — surfacing "here are
+  // the higher-paying codes" while asking the model to pick a code is exactly
+  // the reimbursement-steering behavior CLAUDE.md forbids and the accuracy
+  // reframing removes. Rates are still used AFTER selection to compute the
+  // dollar estimate (see the rate lookup below). This flag only records that
+  // rate data was available for that estimate.
   let reimbursementContext = '';
   let reimbursementOptimized = false;
   try {
     const payerRates = await getPayerRatesSummary(insuranceName);
     if (payerRates.rates.length > 0) {
       reimbursementOptimized = true;
-      reimbursementContext = `\nREIMBURSEMENT DATA FOR ${insuranceName.toUpperCase()}:
-${payerRates.rates.slice(0, 10).map(r => `- ${r.cptCode}: $${r.inNetworkRate?.toFixed(2)} (Rank #${r.rank})`).join('\n')}
-Average rate: $${payerRates.averageRate.toFixed(2)} per unit
-OPTIMIZATION TIP: When clinically appropriate, favor higher-reimbursing codes.`;
+      // Intentionally left blank — no rate steering in the selection prompt.
     }
   } catch (error) {
     console.log("No reimbursement data available for", insuranceName);
@@ -276,7 +279,7 @@ Recommend the most ACCURATE, defensible coding. If the documentation is thin, re
       lineItems,
       totalUnits,
       estimatedAmount,
-      accuracyNotes: aiResult.accuracyNotes || aiResult.optimizationNotes || '',
+      accuracyNotes: aiResult.accuracyNotes || '',
       suppressedCodes,
       complianceScore: aiResult.complianceScore || 85,
       reimbursementOptimized
