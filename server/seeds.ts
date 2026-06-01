@@ -362,6 +362,32 @@ async function seedSoapInterventionTemplates(db: any) {
       { name: 'Environmental Modification Recommendation', description: 'Recommended home/school environment modifications' },
       { name: 'Re-evaluation / Progress Note', description: 'Formal re-evaluation or progress note completed' },
     ],
+    // Speech-language interventions (ST scope). Previously the library was
+    // OT-only; these fill the speech-therapy gap (Fusion-parity: SLP-focused
+    // templates for articulation, language, fluency, feeding).
+    'Speech — Articulation & Phonology': [
+      { name: 'Articulation Drill (Sound Level)', description: 'Targeted production of a specific phoneme in isolation/syllables' },
+      { name: 'Articulation Carryover (Word/Sentence)', description: 'Sound production practiced in words, phrases, and sentences' },
+      { name: 'Phonological Process Cueing', description: 'Cueing hierarchy to reduce a phonological process (e.g., fronting, cluster reduction)' },
+      { name: 'Minimal Pairs Contrast', description: 'Minimal-pairs activity to establish phonemic contrasts' },
+    ],
+    'Speech — Language': [
+      { name: 'Expressive Language — Sentence Formulation', description: 'Structured practice producing target sentence structures' },
+      { name: 'Receptive Language — Following Directions', description: 'Graded multi-step direction following' },
+      { name: 'Vocabulary / Semantic Mapping', description: 'Targeted vocabulary building and semantic organization' },
+      { name: 'Grammar / Morphology Targeting', description: 'Practice of target morphological markers (plurals, tense, pronouns)' },
+      { name: 'Social / Pragmatic Language Practice', description: 'Skilled facilitation of turn-taking, topic maintenance, perspective-taking' },
+    ],
+    'Speech — Fluency & Voice': [
+      { name: 'Fluency Shaping Technique', description: 'Easy onset / continuous phonation / rate control practice' },
+      { name: 'Stuttering Modification', description: 'Cancellation, pull-out, or preparatory-set strategies' },
+      { name: 'Voice Therapy Technique', description: 'Resonant voice, easy onset, or vocal hygiene practice' },
+    ],
+    'Speech — Feeding & Swallowing': [
+      { name: 'Oral-Motor Exercise', description: 'Skilled oral-motor activity targeting feeding/speech musculature' },
+      { name: 'Feeding / Swallow Trial', description: 'Graded trial of textures/consistencies with safety monitoring' },
+      { name: 'Food Hierarchy / Desensitization', description: 'Systematic food-acceptance hierarchy for selective eating' },
+    ],
   };
 
   // One-time cleanup: prior versions seeded activity-level duplicates
@@ -427,6 +453,139 @@ async function seedSoapInterventionTemplates(db: any) {
   }
   if (insertedCount > 0) {
     console.log(`  Seeded ${insertedCount} SOAP intervention templates`);
+  }
+}
+
+/**
+ * Seed the system-default goal bank — common peds OT + ST treatment goals a
+ * therapist can pick from instead of hand-writing each one (Fusion-parity).
+ * Idempotent: matched on (practice_id IS NULL, discipline, category, goal_text).
+ * STARTER CONTENT — clinician-reviewable. The {patient} placeholder is filled
+ * by the UI when a template is applied to a plan.
+ */
+async function seedGoalTemplates(db: any) {
+  type Goal = { category: string; goalText: string; objectives: string[]; measure: string };
+  const goals: Record<'OT' | 'ST', Goal[]> = {
+    OT: [
+      {
+        category: 'fine_motor',
+        goalText: '{patient} will improve fine-motor control to participate in age-appropriate school and self-care tasks.',
+        objectives: [
+          '{patient} will use a functional tripod grasp during writing/coloring tasks with no more than minimal verbal cues in 4 of 5 trials.',
+          '{patient} will complete a 2-step fastener task (button/zip) with modified independence across 3 consecutive sessions.',
+        ],
+        measure: 'Functional tripod grasp + fastener task at modified independence, 4/5 trials.',
+      },
+      {
+        category: 'postural_motor',
+        goalText: '{patient} will improve postural control and motor planning to sustain participation in classroom and play activities.',
+        objectives: [
+          '{patient} will maintain prone-extension/seated postural control during a 10-minute tabletop task with no more than 2 verbal cues.',
+          '{patient} will sequence a 3-step gross-motor obstacle course with minimal assist in 4 of 5 trials.',
+        ],
+        measure: 'Sustained postural control 10 min; 3-step motor sequence at min assist, 4/5 trials.',
+      },
+      {
+        category: 'sensory_regulation',
+        goalText: '{patient} will improve self-regulation to maintain a calm-alert state for functional participation across settings.',
+        objectives: [
+          '{patient} will independently select and use a regulation strategy when dysregulated in 3 of 5 observed opportunities.',
+          '{patient} will tolerate transitions between activities with no more than 1 verbal cue across 3 consecutive sessions.',
+        ],
+        measure: 'Independent regulation strategy use 3/5 opportunities; transitions with ≤1 cue.',
+      },
+      {
+        category: 'adl_self_care',
+        goalText: '{patient} will increase independence in age-appropriate ADLs (dressing, feeding, grooming).',
+        objectives: [
+          '{patient} will don/doff a pullover garment with modified independence in 4 of 5 trials.',
+          '{patient} will self-feed using an adaptive utensil with minimal spillage across 3 consecutive sessions.',
+        ],
+        measure: 'Dressing + self-feeding at modified independence, 4/5 trials.',
+      },
+    ],
+    ST: [
+      {
+        category: 'articulation',
+        goalText: '{patient} will improve speech-sound production for intelligible connected speech.',
+        objectives: [
+          '{patient} will produce target phoneme(s) at the word level with 80% accuracy across 3 consecutive sessions.',
+          '{patient} will carry over target sound production to sentence level with 80% accuracy given a cueing hierarchy.',
+        ],
+        measure: 'Target phoneme at sentence level, 80% accuracy, 3 consecutive sessions.',
+      },
+      {
+        category: 'expressive_language',
+        goalText: '{patient} will improve expressive language to communicate needs and ideas in functional contexts.',
+        objectives: [
+          '{patient} will formulate grammatically complete target sentence structures in 8 of 10 opportunities.',
+          '{patient} will use target morphological markers (plurals/tense/pronouns) with 80% accuracy in structured tasks.',
+        ],
+        measure: 'Target sentence structures 8/10; morphology 80% accuracy.',
+      },
+      {
+        category: 'receptive_language',
+        goalText: '{patient} will improve receptive language to follow directions and comprehend in classroom settings.',
+        objectives: [
+          '{patient} will follow 2-3 step directions with no more than 1 repetition in 8 of 10 trials.',
+          '{patient} will answer wh- questions about a short narrative with 80% accuracy.',
+        ],
+        measure: '2-3 step directions 8/10; wh- comprehension 80%.',
+      },
+      {
+        category: 'fluency',
+        goalText: '{patient} will improve speech fluency to communicate with reduced disfluency and effort.',
+        objectives: [
+          '{patient} will use a taught fluency-shaping/modification strategy during structured speech in 4 of 5 trials.',
+          '{patient} will self-identify moments of disfluency and apply a strategy with minimal cues.',
+        ],
+        measure: 'Fluency strategy use 4/5 trials with self-monitoring.',
+      },
+      {
+        category: 'feeding_swallowing',
+        goalText: '{patient} will increase safe oral intake and accepted food repertoire.',
+        objectives: [
+          '{patient} will accept and safely manage a new target texture across 3 consecutive sessions.',
+          '{patient} will tolerate a graded food-acceptance hierarchy step with minimal refusal behaviors.',
+        ],
+        measure: 'New texture accepted safely, 3 consecutive sessions.',
+      },
+    ],
+  };
+
+  let inserted = 0;
+  for (const discipline of ['OT', 'ST'] as const) {
+    let sortOrder = 0;
+    for (const g of goals[discipline]) {
+      sortOrder += 1;
+      try {
+        const existing: any = await db.execute(sql`
+          SELECT 1 FROM goal_templates
+           WHERE practice_id IS NULL
+             AND discipline = ${discipline}
+             AND category = ${g.category}
+             AND goal_text = ${g.goalText}
+           LIMIT 1
+        `);
+        const hasRow = Array.isArray((existing as any).rows)
+          ? (existing as any).rows.length > 0
+          : (existing as any).length > 0;
+        if (!hasRow) {
+          await db.execute(sql`
+            INSERT INTO goal_templates
+              (practice_id, discipline, category, goal_text, suggested_objectives, common_measure, is_active, is_custom, sort_order)
+            VALUES (NULL, ${discipline}, ${g.category}, ${g.goalText},
+                    ${JSON.stringify(g.objectives)}::jsonb, ${g.measure}, true, false, ${sortOrder})
+          `);
+          inserted++;
+        }
+      } catch (e: any) {
+        console.warn(`  goal template seed ${discipline}/${g.category} failed: ${e.message}`);
+      }
+    }
+  }
+  if (inserted > 0) {
+    console.log(`  Seeded ${inserted} goal-bank templates`);
   }
 }
 
@@ -628,6 +787,34 @@ export async function seedDatabase(options?: { force?: boolean }) {
       await seedSoapInterventionTemplates(db);
     } catch (err) {
       console.warn('  SOAP intervention templates seed skipped:', err instanceof Error ? err.message : err);
+    }
+
+    // Goal bank — system-default peds OT/ST treatment-goal templates a
+    // therapist can pick from when building a treatment plan. Idempotent.
+    // NOTE: starter clinical content; wording should get a clinician review
+    // pass before it's treated as authoritative.
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS goal_templates (
+          id SERIAL PRIMARY KEY,
+          practice_id INTEGER REFERENCES practices(id),
+          discipline VARCHAR(10) NOT NULL,
+          category VARCHAR(80) NOT NULL,
+          goal_text TEXT NOT NULL,
+          suggested_objectives JSONB,
+          common_measure TEXT,
+          is_active BOOLEAN DEFAULT TRUE,
+          is_custom BOOLEAN DEFAULT FALSE,
+          sort_order INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_goal_templates_practice ON goal_templates (practice_id, is_active)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_goal_templates_discipline ON goal_templates (discipline)`);
+      await seedGoalTemplates(db);
+    } catch (err) {
+      console.warn('  Goal templates seed skipped:', err instanceof Error ? err.message : err);
     }
 
     // Run schema migrations for new columns (safe to run multiple times)

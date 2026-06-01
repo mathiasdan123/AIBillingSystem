@@ -259,6 +259,23 @@ export default function TreatmentPlansPage() {
     },
   });
 
+  // Goal bank — pre-written OT/ST goal templates the therapist can pick from
+  // to prefill a new goal (Fusion-parity). Loaded once; filtered in-memory.
+  const { data: goalTemplates = [] } = useQuery<Array<{
+    id: number;
+    discipline: string;
+    category: string;
+    goalText: string;
+    suggestedObjectives: string[] | null;
+    commonMeasure: string | null;
+  }>>({
+    queryKey: ["/api/goal-templates"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/goal-templates");
+      return res.json();
+    },
+  });
+
   const { data: goalProgressNotes } = useQuery<GoalProgressNote[]>({
     queryKey: ["/api/treatment-plans", selectedPlanId, "goals", showProgressTimeline, "progress"],
     enabled: !!showProgressTimeline && !!selectedPlanId,
@@ -1206,6 +1223,47 @@ export default function TreatmentPlansPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {!editingGoal && goalTemplates.length > 0 && (
+              <div className="rounded-md border border-dashed border-blue-300 bg-blue-50/50 dark:bg-blue-900/10 p-3">
+                <Label className="text-xs text-blue-700 dark:text-blue-300">
+                  Start from goal bank (optional)
+                </Label>
+                <select
+                  className="mt-1 w-full text-sm rounded-md border bg-background px-2 py-1.5"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const t = goalTemplates.find((g) => String(g.id) === e.target.value);
+                    if (!t) return;
+                    const patientName = patients?.find((p: any) => p.id === selectedPatientId);
+                    const who = patientName ? `${patientName.firstName}` : 'The patient';
+                    setGoalForm((prev) => ({
+                      ...prev,
+                      description: t.goalText.replace(/\{patient\}/g, who),
+                      category: t.category,
+                      targetMeasure: t.commonMeasure || prev.targetMeasure,
+                    }));
+                  }}
+                >
+                  <option value="">Pick a template to prefill…</option>
+                  {['OT', 'ST'].map((disc) => {
+                    const items = goalTemplates.filter((g) => g.discipline === disc);
+                    if (items.length === 0) return null;
+                    return (
+                      <optgroup key={disc} label={disc === 'OT' ? 'Occupational Therapy' : 'Speech Therapy'}>
+                        {items.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.category.replace(/_/g, ' ')} — {g.goalText.replace(/\{patient\}/g, 'patient').slice(0, 60)}…
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
+                </select>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Prefills the fields below — review and edit before saving.
+                </p>
+              </div>
+            )}
             <div>
               <Label>Goal Description <span className="text-red-500">*</span></Label>
               <Textarea
