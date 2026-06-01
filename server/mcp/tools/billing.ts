@@ -98,4 +98,52 @@ export function registerBillingTools(
     },
     (input) => billingCodeAccuracyReview(input, context),
   );
+
+  // ── get_recovery_summary ──────────────────────────────────────────────
+  // The "Sheer for practices" advocate voice: lets the assistant answer
+  // "how much have you recovered/protected for me?" with REAL numbers from
+  // the Recovery Ledger. Read-only; honest framing — appeals recovered +
+  // underpayments caught are hard dollars; denials flagged is a COUNT, never
+  // dollarized. Optional date window (YYYY-MM-DD).
+  const getRecoverySummary = withAudit(
+    'get_recovery_summary',
+    'claim',
+    false,
+    async (input: { startDate?: string; endDate?: string }) => {
+      const start = input.startDate ? new Date(input.startDate) : undefined;
+      const end = input.endDate ? new Date(input.endDate) : undefined;
+      const stats = await storage.getRecoveryLedgerStats(
+        context.practiceId,
+        start && !isNaN(start.getTime()) ? start : undefined,
+        end && !isNaN(end.getTime()) ? end : undefined,
+      );
+      const usd = (n: number) =>
+        n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+      return {
+        ...stats,
+        // A ready-to-speak line so the assistant doesn't have to assemble it.
+        headline:
+          `Recovered ${usd(stats.valueDelivered)} in hard dollars` +
+          ` (${usd(stats.appealsRecovered.totalRecovered)} via ${stats.appealsRecovered.count} won/partial appeal(s)` +
+          ` + ${usd(stats.underpaymentsCaught.amount)} in underpayments caught across ${stats.underpaymentsCaught.count} claim(s)).` +
+          ` Separately, ${stats.denialsFlagged.count} at-risk claim(s) were flagged before submission (not counted as recovered dollars).`,
+      };
+    },
+  );
+
+  server.tool(
+    'get_recovery_summary',
+    'Summarize the money the platform has recovered and protected for the practice (the "payer advocate" view): dollars won back via appeals, underpayments caught vs contract, and a count of at-risk claims flagged before submission. Returns hard-dollar totals plus a ready-to-speak headline. Optional startDate/endDate (YYYY-MM-DD) to window the period.',
+    {
+      startDate: z
+        .string()
+        .optional()
+        .describe('Window start, YYYY-MM-DD (optional)'),
+      endDate: z
+        .string()
+        .optional()
+        .describe('Window end, YYYY-MM-DD (optional)'),
+    },
+    (input) => getRecoverySummary(input, context),
+  );
 }
