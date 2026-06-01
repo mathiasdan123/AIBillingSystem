@@ -94,6 +94,12 @@ export const practices = pgTable("practices", {
   brandPrivacyPolicyUrl: varchar("brand_privacy_policy_url"),
   // Patient portal intake settings
   requireCardOnFile: boolean("require_card_on_file").default(true),
+  // Payer-advocacy (2026-05-31): when true, the patient intake flow shows the
+  // optional Benefits Authorization step (assignment_of_benefits +
+  // authorized_representative consents — the "Sheer for practices" legal key).
+  // Default OFF: the DRAFT consent language must be reviewed/replaced by
+  // health-law counsel before any real patient sees it. Expand-only.
+  benefitsAuthEnabled: boolean("benefits_auth_enabled").default(false),
   // Review collection settings
   googleReviewUrl: varchar("google_review_url"), // URL for Google Business Profile reviews
   // Additional practice fields
@@ -213,6 +219,11 @@ export const patients = pgTable("patients", {
   // these two are the user-editable basics.
   effectiveDate: date("effective_date"),
   terminationDate: date("termination_date"),
+  // Payer-advocacy (2026-05-31): employer / plan sponsor name. Needed to match
+  // a member to the correct employer plan terms (self-funded plans vary by
+  // employer) and to disambiguate Transparency-in-Coverage negotiated rates.
+  // Nullable, expand-only.
+  insuranceEmployerName: varchar("insurance_employer_name"),
   // Secondary insurance fields
   secondaryInsuranceProvider: varchar("secondary_insurance_provider"),
   secondaryInsurancePolicyNumber: varchar("secondary_insurance_policy_number"),

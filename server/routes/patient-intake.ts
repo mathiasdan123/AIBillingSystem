@@ -55,6 +55,12 @@ router.get('/patient-portal/intake/status', async (req, res) => {
     const hipaaConsent = consents.find(c => c.consentType === 'hipaa_privacy_practices');
     const waiverConsent = consents.find(c => c.consentType === 'waiver_release');
     const cardAuthConsent = consents.find(c => c.consentType === 'card_authorization');
+    // Payer-advocacy: Benefits Authorization step is signed when BOTH the
+    // assignment-of-benefits and authorized-representative consents exist.
+    // Gated by the practice flag benefitsAuthEnabled (default off).
+    const benefitsAuthEnabled = practice?.benefitsAuthEnabled === true;
+    const aobConsent = consents.find(c => c.consentType === 'assignment_of_benefits');
+    const authRepConsent = consents.find(c => c.consentType === 'authorized_representative');
 
     // Check if patient has a payment method
     const paymentMethods = await storage.getPatientPaymentMethods(patient.id);
@@ -77,6 +83,13 @@ router.get('/patient-portal/intake/status', async (req, res) => {
         completed: !!waiverConsent,
         signedAt: waiverConsent?.signatureDate || null,
       },
+      benefitsAuth: {
+        // Only relevant when the practice has enabled the step. Completed when
+        // both AOB + authorized-representative consents are on file.
+        enabled: benefitsAuthEnabled,
+        completed: !!aobConsent && !!authRepConsent,
+        signedAt: aobConsent?.signatureDate || null,
+      },
       creditCardAuth: {
         completed: hasPaymentMethod && !!cardAuthConsent,
         required: practice?.requireCardOnFile !== false, // Default to required
@@ -88,13 +101,24 @@ router.get('/patient-portal/intake/status', async (req, res) => {
       },
     };
 
-    // Calculate current step
-    let currentStep = 1;
-    if (steps.hipaaNotice.completed) currentStep = 2;
-    if (steps.hipaaNotice.completed && steps.parentQuestionnaire.completed) currentStep = 3;
-    if (steps.hipaaNotice.completed && steps.parentQuestionnaire.completed && steps.waiverRelease.completed) currentStep = 4;
-    if (steps.hipaaNotice.completed && steps.parentQuestionnaire.completed && steps.waiverRelease.completed &&
-        (steps.creditCardAuth.completed || steps.creditCardAuth.skipped || !steps.creditCardAuth.required)) currentStep = 5;
+    // Calculate current step. Build the SAME ordered step list the client
+    // renders (Benefits Authorization is inserted only when the practice flag
+    // is on) and land on the first incomplete step. Computing position from
+    // this list — rather than a hardcoded 1..5 ladder — keeps the resume point
+    // correct whether or not the optional benefitsAuth step is present.
+    const cardDone =
+      steps.creditCardAuth.completed || steps.creditCardAuth.skipped || !steps.creditCardAuth.required;
+    const stepOrder: Array<{ done: boolean }> = [
+      { done: steps.hipaaNotice.completed },
+      { done: steps.parentQuestionnaire.completed },
+      { done: steps.waiverRelease.completed },
+      ...(benefitsAuthEnabled ? [{ done: steps.benefitsAuth.completed }] : []),
+      { done: cardDone },
+      { done: steps.reviewSubmit.completed },
+    ];
+    const firstIncomplete = stepOrder.findIndex((s) => !s.done);
+    // 1-indexed; if everything's done, point at the last (Review) step.
+    const currentStep = firstIncomplete === -1 ? stepOrder.length : firstIncomplete + 1;
 
     // Overall intake completed?
     const intakeCompleted = !!patient.intakeCompletedAt;
@@ -112,6 +136,7 @@ router.get('/patient-portal/intake/status', async (req, res) => {
         secondaryColor: practice?.brandSecondaryColor || '#1e40af',
       },
       requireCardOnFile: practice?.requireCardOnFile !== false,
+      benefitsAuthEnabled,
     });
   } catch (error) {
     logger.error('Error fetching intake status', { error: error instanceof Error ? error.message : String(error) });
@@ -222,11 +247,67 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
         info: 'Financial responsibility agreement',
         recipient: 'Practice billing department',
       },
+      // Payer-advocacy consent types (2026-05-31). DRAFT language — must be
+      // reviewed/replaced by health-law counsel before going live to real
+      // patients (see ~/Desktop/payer-advocacy-attorney-questions.md). These
+      // are the legal keys that let the practice (and its billing agent)
+      // retrieve benefit data and act as the patient's authorized
+      // representative in appeals — the "Sheer for practices" wedge.
+      assignment_of_benefits: {
+        purpose:
+          'Assignment of insurance benefits to the practice for services rendered (DRAFT — pending counsel review)',
+        info:
+          'Authorization for the health plan to pay benefits directly to the practice, and for the practice and its billing agent to obtain eligibility, coverage, claims, and explanation-of-benefit data for billing-accuracy purposes',
+        recipient: 'Patient health plan(s), practice billing, and authorized billing agent',
+      },
+      authorized_representative: {
+        purpose:
+          "Designation of the practice and its billing agent as the patient's authorized representative with the health plan, including appeals (DRAFT — pending counsel review)",
+        info:
+          'Authorization to communicate with the health plan and file appeals on the patient’s behalf regarding claims for services rendered by the practice',
+        recipient: 'Patient health plan(s), practice billing, and authorized billing agent',
+      },
     };
 
     const mapping = consentMappings[consentType];
     if (!mapping) {
       return res.status(400).json({ message: 'Invalid consent type' });
+    }
+
+    // Payer-advocacy gate: the assignment_of_benefits + authorized_representative
+    // consents use DRAFT language pending health-law counsel review. They must
+    // NOT be signable until the practice has explicitly enabled the feature.
+    // The intake wizard already hides the step when the flag is off, but that
+    // is client-side only — enforce the gate server-side too so a direct POST
+    // can't record these legally-significant consents out of band.
+    const GATED_CONSENT_TYPES = ['assignment_of_benefits', 'authorized_representative'];
+    if (GATED_CONSENT_TYPES.includes(consentType) && practice?.benefitsAuthEnabled !== true) {
+      logger.warn('Blocked gated consent attempt while benefitsAuthEnabled is off', {
+        patientId: patient.id,
+        practiceId: patient.practiceId,
+        consentType,
+      });
+      return res.status(403).json({ message: 'This authorization is not enabled for your practice.' });
+    }
+
+    // Idempotency for the gated payer-advocacy consents. The Benefits
+    // Authorization step signs two consents in sequence; if the second fails
+    // and the patient retries, we must not duplicate the one that already
+    // succeeded. If an active consent of this gated type already exists,
+    // return it instead of inserting a duplicate.
+    if (GATED_CONSENT_TYPES.includes(consentType)) {
+      const existing = await storage.getPatientConsents(patient.id);
+      const already = existing.find(
+        (c: any) => c.consentType === consentType && !c.isRevoked,
+      );
+      if (already) {
+        return res.json({
+          consentId: already.id,
+          consentType,
+          signedAt: already.signatureDate,
+          deduped: true,
+        });
+      }
     }
 
     // Get client IP address
