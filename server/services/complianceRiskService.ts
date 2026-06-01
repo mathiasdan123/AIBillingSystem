@@ -78,6 +78,16 @@ export async function assessComplianceRisk(
       claimId,
       error: err instanceof Error ? err.message : String(err),
     });
+    // Don't present an optimistically-clean score when a signal source failed.
+    // Surface the gap as a high-severity issue so the verdict reflects that
+    // structural validation could not be confirmed (advisory — still no gate;
+    // the submit path re-runs the scrubber authoritatively).
+    issues.push({
+      source: "scrubber",
+      severity: "high",
+      description: "Structural validation could not be completed for this claim — audit readiness is incomplete.",
+      suggestion: "Re-run the check; if it persists, review the claim manually before submitting.",
+    });
   }
 
   // 2) Gather claim context for the predictor + doc check.
