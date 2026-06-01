@@ -62,6 +62,7 @@ import {
   bulkExportClaims,
 } from '../services/bulkOperationsService';
 import { scrubClaim } from '../services/claimScrubber';
+import { assessComplianceRisk } from '../services/complianceRiskService';
 
 const router = Router();
 const claimOptimizer = new AiClaimOptimizer();
@@ -1436,6 +1437,28 @@ router.post('/:id/scrub', isAuthenticated, async (req: any, res) => {
     res.json(result);
   } catch (error: any) {
     safeErrorResponse(res, 500, 'Failed to scrub claim', error);
+  }
+});
+
+// Pre-submission compliance-risk assessment (Phase C, advisory). Composes the
+// scrubber + denial predictor + documentation-vs-billed-code cross-check into
+// a single audit-readiness verdict. Does NOT submit or block — informational.
+router.post('/:id/compliance-risk', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id);
+    const practiceId = getAuthorizedPracticeId(req);
+    // Ensure the claim belongs to this practice before assessing.
+    const claim = await storage.getClaim(claimId);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+    if (claim.practiceId !== practiceId) {
+      return res.status(403).json({ message: 'Access denied for this claim' });
+    }
+    const result = await assessComplianceRisk(claimId, practiceId);
+    res.json(result);
+  } catch (error: any) {
+    safeErrorResponse(res, 500, 'Failed to assess compliance risk', error);
   }
 });
 

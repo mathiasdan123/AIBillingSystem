@@ -28,6 +28,7 @@ export async function getDashboardStats(practiceId: number): Promise<{
   monthlyRevenue: number;
   denialRate: number;
   pendingClaims: number;
+  claimsAtComplianceRisk: number;
 }> {
   // P1.1 perf: collapse what used to be 7 sequential aggregate queries
   // (totalClaims, paid, denied, pending, totalRevenue, monthlyClaims,
@@ -47,6 +48,9 @@ export async function getDashboardStats(practiceId: number): Promise<{
       totalRevenue: sql<string>`COALESCE(SUM(${claims.paidAmount}) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
       monthlyClaimsCount: sql<number>`COUNT(*) FILTER (WHERE ${claims.createdAt} >= ${currentMonth})::int`,
       monthlyRevenue: sql<string>`COALESCE(SUM(${claims.paidAmount}) FILTER (WHERE ${claims.status} = 'paid' AND ${claims.paidAt} >= ${currentMonth}), 0)`,
+      // Phase C: not-yet-submitted claims flagged high denial risk by the
+      // predictor — the "claims at compliance risk" Practice-Intel widget.
+      claimsAtComplianceRisk: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} IN ('draft','held') AND ${claims.denialPrediction}->>'riskLevel' = 'high')::int`,
     })
     .from(claims)
     .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM));
@@ -65,6 +69,7 @@ export async function getDashboardStats(practiceId: number): Promise<{
     monthlyRevenue: Number(row?.monthlyRevenue) || 0,
     denialRate: totalClaims > 0 ? (deniedClaims / totalClaims) * 100 : 0,
     pendingClaims,
+    claimsAtComplianceRisk: Number(row?.claimsAtComplianceRisk) || 0,
   };
 }
 
