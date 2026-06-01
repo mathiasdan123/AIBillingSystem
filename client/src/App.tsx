@@ -74,6 +74,7 @@ const EnrollmentOverview = lazy(() => import("@/pages/enrollment-overview"));
 const RecoveryLedger = lazy(() => import("@/pages/recovery-ledger"));
 const BillingTasks = lazy(() => import("@/pages/billing-tasks"));
 const RevenueAtRisk = lazy(() => import("@/pages/revenue-at-risk"));
+const BillerCockpit = lazy(() => import("@/pages/biller-cockpit"));
 const Benchmarking = lazy(() => import("@/pages/benchmarking"));
 const DailyReport = lazy(() => import("@/pages/daily-report"));
 const InsightsReport = lazy(() => import("@/pages/insights-report"));
@@ -284,6 +285,7 @@ function Router() {
               <Route path="/appeals" component={Appeals} />
               <Route path="/billing-tasks" component={BillingTasks} />
               <Route path="/revenue-at-risk" component={RevenueAtRisk} />
+              <Route path="/biller-cockpit" component={BillerCockpit} />
               <Route path="/waitlist" component={Waitlist} />
               <Route path="/front-desk" component={FrontDesk} />
               <Route path="/reviews" component={Reviews} />
