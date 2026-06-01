@@ -636,7 +636,9 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
 router.get('/claims/search', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const searchTerm = (req.query.q as string) || '';
+    // Guard against parameter tampering: req.query.q may be an array or object
+    // if the client sends repeated/structured params. Require a string.
+    const searchTerm = typeof req.query.q === 'string' ? req.query.q : '';
 
     if (searchTerm.length < 2) {
       return res.json([]);
