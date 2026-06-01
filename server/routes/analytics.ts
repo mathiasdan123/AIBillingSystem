@@ -937,4 +937,39 @@ router.get('/recovery-ledger', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// Biller cockpit — unified "what needs action" worklist. Read-only aggregation
+// of actionable claim buckets (held, at-risk, denied-needs-appeal, underpaid,
+// aging, draft). Practice-scoped; admin/billing only (operational/financial).
+router.get('/biller-cockpit', isAuthenticated, async (req: any, res) => {
+  try {
+    const user = await storage.getUser(req.user.claims.sub);
+    const isAdminOrBillingRole = user?.role === 'admin' || user?.role === 'billing';
+    if (!isAdminOrBillingRole) {
+      return res.status(403).json({
+        message: 'Access denied. Admin or billing role required for the biller cockpit.',
+      });
+    }
+    const requestedPracticeId = req.query.practiceId
+      ? parseInt(req.query.practiceId as string, 10)
+      : undefined;
+    const practiceId = requestedPracticeId ?? req.userPracticeId ?? req.authorizedPracticeId;
+    if (!practiceId || Number.isNaN(practiceId)) {
+      return res.status(400).json({
+        message: 'No practice specified. Pass ?practiceId or use an account assigned to a practice.',
+      });
+    }
+    if (user?.role !== 'admin' && req.userPracticeId && practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied for the requested practice.' });
+    }
+
+    const data = await storage.getBillerCockpit(practiceId);
+    res.json(data);
+  } catch (error) {
+    logger.error('Failed to build biller cockpit', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to build biller cockpit' });
+  }
+});
+
 export default router;

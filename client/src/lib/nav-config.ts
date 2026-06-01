@@ -94,6 +94,7 @@ export const navigationSections: NavSection[] = [
     labelKey: 'nav.sectionBilling',
     items: [
       { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
+      { nameKey: 'nav.billerCockpit', href: '/biller-cockpit', icon: ClipboardList, adminOnly: true },
       { nameKey: 'nav.recoveryLedger', href: '/recovery-ledger', icon: DollarSign, adminOnly: true },
       { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
       { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
