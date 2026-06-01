@@ -101,13 +101,24 @@ router.get('/patient-portal/intake/status', async (req, res) => {
       },
     };
 
-    // Calculate current step
-    let currentStep = 1;
-    if (steps.hipaaNotice.completed) currentStep = 2;
-    if (steps.hipaaNotice.completed && steps.parentQuestionnaire.completed) currentStep = 3;
-    if (steps.hipaaNotice.completed && steps.parentQuestionnaire.completed && steps.waiverRelease.completed) currentStep = 4;
-    if (steps.hipaaNotice.completed && steps.parentQuestionnaire.completed && steps.waiverRelease.completed &&
-        (steps.creditCardAuth.completed || steps.creditCardAuth.skipped || !steps.creditCardAuth.required)) currentStep = 5;
+    // Calculate current step. Build the SAME ordered step list the client
+    // renders (Benefits Authorization is inserted only when the practice flag
+    // is on) and land on the first incomplete step. Computing position from
+    // this list — rather than a hardcoded 1..5 ladder — keeps the resume point
+    // correct whether or not the optional benefitsAuth step is present.
+    const cardDone =
+      steps.creditCardAuth.completed || steps.creditCardAuth.skipped || !steps.creditCardAuth.required;
+    const stepOrder: Array<{ done: boolean }> = [
+      { done: steps.hipaaNotice.completed },
+      { done: steps.parentQuestionnaire.completed },
+      { done: steps.waiverRelease.completed },
+      ...(benefitsAuthEnabled ? [{ done: steps.benefitsAuth.completed }] : []),
+      { done: cardDone },
+      { done: steps.reviewSubmit.completed },
+    ];
+    const firstIncomplete = stepOrder.findIndex((s) => !s.done);
+    // 1-indexed; if everything's done, point at the last (Review) step.
+    const currentStep = firstIncomplete === -1 ? stepOrder.length : firstIncomplete + 1;
 
     // Overall intake completed?
     const intakeCompleted = !!patient.intakeCompletedAt;
@@ -261,6 +272,42 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
     const mapping = consentMappings[consentType];
     if (!mapping) {
       return res.status(400).json({ message: 'Invalid consent type' });
+    }
+
+    // Payer-advocacy gate: the assignment_of_benefits + authorized_representative
+    // consents use DRAFT language pending health-law counsel review. They must
+    // NOT be signable until the practice has explicitly enabled the feature.
+    // The intake wizard already hides the step when the flag is off, but that
+    // is client-side only — enforce the gate server-side too so a direct POST
+    // can't record these legally-significant consents out of band.
+    const GATED_CONSENT_TYPES = ['assignment_of_benefits', 'authorized_representative'];
+    if (GATED_CONSENT_TYPES.includes(consentType) && practice?.benefitsAuthEnabled !== true) {
+      logger.warn('Blocked gated consent attempt while benefitsAuthEnabled is off', {
+        patientId: patient.id,
+        practiceId: patient.practiceId,
+        consentType,
+      });
+      return res.status(403).json({ message: 'This authorization is not enabled for your practice.' });
+    }
+
+    // Idempotency for the gated payer-advocacy consents. The Benefits
+    // Authorization step signs two consents in sequence; if the second fails
+    // and the patient retries, we must not duplicate the one that already
+    // succeeded. If an active consent of this gated type already exists,
+    // return it instead of inserting a duplicate.
+    if (GATED_CONSENT_TYPES.includes(consentType)) {
+      const existing = await storage.getPatientConsents(patient.id);
+      const already = existing.find(
+        (c: any) => c.consentType === consentType && !c.isRevoked,
+      );
+      if (already) {
+        return res.json({
+          consentId: already.id,
+          consentType,
+          signedAt: already.signatureDate,
+          deduped: true,
+        });
+      }
     }
 
     // Get client IP address
