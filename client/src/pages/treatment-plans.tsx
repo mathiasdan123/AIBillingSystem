@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
+import { GoalProgressChart } from "@/components/GoalProgressChart";
 import { Separator } from "@/components/ui/separator";
 import {
   Select,
@@ -1019,7 +1020,25 @@ export default function TreatmentPlansPage() {
                                   return <p className="text-xs text-slate-400 italic">No progress notes yet.</p>;
                                 }
 
+                                const currentGoalPct = planDetails?.goals?.find((g: any) => g.id === goal.id)?.progressPercentage ?? null;
+
                                 return (
+                                  <>
+                                  {/* Progress trend chart (Fusion-parity goal-progress viz) */}
+                                  <div className="mb-4 rounded-lg border bg-card p-3">
+                                    <div className="text-xs font-medium text-muted-foreground mb-1">
+                                      Progress over time
+                                    </div>
+                                    <GoalProgressChart
+                                      points={timelineItems.map((i) => ({
+                                        date: i.date,
+                                        type: i.type,
+                                        progressRating: i.progressRating,
+                                        progressPercentage: i.progressPercentage,
+                                      }))}
+                                      currentPercentage={currentGoalPct}
+                                    />
+                                  </div>
                                   <div className="border-l-2 border-blue-200 pl-4 space-y-3">
                                     {timelineItems.map((item) => (
                                       <div key={item.id} className="relative">
@@ -1062,6 +1081,7 @@ export default function TreatmentPlansPage() {
                                       </div>
                                     ))}
                                   </div>
+                                  </>
                                 );
                               })()}
                             </div>
