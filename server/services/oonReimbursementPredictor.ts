@@ -209,7 +209,10 @@ function normalizePayerName(payer: string): string {
 }
 
 function getGeographicAdjustment(zipCode: string): number {
-  if (!zipCode || zipCode.length < 3) return 1.0;
+  // Guard against parameter tampering: a request body may supply a non-string
+  // zipCode (array/object), which would make .length/.substring behave
+  // unexpectedly. Require a string before using string operations.
+  if (typeof zipCode !== 'string' || zipCode.length < 3) return 1.0;
 
   const prefix = zipCode.substring(0, 3);
   const firstDigit = zipCode.charAt(0);

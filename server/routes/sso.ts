@@ -237,8 +237,10 @@ router.get('/check/:practiceId', async (req: Request, res: Response) => {
  */
 router.get('/check-domain', async (req: Request, res: Response) => {
   try {
-    const email = req.query.email as string;
-    if (!email || !email.includes('@')) {
+    // Guard against parameter tampering: req.query.email may be an array or
+    // object if the client sends repeated/structured params. Require a string.
+    const email = req.query.email;
+    if (typeof email !== 'string' || !email.includes('@')) {
       return res.json({ ssoEnabled: false });
     }
 

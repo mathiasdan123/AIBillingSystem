@@ -96,7 +96,14 @@ export async function textToSpeech(
     ? text.substring(0, maxLength) + "... Text truncated for brevity."
     : text;
 
-  const voiceId = options.voiceId || DEFAULT_VOICE_ID;
+  // Validate voiceId against a strict allowlist pattern before interpolating it
+  // into the request URL, so a caller-supplied value can't alter the request
+  // path or host (SSRF hardening). ElevenLabs voice IDs are alphanumeric.
+  const requestedVoiceId = options.voiceId;
+  const voiceId =
+    typeof requestedVoiceId === "string" && /^[A-Za-z0-9]+$/.test(requestedVoiceId)
+      ? requestedVoiceId
+      : DEFAULT_VOICE_ID;
   const modelId = options.modelId || DEFAULT_MODEL_ID;
 
   try {
