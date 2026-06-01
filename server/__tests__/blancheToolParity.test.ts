@@ -168,6 +168,7 @@ const SURFACE_ONLY_REASONS: Record<string, string> = {
   billing_code_accuracy_review: 'MCP only: AI billing-code accuracy review; in-app exposes the same primitive via the SOAP-note submission flow (no direct chat tool)',
   predict_denial_risk: 'MCP only: AI denial risk score; in-app does not expose a direct equivalent',
   get_recovery_summary: 'MCP only: payer-advocate recovery summary for the assistant voice; in-app equivalent is the Recovery Ledger page (/recovery-ledger), not a chat-parity tool',
+  check_compliance_risk: 'MCP only: pre-submission audit-readiness assessment (scrubber + denial predictor + doc-vs-code check); in-app exposes it via POST /api/claims/:id/compliance-risk, not a chat-parity tool',
 };
 
 // ── The tests ─────────────────────────────────────────────────────────

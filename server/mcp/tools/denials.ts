@@ -4,6 +4,7 @@ import { storage } from '../../storage';
 import { predictDenial } from '../../services/aiDenialPredictor';
 import { reviewDeniedClaims, suggestClaimCorrection } from '../../services/denialReviewService';
 import { reviewUnderpayments, draftUnderpaymentDispute } from '../../services/underpaymentReviewService';
+import { assessComplianceRisk } from '../../services/complianceRiskService';
 import { withAudit } from '../audit';
 import type { McpPracticeContext } from '../types';
 
@@ -118,5 +119,27 @@ export function registerDenialTools(
     'Draft a provider dispute letter for an underpaid claim, using its matched ERA/835 remittance data and the practice fee schedule. Returns the letter text plus an adjustment-code analysis. Review and customize before sending to the payer.',
     { claimId: z.number().describe('The underpaid claim to draft a dispute for (must have matched ERA data)') },
     (input) => draftUnderpaymentDisputeTool(input, context),
+  // Pre-submission audit-readiness check (Phase C). Composes the claim
+  // scrubber + denial predictor + documentation-vs-billed-code cross-check
+  // into one verdict. Advisory — does not submit or modify the claim.
+  const checkComplianceRisk = withAudit(
+    'check_compliance_risk',
+    'claim',
+    true,
+    async (input: { claimId: number }) => {
+      const claim = await storage.getClaim(input.claimId);
+      if (!claim) throw new Error(`Claim ${input.claimId} not found`);
+      if ((claim as any).practiceId !== context.practiceId) {
+        throw new Error('Access denied: claim belongs to a different practice');
+      }
+      return assessComplianceRisk(input.claimId, context.practiceId);
+    },
+  );
+
+  server.tool(
+    'check_compliance_risk',
+    'Assess a claim\'s audit readiness BEFORE submission. Composes structural validation, denial-risk prediction, and a documentation-vs-billed-code check into one audit-readiness score (0-100), level (ready/review/at_risk), and an issue list with suggestions. Advisory only — does not submit or change the claim.',
+    { claimId: z.number().describe('Claim ID to assess for compliance/audit risk') },
+    (input) => checkComplianceRisk(input, context),
   );
 }
