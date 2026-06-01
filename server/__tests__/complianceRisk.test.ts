@@ -50,4 +50,36 @@ describe('compliance risk — documentation-vs-billed-code cross-check', () => {
     const issues = checkDocumentationSupport([li('99999')], 'anything');
     expect(issues).toHaveLength(0);
   });
+
+  it('does not false-match short terms inside other words (word boundaries)', () => {
+    // 97110 (therapeutic exercise) needs strength/ROM/exercise language.
+    // "from" contains "rom" but must NOT count as support → should flag.
+    const issues = checkDocumentationSupport(
+      [li('97110')],
+      'Patient transitioned from the mat to standing; calm and cooperative.',
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].description).toContain('97110');
+  });
+
+  it('does not false-match "adl" inside words like "cradle"', () => {
+    // 97535 (self-care) needs ADL/self-care language; "cradle" must not match.
+    const issues = checkDocumentationSupport(
+      [li('97535')],
+      'Worked on cradle-position carries during play; no self-care tasks addressed.',
+    );
+    // "self-care" IS present here, so it should pass — but verify "cradle"
+    // alone wouldn't have. Test the negative explicitly:
+    const negative = checkDocumentationSupport([li('97535')], 'cradle and ladle play only');
+    expect(negative).toHaveLength(1);
+    expect(negative[0].description).toContain('97535');
+  });
+
+  it('still matches genuine "range of motion" phrasing for 97110', () => {
+    const issues = checkDocumentationSupport(
+      [li('97110')],
+      'Addressed shoulder range of motion with active stretching.',
+    );
+    expect(issues).toHaveLength(0);
+  });
 });
