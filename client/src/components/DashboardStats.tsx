@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, CheckCircle, DollarSign, Clock, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
+import { FileText, CheckCircle, DollarSign, Clock, TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Link } from "wouter";
 
 interface DashboardStatsProps {
   stats: {
@@ -11,6 +12,7 @@ interface DashboardStatsProps {
     monthlyRevenue: number;
     denialRate: number;
     pendingClaims: number;
+    claimsAtComplianceRisk?: number;
   };
 }
 
@@ -73,14 +75,31 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
           : 'text-red-600 dark:text-red-400',
       description: 'Average processing time',
     },
+    {
+      // Phase C: pre-submission audit-readiness. Counts not-yet-submitted
+      // claims the denial predictor flagged high-risk. Clickable → claims list.
+      title: 'Compliance Risk',
+      value: String(stats?.claimsAtComplianceRisk ?? 0),
+      icon: (stats?.claimsAtComplianceRisk ?? 0) === 0 ? ShieldCheck : ShieldAlert,
+      iconBg: (stats?.claimsAtComplianceRisk ?? 0) === 0
+        ? 'bg-emerald-100 dark:bg-emerald-950'
+        : 'bg-red-100 dark:bg-red-950',
+      iconColor: (stats?.claimsAtComplianceRisk ?? 0) === 0
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : 'text-red-600 dark:text-red-400',
+      description: (stats?.claimsAtComplianceRisk ?? 0) === 0
+        ? 'No at-risk claims pending'
+        : 'Unsubmitted claims to review',
+      href: '/claims',
+    },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
       {kpis.map((kpi) => {
         const Icon = kpi.icon;
-        return (
-          <Card key={kpi.title} className="relative overflow-hidden">
+        const card = (
+          <Card className={`relative overflow-hidden h-full ${kpi.href ? 'transition-shadow hover:shadow-md cursor-pointer' : ''}`}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-4 md:px-6 pt-4 md:pt-6">
               <CardTitle className="text-xs md:text-sm font-medium text-muted-foreground">{kpi.title}</CardTitle>
               <div className={`p-1.5 md:p-2 rounded-lg ${kpi.iconBg}`}>
@@ -94,6 +113,11 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
               </p>
             </CardContent>
           </Card>
+        );
+        return kpi.href ? (
+          <Link key={kpi.title} href={kpi.href}>{card}</Link>
+        ) : (
+          <div key={kpi.title}>{card}</div>
         );
       })}
     </div>
