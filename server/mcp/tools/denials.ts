@@ -119,6 +119,8 @@ export function registerDenialTools(
     'Draft a provider dispute letter for an underpaid claim, using its matched ERA/835 remittance data and the practice fee schedule. Returns the letter text plus an adjustment-code analysis. Review and customize before sending to the payer.',
     { claimId: z.number().describe('The underpaid claim to draft a dispute for (must have matched ERA data)') },
     (input) => draftUnderpaymentDisputeTool(input, context),
+  );
+
   // Pre-submission audit-readiness check (Phase C). Composes the claim
   // scrubber + denial predictor + documentation-vs-billed-code cross-check
   // into one verdict. Advisory — does not submit or modify the claim.

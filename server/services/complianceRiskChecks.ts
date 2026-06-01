@@ -18,6 +18,17 @@ export const severityRank = (s: string): number =>
   ({ low: 1, medium: 2, high: 3, critical: 4 }[s] ?? 1);
 
 /**
+ * Whole-term containment check. Uses word boundaries so a short term like
+ * "rom" (range of motion) does NOT match inside "from"/"prompt", and "adl"
+ * does not match "cradle"/"ladle". Multi-word phrases ("range of motion")
+ * still match as a bounded phrase. Term is regex-escaped for safety.
+ */
+function containsTerm(text: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+}
+
+/**
  * Deterministic documentation-vs-billed-code cross-check. For each billed CPT,
  * confirm the SOAP note contains language plausibly supporting that code's
  * skilled objective. Conservative: flags for human review, never auto-removes.
@@ -71,7 +82,7 @@ export function checkDocumentationSupport(
     if (!code) continue;
     const support = CPT_SUPPORT[code];
     if (!support) continue; // unknown code — scrubber/predictor handle validity
-    const matched = support.terms.some((t) => text.includes(t));
+    const matched = support.terms.some((t) => containsTerm(text, t));
     if (!matched) {
       issues.push({
         source: "documentation",
@@ -82,7 +93,7 @@ export function checkDocumentationSupport(
     } else if (code === "97533") {
       const hasFunctionalAnchor = [
         "functional", "postural", "motor planning", "regulation to", "participation", "deficit", "skilled",
-      ].some((t) => text.includes(t));
+      ].some((t) => containsTerm(text, t));
       if (!hasFunctionalAnchor) {
         issues.push({
           source: "documentation",
