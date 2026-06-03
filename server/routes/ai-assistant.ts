@@ -3047,7 +3047,7 @@ export async function executeTool(
             query,
             count: 0,
             payers: [],
-            message: `No payers matched "${query}". Try a shorter or differently spelled name.`,
+            message: `No payers matched "${query}". Try a shorter or differently spelled name (fuzzy matching is supported).`,
           });
         }
         const payers = results.map((p) => ({
@@ -3055,6 +3055,7 @@ export async function executeTool(
           name: p.displayName,
           operatingStates: p.operatingStates,
           coverageTypes: p.coverageTypes,
+          aliases: p.aliases,
           eligibilityCheck: p.transactionSupport.eligibilityCheck ?? 'UNKNOWN',
           professionalClaims: p.transactionSupport.professionalClaimSubmission ?? 'UNKNOWN',
           claimStatus: p.transactionSupport.claimStatus ?? 'UNKNOWN',

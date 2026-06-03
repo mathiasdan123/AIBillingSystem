@@ -1485,8 +1485,12 @@ export async function searchPayers(
   query: string,
   options: { pageSize?: number; practiceId?: number } = {},
 ): Promise<PayerSearchResult[]> {
-  // pageSize must be 10-100 per Stedi's API; default to 10.
-  const pageSize = Math.min(100, Math.max(10, options.pageSize ?? 10));
+  // pageSize must be an integer 10-100 per Stedi's API; default to 10.
+  // Coerce defensively in case a non-number (or NaN) reaches us from a tool call.
+  const rawSize = Number(options.pageSize);
+  const pageSize = Number.isFinite(rawSize)
+    ? Math.min(100, Math.max(10, Math.trunc(rawSize)))
+    : 10;
 
   let apiKey = process.env.STEDI_API_KEY;
   if (options.practiceId !== undefined) {
@@ -1505,9 +1509,11 @@ export async function searchPayers(
     query,
   )}&pageSize=${pageSize}`;
 
+  // Reuse getHeaders() so this stays in lockstep with every other Stedi call
+  // if the auth/header format ever changes.
   const response = await fetch(url, {
     method: 'GET',
-    headers: { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' },
+    headers: getHeaders(apiKey),
   });
 
   if (!response.ok) {
@@ -1517,28 +1523,41 @@ export async function searchPayers(
     );
   }
 
-  const data: any = await response.json();
+  // Guard against a 200 with a non-JSON body (HTML error page, gateway timeout
+  // page, etc.) so we degrade gracefully like the other Stedi service functions
+  // rather than throwing a raw SyntaxError at the caller.
+  let data: any;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('Stedi payer search returned a non-JSON response body.');
+  }
+
   const items: any[] = Array.isArray(data?.items) ? data.items : [];
 
-  return items.map((item): PayerSearchResult => {
-    // Stedi nests the payer record under `payer` in search responses, but some
-    // endpoints return it flat — handle both.
-    const p = item?.payer ?? item;
-    const ts = p?.transactionSupport ?? {};
-    return {
-      payerId: p?.primaryPayerId ?? p?.stediId ?? '',
-      displayName: p?.displayName ?? '',
-      aliases: Array.isArray(p?.aliases) ? p.aliases : [],
-      operatingStates: Array.isArray(p?.operatingStates) ? p.operatingStates : [],
-      coverageTypes: Array.isArray(p?.coverageTypes) ? p.coverageTypes : [],
-      transactionSupport: {
-        eligibilityCheck: ts.eligibilityCheck,
-        professionalClaimSubmission: ts.professionalClaimSubmission,
-        claimStatus: ts.claimStatus,
-        claimPayment: ts.claimPayment,
-      },
-    };
-  });
+  return items
+    .map((item): PayerSearchResult => {
+      // Stedi nests the payer record under `payer` in search responses, but some
+      // endpoints return it flat — handle both.
+      const p = item?.payer ?? item;
+      const ts = p?.transactionSupport ?? {};
+      return {
+        payerId: p?.primaryPayerId ?? p?.stediId ?? '',
+        displayName: p?.displayName ?? '',
+        aliases: Array.isArray(p?.aliases) ? p.aliases : [],
+        operatingStates: Array.isArray(p?.operatingStates) ? p.operatingStates : [],
+        coverageTypes: Array.isArray(p?.coverageTypes) ? p.coverageTypes : [],
+        transactionSupport: {
+          eligibilityCheck: ts.eligibilityCheck,
+          professionalClaimSubmission: ts.professionalClaimSubmission,
+          claimStatus: ts.claimStatus,
+          claimPayment: ts.claimPayment,
+        },
+      };
+    })
+    // Drop any degenerate result with no usable payer ID — the whole point of
+    // this tool is returning IDs a biller can actually use.
+    .filter((r) => r.payerId !== '');
 }
 
 export default {
