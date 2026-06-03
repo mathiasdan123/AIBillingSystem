@@ -1446,12 +1446,108 @@ function getBenefitCodeDescription(code: string): string {
   return descriptions[code] || code;
 }
 
+/**
+ * A single payer result from a live Stedi Payer Network search, flattened to
+ * the fields a biller actually needs to pick the right payer ID. Transaction
+ * support tells the user what they can do today vs. what needs enrollment.
+ */
+export interface PayerSearchResult {
+  /** Primary payer ID to use in eligibility/claim requests (e.g. "60054"). */
+  payerId: string;
+  /** Human-readable payer name (e.g. "Aetna"). */
+  displayName: string;
+  /** Alternate payer IDs/aliases Stedi also accepts for this payer. */
+  aliases: string[];
+  /** States the payer operates in, or ["NATIONAL"]. */
+  operatingStates: string[];
+  /** Coverage types: medical / dental / vision. */
+  coverageTypes: string[];
+  /** Per-transaction support: SUPPORTED | NOT_SUPPORTED | ENROLLMENT_REQUIRED. */
+  transactionSupport: {
+    eligibilityCheck?: string;
+    professionalClaimSubmission?: string;
+    claimStatus?: string;
+    claimPayment?: string; // ERA / 835
+  };
+}
+
+/**
+ * Search Stedi's live Payer Network by name, ID, or alias (fuzzy matching).
+ * This is the authoritative source for payer IDs — far better than the static
+ * PAYER_IDS map, because it returns every entity (commercial vs. Medicaid
+ * "Better Health" vs. Senior Supplemental) with that entity's exact ID and
+ * what transactions it supports today.
+ *
+ * Powers the `search_payer` MCP tool so the in-app assistant stops guessing
+ * payer IDs and returns verified ones with transaction support.
+ */
+export async function searchPayers(
+  query: string,
+  options: { pageSize?: number; practiceId?: number } = {},
+): Promise<PayerSearchResult[]> {
+  // pageSize must be 10-100 per Stedi's API; default to 10.
+  const pageSize = Math.min(100, Math.max(10, options.pageSize ?? 10));
+
+  let apiKey = process.env.STEDI_API_KEY;
+  if (options.practiceId !== undefined) {
+    try {
+      const resolved = await getStediApiKeyForPractice(options.practiceId);
+      apiKey = resolved.apiKey;
+    } catch {
+      // Fall through to global key.
+    }
+  }
+  if (!apiKey) {
+    throw new Error('STEDI_API_KEY environment variable is not configured');
+  }
+
+  const url = `${STEDI_API_BASE}/payers/search?query=${encodeURIComponent(
+    query,
+  )}&pageSize=${pageSize}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(
+      `Stedi payer search failed (${response.status}): ${body.slice(0, 300)}`,
+    );
+  }
+
+  const data: any = await response.json();
+  const items: any[] = Array.isArray(data?.items) ? data.items : [];
+
+  return items.map((item): PayerSearchResult => {
+    // Stedi nests the payer record under `payer` in search responses, but some
+    // endpoints return it flat — handle both.
+    const p = item?.payer ?? item;
+    const ts = p?.transactionSupport ?? {};
+    return {
+      payerId: p?.primaryPayerId ?? p?.stediId ?? '',
+      displayName: p?.displayName ?? '',
+      aliases: Array.isArray(p?.aliases) ? p.aliases : [],
+      operatingStates: Array.isArray(p?.operatingStates) ? p.operatingStates : [],
+      coverageTypes: Array.isArray(p?.coverageTypes) ? p.coverageTypes : [],
+      transactionSupport: {
+        eligibilityCheck: ts.eligibilityCheck,
+        professionalClaimSubmission: ts.professionalClaimSubmission,
+        claimStatus: ts.claimStatus,
+        claimPayment: ts.claimPayment,
+      },
+    };
+  });
+}
+
 export default {
   isStediConfigured,
   checkEligibility,
   submitClaim,
   checkClaimStatus,
   resolvePayerId,
+  searchPayers,
   getDetailedBenefits,
   PAYER_IDS,
 };

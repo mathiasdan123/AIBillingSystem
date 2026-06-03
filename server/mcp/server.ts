@@ -15,6 +15,7 @@ import { registerAppointmentTools } from './tools/appointments';
 import { registerPatientTools } from './tools/patients';
 import { registerClaimTools } from './tools/claims';
 import { registerEligibilityTools } from './tools/eligibility';
+import { registerPayerTools } from './tools/payers';
 import { registerInvoiceTools } from './tools/invoices';
 import { registerEraTools } from './tools/era';
 import { registerAppealTools } from './tools/appeals';
@@ -52,6 +53,9 @@ export function createMcpServer(context: McpPracticeContext): McpServer {
 
   // Eligibility (PHI, Stedi API)
   registerEligibilityTools(server, context);
+
+  // Payer directory lookup (no PHI, Stedi Payer Network)
+  registerPayerTools(server, context);
 
   // Payments (PHI, Stripe API)
   registerInvoiceTools(server, context);
