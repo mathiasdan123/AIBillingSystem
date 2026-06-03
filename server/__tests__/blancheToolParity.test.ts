@@ -101,6 +101,7 @@ const PARITY_TOOLS: ReadonlySet<string> = new Set([
   'mark_no_show',
   'reschedule_appointment',
   'search_patients',
+  'search_payer',
   'send_patient_payment_link',
   'session_end',
   'session_start',

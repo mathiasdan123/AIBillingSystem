@@ -1495,6 +1495,18 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'search_payer',
+    description: 'Look up a verified insurance payer ID from a payer name (or ID/alias) using the live Stedi Payer Network. Use when a user asks "what is the payer ID for X", before configuring a patient\'s insurance, or to confirm whether a payer supports eligibility, claims, claim status, or ERA. Returns the primary payer ID, related entities (commercial vs. Medicaid vs. Senior Supplemental often have different IDs), operating states, and per-transaction support. Public reference data — no PHI. Do NOT guess payer IDs; always use this tool.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string' as const, description: 'Payer name, payer ID, or alias to search for (fuzzy matching supported, e.g. "aetna", "bcbs nj", "60054")' },
+        limit: { type: 'number' as const, description: 'Max results to return (10-100, default 10)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'get_prior_session_notes',
     description: 'Pre-charting helper: return the N most recent SOAP notes for a patient so the therapist can reference prior sessions when documenting today\'s. Use when a therapist says "what did we work on last time with Sarah", "remind me what I documented for her", "pull her last few notes before this session". Returns each note\'s subjective/objective/assessment/plan summaries, date, signed status, and therapist. Only returns notes from this practice. Default limit 5, max 20.',
     input_schema: {
@@ -3017,6 +3029,49 @@ export async function executeTool(
           coinsurance: result.coinsurance,
           coverageActive: result.status === 'active',
           errors: result.errors,
+        });
+      }
+
+      case 'search_payer': {
+        const query = ((args.query as string) || '').trim();
+        if (!query) {
+          return JSON.stringify({ error: 'Please provide a payer name, ID, or alias to search.' });
+        }
+        const { searchPayers } = await import('../services/stediService');
+        const results = await searchPayers(query, {
+          pageSize: args.limit as number | undefined,
+          practiceId,
+        });
+        if (results.length === 0) {
+          return JSON.stringify({
+            query,
+            count: 0,
+            payers: [],
+            message: `No payers matched "${query}". Try a shorter or differently spelled name (fuzzy matching is supported).`,
+          });
+        }
+        const payers = results.map((p) => ({
+          payerId: p.payerId,
+          name: p.displayName,
+          operatingStates: p.operatingStates,
+          coverageTypes: p.coverageTypes,
+          aliases: p.aliases,
+          eligibilityCheck: p.transactionSupport.eligibilityCheck ?? 'UNKNOWN',
+          professionalClaims: p.transactionSupport.professionalClaimSubmission ?? 'UNKNOWN',
+          claimStatus: p.transactionSupport.claimStatus ?? 'UNKNOWN',
+          eraPayment: p.transactionSupport.claimPayment ?? 'UNKNOWN',
+        }));
+        const top = payers[0];
+        return JSON.stringify({
+          query,
+          count: payers.length,
+          payers,
+          message:
+            `Top match: ${top.name} — payer ID ${top.payerId}. ` +
+            `Eligibility ${top.eligibilityCheck}, professional claims ${top.professionalClaims}, ERA ${top.eraPayment}.` +
+            (payers.length > 1
+              ? ` ${payers.length - 1} other related payer(s) returned — confirm the patient's exact plan (Medicaid/Senior plans often have different IDs).`
+              : ''),
         });
       }
 
