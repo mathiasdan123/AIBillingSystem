@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
-import { CheckCircle2, AlertTriangle, Search, RefreshCw, HelpCircle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Search, RefreshCw, HelpCircle, Plus } from 'lucide-react';
 import PageLayout from '@/components/PageLayout';
 
 /**
@@ -65,6 +65,10 @@ export default function PayerMappingPage() {
   const [overrideFor, setOverrideFor] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<PayerSearchResult[]>([]);
+  // Separate state for the "Add a payer" card so it doesn't clash with the
+  // per-row Override search above.
+  const [addTerm, setAddTerm] = useState('');
+  const [addResults, setAddResults] = useState<PayerSearchResult[]>([]);
 
   const { data, isLoading } = useQuery<{ mappings: Mapping[] }>({
     queryKey: ['/api/payer-mapping'],
@@ -115,6 +119,32 @@ export default function PayerMappingPage() {
     onError: () => setSearchResults([]),
   });
 
+  // "Add a payer" — live Stedi search, then create a confirmed mapping.
+  const addSearchMutation = useMutation({
+    mutationFn: async (q: string) =>
+      (await apiRequest('GET', `/api/payer-mapping/search?q=${encodeURIComponent(q)}`)).json(),
+    onSuccess: (r: { results: PayerSearchResult[] }) => setAddResults(r.results || []),
+    onError: () => setAddResults([]),
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async (vars: { rawName: string; result: PayerSearchResult }) =>
+      (await apiRequest('POST', '/api/payer-mapping', {
+        rawName: vars.rawName,
+        stediPayerId: vars.result.payerId,
+        displayName: vars.result.displayName,
+        transactionSupport: vars.result.transactionSupport,
+      })).json(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['/api/payer-mapping'] });
+      setAddTerm('');
+      setAddResults([]);
+      toast({ title: 'Payer added' });
+    },
+    onError: (e: any) =>
+      toast({ title: 'Could not add payer', description: e?.message, variant: 'destructive' }),
+  });
+
   const mappings = data?.mappings ?? [];
   const confirmed = mappings.filter((m) => m.status === 'confirmed').length;
   const needsReview = mappings.filter((m) => !m.stediPayerId || m.status === 'auto').length;
@@ -147,6 +177,70 @@ export default function PayerMappingPage() {
             <RefreshCw className={`w-4 h-4 mr-2 ${scanMutation.isPending ? 'animate-spin' : ''}`} />
             {scanMutation.isPending ? 'Scanning…' : 'Scan my payers'}
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Add a payer manually — search Stedi, pick the exact entity, add it. */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Add a payer
+          </CardTitle>
+          <CardDescription>
+            Add a payer that isn't on any patient yet. Search the Stedi network, then add the exact
+            entity — it's saved as a confirmed mapping.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              value={addTerm}
+              onChange={(e) => setAddTerm(e.target.value)}
+              placeholder="Payer name as it appears on your patients (e.g. 'Horizon BCBS NJ')"
+              onKeyDown={(e) => e.key === 'Enter' && addTerm.trim() && addSearchMutation.mutate(addTerm)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => addSearchMutation.mutate(addTerm)}
+              disabled={!addTerm.trim() || addSearchMutation.isPending}
+            >
+              <Search className="w-4 h-4 mr-1" /> Search
+            </Button>
+          </div>
+          <div className="space-y-1">
+            {addResults.map((r) => (
+              <div
+                key={r.payerId}
+                className="flex items-center justify-between gap-2 text-sm p-2 rounded hover:bg-slate-50"
+              >
+                <div>
+                  <span className="font-medium">{r.displayName}</span>{' '}
+                  <span className="font-mono text-muted-foreground">({r.payerId})</span>
+                  {r.operatingStates?.length > 0 && (
+                    <span className="text-xs text-muted-foreground ml-2">
+                      {r.operatingStates.slice(0, 4).join(', ')}
+                    </span>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => addMutation.mutate({ rawName: addTerm.trim(), result: r })}
+                  disabled={addMutation.isPending || !addTerm.trim()}
+                >
+                  Add
+                </Button>
+              </div>
+            ))}
+            {addSearchMutation.isPending && (
+              <div className="text-xs text-muted-foreground">Searching…</div>
+            )}
+            {!addSearchMutation.isPending && addResults.length === 0 && addSearchMutation.isSuccess && (
+              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                <HelpCircle className="w-3 h-3" /> No payers found — try a different name.
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 

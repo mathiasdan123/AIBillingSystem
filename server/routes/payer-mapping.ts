@@ -24,7 +24,7 @@ import logger from '../services/logger';
 import { db } from '../db';
 import { practicePayerMap, patients, payerEnrollments } from '@shared/schema';
 import { and, eq, ne } from 'drizzle-orm';
-import { resolveDistinctPayers } from '../services/payerMappingService';
+import { resolveDistinctPayers, normalizePayerName } from '../services/payerMappingService';
 import { searchPayers } from '../services/stediService';
 import { decryptField } from '../services/phiEncryptionService';
 
@@ -59,6 +59,30 @@ function sanitizeTransactionSupport(v: unknown): Record<string, string> | undefi
     if (typeof val === 'string') out[k] = val.slice(0, 40);
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// Seed not_enrolled payerEnrollments rows for a confirmed payer so it shows up
+// on the enrollment tracker. Guarded (select-then-insert the missing transaction
+// types) because idx_payer_enrollments_unique is a plain index, not a DB
+// constraint. Used by both PUT /:id (confirm/override) and POST / (manual add).
+async function seedEnrollments(practiceId: number, payerName: string, payerId: string): Promise<void> {
+  const existing = await db
+    .select({ transactionType: payerEnrollments.transactionType })
+    .from(payerEnrollments)
+    .where(and(eq(payerEnrollments.practiceId, practiceId), eq(payerEnrollments.payerName, payerName)));
+  const have = new Set(existing.map((e: { transactionType: string }) => e.transactionType));
+  const toAdd = (['eligibility', 'claims', 'era'] as const).filter((tt) => !have.has(tt));
+  if (toAdd.length > 0) {
+    await db.insert(payerEnrollments).values(
+      toAdd.map((tt) => ({
+        practiceId,
+        payerName,
+        payerId,
+        transactionType: tt,
+        status: 'not_enrolled' as const,
+      })),
+    );
+  }
 }
 
 // GET /api/payer-mapping — list this practice's mappings.
@@ -218,32 +242,8 @@ router.put('/:id', isAuthenticated, adminMfaRequired, async (req: any, res: Resp
       .where(eq(practicePayerMap.id, id))
       .returning();
 
-    // Seed enrollment-tracker rows (guarded: only insert the ones not already
-    // present, since the payerEnrollments unique index isn't a DB constraint).
     if (updated.stediPayerId) {
-      const payerName = updated.displayName || updated.rawName;
-      const existing = await db
-        .select({ transactionType: payerEnrollments.transactionType })
-        .from(payerEnrollments)
-        .where(
-          and(
-            eq(payerEnrollments.practiceId, practiceId),
-            eq(payerEnrollments.payerName, payerName),
-          ),
-        );
-      const have = new Set(existing.map((e: { transactionType: string }) => e.transactionType));
-      const toAdd = (['eligibility', 'claims', 'era'] as const).filter((tt) => !have.has(tt));
-      if (toAdd.length > 0) {
-        await db.insert(payerEnrollments).values(
-          toAdd.map((tt) => ({
-            practiceId,
-            payerName,
-            payerId: updated.stediPayerId,
-            transactionType: tt,
-            status: 'not_enrolled' as const,
-          })),
-        );
-      }
+      await seedEnrollments(practiceId, updated.displayName || updated.rawName, updated.stediPayerId);
     }
 
     res.json({ ok: true, mapping: updated });
@@ -252,6 +252,71 @@ router.put('/:id', isAuthenticated, adminMfaRequired, async (req: any, res: Resp
       error: error instanceof Error ? error.message : String(error),
     });
     res.status(500).json({ message: 'Failed to confirm payer mapping' });
+  }
+});
+
+// POST /api/payer-mapping — manually add a payer mapping (the "Add a payer"
+// search-and-pick flow). The caller searches Stedi (GET /search) and posts the
+// chosen payer here; we create a confirmed mapping keyed on the typed name and
+// seed enrollment rows. Upserts on (practice, normalized name) so re-adding the
+// same name updates rather than duplicates.
+router.post('/', isAuthenticated, adminMfaRequired, async (req: any, res: Response) => {
+  try {
+    const practiceId = getPracticeId(req);
+    if (!practiceId) return res.status(400).json(NO_PRACTICE);
+
+    const b = req.body || {};
+    const rawName = typeof b.rawName === 'string' ? b.rawName.trim() : '';
+    const stediPayerId = typeof b.stediPayerId === 'string' ? b.stediPayerId.trim() : '';
+    if (!rawName || !stediPayerId) {
+      return res.status(400).json({ message: 'rawName and stediPayerId are required' });
+    }
+    const normalized = normalizePayerName(rawName);
+    if (!normalized) {
+      return res.status(400).json({ message: 'Payer name is empty after normalization' });
+    }
+    const displayName =
+      typeof b.displayName === 'string' && b.displayName.trim() ? b.displayName.trim() : null;
+    const transactionSupport = sanitizeTransactionSupport(b.transactionSupport);
+
+    const [mapping] = await db
+      .insert(practicePayerMap)
+      .values({
+        practiceId,
+        rawName: rawName.slice(0, MAX_NAME_LEN),
+        normalizedName: normalized.slice(0, MAX_NAME_LEN),
+        stediPayerId: stediPayerId.slice(0, 50),
+        displayName,
+        transactionSupport,
+        confidence: '1.00',
+        source: 'manual',
+        status: 'confirmed',
+        reviewedBy: req.user?.claims?.sub ?? null,
+      })
+      .onConflictDoUpdate({
+        target: [practicePayerMap.practiceId, practicePayerMap.normalizedName],
+        set: {
+          rawName: rawName.slice(0, MAX_NAME_LEN),
+          stediPayerId: stediPayerId.slice(0, 50),
+          displayName,
+          transactionSupport,
+          confidence: '1.00',
+          source: 'manual',
+          status: 'confirmed',
+          reviewedBy: req.user?.claims?.sub ?? null,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    await seedEnrollments(practiceId, mapping.displayName || mapping.rawName, mapping.stediPayerId!);
+    logger.info('Payer mapping manually added', { practiceId, stediPayerId, normalized });
+    res.json({ ok: true, mapping });
+  } catch (error) {
+    logger.error('Failed to add payer mapping', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to add payer mapping' });
   }
 });
 
