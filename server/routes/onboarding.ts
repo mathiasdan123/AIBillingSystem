@@ -15,6 +15,7 @@ import { db } from '../db';
 import { practices, users, patients, claims } from '../../shared/schema';
 import { eq, and, count, isNull } from 'drizzle-orm';
 import logger from '../services/logger';
+import { isRenderingClinician } from '../services/onboardingChecklist';
 
 const router = Router();
 
@@ -121,17 +122,22 @@ router.get('/checklist', isAuthenticated, async (req: any, res: Response) => {
       practice.taxId
     );
 
-    // Check if at least one therapist exists (users with role therapist in this practice)
-    const [therapistResult] = await db
-      .select({ total: count() })
+    // Check if at least one rendering clinician exists. Counts a user with the
+    // `therapist` role OR clinical identity (individual NPI / license /
+    // credentials) — so a SOLO practice, where the owner is an `admin` who is
+    // also the treating provider, can complete this step. A role-only check left
+    // such practices stuck at 4/5 forever. (A billing-only admin still doesn't
+    // count.) npi/license are PHI-encrypted, but we only check presence here.
+    const practiceUsers = await db
+      .select({
+        role: users.role,
+        npiNumber: users.npiNumber,
+        licenseNumber: users.licenseNumber,
+        credentials: users.credentials,
+      })
       .from(users)
-      .where(
-        and(
-          eq(users.practiceId, practiceId),
-          eq(users.role, 'therapist')
-        )
-      );
-    const hasTherapist = (therapistResult?.total ?? 0) > 0;
+      .where(eq(users.practiceId, practiceId));
+    const hasTherapist = practiceUsers.some(isRenderingClinician);
 
     // Check if at least one patient exists.
     // Demo rows excluded — practices seeded with the 7 showcase patients
