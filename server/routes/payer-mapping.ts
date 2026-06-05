@@ -219,11 +219,11 @@ router.put('/:id', isAuthenticated, adminMfaRequired, async (req: any, res: Resp
 
     const stediPayerId =
       typeof b.stediPayerId === 'string' && b.stediPayerId.trim()
-        ? b.stediPayerId.trim()
+        ? b.stediPayerId.trim().slice(0, 50)
         : row.stediPayerId;
     const displayName =
       typeof b.displayName === 'string' && b.displayName.trim()
-        ? b.displayName.trim()
+        ? b.displayName.trim().slice(0, MAX_NAME_LEN)
         : row.displayName;
 
     const sanitizedSupport = sanitizeTransactionSupport(b.transactionSupport);
@@ -276,7 +276,9 @@ router.post('/', isAuthenticated, adminMfaRequired, async (req: any, res: Respon
       return res.status(400).json({ message: 'Payer name is empty after normalization' });
     }
     const displayName =
-      typeof b.displayName === 'string' && b.displayName.trim() ? b.displayName.trim() : null;
+      typeof b.displayName === 'string' && b.displayName.trim()
+        ? b.displayName.trim().slice(0, MAX_NAME_LEN)
+        : null;
     const transactionSupport = sanitizeTransactionSupport(b.transactionSupport);
 
     const [mapping] = await db
