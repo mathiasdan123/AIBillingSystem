@@ -23,9 +23,10 @@ import { adminMfaRequired } from '../middleware/mfa-required';
 import logger from '../services/logger';
 import { db } from '../db';
 import { practicePayerMap, patients, payerEnrollments } from '@shared/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { resolveDistinctPayers } from '../services/payerMappingService';
 import { searchPayers } from '../services/stediService';
+import { decryptField } from '../services/phiEncryptionService';
 
 const router = Router();
 
@@ -86,14 +87,25 @@ router.post('/scan', isAuthenticated, adminMfaRequired, async (req: any, res: Re
     const practiceId = getPracticeId(req);
     if (!practiceId) return res.status(400).json(NO_PRACTICE);
 
-    const distinct = await db
-      .selectDistinct({ name: patients.insuranceProvider })
+    // patients.insuranceProvider is PHI-encrypted at rest, and each row uses a
+    // random IV — so a SQL SELECT DISTINCT on the raw column returns ciphertext
+    // that never dedupes and never matches a payer. Pull the raw values, decrypt
+    // each (decryptField passes through legacy plaintext), then dedupe on the
+    // decrypted name. (The eligibility/claims paths are unaffected — they load
+    // patients via storage.getPatient, which already decrypts.)
+    const rawRows = await db
+      .select({ enc: patients.insuranceProvider })
       .from(patients)
       .where(eq(patients.practiceId, practiceId));
 
-    const fromPatients = distinct
-      .map((r: { name: string | null }) => r.name)
-      .filter((n: string | null): n is string => !!n && n.trim() !== '');
+    const seen = new Map<string, string>(); // lower(name) -> first spelling seen
+    for (const r of rawRows) {
+      const name = decryptField(r.enc)?.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!seen.has(key)) seen.set(key, name);
+    }
+    const fromPatients = Array.from(seen.values());
 
     // Caller-supplied extra names are attacker-controllable, so bound the array
     // length and each entry before they fan out into live Stedi searches.
@@ -101,6 +113,13 @@ router.post('/scan', isAuthenticated, adminMfaRequired, async (req: any, res: Re
       .filter((x: unknown): x is string => typeof x === 'string')
       .slice(0, MAX_EXTRA_NAMES)
       .map((s: string) => s.slice(0, MAX_NAME_LEN));
+
+    // Clear this practice's UNCONFIRMED mappings so a re-scan starts clean —
+    // removes any stale/garbage rows (e.g. ciphertext from before this fix).
+    // Confirmed (human-reviewed) mappings are preserved.
+    await db
+      .delete(practicePayerMap)
+      .where(and(eq(practicePayerMap.practiceId, practiceId), ne(practicePayerMap.status, 'confirmed')));
 
     const allNames = [...fromPatients, ...extra];
     const truncated = allNames.length > MAX_SCAN_PAYERS;
