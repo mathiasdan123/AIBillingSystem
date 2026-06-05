@@ -2996,10 +2996,18 @@ export async function executeTool(
 
         const practice = await storage.getPractice(practiceId);
 
-        // Resolve payer ID from insurance provider name
-        const { checkEligibility, PAYER_IDS } = await import('../services/stediService');
-        const insuranceName = (patient.insuranceProvider || '').toLowerCase();
-        const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
+        // Resolve payer ID via the unified practice payer map (cache → crosswalk
+        // → static map → live Stedi search) instead of the old
+        // `PAYER_IDS[name] || insuranceId || '60054'` which fell back to Aetna.
+        const { checkEligibility } = await import('../services/stediService');
+        const { resolvePracticePayer } = await import('../services/payerMappingService');
+        const routed = await resolvePracticePayer(practiceId, patient.insuranceProvider || '');
+        if (!routed.stediPayerId) {
+          return JSON.stringify({
+            error: `Could not match payer "${patient.insuranceProvider || 'Unknown'}" to a Stedi payer ID. Use search_payer to find the right ID, or add it in Provider Profile.`,
+          });
+        }
+        const payerId = routed.stediPayerId;
 
         const result = await checkEligibility({
           payer: { id: payerId, name: patient.insuranceProvider || 'Unknown' },

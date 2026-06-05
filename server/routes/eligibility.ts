@@ -22,7 +22,8 @@ import {
   getExpiringEligibility,
   clearQueue,
 } from '../services/batchEligibilityService';
-import { checkEligibility, isStediConfigured, PAYER_IDS } from '../services/stediService';
+import { checkEligibility, isStediConfigured } from '../services/stediService';
+import { resolvePracticePayer } from '../services/payerMappingService';
 
 const router = Router();
 
@@ -256,9 +257,26 @@ router.post('/batch-check', isAuthenticated, async (req: any, res: Response) => 
           continue;
         }
 
-        // Resolve payer ID
-        const insuranceName = (patient.insuranceProvider || '').toLowerCase();
-        const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
+        // Resolve payer ID via the unified practice payer map (cache → crosswalk
+        // → static PAYER_IDS → live Stedi search). Previously this hardcoded
+        // `PAYER_IDS[name] || patient.insuranceId || '60054'`, which billed
+        // eligibility against Aetna (60054) — or the member ID — for any payer
+        // not in the 10-entry static map. Skip with a clear error instead of
+        // silently checking the wrong payer.
+        const routed = await resolvePracticePayer(practiceId, patient.insuranceProvider || '');
+        const payerId = routed.stediPayerId;
+        if (!payerId) {
+          results.push({
+            patientId,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            insurance: patient.insuranceProvider || null,
+            status: 'skipped',
+            eligible: null,
+            error: `Could not match payer "${patient.insuranceProvider || 'Unknown'}" to a Stedi payer ID`,
+          });
+          errorCount++;
+          continue;
+        }
 
         const eligResult = await checkEligibility(
           {

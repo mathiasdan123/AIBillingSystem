@@ -43,6 +43,7 @@ import {
   notificationTemplatesRouter,
   stediReadinessRouter,
   providerProfileRouter,
+  payerMappingRouter,
   enrollmentOpsRouter,
 } from "./routes/index";
 import { auditMiddleware } from "./middleware/auditMiddleware";
@@ -280,6 +281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Multi-practice enrollment (Phases 1-4): provider identity + ops overview
   app.use('/api/provider-profile', providerProfileRouter);
+  app.use('/api/payer-mapping', payerMappingRouter);
   app.use('/api/admin/enrollment-overview', enrollmentOpsRouter);
 
   // SOAP intervention templates (activity picker library) — /api/soap-intervention-templates/*

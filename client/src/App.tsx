@@ -70,6 +70,7 @@ const NotificationSettings = lazy(() => import("@/pages/notification-settings"))
 const NotificationTemplates = lazy(() => import("@/pages/notification-templates"));
 const StediReadiness = lazy(() => import("@/pages/stedi-readiness"));
 const ProviderProfile = lazy(() => import("@/pages/provider-profile"));
+const PayerMapping = lazy(() => import("@/pages/payer-mapping"));
 const EnrollmentOverview = lazy(() => import("@/pages/enrollment-overview"));
 const RecoveryLedger = lazy(() => import("@/pages/recovery-ledger"));
 const BillingTasks = lazy(() => import("@/pages/billing-tasks"));
@@ -344,6 +345,7 @@ function Router() {
               <Route path="/notification-templates" component={NotificationTemplates} />
               <Route path="/stedi-readiness" component={StediReadiness} />
               <Route path="/provider-profile" component={ProviderProfile} />
+              <Route path="/payer-mapping" component={PayerMapping} />
               <Route path="/enrollment-overview" component={EnrollmentOverview} />
               <Route path="/recovery-ledger" component={RecoveryLedger} />
               <Route path="/mcp-setup" component={McpSetup} />

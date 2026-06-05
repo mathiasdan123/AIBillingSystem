@@ -4167,6 +4167,71 @@ export const insertPayerCrosswalkSchema = createInsertSchema(payerCrosswalk).omi
 export type PayerCrosswalk = typeof payerCrosswalk.$inferSelect;
 export type InsertPayerCrosswalk = z.infer<typeof insertPayerCrosswalkSchema>;
 
+// ==================== Practice Payer Map (Onboarding Payer Resolution) ====================
+
+// Per-practice resolved mapping from a raw insurance/payer name (as it arrives
+// from data import or patient intake) to a verified Stedi payer ID. This is the
+// practice-scoped source of truth that makes eligibility/claims "just work":
+// resolvePracticePayer() reads it first (cache hit) before falling back to the
+// crosswalk, the static PAYER_IDS map, or a live Stedi payer search.
+//
+// `status` lets onboarding mark a row 'confirmed' (a human reviewed it) vs.
+// 'auto' (resolver's best guess) vs. 'unmatched' (needs a human to pick). All
+// columns are nullable/additive — expand-only, safe for rolling deploys.
+export const practicePayerMap = pgTable("practice_payer_map", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  // The payer name exactly as it appeared in the source (patient.insuranceProvider,
+  // import CSV, intake form). Kept verbatim for auditing/override.
+  rawName: varchar("raw_name", { length: 200 }).notNull(),
+  // normalizePayerName(rawName) — lowercased, punctuation/abbreviation-collapsed.
+  // The lookup key. Unique per practice (see index below).
+  normalizedName: varchar("normalized_name", { length: 200 }).notNull(),
+  // Resolved Stedi payer ID (tradingPartnerServiceId), null when unmatched.
+  stediPayerId: varchar("stedi_payer_id", { length: 50 }),
+  // Stedi's canonical display name for the matched payer.
+  displayName: varchar("display_name", { length: 200 }),
+  // Snapshot of Stedi transaction support at resolution time:
+  // { eligibilityCheck, professionalClaimSubmission, claimStatus, claimPayment }.
+  transactionSupport: jsonb("transaction_support").$type<Record<string, string>>(),
+  // 0..1 resolver confidence (1 = exact/curated, lower = fuzzy search match).
+  confidence: decimal("confidence", { precision: 3, scale: 2 }),
+  // Where the mapping came from: 'crosswalk' | 'static_map' | 'insurance_record'
+  // | 'stedi_search' | 'manual'.
+  source: varchar("source", { length: 20 }),
+  // 'auto' (resolver guess) | 'confirmed' (human-reviewed) | 'unmatched' (needs pick).
+  status: varchar("status", { length: 20 }).default("auto").notNull(),
+  reviewedBy: varchar("reviewed_by"), // user id who confirmed/overrode
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_practice_payer_map_practice").on(table.practiceId),
+  // One mapping per (practice, normalized name). Upsert on this.
+  uniqueIndex("idx_practice_payer_map_unique").on(table.practiceId, table.normalizedName),
+]);
+
+export const insertPracticePayerMapSchema = createInsertSchema(practicePayerMap).omit({ id: true, createdAt: true, updatedAt: true });
+export type PracticePayerMap = typeof practicePayerMap.$inferSelect;
+export type InsertPracticePayerMap = z.infer<typeof insertPracticePayerMapSchema>;
+
+// Global (cross-practice) cache of live Stedi payer-search results, keyed by the
+// normalized query. Stedi's payer network is the same for everyone, so caching
+// here avoids re-hitting the live API for the same payer name across practices.
+// Refreshed when a row is older than the resolver's TTL.
+export const payerSearchCache = pgTable("payer_search_cache", {
+  id: serial("id").primaryKey(),
+  normalizedQuery: varchar("normalized_query", { length: 200 }).notNull().unique(),
+  // Full PayerSearchResult[] returned by searchPayers(), stored verbatim.
+  results: jsonb("results").$type<unknown[]>(),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+}, (table) => [
+  index("idx_payer_search_cache_query").on(table.normalizedQuery),
+]);
+
+export const insertPayerSearchCacheSchema = createInsertSchema(payerSearchCache).omit({ id: true });
+export type PayerSearchCache = typeof payerSearchCache.$inferSelect;
+export type InsertPayerSearchCache = z.infer<typeof insertPayerSearchCacheSchema>;
+
 // Note: patientStatements table is defined earlier in this file (line ~1864)
 // patientStatementsRelations kept here for organizational purposes
 export const patientStatementsRelations = relations(patientStatements, ({ one }) => ({

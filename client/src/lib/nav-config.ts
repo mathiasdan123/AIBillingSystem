@@ -38,6 +38,7 @@ import {
   Bell,
   Mail,
   Activity,
+  Link2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -128,6 +129,7 @@ export const navigationSections: NavSection[] = [
           { nameKey: 'nav.payerManagement', href: '/payer-management', icon: Shield, adminOnly: true },
           { nameKey: 'nav.payerEnrollments', href: '/payer-enrollments', icon: Handshake, adminOnly: false },
           { nameKey: 'nav.providerProfile', href: '/provider-profile', icon: Building2, adminOnly: true },
+          { nameKey: 'nav.payerMapping', href: '/payer-mapping', icon: Link2, adminOnly: true },
           { nameKey: 'nav.enrollmentOverview', href: '/enrollment-overview', icon: BarChart3, adminOnly: true },
           { nameKey: 'nav.credentialing', href: '/credentialing', icon: ShieldCheck, adminOnly: true },
           { nameKey: 'nav.stediReadiness', href: '/stedi-readiness', icon: Activity, adminOnly: true },
