@@ -49,6 +49,19 @@ describe('PHI Encryption Service', () => {
     expect(encryptField('')).toBeNull();
   });
 
+  // Regression: practices.taxId is a varchar (text) column, not jsonb. Callers
+  // persisting an encrypted value into a text column must JSON.stringify the
+  // EncryptedField object first; assigning the raw object throws on write and
+  // never round-trips. decryptField must read that JSON string back to plaintext.
+  // (provider-profile PUT previously stored the raw object → 500 on save.)
+  it('should round-trip an encrypted field stored as a JSON string (varchar column)', async () => {
+    const { encryptField, decryptField } = await loadModule();
+    const ein = '863309083';
+    const stored = JSON.stringify(encryptField(ein)); // what a varchar column holds
+    expect(typeof stored).toBe('string');
+    expect(decryptField(stored)).toBe(ein);
+  });
+
   it('should produce ciphertext that differs from the plaintext', async () => {
     const { encryptField } = await loadModule();
     const plaintext = 'SensitivePHI-12345';
