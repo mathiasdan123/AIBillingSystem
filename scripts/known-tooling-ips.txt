@@ -16,3 +16,5 @@
 # If the alarm keeps firing on the same IP and you confirm it's yours, add it here
 # with a comment explaining what it is. Future runs of the alarm-triage script will
 # stop flagging it.
+
+68.173.239.185      # Spectrum office IP (daniel) — confirmed own IP, false-positive auto-block 2026-06-05
