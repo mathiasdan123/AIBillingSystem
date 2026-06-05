@@ -46,6 +46,19 @@ describe('normalizePayerName', () => {
   it('normalizes differently-spelled variants of the same payer identically', () => {
     expect(normalizePayerName('blue-cross blueshield')).toBe(normalizePayerName('BCBS'));
   });
+
+  it('keeps "health plan" so regional plans stay distinct (no collision)', () => {
+    expect(normalizePayerName('Health Plan of San Mateo')).toBe('health plan san mateo');
+    expect(normalizePayerName('The Health Plan')).toBe('health plan');
+    expect(normalizePayerName('Health Plan of San Mateo')).not.toBe(
+      normalizePayerName('Health Plan of Nevada'),
+    );
+  });
+
+  it('never collapses a non-empty name to empty (falls back to expanded form)', () => {
+    // "Insurance Company Inc" is all noise words — must not become "".
+    expect(normalizePayerName('Insurance Company Inc')).not.toBe('');
+  });
 });
 
 describe('scoreNameMatch', () => {
@@ -53,10 +66,17 @@ describe('scoreNameMatch', () => {
     expect(scoreNameMatch('Aetna', payer({ displayName: 'Aetna' }))).toBe(1);
   });
 
-  it('scores substring containment highly', () => {
+  it('scores containment BELOW the auto-accept bar (sub-plan must be reviewed)', () => {
+    // "Aetna" vs "Aetna Better Health" (a Medicaid sub-plan) must not auto-accept.
     const score = scoreNameMatch('Aetna', payer({ displayName: 'Aetna Better Health' }));
-    expect(score).toBeGreaterThanOrEqual(0.85);
-    expect(score).toBeLessThan(1);
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThan(0.85);
+  });
+
+  it('does not auto-accept a sub-plan whose query has extra qualifier tokens', () => {
+    // "Cigna Behavioral Health" must NOT silently resolve to plain "Cigna".
+    const score = scoreNameMatch('Cigna Behavioral Health', payer({ displayName: 'Cigna' }));
+    expect(score).toBeLessThan(0.85);
   });
 
   it('considers aliases, not just displayName', () => {
@@ -96,5 +116,16 @@ describe('pickBestMatch', () => {
 
   it('returns null for an empty result set', () => {
     expect(pickBestMatch('Aetna', [])).toBeNull();
+  });
+
+  it('breaks score ties toward the base plan (fewer tokens), deterministically', () => {
+    // Both score 0.8 (containment of "anthem"); the base plan must win even
+    // though the sub-plan is listed first.
+    const results = [
+      payer({ payerId: 'sub', displayName: 'Anthem Blue Cross Partnership Plan' }),
+      payer({ payerId: 'base', displayName: 'Anthem Blue Cross' }),
+    ];
+    const best = pickBestMatch('Anthem', results);
+    expect(best?.match.payerId).toBe('base');
   });
 });

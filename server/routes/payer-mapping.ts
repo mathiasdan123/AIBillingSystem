@@ -12,11 +12,14 @@
  *   PUT  /api/payer-mapping/:id      — confirm/override a mapping (sets a verified
  *                                      payer ID, status=confirmed) + seed enrollment rows
  *
- * Admin/billing-gated at mount time (see routes.ts).
+ * Reads (GET) require an authenticated, practice-scoped session. The mutating
+ * routes (POST /scan, PUT /:id) additionally require admin + recent MFA
+ * (adminMfaRequired) — they change payer routing and trigger live Stedi calls.
  */
 
 import { Router, type Response } from 'express';
 import { isAuthenticated } from '../replitAuth';
+import { adminMfaRequired } from '../middleware/mfa-required';
 import logger from '../services/logger';
 import { db } from '../db';
 import { practicePayerMap, patients, payerEnrollments } from '@shared/schema';
@@ -30,6 +33,32 @@ const getPracticeId = (req: any): number | null =>
   req.authorizedPracticeId ?? req.userPracticeId ?? null;
 
 const NO_PRACTICE = { message: 'No practice context for this user' };
+
+// Caps on POST /scan to bound live Stedi calls: a scan can resolve at most this
+// many distinct payers, and the caller-supplied `payerNames` array (and each
+// entry) is bounded so a request can't fan out into thousands of live searches.
+const MAX_SCAN_PAYERS = 100;
+const MAX_EXTRA_NAMES = 50;
+const MAX_NAME_LEN = 200;
+
+// Stedi's per-transaction support is a flat map of known keys → status strings.
+// Sanitize untrusted body JSON down to that shape before persisting to jsonb so
+// a client can't stuff arbitrary/oversized blobs into the routing table.
+const SUPPORT_KEYS = [
+  'eligibilityCheck',
+  'professionalClaimSubmission',
+  'claimStatus',
+  'claimPayment',
+] as const;
+function sanitizeTransactionSupport(v: unknown): Record<string, string> | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const out: Record<string, string> = {};
+  for (const k of SUPPORT_KEYS) {
+    const val = (v as Record<string, unknown>)[k];
+    if (typeof val === 'string') out[k] = val.slice(0, 40);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 // GET /api/payer-mapping — list this practice's mappings.
 router.get('/', isAuthenticated, async (req: any, res: Response) => {
@@ -52,7 +81,7 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
 
 // POST /api/payer-mapping/scan — collect distinct patient payer names (plus any
 // extra names in the body) and resolve each. Persists drafts into the map.
-router.post('/scan', isAuthenticated, async (req: any, res: Response) => {
+router.post('/scan', isAuthenticated, adminMfaRequired, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
     if (!practiceId) return res.status(400).json(NO_PRACTICE);
@@ -66,11 +95,25 @@ router.post('/scan', isAuthenticated, async (req: any, res: Response) => {
       .map((r: { name: string | null }) => r.name)
       .filter((n: string | null): n is string => !!n && n.trim() !== '');
 
-    const extra = Array.isArray(req.body?.payerNames)
-      ? req.body.payerNames.filter((x: unknown): x is string => typeof x === 'string')
-      : [];
+    // Caller-supplied extra names are attacker-controllable, so bound the array
+    // length and each entry before they fan out into live Stedi searches.
+    const extra = (Array.isArray(req.body?.payerNames) ? req.body.payerNames : [])
+      .filter((x: unknown): x is string => typeof x === 'string')
+      .slice(0, MAX_EXTRA_NAMES)
+      .map((s: string) => s.slice(0, MAX_NAME_LEN));
 
-    const resolved = await resolveDistinctPayers(practiceId, [...fromPatients, ...extra]);
+    const allNames = [...fromPatients, ...extra];
+    const truncated = allNames.length > MAX_SCAN_PAYERS;
+    const names = truncated ? allNames.slice(0, MAX_SCAN_PAYERS) : allNames;
+    if (truncated) {
+      logger.warn('Payer mapping scan truncated', {
+        practiceId,
+        total: allNames.length,
+        cap: MAX_SCAN_PAYERS,
+      });
+    }
+
+    const resolved = await resolveDistinctPayers(practiceId, names);
 
     const matched = resolved.filter((r) => r.resolved.stediPayerId).length;
     logger.info('Payer mapping scan', {
@@ -84,6 +127,7 @@ router.post('/scan', isAuthenticated, async (req: any, res: Response) => {
       distinctPayers: resolved.length,
       matched,
       needsReview: resolved.length - matched,
+      truncated,
       mappings: resolved,
     });
   } catch (error) {
@@ -114,7 +158,7 @@ router.get('/search', isAuthenticated, async (req: any, res: Response) => {
 // PUT /api/payer-mapping/:id — confirm or override a mapping. Sets a verified
 // payer ID + status=confirmed, then seeds not_enrolled payerEnrollments rows so
 // the payer shows up on the enrollment tracker.
-router.put('/:id', isAuthenticated, async (req: any, res: Response) => {
+router.put('/:id', isAuthenticated, adminMfaRequired, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
     if (!practiceId) return res.status(400).json(NO_PRACTICE);
@@ -139,12 +183,13 @@ router.put('/:id', isAuthenticated, async (req: any, res: Response) => {
         ? b.displayName.trim()
         : row.displayName;
 
+    const sanitizedSupport = sanitizeTransactionSupport(b.transactionSupport);
     const [updated] = await db
       .update(practicePayerMap)
       .set({
         stediPayerId,
         displayName,
-        transactionSupport: b.transactionSupport ?? row.transactionSupport,
+        transactionSupport: sanitizedSupport ?? row.transactionSupport,
         status: 'confirmed',
         source: 'manual',
         confidence: '1.00',

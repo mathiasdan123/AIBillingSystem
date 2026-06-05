@@ -73,11 +73,18 @@ export default function PayerMappingPage() {
 
   const scanMutation = useMutation({
     mutationFn: async () => (await apiRequest('POST', '/api/payer-mapping/scan', {})).json(),
-    onSuccess: (r: { distinctPayers: number; matched: number; needsReview: number }) => {
+    onSuccess: (r: {
+      distinctPayers: number;
+      matched: number;
+      needsReview: number;
+      truncated?: boolean;
+    }) => {
       qc.invalidateQueries({ queryKey: ['/api/payer-mapping'] });
       toast({
-        title: 'Scan complete',
-        description: `${r.distinctPayers} payers found · ${r.matched} matched · ${r.needsReview} need review`,
+        title: r.truncated ? 'Scan complete (capped)' : 'Scan complete',
+        description:
+          `${r.distinctPayers} payers found · ${r.matched} matched · ${r.needsReview} need review` +
+          (r.truncated ? ' — payer list was large and capped; scan again to resolve the rest' : ''),
       });
     },
     onError: (e: any) =>

@@ -31,8 +31,10 @@ import { resolvePayerId, searchPayers, type PayerSearchResult } from './stediSer
 const SEARCH_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // Minimum name-match score to auto-accept a live Stedi search result without a
-// human review. Below this we still record the best guess but mark it for review.
-const AUTO_ACCEPT_THRESHOLD = 0.6;
+// human review. Set high (effectively requires an exact normalized-token match;
+// see scoreNameMatch) so fuzzy/sub-plan matches go to the onboarding review UI
+// instead of silently routing claims to a wrong-but-similar payer.
+const AUTO_ACCEPT_THRESHOLD = 0.85;
 
 // Common payer-name abbreviations/variants collapsed to a canonical token so
 // "BCBS", "BC/BS", "Blue Cross Blue Shield", and "blue-cross blueshield" all
@@ -57,21 +59,40 @@ const ABBREVIATIONS: Array<[RegExp, string]> = [
  */
 export function normalizePayerName(raw: string | null | undefined): string {
   if (!raw) return '';
-  let s = String(raw).toLowerCase().trim();
-  // Replace punctuation/symbols with spaces (keep alphanumerics).
-  s = s.replace(/[^a-z0-9]+/g, ' ').trim();
+  // 1. Lowercase + replace punctuation with spaces (keep alphanumerics).
+  let s = String(raw).toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').trim();
+  // 2. Expand abbreviations (BCBS → blue cross blue shield, etc.).
   for (const [pattern, replacement] of ABBREVIATIONS) {
     s = s.replace(pattern, replacement);
   }
-  // Drop generic noise words that don't help disambiguate a payer.
-  s = s.replace(/\b(insurance|health ?plan|healthplan|inc|llc|of|the|company|co)\b/g, ' ');
-  return s.replace(/\s+/g, ' ').trim();
+  const expanded = s.replace(/\s+/g, ' ').trim();
+  // 3. Drop generic corporate-suffix noise that doesn't disambiguate a payer.
+  //    NOTE: we deliberately do NOT strip "health plan" — it's load-bearing in
+  //    regional Medicaid/HMO names ("Health Plan of San Mateo", "The Health
+  //    Plan"). Stripping it collapsed distinct payers to the same key (and some
+  //    to empty), which — given practice_payer_map's (practiceId, normalizedName)
+  //    upsert key — could overwrite one payer's confirmed mapping with another's.
+  const stripped = expanded
+    .replace(/\b(insurance|inc|llc|of|the|company|co)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // 4. Never let noise-stripping empty out a non-empty name (e.g. "Health
+  //    Insurance Co") — fall back to the expanded form so it stays resolvable
+  //    and can't collide with every other all-noise name on the empty key.
+  return stripped || expanded;
 }
 
 /**
  * Score how well a candidate Stedi result matches the query name, 0..1. Pure.
- * Exact normalized-name equality scores highest; otherwise we reward token
- * overlap and substring containment. Aliases are considered too.
+ *
+ * Only an EXACT normalized-token match scores 1.0 — and (with the auto-accept
+ * threshold at 0.85) only a 1.0 resolves without human review. Everything else
+ * is deliberately scored below the bar so it surfaces in the onboarding review
+ * UI rather than silently routing claims. This matters because asymmetric
+ * containment ("Cigna Behavioral Health" ⊃ "Cigna", "UnitedHealthcare Community
+ * Plan" ⊃ "UnitedHealthcare") denotes a *different sub-plan* with a different
+ * payer ID — a high-confidence containment match there would mis-route behavioral
+ * / Medicaid claims to the commercial payer. Aliases are considered too.
  */
 export function scoreNameMatch(query: string, candidate: PayerSearchResult): number {
   const q = normalizePayerName(query);
@@ -84,33 +105,49 @@ export function scoreNameMatch(query: string, candidate: PayerSearchResult): num
   let best = 0;
   const qTokens = new Set(q.split(' ').filter(Boolean));
   for (const name of names) {
-    if (name === q) {
-      best = Math.max(best, 1);
-      continue;
-    }
-    if (name.includes(q) || q.includes(name)) {
-      best = Math.max(best, 0.85);
-      continue;
-    }
+    if (name === q) return 1; // exact token-string match — the only auto-accept
+
     const nameTokens = name.split(' ').filter(Boolean);
     if (nameTokens.length === 0) continue;
-    let overlap = 0;
-    for (const t of nameTokens) if (qTokens.has(t)) overlap++;
-    const score = overlap / Math.max(qTokens.size, nameTokens.length);
+    const nameSet = new Set(nameTokens);
+
+    // Jaccard over token sets: rewards full overlap, penalizes extra qualifier
+    // tokens on either side (so sub-plans score lower than the base plan).
+    let inter = 0;
+    for (const t of Array.from(qTokens)) if (nameSet.has(t)) inter++;
+    const union = new Set([...Array.from(qTokens), ...nameTokens]).size;
+    let score = union > 0 ? inter / union : 0;
+
+    // Containment is a weak signal only — capped below the auto-accept threshold
+    // so a contained name still needs review (it's usually a sub-plan, not the
+    // same entity).
+    if (name.includes(q) || q.includes(name)) score = Math.max(score, 0.8);
+
     best = Math.max(best, score);
   }
   return best;
 }
 
-/** Pick the highest-scoring Stedi result for a query, or null. Pure. */
+/**
+ * Pick the highest-scoring Stedi result for a query, or null. Pure.
+ * Tie-break: prefer the candidate with the FEWER tokens in its name — i.e. the
+ * base plan ("Anthem Blue Cross") over a sub-plan with extra qualifiers
+ * ("Anthem Blue Cross Partnership Plan", a Medicaid product). Deterministic so
+ * the same inputs always resolve the same way regardless of Stedi result order.
+ */
 export function pickBestMatch(
   query: string,
   results: PayerSearchResult[],
 ): { match: PayerSearchResult; score: number } | null {
   let best: { match: PayerSearchResult; score: number } | null = null;
+  let bestTokens = Infinity;
   for (const r of results) {
     const score = scoreNameMatch(query, r);
-    if (!best || score > best.score) best = { match: r, score };
+    const tokens = normalizePayerName(r.displayName).split(' ').filter(Boolean).length;
+    if (!best || score > best.score || (score === best.score && tokens < bestTokens)) {
+      best = { match: r, score };
+      bestTokens = tokens;
+    }
   }
   return best;
 }
@@ -137,6 +174,12 @@ const UNMATCHED: ResolvedPayer = {
  * Fetch a global live-search result set for a normalized query, using the
  * payer_search_cache table (cross-practice) to avoid re-hitting Stedi. Returns
  * the raw PayerSearchResult[] (possibly empty). Network/db failures degrade to [].
+ *
+ * The cache is intentionally global (keyed only on normalizedQuery): Stedi's
+ * payer-network /payers/search is a directory lookup over the shared network,
+ * not account-scoped data, so the result set for a given name is the same
+ * regardless of which practice's API key issues it. (The practice key is still
+ * passed so the call is attributed/authorized correctly.)
  */
 async function cachedSearch(rawName: string, normalized: string, practiceId?: number): Promise<PayerSearchResult[]> {
   try {
@@ -268,13 +311,22 @@ export async function resolvePracticePayer(
   // 2. Existing crosswalk → static PAYER_IDS → insurance payerCode.
   const routed = await resolvePayerId(rawName, rawName, null);
   if (routed.routingSource !== 'default' && routed.tradingPartnerId && routed.tradingPartnerId !== '00000') {
+    // The static PAYER_IDS map has two "varies by state" placeholders — BCBS
+    // (00590, one state's plan) and Medicaid (SKMED). Auto-accepting those for a
+    // multi-state rollout would route a TX practice's "Medicaid" to the wrong
+    // state's payer. Flag them for review; crosswalk + specific static entries
+    // (Aetna/Cigna/etc.) stay auto-accepted.
+    const STATE_VARYING_STATIC_IDS = new Set(['00590', 'SKMED']);
+    const needsReview =
+      routed.routingSource === 'static_map' &&
+      STATE_VARYING_STATIC_IDS.has(routed.tradingPartnerId);
     const resolved: ResolvedPayer = {
       stediPayerId: routed.tradingPartnerId,
       displayName: routed.matchedSubPlan ?? null,
       transactionSupport: null,
       confidence: routed.routingSource === 'crosswalk' ? 0.95 : 0.9,
       source: routed.routingSource as ResolvedPayer['source'],
-      needsReview: false,
+      needsReview,
     };
     if (!options.noPersist) await upsertMapping(practiceId, rawName, normalized, resolved);
     return resolved;
