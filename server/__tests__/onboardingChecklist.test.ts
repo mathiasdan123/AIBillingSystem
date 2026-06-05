@@ -26,7 +26,10 @@ describe('isRenderingClinician', () => {
     expect(isRenderingClinician({ role: 'billing', npiNumber: null, licenseNumber: '' })).toBe(false);
   });
 
-  it('treats whitespace-only credentials as absent', () => {
-    expect(isRenderingClinician({ role: 'admin', npiNumber: '   ', credentials: ' ' })).toBe(false);
+  it('treats whitespace-only plaintext credentials as absent', () => {
+    // `credentials` is plaintext, so the predicate's `.trim()` genuinely filters
+    // it. (npiNumber/licenseNumber arrive as ciphertext in prod and can never be
+    // whitespace-only — the encryptor maps '' to null — so they're presence-only.)
+    expect(isRenderingClinician({ role: 'admin', credentials: '   ' })).toBe(false);
   });
 });

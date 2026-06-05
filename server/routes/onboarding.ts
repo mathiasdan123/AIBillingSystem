@@ -128,6 +128,9 @@ router.get('/checklist', isAuthenticated, async (req: any, res: Response) => {
     // also the treating provider, can complete this step. A role-only check left
     // such practices stuck at 4/5 forever. (A billing-only admin still doesn't
     // count.) npi/license are PHI-encrypted, but we only check presence here.
+    // No demo exclusion here (unlike the patient/claim steps): the users table
+    // has no isDemo concept, and demo seeding creates credential-less admins, so
+    // none satisfy the predicate.
     const practiceUsers = await db
       .select({
         role: users.role,

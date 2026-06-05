@@ -21,9 +21,16 @@ export interface ClinicianFields {
  * (`role === 'therapist'`) could never reach 5/5. A billing-only admin (no NPI /
  * license / credentials) still does not count.
  *
- * Note: npiNumber/licenseNumber are PHI-encrypted at rest, but this is only a
- * presence check (non-empty ciphertext still means "has one"), so no decryption
- * is needed.
+ * Note: npiNumber/licenseNumber are PHI-encrypted at rest, so in production they
+ * reach this predicate as ciphertext — a pure presence check ("is the column
+ * non-empty?") is correct and needs no decryption. Because the encryptor maps ''
+ * to null, a stored value is always non-empty ciphertext, so `.trim()` is a no-op
+ * for those two fields; it only meaningfully filters whitespace from
+ * `credentials`, which is plaintext.
+ *
+ * `credentials` is the weakest of the three signals (free-text, any role can set
+ * it). It's included because this step is an onboarding nudge, not a billing
+ * gate; NPI / license are the strong "this user renders care" signals.
  */
 export function isRenderingClinician(u: ClinicianFields): boolean {
   if (u.role === 'therapist') return true;
