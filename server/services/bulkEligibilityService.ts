@@ -33,8 +33,8 @@ export async function runBulkEligibility(
   const {
     checkEligibility: stediCheckEligibility,
     isStediConfigured,
-    PAYER_IDS: payerIds,
   } = await import('./stediService');
+  const { resolvePracticePayer } = await import('./payerMappingService');
   if (!isStediConfigured()) {
     return { error: 'Stedi API is not configured. Please set the STEDI_API_KEY.' };
   }
@@ -67,8 +67,22 @@ export async function runBulkEligibility(
         continue;
       }
 
-      const insName = (pat.insuranceProvider || '').toLowerCase();
-      const pId = (payerIds as Record<string, string>)[insName] || pat.insuranceId || '60054';
+      // Unified payer resolution (cache → crosswalk → static map → live Stedi
+      // search). Replaces `PAYER_IDS[name] || insuranceId || '60054'`, which
+      // silently checked eligibility against Aetna for unmapped payers.
+      const routed = await resolvePracticePayer(practiceId, pat.insuranceProvider || '');
+      if (!routed.stediPayerId) {
+        errors++;
+        results.push({
+          patientName: `${pat.firstName} ${pat.lastName}`,
+          insurance: pat.insuranceProvider || null,
+          status: 'skipped',
+          eligible: null,
+          error: `Could not match payer "${pat.insuranceProvider || 'Unknown'}" to a Stedi payer ID`,
+        });
+        continue;
+      }
+      const pId = routed.stediPayerId;
       const eligRes = await stediCheckEligibility({
         payer: { id: pId, name: pat.insuranceProvider || 'Unknown' },
         provider: { npi: (practice as any)?.npi || '', organizationName: (practice as any)?.name || undefined },
