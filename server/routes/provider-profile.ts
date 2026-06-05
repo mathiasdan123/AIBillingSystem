@@ -134,7 +134,12 @@ router.put('/', isAuthenticated, async (req: any, res: Response) => {
         if (digits.length !== 9) {
           return res.status(400).json({ message: 'Tax ID (EIN/SSN) must be 9 digits' });
         }
-        update.taxId = encryptField(digits);
+        // practices.taxId is a varchar column, so store the encrypted field as a
+        // JSON string (decryptField JSON-parses it back on read). encryptField
+        // returns an object; assigning it raw throws on write to a text column.
+        // (The sso/mcp encrypted-secret columns are jsonb, which is why they can
+        // assign the object directly.)
+        update.taxId = JSON.stringify(encryptField(digits));
       }
     }
 
