@@ -4,6 +4,7 @@ import { storage } from '../../storage';
 import * as stripeService from '../../services/stripeService';
 import { withAudit } from '../audit';
 import { withMcpMutationGate } from '../confirmation';
+import { rejectIfDemoDataMessage } from '../../services/bulkEligibilityService';
 import type { McpPracticeContext } from '../types';
 
 export function registerAppointmentTools(
@@ -533,8 +534,17 @@ export function registerAppointmentTools(
         }
         if (!appointment.patientId) throw new Error('Appointment has no patient assigned.');
 
+        // Mirror the in-app dispatcher: never dispatch a real SMS/email for
+        // demo/showcase rows. Without this, an MCP call against practice 1's
+        // is_demo appointments would fire a real reminder.
+        const apptDemoMessage = rejectIfDemoDataMessage(appointment, 'appointment');
+        if (apptDemoMessage) throw new Error(apptDemoMessage);
+
         const patient: any = await storage.getPatient(appointment.patientId);
         if (!patient) throw new Error('Patient not found for this appointment.');
+
+        const patientDemoMessage = rejectIfDemoDataMessage(patient, 'patient');
+        if (patientDemoMessage) throw new Error(patientDemoMessage);
 
         const practice: any = await storage.getPractice(ctx.practiceId);
         const practiceName = practice?.name || 'Your Practice';

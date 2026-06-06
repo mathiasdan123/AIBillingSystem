@@ -114,6 +114,37 @@ describe('MCP backfill (7 tools) — cross-practice tenant guard', () => {
   });
 });
 
+describe('MCP backfill (7 tools) — send_appointment_reminder demo guard', () => {
+  // Drives the REAL registered tool (captured via a fake server) so a
+  // regression that drops the demo guard would fail this test.
+  function captureTools() {
+    const handlers: Record<string, (input: any) => Promise<any>> = {};
+    const fakeServer = {
+      tool: (name: string, _desc: string, _schema: any, fn: (input: any) => Promise<any>) => {
+        handlers[name] = fn;
+      },
+    } as any;
+    registerAppointmentTools(fakeServer, ctx);
+    return handlers;
+  }
+
+  it('refuses to send a reminder for a demo appointment and dispatches nothing', async () => {
+    vi.mocked(storage.getAppointment).mockResolvedValue({
+      id: 51, practiceId: PRACTICE_ID, patientId: 58, isDemo: true,
+      startTime: new Date('2026-06-10T10:00:00.000Z'),
+    } as any);
+    const handlers = captureTools();
+    const result = await handlers['send_appointment_reminder']({ appointmentId: 51 });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toMatch(/demo appointment/i);
+    // Short-circuits before loading the patient or marking reminder-sent —
+    // proving no SMS/email plumbing was reached.
+    expect(storage.getPatient).not.toHaveBeenCalled();
+    expect(storage.updateAppointment).not.toHaveBeenCalled();
+  });
+});
+
 describe('MCP backfill (7 tools) — read behavior', () => {
   it('review_denied_claims returns the shared-service payload (no denials)', async () => {
     vi.mocked(storage.getClaims).mockResolvedValue([] as any);

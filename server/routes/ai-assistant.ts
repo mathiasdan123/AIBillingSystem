@@ -12,17 +12,13 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { getUserPracticeContext } from '../services/practiceContext';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
-import { assessUnderpayment, analyzeAdjustment } from '../services/underpaymentAnalyzer';
 import { reviewDeniedClaims, suggestClaimCorrection } from '../services/denialReviewService';
 import { reviewUnderpayments, draftUnderpaymentDispute } from '../services/underpaymentReviewService';
 import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import { getRedisClient, isRedisReady } from '../services/redisClient';
 import {
-  remittanceAdvice,
-  remittanceLineItems,
   claims,
-  feeSchedules,
   patients,
   patientPlanDocuments,
   patientPlanBenefits,
