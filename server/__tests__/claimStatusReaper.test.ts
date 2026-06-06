@@ -31,6 +31,12 @@ vi.mock('../services/stediService', () => ({
 // a connection.
 vi.mock('../db', () => ({ db: {} }));
 
+// Mock the denial pipeline so we can assert it's called without executing it.
+const mockRunDenialPipeline = vi.fn();
+vi.mock('../services/denialPipelineService', () => ({
+  runDenialPipeline: (...a: any[]) => mockRunDenialPipeline(...a),
+}));
+
 import {
   runClaimStatusReap,
   mapStediBucketToReaperStatus,
@@ -65,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetAllPracticeIds.mockResolvedValue([1]);
   mockCreateAuditLog.mockResolvedValue({ id: 1 });
+  mockRunDenialPipeline.mockResolvedValue(undefined);
 });
 
 describe('mapStediBucketToReaperStatus', () => {
@@ -196,6 +203,8 @@ describe('runClaimStatusReap', () => {
       }),
     );
     expect(result.totals.transitionedToDenied).toBe(1);
+    // Denied claim ID collected in the practice summary
+    expect(result.practices[0].deniedClaimIds).toEqual([1]);
   });
 
   it('transitions a claim to pending on a Stedi "pending" bucket', async () => {
@@ -388,5 +397,135 @@ describe('runClaimStatusReap', () => {
     // Bad claim contributed one error; good claim still transitioned.
     expect(result.totals.errors).toBe(1);
     expect(result.totals.transitionedToPaid).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Denial pipeline handoff
+  // ---------------------------------------------------------------------------
+
+  it('calls runDenialPipeline with denied claim IDs after the reap', async () => {
+    // Two claims — one denied, one paid — only the denied one feeds the pipeline.
+    const getStaleSubmittedClaims = vi.fn().mockResolvedValue([
+      row({ id: 10, claimNumber: 'CLM-010' }),
+      row({ id: 11, claimNumber: 'CLM-011' }),
+    ]);
+    const checker = vi
+      .fn()
+      .mockResolvedValueOnce({
+        claimId: 'CLM-010',
+        status: 'finalized_denied',
+        denialReason: 'Not medically necessary',
+        raw: {},
+      })
+      .mockResolvedValueOnce({
+        claimId: 'CLM-011',
+        status: 'paid',
+        paidAmount: 100,
+        raw: {},
+      });
+
+    await runClaimStatusReap(
+      {},
+      {
+        checkClaimStatus: checker as any,
+        getStaleSubmittedClaims,
+        applyClaimTransition: vi.fn(),
+        recordStatusCheck: vi.fn(),
+        markPolled: vi.fn(),
+      },
+    );
+
+    expect(mockRunDenialPipeline).toHaveBeenCalledOnce();
+    expect(mockRunDenialPipeline).toHaveBeenCalledWith([10]);
+  });
+
+  it('aggregates denied claim IDs across multiple practices', async () => {
+    // Two practices, each returning one denied claim.
+    mockGetAllPracticeIds.mockResolvedValue([1, 2]);
+    const getStaleSubmittedClaims = vi.fn(async (pid: number) => [
+      row({ id: pid === 1 ? 21 : 22, practiceId: pid }),
+    ]);
+    const checker = vi.fn().mockResolvedValue({
+      status: 'finalized_denied',
+      denialReason: 'Excluded service',
+      raw: {},
+    });
+
+    await runClaimStatusReap(
+      {},
+      {
+        checkClaimStatus: checker as any,
+        getStaleSubmittedClaims,
+        applyClaimTransition: vi.fn(),
+        recordStatusCheck: vi.fn(),
+        markPolled: vi.fn(),
+      },
+    );
+
+    expect(mockRunDenialPipeline).toHaveBeenCalledOnce();
+    // IDs from both practices are merged
+    expect(mockRunDenialPipeline).toHaveBeenCalledWith(expect.arrayContaining([21, 22]));
+    expect(mockRunDenialPipeline.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it('does NOT call runDenialPipeline when no claims are denied', async () => {
+    const getStaleSubmittedClaims = vi.fn().mockResolvedValue([row({ id: 30 })]);
+    const checker = vi.fn().mockResolvedValue({ status: 'paid', paidAmount: 50, raw: {} });
+
+    await runClaimStatusReap(
+      {},
+      {
+        checkClaimStatus: checker as any,
+        getStaleSubmittedClaims,
+        applyClaimTransition: vi.fn(),
+        recordStatusCheck: vi.fn(),
+        markPolled: vi.fn(),
+      },
+    );
+
+    expect(mockRunDenialPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call runDenialPipeline when no stale claims exist', async () => {
+    const getStaleSubmittedClaims = vi.fn().mockResolvedValue([]);
+
+    await runClaimStatusReap(
+      {},
+      {
+        checkClaimStatus: vi.fn() as any,
+        getStaleSubmittedClaims,
+        applyClaimTransition: vi.fn(),
+        recordStatusCheck: vi.fn(),
+        markPolled: vi.fn(),
+      },
+    );
+
+    expect(mockRunDenialPipeline).not.toHaveBeenCalled();
+  });
+
+  it('continues normally if runDenialPipeline throws — reap result is still returned', async () => {
+    const getStaleSubmittedClaims = vi.fn().mockResolvedValue([row({ id: 40 })]);
+    const checker = vi.fn().mockResolvedValue({
+      status: 'finalized_denied',
+      denialReason: 'Plan lapsed',
+      raw: {},
+    });
+    mockRunDenialPipeline.mockRejectedValueOnce(new Error('Pipeline boom'));
+
+    const result = await runClaimStatusReap(
+      {},
+      {
+        checkClaimStatus: checker as any,
+        getStaleSubmittedClaims,
+        applyClaimTransition: vi.fn(),
+        recordStatusCheck: vi.fn(),
+        markPolled: vi.fn(),
+      },
+    );
+
+    // The reap itself still succeeded and reported the denial.
+    expect(result.totals.transitionedToDenied).toBe(1);
+    // Pipeline was attempted
+    expect(mockRunDenialPipeline).toHaveBeenCalledWith([40]);
   });
 });

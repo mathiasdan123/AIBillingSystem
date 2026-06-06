@@ -59,6 +59,8 @@ export interface ReapPracticeSummary {
   transitionedToPending: number;
   unchanged: number;
   errors: Array<{ claimId: number; claimNumber?: string | null; error: string }>;
+  /** Claim IDs that transitioned to `denied` this run — fed to the denial pipeline. */
+  deniedClaimIds: number[];
 }
 
 export interface ReapRunSummary {
@@ -331,8 +333,10 @@ async function processClaim(
   });
 
   if (reaperStatus === 'paid') practiceSummary.transitionedToPaid += 1;
-  else if (reaperStatus === 'denied') practiceSummary.transitionedToDenied += 1;
-  else if (reaperStatus === 'pending') practiceSummary.transitionedToPending += 1;
+  else if (reaperStatus === 'denied') {
+    practiceSummary.transitionedToDenied += 1;
+    practiceSummary.deniedClaimIds.push(claim.id);
+  } else if (reaperStatus === 'pending') practiceSummary.transitionedToPending += 1;
 }
 
 async function reapPractice(
@@ -348,6 +352,7 @@ async function reapPractice(
     transitionedToPending: 0,
     unchanged: 0,
     errors: [],
+    deniedClaimIds: [],
   };
 
   const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
@@ -440,6 +445,7 @@ export async function runClaimStatusReap(
         transitionedToPending: 0,
         unchanged: 0,
         errors: [{ claimId: -1, error: err?.message || String(err) }],
+        deniedClaimIds: [],
       });
     }
   }
@@ -511,6 +517,23 @@ export async function runClaimStatusReap(
     practicesProcessed: practiceSummaries.length,
     totals,
   });
+
+  // Feed all overnight-detected denials into the denial pipeline so they get
+  // an auto-drafted appeal, mirroring what the 4h poller does for fresher
+  // claims. runDenialPipeline only DRAFTS (status='ready') and creates a
+  // follow-up task — it sends nothing outward. An empty array is a safe no-op.
+  const allDeniedClaimIds = practiceSummaries.flatMap((p) => p.deniedClaimIds);
+  if (allDeniedClaimIds.length > 0) {
+    try {
+      const { runDenialPipeline } = await import('./denialPipelineService');
+      await runDenialPipeline(allDeniedClaimIds);
+    } catch (pipelineErr: any) {
+      logger.error('Claim status reaper: denial pipeline handoff failed', {
+        claimIds: allDeniedClaimIds,
+        error: pipelineErr?.message || String(pipelineErr),
+      });
+    }
+  }
 
   return result;
 }
