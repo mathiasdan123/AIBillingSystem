@@ -19,7 +19,6 @@
  */
 
 import { Router, type Request, type Response } from 'express';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import {
@@ -46,17 +45,6 @@ const issuerUrl = new URL(BASE_URL);
 const mcpServerUrl = new URL('/mcp', BASE_URL);
 
 // ---------------------------------------------------------------------------
-// Session map: sessionId -> { server, transport, context }
-// ---------------------------------------------------------------------------
-
-interface McpSession {
-  server: McpServer;
-  transport: StreamableHTTPServerTransport;
-  context: McpPracticeContext;
-}
-const sessions = new Map<string, McpSession>();
-
-// ---------------------------------------------------------------------------
 // Bearer auth middleware (validates OAuth access tokens AND direct API keys)
 // ---------------------------------------------------------------------------
 
@@ -68,60 +56,52 @@ const bearerAuth = requireBearerAuth({
 
 // ---------------------------------------------------------------------------
 // POST /mcp — Handle MCP JSON-RPC requests (with Bearer auth)
+//
+// STATELESS transport: a fresh McpServer + StreamableHTTPServerTransport is
+// created per request and torn down when the response finishes. We deliberately
+// do NOT keep a server-side session map.
+//
+// Why: the app runs 2+ ECS tasks behind an ALB with no stickiness. The previous
+// implementation stored sessions in an in-memory per-process Map keyed by
+// mcp-session-id. A session created on task A could not be found when the ALB
+// round-robined a follow-up request to task B — task B silently spun up a new,
+// uninitialized session, and the response never correlated back to the client's
+// request id, hanging it until an MCP -32001 timeout. Statelessness makes every
+// request self-contained, so it works on any task. (The SDK requires a fresh
+// transport per request in stateless mode — reusing one collides message ids.)
 // ---------------------------------------------------------------------------
 
 router.post('/', bearerAuth, async (req: Request, res: Response) => {
+  // The bearer auth middleware validated the token and set req.auth
+  const token = req.auth?.token;
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  // Authenticate the API key / OAuth token for the practice context
+  let context: McpPracticeContext;
   try {
-    // The bearer auth middleware validated the token and set req.auth
-    const token = req.auth?.token;
-    if (!token) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
+    context = await authenticateKey(token);
+  } catch (err: any) {
+    return res.status(401).json({ error: err.message || 'Authentication failed' });
+  }
 
-    // Check for existing session
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  const server = createMcpServer(context);
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined, // stateless mode — no server-side session
+    enableJsonResponse: true,      // direct JSON request/response, no SSE stream
+  });
 
-    if (sessionId && sessions.has(sessionId)) {
-      // Reuse existing session
-      const session = sessions.get(sessionId)!;
-      await session.transport.handleRequest(req, res, req.body);
-      return;
-    }
+  // Tear down the per-request server + transport once the response is done,
+  // whether it finished normally or the client disconnected.
+  res.on('close', () => {
+    void transport.close();
+    void server.close();
+  });
 
-    // New session: authenticate the API key for practice context
-    let context: McpPracticeContext;
-    try {
-      context = await authenticateKey(token);
-    } catch (err: any) {
-      return res.status(401).json({ error: err.message || 'Authentication failed' });
-    }
-
-    // Create a new MCP server and transport for this session
-    const server = createMcpServer(context);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
-    });
-
+  try {
     await server.connect(transport);
-
-    // Store session after transport has an ID
-    transport.onclose = () => {
-      const sid = transport.sessionId;
-      if (sid) {
-        sessions.delete(sid);
-        logger.info('MCP HTTP session closed', { sessionId: sid, practiceId: context.practiceId });
-      }
-    };
-
-    // Handle the initial request
     await transport.handleRequest(req, res, req.body);
-
-    // Store session for future requests
-    const newSessionId = transport.sessionId;
-    if (newSessionId) {
-      sessions.set(newSessionId, { server, transport, context });
-      logger.info('MCP HTTP session created', { sessionId: newSessionId, practiceId: context.practiceId });
-    }
   } catch (error) {
     logger.error('MCP transport error', { error: error instanceof Error ? error.message : String(error) });
     if (!res.headersSent) {
@@ -131,43 +111,19 @@ router.post('/', bearerAuth, async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /mcp — SSE endpoint for server-initiated messages (with Bearer auth)
+// GET / DELETE /mcp — not supported in stateless mode
+//
+// There is no long-lived server-side session to attach an SSE stream to or to
+// delete, so these return 405 rather than referencing a session map.
 // ---------------------------------------------------------------------------
 
-router.get('/', bearerAuth, async (req: Request, res: Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (sessionId && sessions.has(sessionId)) {
-    const session = sessions.get(sessionId)!;
-    await session.transport.handleRequest(req, res);
-    return;
-  }
-  res.status(400).json({ error: 'No active session. Send a POST request first.' });
+router.get('/', bearerAuth, (_req: Request, res: Response) => {
+  res.status(405).json({ error: 'Method not allowed in stateless mode. Use POST.' });
 });
 
-// ---------------------------------------------------------------------------
-// DELETE /mcp — Close an MCP session (with Bearer auth)
-// ---------------------------------------------------------------------------
-
-router.delete('/', bearerAuth, async (req: Request, res: Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (sessionId && sessions.has(sessionId)) {
-    const session = sessions.get(sessionId)!;
-    await session.transport.handleRequest(req, res);
-    sessions.delete(sessionId);
-    return;
-  }
-  res.status(400).json({ error: 'No active session.' });
+router.delete('/', bearerAuth, (_req: Request, res: Response) => {
+  res.status(405).json({ error: 'Method not allowed in stateless mode.' });
 });
-
-// ---------------------------------------------------------------------------
-// Clean up stale sessions every 30 minutes
-// ---------------------------------------------------------------------------
-
-setInterval(() => {
-  if (sessions.size > 0) {
-    logger.info(`MCP HTTP sessions active: ${sessions.size}`);
-  }
-}, 30 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
 // Exports
