@@ -116,6 +116,11 @@ router.patch('/:id', isAuthenticated, async (req: any, res) => {
       }
       // Non-date field with explicit null → drop (preserve original behavior).
       if (value === null && !DATE_FIELDS.has(key)) continue;
+      // Guard: never re-persist a taxId that's already an encrypted blob (the
+      // client read it back from a legacy double-encrypted row). storage would
+      // encrypt it AGAIN. Skip it — taxId only changes when a fresh plaintext
+      // value is entered.
+      if (key === 'taxId' && typeof value === 'string' && value.includes('ciphertext')) continue;
       cleanUpdates[key] = value;
     }
 

@@ -48,10 +48,10 @@ router.get('/appeal-letter/:appealId/pdf', isAuthenticated, async (req, res) => 
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    // Fetch practice for letterhead
-    const practice = await db.query.practices.findFirst({
-      where: eq(practices.id, appeal.practiceId),
-    });
+    // Fetch practice for letterhead via storage.getPractice so PHI fields
+    // (taxId, phone) are DECRYPTED — a raw db query returns ciphertext, which
+    // would print as a {ciphertext,...} blob on the appeal-letter Tax ID line.
+    const practice = await storage.getPractice(appeal.practiceId);
 
     if (!practice) {
       return res.status(404).json({ error: 'Practice not found' });

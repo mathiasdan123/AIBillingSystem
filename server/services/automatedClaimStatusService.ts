@@ -19,6 +19,7 @@ import { eq, and, or, isNull, lt, sql } from 'drizzle-orm';
 import { checkClaimStatus, isStediConfigured } from './stediService';
 import type { ClaimStatusRequest, ClaimStatusResponse } from './stediService';
 import { logger } from './logger';
+import { decryptField } from './phiEncryptionService';
 
 const RATE_LIMIT_DELAY_MS = 200;
 const MAX_CLAIMS_PER_BATCH = 50;
@@ -208,7 +209,9 @@ async function processClaimStatusCheck(
     },
     provider: {
       npi: claim.practiceNpi,
-      taxId: claim.practiceTaxId,
+      // practices.taxId is PHI-encrypted at rest and this is a raw join, so
+      // decrypt before sending on the 276 status request.
+      taxId: decryptField(claim.practiceTaxId) ?? undefined,
     },
     subscriber: {
       memberId: claim.patientInsuranceId,
