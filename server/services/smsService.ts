@@ -125,7 +125,8 @@ export async function sendSMSWithPreferenceCheck(
       return { success: true, messageId: 'skipped-by-preference' };
     }
     if (prefResult.inQuietHours) {
-      return { success: true, messageId: 'deferred-quiet-hours' };
+      // Note: this skips the send entirely; it is not actually deferred/retried.
+      return { success: true, messageId: 'skipped-quiet-hours' };
     }
   }
   return sendSMS(to, message);

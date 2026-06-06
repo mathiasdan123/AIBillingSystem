@@ -3913,7 +3913,6 @@ export async function executeTool(
         return JSON.stringify({
           success: true,
           appointmentId,
-          patient: `${patient.firstName} ${patient.lastName}`,
           emailSent,
           smsSent,
           warnings: errors.length ? errors : undefined,
