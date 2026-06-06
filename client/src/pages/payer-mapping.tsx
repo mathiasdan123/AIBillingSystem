@@ -139,6 +139,9 @@ export default function PayerMappingPage() {
       qc.invalidateQueries({ queryKey: ['/api/payer-mapping'] });
       setAddTerm('');
       setAddResults([]);
+      // Reset the search mutation too, otherwise its lingering isSuccess makes
+      // the "No payers found" empty-state flash after a successful add.
+      addSearchMutation.reset();
       toast({ title: 'Payer added' });
     },
     onError: (e: any) =>

@@ -40,6 +40,7 @@ import { claims, claimStatusChecks, patients, insurances, practices } from '@sha
 import { eq, and, isNull, lt, or, sql } from 'drizzle-orm';
 import { storage } from '../storage';
 import logger from './logger';
+import { decryptField } from './phiEncryptionService';
 import {
   checkClaimStatus,
   type ClaimStatusRequest,
@@ -273,7 +274,9 @@ async function processClaim(
   const request: ClaimStatusRequest = {
     claimId: claim.claimNumber,
     payer: { id: claim.insurancePayerCode },
-    provider: { npi: claim.practiceNpi, taxId: claim.practiceTaxId ?? undefined },
+    // practices.taxId is PHI-encrypted at rest and this is a raw join (no
+    // storage decryption), so decrypt before sending on the 276 status request.
+    provider: { npi: claim.practiceNpi, taxId: decryptField(claim.practiceTaxId) ?? undefined },
     subscriber: {
       memberId: claim.patientInsuranceId,
       firstName: claim.patientFirstName,

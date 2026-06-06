@@ -26,7 +26,7 @@ import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
 import { isValidNpi, lookupNpi } from '../services/npiValidation';
 import { computeReadiness } from '../services/enrollmentReadiness';
-import { encryptField, decryptField } from '../services/phiEncryptionService';
+import { decryptField } from '../services/phiEncryptionService';
 import { getStediApiKeyForPractice } from '../services/stediService';
 import { createStediProvider } from '../services/stediEnrollmentService';
 import { sanitizeExternalError } from '../services/errorSanitizer';
@@ -134,12 +134,12 @@ router.put('/', isAuthenticated, async (req: any, res: Response) => {
         if (digits.length !== 9) {
           return res.status(400).json({ message: 'Tax ID (EIN/SSN) must be 9 digits' });
         }
-        // practices.taxId is a varchar column, so store the encrypted field as a
-        // JSON string (decryptField JSON-parses it back on read). encryptField
-        // returns an object; assigning it raw throws on write to a text column.
-        // (The sso/mcp encrypted-secret columns are jsonb, which is why they can
-        // assign the object directly.)
-        update.taxId = JSON.stringify(encryptField(digits));
+        // Store PLAINTEXT — storage.updatePractice encrypts taxId (a
+        // PRACTICE_PHI_STRING_FIELD) via encryptPracticeRecord, exactly like
+        // practice.phone. Encrypting here too double-encrypted it: decrypt-
+        // PracticeRecord peeled only the outer layer, so getPractice returned
+        // ciphertext and claims.ts put that ciphertext on the 837P Tax ID.
+        update.taxId = digits;
       }
     }
 
