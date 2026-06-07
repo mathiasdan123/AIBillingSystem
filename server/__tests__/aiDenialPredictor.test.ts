@@ -291,4 +291,62 @@ describe('aiDenialPredictor', () => {
     // Well-documented claims should have few or no issues
     expect(result.issues.length).toBeLessThanOrEqual(1);
   });
+
+  // ---- Rule-based: Sensory documentation without functional/skilled/goal link ----
+
+  it('should flag sensory intervention with no functional, skilled, or goal connection', async () => {
+    const soap = makeSoapNote({
+      subjective: 'Child engaged with the therapy swing and the crash mat throughout the visit.',
+      objective: 'Provided tactile input and brushing. Child used a body sock and vestibular equipment.',
+      assessment: 'Child tolerated the sensory activities offered during the visit today.',
+      plan: 'Continue similar sensory activities at the next visit as planned.',
+    });
+    const result = await predictDenial(makeClaim(), [makeLineItem()], soap, makePatient());
+    const issue = result.issues.find(i => i.category === 'Medical Necessity' && i.description.includes('Sensory-based'));
+    expect(issue).toBeDefined();
+    expect(issue!.severity).toBe('medium');
+  });
+
+  it('should NOT flag sensory intervention when a functional/goal connection is documented', async () => {
+    // Over-firing guard: sensory work tied to functional outcomes + goals must not warn.
+    const soap = makeSoapNote({
+      objective: 'Used sensory swing activities; child showed improved functional independence and progress toward goals.',
+    });
+    const result = await predictDenial(makeClaim(), [makeLineItem()], soap, makePatient());
+    const issue = result.issues.find(i => i.category === 'Medical Necessity' && i.description.includes('Sensory-based'));
+    expect(issue).toBeUndefined();
+  });
+
+  // ---- Rule-based: Non-functional goal language ----
+
+  it('should flag underlying-skill goals lacking a participation-based outcome', async () => {
+    const soap = makeSoapNote({
+      subjective: 'Parent would like the child to improve strength this quarter per their request.',
+      objective: 'Child completed strengthening exercises with the therapist during the visit.',
+      assessment: 'The child demonstrates reduced strength noted on testing.',
+      plan: 'Continue strengthening at the next visit as discussed.',
+    });
+    const result = await predictDenial(makeClaim(), [makeLineItem()], soap, makePatient());
+    const issue = result.issues.find(i => i.category === 'Medical Necessity' && i.description.includes('underlying skill'));
+    expect(issue).toBeDefined();
+    expect(issue!.severity).toBe('medium');
+  });
+
+  it('should NOT flag underlying-skill goals when tied to participation', async () => {
+    const soap = makeSoapNote({
+      subjective: 'Goal is to improve strength to participate in classroom activities and play.',
+    });
+    const result = await predictDenial(makeClaim(), [makeLineItem()], soap, makePatient());
+    const issue = result.issues.find(i => i.category === 'Medical Necessity' && i.description.includes('underlying skill'));
+    expect(issue).toBeUndefined();
+  });
+
+  // ---- Rule-based: 97533 sensory integration now monitored for modifiers ----
+
+  it('should flag missing modifier on CPT 97533 (sensory integration)', async () => {
+    const lineItem = makeLineItem({ modifier: null, cptCode: { code: '97533', description: 'Sensory Integration' } });
+    const result = await predictDenial(makeClaim(), [lineItem], makeSoapNote(), makePatient());
+    const issue = result.issues.find(i => i.category === 'Missing Modifier');
+    expect(issue).toBeDefined();
+  });
 });

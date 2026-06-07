@@ -108,7 +108,7 @@ function runRuleBasedChecks(
   }
 
   // Check for missing modifiers on therapy codes
-  const therapyCodes = ["97110", "97112", "97140", "97530", "97535", "97542"];
+  const therapyCodes = ["97110", "97112", "97140", "97530", "97533", "97535", "97542"];
   for (const li of lineItems) {
     const code = li.cptCode?.code || "";
     if (therapyCodes.includes(code) && !li.modifier) {
@@ -149,7 +149,13 @@ function runRuleBasedChecks(
     // Check for functional outcomes / medical necessity language
     const allText = `${soapNote.subjective || ""} ${soapNote.objective || ""} ${soapNote.assessment || ""} ${soapNote.plan || ""}`.toLowerCase();
 
-    if (!/progress|improv|decline|regress|functional|independence|deficit/.test(allText)) {
+    const hasFunctionalLang = /progress|improv|decline|regress|functional|independence|deficit/.test(allText);
+    const hasGoalLang = /goal|objective|target/.test(allText);
+    // Skilled-clinical-reasoning markers: grading/adapting the activity, cueing,
+    // facilitation technique, hand-over-hand, explicit clinical reasoning.
+    const hasSkilledLang = /skilled|clinical reasoning|grade[d]?|adapt|facilitat|cue|technique|hand-over-hand/.test(allText);
+
+    if (!hasFunctionalLang) {
       issues.push({
         category: "Medical Necessity",
         description:
@@ -160,12 +166,46 @@ function runRuleBasedChecks(
       });
     }
 
-    if (!/goal|objective|target/.test(allText)) {
+    if (!hasGoalLang) {
       issues.push({
         category: "Medical Necessity",
         description: "SOAP note does not reference treatment goals",
         suggestion:
           "Document specific, measurable treatment goals and how the session addressed them. Payers expect goal-directed treatment documentation.",
+        severity: "medium",
+      });
+    }
+
+    // Sensory-based intervention without a functional/skilled/goal connection.
+    // Scoped narrowly per clinical guidance: the sensory work itself is fine — the
+    // risk is documentation that reads as an activity list. Only fire when NONE of
+    // functional language, skilled reasoning, or a goal link is present.
+    const hasSensoryIntervention =
+      /sensory|vestibular|propriocept|deep pressure|brushing|swing|body sock|crash (mat|pad)|tactile|sensory diet|sensory integration/.test(allText);
+    if (hasSensoryIntervention && !hasFunctionalLang && !hasSkilledLang && !hasGoalLang) {
+      issues.push({
+        category: "Medical Necessity",
+        description:
+          "Sensory-based intervention is documented without a clear functional connection, skilled clinical reasoning, or link to treatment goals",
+        suggestion:
+          "For sensory-based treatment, document the functional deficit addressed, the skilled component (e.g., grading/adapting the activity, clinical reasoning), and how it connects to the child's functional goals. Payers deny sensory documentation that reads as an activity list.",
+        severity: "medium",
+      });
+    }
+
+    // Non-functional goal language: goals targeting an underlying skill (sensory
+    // processing, attention, strength, etc.) with no participation-based outcome.
+    const hasParticipationOutcome =
+      /participat|classroom|self-care|daily activit|\badl\b|function|play|school|community|routine/.test(allText);
+    const hasUnderlyingSkillGoal =
+      /improve (sensory processing|sensory|attention|strength|postural control|tone|range of motion|coordination|core)/.test(allText);
+    if (hasUnderlyingSkillGoal && !hasParticipationOutcome) {
+      issues.push({
+        category: "Medical Necessity",
+        description:
+          "Goal language targets an underlying skill (e.g., sensory processing, attention, strength) without a participation-based functional outcome",
+        suggestion:
+          'Reframe the goal around functional participation (e.g., "...to participate in classroom handwriting" rather than "improve strength"). Payers more readily approve goals tied to daily-activity participation.',
         severity: "medium",
       });
     }
