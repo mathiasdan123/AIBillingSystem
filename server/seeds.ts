@@ -503,6 +503,87 @@ async function seedGoalTemplates(db: any) {
         ],
         measure: 'Dressing + self-feeding at modified independence, 4/5 trials.',
       },
+      {
+        category: 'visual_motor_integration',
+        goalText: '{patient} will improve visual-motor integration to complete age-appropriate classroom and self-care tasks.',
+        objectives: [
+          '{patient} will copy age-appropriate shapes/letters from a model with accurate formation in 4 of 5 trials.',
+          '{patient} will complete a visual-motor task (cutting/tracing within boundaries) with no more than minimal cues across 3 consecutive sessions.',
+        ],
+        measure: 'Accurate shape/letter copying 4/5; cutting/tracing within boundaries at min cues.',
+      },
+      {
+        category: 'handwriting_prewriting',
+        goalText: '{patient} will improve handwriting/pre-writing skills to participate in classroom written work.',
+        objectives: [
+          '{patient} will form age-appropriate pre-writing strokes/letters with correct size and line placement in 4 of 5 trials.',
+          '{patient} will write target letters/name legibly within given boundaries with no more than minimal verbal cues across 3 consecutive sessions.',
+        ],
+        measure: 'Legible letter formation within boundaries, 4/5 trials.',
+      },
+      {
+        category: 'bilateral_coordination',
+        goalText: '{patient} will improve bilateral coordination to participate in two-handed school and self-care tasks.',
+        objectives: [
+          '{patient} will stabilize paper/material with the assisting hand while cutting or writing with the dominant hand in 4 of 5 trials.',
+          '{patient} will complete a two-handed task (lacing/cutting/fasteners) with modified independence across 3 consecutive sessions.',
+        ],
+        measure: 'Coordinated two-handed task completion at modified independence, 4/5 trials.',
+      },
+      {
+        category: 'ocular_motor',
+        goalText: '{patient} will improve ocular-motor control to support reading, copying, and visual tracking in the classroom.',
+        objectives: [
+          '{patient} will visually track a moving target across midline smoothly without head movement in 4 of 5 trials.',
+          '{patient} will accurately copy from a vertical/board model to desk with correct sequencing in 4 of 5 trials.',
+        ],
+        measure: 'Smooth tracking across midline 4/5; near-far copying accuracy 4/5 trials.',
+      },
+      {
+        category: 'attention_participation',
+        goalText: '{patient} will improve sustained attention to participate in structured classroom and therapy activities.',
+        objectives: [
+          '{patient} will sustain attention to a non-preferred tabletop task for 10 minutes with no more than 2 redirection cues.',
+          '{patient} will remain engaged in a structured group activity through completion in 4 of 5 opportunities.',
+        ],
+        measure: 'Sustained attention 10 min with ≤2 cues; task completion 4/5 opportunities.',
+      },
+      {
+        category: 'executive_functioning',
+        goalText: '{patient} will improve executive-functioning skills (planning, organization, self-monitoring) to complete multi-step routines.',
+        objectives: [
+          '{patient} will independently initiate and sequence a 3-step task/routine using a visual support in 4 of 5 trials.',
+          '{patient} will self-monitor and correct errors in completed work with no more than 1 cue across 3 consecutive sessions.',
+        ],
+        measure: 'Independent 3-step task sequencing 4/5; self-monitoring with ≤1 cue.',
+      },
+      {
+        category: 'transitions',
+        goalText: '{patient} will improve transition skills to move between activities and settings with reduced support.',
+        objectives: [
+          '{patient} will transition between activities following a visual/verbal warning with no more than 1 cue in 4 of 5 opportunities.',
+          '{patient} will transition between settings (classroom/therapy/home routine) without disruptive behavior across 3 consecutive sessions.',
+        ],
+        measure: 'Transitions with ≤1 cue, 4/5 opportunities, without disruptive behavior.',
+      },
+      {
+        category: 'toileting',
+        goalText: '{patient} will increase independence with toileting routines for participation at home and school.',
+        objectives: [
+          '{patient} will complete the toileting sequence (clothing management, hygiene, hand-washing) with modified independence in 4 of 5 opportunities.',
+          '{patient} will indicate toileting needs and initiate the routine with no more than minimal cues across 3 consecutive sessions.',
+        ],
+        measure: 'Toileting sequence at modified independence 4/5; self-initiation with min cues.',
+      },
+      {
+        category: 'social_participation_play',
+        goalText: '{patient} will improve social participation and play skills to engage with peers across school and community settings.',
+        objectives: [
+          '{patient} will engage in cooperative/turn-taking play with a peer for 10 minutes with no more than 2 facilitation cues.',
+          '{patient} will initiate and maintain a peer interaction across at least 3 exchanges in 4 of 5 opportunities.',
+        ],
+        measure: 'Cooperative play 10 min with ≤2 cues; 3-exchange peer interaction 4/5.',
+      },
     ],
     ST: [
       {
@@ -549,6 +630,24 @@ async function seedGoalTemplates(db: any) {
           '{patient} will tolerate a graded food-acceptance hierarchy step with minimal refusal behaviors.',
         ],
         measure: 'New texture accepted safely, 3 consecutive sessions.',
+      },
+      {
+        category: 'aac',
+        goalText: '{patient} will use an AAC system to communicate functionally across daily activities and settings.',
+        objectives: [
+          '{patient} will use the AAC system to communicate across at least 3 functions (request, comment, protest) in 8 of 10 opportunities.',
+          '{patient} will navigate to target vocabulary to form 2-3 symbol/word messages with no more than minimal cues.',
+        ],
+        measure: 'AAC use across 3 functions 8/10; 2-3 symbol messages at min cues.',
+      },
+      {
+        category: 'social_communication',
+        goalText: '{patient} will improve social-communication skills to participate in conversations and peer interactions.',
+        objectives: [
+          '{patient} will initiate and maintain a topic-appropriate conversational exchange for 3-4 turns in 4 of 5 opportunities.',
+          '{patient} will use and interpret nonverbal cues (eye contact, body orientation, turn-taking) appropriately with no more than minimal cues.',
+        ],
+        measure: 'Topic-maintained 3-4 turn exchanges 4/5; appropriate nonverbal use at min cues.',
       },
     ],
   };
