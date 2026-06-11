@@ -1,5 +1,6 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
+import { stripImmutable } from '../utils/sanitizeUpdate';
 import { logAuditEvent } from '../middleware/auditMiddleware';
 import { isAuthenticated } from '../replitAuth';
 import {
@@ -285,7 +286,7 @@ export function registerBreachManagementRoutes(app: Express) {
       if (!existing) return res.status(404).json({ error: 'Breach incident not found' });
 
       const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
-      const updateData = { ...req.body };
+      const updateData: any = stripImmutable(req.body);
 
       // Validate status transitions
       if (updateData.status && !VALID_STATUSES.includes(updateData.status)) {

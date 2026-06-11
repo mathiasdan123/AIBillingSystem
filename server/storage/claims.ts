@@ -39,6 +39,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, or, gte, lte, isNull, inArray, sql, count, sum } from "drizzle-orm";
+import { stripImmutable } from "../utils/sanitizeUpdate";
 import { cache, CacheKeys } from "../services/cacheService";
 
 // ==================== CLAIMS ====================
@@ -101,7 +102,7 @@ export async function getClaimsByIds(ids: number[]): Promise<Map<number, Claim>>
 export async function updateClaim(id: number, claim: Partial<InsertClaim>): Promise<Claim> {
   const [updatedClaim] = await db
     .update(claims)
-    .set({ ...claim, updatedAt: new Date() })
+    .set({ ...stripImmutable(claim), updatedAt: new Date() })
     .where(eq(claims.id, id))
     .returning();
   if (updatedClaim.practiceId) {
@@ -338,7 +339,7 @@ export async function createInsuranceRate(rate: InsertInsuranceRate): Promise<In
 export async function updateInsuranceRate(id: number, updates: Partial<InsertInsuranceRate>): Promise<InsuranceRate | undefined> {
   const [updated] = await db
     .update(insuranceRates)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(insuranceRates.id, id))
     .returning();
   return updated;
