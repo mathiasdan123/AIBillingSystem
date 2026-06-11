@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { clearSensitiveStorage } from "@/lib/clearSensitiveStorage";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -626,7 +627,7 @@ export default function SimpleNavigation() {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => { window.location.href = '/api/logout'; }}
+                  onClick={() => { clearSensitiveStorage(); window.location.href = '/api/logout'; }}
                   data-testid="account-menu-logout"
                 >
                   <LogOut className="w-3.5 h-3.5 mr-2" strokeWidth={ICON_STROKE} aria-hidden="true" />
@@ -661,7 +662,7 @@ export default function SimpleNavigation() {
               size="sm"
               className="h-7 w-7 p-0"
               aria-label={t('nav.logOut')}
-              onClick={() => window.location.href = '/api/logout'}
+              onClick={() => { clearSensitiveStorage(); window.location.href = '/api/logout'; }}
             >
               <LogOut className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
             </Button>
@@ -776,7 +777,7 @@ export default function SimpleNavigation() {
                 variant="ghost"
                 size="sm"
                 aria-label={t('nav.logOut')}
-                onClick={() => window.location.href = '/api/logout'}
+                onClick={() => { clearSensitiveStorage(); window.location.href = '/api/logout'; }}
                 className="min-h-[44px] min-w-[44px]"
               >
                 <LogOut className="w-4 h-4" strokeWidth={ICON_STROKE} aria-hidden="true" />

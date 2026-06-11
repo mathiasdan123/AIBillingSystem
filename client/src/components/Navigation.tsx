@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
+import { clearSensitiveStorage } from "@/lib/clearSensitiveStorage";
+
+function logoutAndClear() {
+  clearSensitiveStorage();
+  window.location.href = '/api/logout';
+}
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -95,7 +101,7 @@ export default function Navigation() {
             <Button 
               variant="ghost" 
               size="sm"
-              onClick={() => window.location.href = '/api/logout'}
+              onClick={() => logoutAndClear()}
             >
               <LogOut className="w-4 h-4" />
             </Button>
@@ -165,7 +171,7 @@ export default function Navigation() {
                   <Button 
                     variant="ghost" 
                     className="w-full justify-start"
-                    onClick={() => window.location.href = '/api/logout'}
+                    onClick={() => logoutAndClear()}
                   >
                     <LogOut className="w-4 h-4 mr-3" />
                     Sign Out
