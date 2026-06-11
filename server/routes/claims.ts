@@ -294,6 +294,39 @@ router.get('/', isAuthenticated, async (req: any, res) => {
  *       500:
  *         description: Server error
  */
+
+/**
+ * Tenant-isolation guard for EVERY `/:id/*` claim route below.
+ *
+ * Runs after GET / and before each /:id sub-route. Closes the IDOR on
+ * PATCH /:id, /:id/submit, and /:id/preview-payload (which had no practice
+ * check — letting one practice edit or submit another's claim under the wrong
+ * NPI, and leak full patient PHI via preview). Non-numeric first segments
+ * (/batch-submit, /bulk-*, /analytics/*) fall through to their own routes.
+ * 404 for not-found and cross-tenant alike. Loaded claim cached on req.claim.
+ */
+router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFunction) => {
+  const claimId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(claimId) || claimId <= 0) {
+    return next(); // not a claim id — let sibling routes handle it
+  }
+  try {
+    const claim = await storage.getClaim(claimId);
+    if (!claim) return res.status(404).json({ message: 'Claim not found' });
+    if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+      logger.warn('Unauthorized claim access attempt', {
+        userId: req.user?.claims?.sub, userPracticeId: req.userPracticeId, claimPracticeId: claim.practiceId, claimId,
+      });
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+    req.claim = claim;
+    next();
+  } catch (error) {
+    logger.error('Claim access guard failed', { claimId, error: error instanceof Error ? error.message : String(error) });
+    return res.status(500).json({ message: 'Failed to verify claim access' });
+  }
+});
+
 router.get('/:id', isAuthenticated, async (req: any, res) => {
   try {
     const claimId = validatePositiveInt(req.params.id);

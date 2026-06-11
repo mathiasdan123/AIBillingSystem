@@ -309,6 +309,41 @@ router.get('/', isAuthenticated, async (req: any, res) => {
   }
 });
 
+/**
+ * Tenant-isolation guard for EVERY `/:id/*` appointment route below.
+ *
+ * Runs after the non-:id routes above (/, POST /, /series/*, /recurring,
+ * /auth-coverage) have matched, and before each /:id sub-route. Loads the
+ * appointment and enforces practice ownership, closing the IDOR where
+ * GET/PATCH/cancel/check-in/check-out/:id had no practice check at all.
+ * Non-numeric first segments (e.g. /series/:seriesId) fall through. 404 for
+ * not-found and cross-tenant alike. Loaded appt cached on req.appointment.
+ */
+router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFunction) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return next(); // not an appointment id — let sibling routes handle it
+  }
+  try {
+    const appt = await storage.getAppointment(id);
+    if (!appt) return res.status(404).json({ message: 'Appointment not found' });
+    if (req.userRole !== 'admin') {
+      const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
+      if (!userPracticeId || appt.practiceId !== userPracticeId) {
+        logger.warn('Unauthorized appointment access attempt', {
+          userId: req.user?.claims?.sub, userPracticeId, apptPracticeId: appt.practiceId, id,
+        });
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+    }
+    req.appointment = appt;
+    next();
+  } catch (error) {
+    logger.error('Appointment access guard failed', { id, error: error instanceof Error ? error.message : String(error) });
+    return res.status(500).json({ message: 'Failed to verify appointment access' });
+  }
+});
+
 // Get single appointment
 router.get('/:id', isAuthenticated, async (req: any, res) => {
   try {

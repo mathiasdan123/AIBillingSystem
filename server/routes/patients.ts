@@ -174,7 +174,7 @@ router.get('/search', isAuthenticated, async (req: any, res) => {
       return res.json([]);
     }
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
-    const results = await storage.searchPatients(query, limit);
+    const results = await storage.searchPatients(getAuthorizedPracticeId(req), query, limit);
     // Return minimal fields for the search results
     res.json(results.map((p: any) => ({
       id: p.id,
@@ -194,9 +194,10 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const { page, limit, offset } = parsePagination(req.query);
     const usePagination = !!(req.query.page || req.query.limit);
 
+    const practiceId = getAuthorizedPracticeId(req);
     const [patients, total] = await Promise.all([
-      storage.getAllPatients(usePagination ? { limit, offset } : undefined),
-      usePagination ? storage.countAllPatients() : Promise.resolve(0),
+      storage.getAllPatients(practiceId, usePagination ? { limit, offset } : undefined),
+      usePagination ? storage.countAllPatients(practiceId) : Promise.resolve(0),
     ]);
 
     // HIPAA: Include consent status for each patient (batch query, not N+1)
@@ -347,6 +348,38 @@ const INSURANCE_FIELDS = new Set([
   'secondaryInsuranceSubscriberName',
   'secondaryInsuranceSubscriberDob',
 ]);
+
+/**
+ * Tenant-isolation guard for EVERY `/:id/*` patient route below this point.
+ *
+ * Mounted with router.use so it runs after the non-:id routes above (/, /search,
+ * POST /) have had their chance to match, and BEFORE every /:id sub-route — which
+ * is why it lives here rather than as a router.param (param callbacks run before
+ * the route's own isAuthenticated, so the practice context wouldn't be populated
+ * yet). It enforces practice ownership uniformly, closing the IDOR class where
+ * handlers loaded a patient by raw id with no practice check. The consent
+ * middleware is NOT an authorization check and fails open, so this must precede
+ * it. Non-numeric segments (e.g. /bulk-eligibility) fall through to their own
+ * routes. Returns 404 for both not-found and cross-tenant to avoid enumeration;
+ * the loaded patient is cached on req.patient for handlers to reuse.
+ */
+router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFunction) => {
+  const patientId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(patientId) || patientId <= 0) {
+    return next(); // not a patient id — let sibling routes (e.g. /bulk-eligibility) handle it
+  }
+  try {
+    const { patient, authorized } = await verifyPatientAccess(req, patientId);
+    if (!authorized || !patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    req.patient = patient;
+    next();
+  } catch (error) {
+    logger.error('Patient access guard failed', { patientId, error: error instanceof Error ? error.message : String(error) });
+    return res.status(500).json({ error: 'Failed to verify patient access' });
+  }
+});
 
 router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
   try {
