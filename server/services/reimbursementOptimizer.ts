@@ -118,13 +118,12 @@ export async function getOptimalCodeForIntervention(
     return null;
   }
 
-  // Sort by reimbursement rate (highest first)
-  codeRates.sort((a, b) => {
-    const rateA = a.rate?.inNetworkRate ? parseFloat(a.rate.inNetworkRate.toString()) : 0;
-    const rateB = b.rate?.inNetworkRate ? parseFloat(b.rate.inNetworkRate.toString()) : 0;
-    return rateB - rateA;
-  });
-
+  // Accuracy framing (per compliance policy): do NOT rank clinically-equivalent
+  // codes by reimbursement rate. Preserve the catalog's defined order
+  // (category.codes lists the clinically primary code first); the rest are
+  // surfaced as alternatives for the treating provider to choose from. The
+  // provider makes the final coding decision — we never default to the
+  // highest-paying option.
   const bestOption = codeRates[0];
   const alternatives = codeRates.slice(1);
 
@@ -154,9 +153,8 @@ export async function getOptimalCodeForIntervention(
         ? `${insuranceProvider} typically requires different codes for each 15-minute unit`
         : ""
     },
-    reasoning: bestRate
-      ? `${bestOption.code.code} reimburses at $${bestRate.toFixed(2)} for ${insuranceProvider}`
-      : `Using ${bestOption.code.code} (no rate data available for this payer)`
+    reasoning: `${bestOption.code.code} is the primary code for ${interventionCategory}`
+      + (bestRate ? ` (estimated ${insuranceProvider} rate $${bestRate.toFixed(2)}; provider confirms the code)` : ` (no rate data for this payer)`)
   };
 }
 
@@ -196,19 +194,18 @@ export async function optimizeSessionCodes(
     }
   }
 
-  // Sort by reimbursement rate (highest first)
-  interventionCodes.sort((a, b) => {
-    const rateA = a.optimal.reimbursementRate || 0;
-    const rateB = b.optimal.reimbursementRate || 0;
-    return rateB - rateA;
-  });
+  // Accuracy framing: keep the therapist's documented intervention order — do
+  // NOT reorder by reimbursement rate. Units are assigned to the codes for the
+  // interventions actually performed, in the order they were documented.
 
   // Distribute units across codes
   let unitsRemaining = totalUnits;
   const allCptCodes = await storage.getCptCodes();
 
   if (requiresDifferentCodes) {
-    // Each unit needs a different code - use highest paying codes first
+    // Each unit needs a different code. Assign one unit per distinct code in the
+    // therapist's documented intervention order (recommended code first, then its
+    // clinical alternatives) — NOT by reimbursement rate.
     const allAvailableCodes: Array<{ code: string; codeId: number; rate: number; intervention: string }> = [];
 
     for (const { intervention, optimal } of interventionCodes) {
@@ -228,8 +225,7 @@ export async function optimizeSessionCodes(
       }
     }
 
-    // Sort by rate and assign one unit to each unique code
-    allAvailableCodes.sort((a, b) => b.rate - a.rate);
+    // Assign one unit to each unique code in documented order (no rate sort).
     const usedCodes = new Set<string>();
 
     for (const codeOption of allAvailableCodes) {
@@ -247,7 +243,7 @@ export async function optimizeSessionCodes(
       unitsRemaining--;
     }
   } else {
-    // Can stack multiple units on same code - use highest paying codes
+    // Can stack multiple units on the same code — assign in documented order.
     for (const { intervention, optimal } of interventionCodes) {
       if (unitsRemaining <= 0) break;
 
@@ -267,7 +263,8 @@ export async function optimizeSessionCodes(
       unitsRemaining -= unitsForThis;
     }
 
-    // If we have remaining units, add to the highest-paying code
+    // Any remaining units go to the PRIMARY documented intervention (the first
+    // one performed), not the highest-paying code.
     if (unitsRemaining > 0 && lineItems.length > 0) {
       lineItems[0].units += unitsRemaining;
     }
@@ -279,9 +276,9 @@ export async function optimizeSessionCodes(
     0
   );
 
-  if (interventionCodes.length > 0 && interventionCodes[0].optimal.reimbursementRate) {
+  if (lineItems.length > 0) {
     optimizationNotes.push(
-      `Selected highest-reimbursing codes: ${lineItems.map(l => `${l.code} ($${l.rate?.toFixed(2) || 'N/A'})`).join(", ")}`
+      `Codes assigned by documented intervention order (estimated rates shown for reference; the treating provider confirms all codes): ${lineItems.map(l => `${l.code} ($${l.rate?.toFixed(2) || 'N/A'})`).join(", ")}`
     );
   }
 
