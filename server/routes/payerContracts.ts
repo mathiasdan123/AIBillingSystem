@@ -15,6 +15,7 @@ import { isAuthenticated } from '../replitAuth';
 import { db } from '../db';
 import { parseInsuranceContract, parseInsuranceContractFromPDF } from '../services/insuranceCostEstimator';
 import { uploadLimiter } from '../middleware/rate-limiter';
+import { createFileValidator, FileValidationContexts } from '../middleware/file-validator';
 import {
   payerContracts,
   payerRates,
@@ -596,6 +597,8 @@ router.post(
   isAuthenticated,
   isAdminOrBilling,
   contractUpload.single('file'),
+  // Validate by magic number, not just the client-supplied Content-Type header.
+  createFileValidator(FileValidationContexts.INSURANCE_CONTRACT),
   async (req: any, res) => {
     try {
       const contractId = parseInt(req.params.id);
