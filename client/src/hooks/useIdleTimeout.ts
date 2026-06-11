@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { clearSensitiveStorage } from '@/lib/clearSensitiveStorage';
 
 const IDLE_TIMEOUT = 25 * 60 * 1000; // 25 minutes
 const WARNING_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -27,8 +28,9 @@ export function useIdleTimeout() {
         setRemainingSeconds(remaining);
 
         if (remaining <= 0) {
-          // Auto-logout
+          // Auto-logout — clear PHI/credential material from browser storage first
           if (warningTimerRef.current) clearInterval(warningTimerRef.current);
+          clearSensitiveStorage();
           window.location.href = '/api/logout';
         }
       }, 1000);

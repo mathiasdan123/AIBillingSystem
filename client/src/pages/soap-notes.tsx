@@ -384,12 +384,12 @@ export default function SoapNotes() {
     sessionType,
   ]);
 
-  // Persist form data to localStorage
+  // Persist form data to sessionStorage (clinical PHI — clears on tab close)
   const STORAGE_KEY = "soap-notes-draft";
 
-  // Restore form data from localStorage on mount
+  // Restore form data from sessionStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = sessionStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const data = JSON.parse(saved);
@@ -429,7 +429,7 @@ export default function SoapNotes() {
       nextSessionFocus,
       homeProgram,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }, [selectedPatient, sessionDate, duration, location, mood, caregiverReport, selectedActivities, selectedTherapies, selectedInterventions, assessment, planNextSteps, nextSessionFocus, homeProgram]);
 
   const { data: patients, isLoading: patientsLoading } = useQuery<Patient[]>({
@@ -970,7 +970,7 @@ export default function SoapNotes() {
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/claims"] });
       // Clear saved draft so a future refresh doesn't re-populate old data.
-      localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_KEY);
       void clearDraft();
       // Record the saved-note info so the confirmation banner can render.
       // Form state is intentionally kept populated so the therapist can
