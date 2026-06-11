@@ -116,11 +116,13 @@ export async function softDeletePatient(id: number): Promise<void> {
     .where(eq(patients.id, id));
 }
 
-export async function getAllPatients(opts?: { limit?: number; offset?: number }): Promise<Patient[]> {
+export async function getAllPatients(practiceId: number, opts?: { limit?: number; offset?: number }): Promise<Patient[]> {
+  // Tenant isolation: always scope to the caller's practice. Without this filter
+  // the list endpoint returned every practice's patients (cross-tenant PHI leak).
   let query = db
     .select()
     .from(patients)
-    .where(isNull(patients.deletedAt))
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt)))
     .orderBy(desc(patients.createdAt))
     .$dynamic();
   if (opts?.limit) query = query.limit(opts.limit);
@@ -129,7 +131,7 @@ export async function getAllPatients(opts?: { limit?: number; offset?: number })
   return rows.map((r: any) => decryptPatientRecord(r) as Patient);
 }
 
-export async function searchPatients(query: string, limit: number = 20): Promise<Patient[]> {
+export async function searchPatients(practiceId: number, query: string, limit: number = 20): Promise<Patient[]> {
   const searchTerm = `%${query}%`;
   // Strip non-digit characters for phone search
   const digitsOnly = query.replace(/\D/g, '');
@@ -149,21 +151,22 @@ export async function searchPatients(query: string, limit: number = 20): Promise
     );
   }
 
+  // Tenant isolation: scope search to the caller's practice.
   const rows = await db
     .select()
     .from(patients)
-    .where(and(isNull(patients.deletedAt), or(...conditions)))
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt), or(...conditions)))
     .orderBy(patients.lastName, patients.firstName)
     .limit(limit);
 
   return rows.map((r: any) => decryptPatientRecord(r) as Patient);
 }
 
-export async function countAllPatients(): Promise<number> {
+export async function countAllPatients(practiceId: number): Promise<number> {
   const [result] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(patients)
-    .where(isNull(patients.deletedAt));
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt)));
   return result?.total ?? 0;
 }
 
