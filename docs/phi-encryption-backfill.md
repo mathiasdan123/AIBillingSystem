@@ -18,7 +18,7 @@ one-time backfill to normalize existing data, plus the related `taxId` normaliza
 | `patients.firstName/lastName/email/phone/address/insuranceId/policyNumber/groupNumber` | already encrypted pre-PR | only rows created before encryption was first added |
 | `patients.dateOfBirth`, `secondaryInsuranceSubscriberDob` | `date` columns — NOT encrypted | deferred (needs schema migration, see issue #211 item 3) |
 | `practices.taxId` | encrypted; double-encryption guard in place | **Normalize** legacy double-encrypted rows, then drop the heuristic |
-| `remittanceLineItems.patientName/memberId` | plaintext | deferred (issue #211 item 4) |
+| `remittanceLineItems.patientName/memberId` | encrypted on write (item 4) | **Yes** — `--remittance` mode; legacy rows plaintext until backfilled |
 
 ## Why it's safe to run online
 
@@ -53,6 +53,9 @@ tsx scripts/backfill-patient-encryption.ts
 
 # Normalize double-encrypted practice taxIds (separate mode):
 tsx scripts/backfill-patient-encryption.ts --taxid
+
+# Backfill remittance line-item PHI (patientName, memberId):
+tsx scripts/backfill-patient-encryption.ts --remittance
 ```
 
 It refuses to run without `PHI_ENCRYPTION_KEY`, batches by id (200/page), and only

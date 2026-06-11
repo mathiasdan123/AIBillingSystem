@@ -26,6 +26,7 @@ import {
 } from '@shared/schema';
 import { eq, and, desc, count, sql, ilike, or, lte, gte } from 'drizzle-orm';
 import logger from '../services/logger';
+import { encryptRemittanceLineItem, decryptRemittanceLineItem } from '../services/phiEncryptionService';
 
 const router = Router();
 
@@ -163,7 +164,8 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
         status: 'unmatched' as const,
       }));
 
-      await db.insert(remittanceLineItems).values(lineItemValues);
+      // Encrypt PHI (patientName, memberId) before storing.
+      await db.insert(remittanceLineItems).values(lineItemValues.map(encryptRemittanceLineItem) as any);
     }
 
     // Fetch the inserted record with line items
@@ -172,6 +174,9 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
       with: { lineItems: true },
     });
 
+    if (result?.lineItems) {
+      result.lineItems = result.lineItems.map(decryptRemittanceLineItem) as any;
+    }
     res.status(201).json(result);
   } catch (error) {
     return safeErrorResponse(res, 500, 'Failed to process remittance upload', error);
@@ -261,6 +266,9 @@ router.get('/:id', isAuthenticated, async (req: any, res: Response) => {
       return res.status(404).json({ message: 'Remittance record not found' });
     }
 
+    if (result.lineItems) {
+      result.lineItems = result.lineItems.map(decryptRemittanceLineItem) as any;
+    }
     res.json(result);
   } catch (error) {
     return safeErrorResponse(res, 500, 'Failed to fetch remittance detail', error);
@@ -288,6 +296,12 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
 
     if (!remittance) {
       return res.status(404).json({ message: 'Remittance record not found' });
+    }
+
+    // Decrypt line-item PHI before matching — the matcher compares patientName
+    // against claim patient names below.
+    if (remittance.lineItems) {
+      remittance.lineItems = remittance.lineItems.map(decryptRemittanceLineItem) as any;
     }
 
     // Get unmatched line items

@@ -15,6 +15,7 @@ import { db } from '../db';
 import { eq, and, desc, ilike, lte, isNotNull } from 'drizzle-orm';
 import { remittanceAdvice, remittanceLineItems, claims, feeSchedules } from '@shared/schema';
 import { storage } from '../storage';
+import { decryptField } from './phiEncryptionService';
 import { assessUnderpayment } from './underpaymentAnalyzer';
 
 export interface UnderpaymentEntry {
@@ -84,6 +85,11 @@ export async function reviewUnderpayments(
     )
     .orderBy(desc(remittanceAdvice.receivedDate))
     .limit(100);
+
+  // Decrypt the patient name PHI pulled from remittance line items.
+  matchedLineItems.forEach((li: any) => {
+    if (li.patientName != null) li.patientName = decryptField(li.patientName);
+  });
 
   if (matchedLineItems.length === 0) {
     return {
