@@ -178,11 +178,20 @@ router.post('/setup/make-admin', isAuthenticated, async (req: any, res) => {
 
 // ==================== MFA ENDPOINTS ====================
 
-router.post('/mfa/setup', isAuthenticated, async (req: any, res) => {
+router.post('/mfa/setup', authLimiter, isAuthenticated, async (req: any, res) => {
   try {
     const { generateSecret, hashBackupCode } = await import('../services/mfaService');
     const userId = req.user.claims.sub;
     const user = await storage.getUser(userId);
+    // Re-enrollment hijack guard: if MFA is already enabled, refuse to overwrite the
+    // existing secret/backup codes from this session. Re-enrolling requires disabling
+    // first (admin-gated), so a hijacked session can't silently re-issue the 2nd factor.
+    if (user?.mfaEnabled) {
+      return res.status(409).json({
+        message: 'MFA is already enabled. Disable it first before re-enrolling.',
+        code: 'MFA_ALREADY_ENABLED',
+      });
+    }
     const result = generateSecret(user?.email || 'user');
     // Persist the HASHED backup codes now so they can actually be redeemed later.
     // The raw codes are returned to the user once here and never stored in the clear.
@@ -196,7 +205,7 @@ router.post('/mfa/setup', isAuthenticated, async (req: any, res) => {
   }
 });
 
-router.post('/mfa/verify', isAuthenticated, async (req: any, res) => {
+router.post('/mfa/verify', authLimiter, isAuthenticated, async (req: any, res) => {
   try {
     const { verifyToken } = await import('../services/mfaService');
     const userId = req.user.claims.sub;

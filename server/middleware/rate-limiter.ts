@@ -103,12 +103,11 @@ export function clearRateLimitStore(): void {
  * Handles proxy headers appropriately
  */
 function getClientIp(req: Request): string {
-  // Trust X-Forwarded-For if behind a proxy (configured in Express trust proxy)
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) {
-    const ips = (typeof forwarded === 'string' ? forwarded : forwarded[0]).split(',');
-    return ips[0].trim();
-  }
+  // Use Express's req.ip, which honors the configured `trust proxy` hop count
+  // (set to 1 for the single ALB in front). Do NOT parse the leftmost
+  // X-Forwarded-For entry ourselves — that value is client-supplied and
+  // spoofable, which would let an attacker rotate it to evade rate limits and
+  // account-lockout. req.ip resolves to the real client as seen past the ALB.
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
