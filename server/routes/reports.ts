@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { storage } from '../storage';
-import { decryptField } from '../services/phiEncryptionService';
+import { decryptField, resolveEncryptedDob } from '../services/phiEncryptionService';
 import { isAuthenticated } from '../replitAuth';
 import {
   claims,
@@ -613,6 +613,7 @@ async function generatePatientsReport(
       email: patients.email,
       phone: patients.phone,
       dateOfBirth: patients.dateOfBirth,
+      dateOfBirthEnc: patients.dateOfBirthEnc,
       insuranceProvider: patients.insuranceProvider,
       createdAt: patients.createdAt,
     })
@@ -622,17 +623,19 @@ async function generatePatientsReport(
 
   const data = rows.map((r: any) => {
     // firstName/lastName/email/phone/insuranceProvider are PHI-encrypted (raw
-    // select) — decrypt before emitting them to the report / CSV. dateOfBirth is
-    // a plaintext date column.
+    // select) — decrypt before emitting them to the report / CSV.
     const firstName = decryptField(r.firstName);
     const lastName = decryptField(r.lastName);
+    const { dateOfBirthEnc, ...rest } = r;
     return {
-      ...r,
+      ...rest,
       firstName,
       lastName,
       email: decryptField(r.email),
       phone: decryptField(r.phone),
       insuranceProvider: decryptField(r.insuranceProvider),
+      // Prefer the encrypted DOB; works after the plaintext column is dropped.
+      dateOfBirth: resolveEncryptedDob(r.dateOfBirthEnc, r.dateOfBirth),
       patientName: `${firstName || ''} ${lastName || ''}`.trim(),
     };
   });

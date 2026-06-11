@@ -19,7 +19,7 @@ import { eq, and, or, isNull, lt, sql } from 'drizzle-orm';
 import { checkClaimStatus, isStediConfigured } from './stediService';
 import type { ClaimStatusRequest, ClaimStatusResponse } from './stediService';
 import { logger } from './logger';
-import { decryptField } from './phiEncryptionService';
+import { decryptField, resolveEncryptedDob } from './phiEncryptionService';
 
 const RATE_LIMIT_DELAY_MS = 200;
 const MAX_CLAIMS_PER_BATCH = 50;
@@ -150,6 +150,7 @@ async function getEligibleClaims() {
       patientFirstName: patients.firstName,
       patientLastName: patients.lastName,
       patientDateOfBirth: patients.dateOfBirth,
+      patientDateOfBirthEnc: patients.dateOfBirthEnc,
       patientInsuranceId: patients.insuranceId,
       // Insurance info
       insuranceName: insurances.name,
@@ -197,7 +198,10 @@ async function processClaimStatusCheck(
   if (!claim.patientInsuranceId) {
     throw new Error('Patient missing insurance member ID');
   }
-  if (!claim.patientFirstName || !claim.patientLastName || !claim.patientDateOfBirth) {
+  // Resolve DOB from the encrypted column (preferred) or the legacy plaintext
+  // date column, so this keeps working after the plaintext column is dropped.
+  const patientDob = resolveEncryptedDob(claim.patientDateOfBirthEnc, claim.patientDateOfBirth);
+  if (!claim.patientFirstName || !claim.patientLastName || !patientDob) {
     throw new Error('Patient missing required demographics');
   }
 
@@ -220,7 +224,7 @@ async function processClaimStatusCheck(
       memberId: decryptField(claim.patientInsuranceId) as string,
       firstName: decryptField(claim.patientFirstName) as string,
       lastName: decryptField(claim.patientLastName) as string,
-      dateOfBirth: claim.patientDateOfBirth.toISOString().split('T')[0],
+      dateOfBirth: patientDob as string,
     },
     dateOfService: claim.submittedAt?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],
     claimAmount: claim.totalAmount ? parseFloat(claim.totalAmount) : undefined,
@@ -378,6 +382,7 @@ export async function checkSingleClaimStatus(claimId: number): Promise<{
         patientFirstName: patients.firstName,
         patientLastName: patients.lastName,
         patientDateOfBirth: patients.dateOfBirth,
+        patientDateOfBirthEnc: patients.dateOfBirthEnc,
         patientInsuranceId: patients.insuranceId,
         insurancePayerCode: insurances.payerCode,
         practiceNpi: practices.npi,

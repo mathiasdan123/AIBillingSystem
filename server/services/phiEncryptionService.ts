@@ -73,6 +73,25 @@ export function decryptValue(encrypted: EncryptedField | string | null | undefin
   }
 }
 
+/**
+ * Resolve a patient date-of-birth to a 'YYYY-MM-DD' string from the encrypted
+ * column (preferred) or the legacy plaintext `date` column. Raw-join readers
+ * that select patients.dateOfBirth directly should use this (selecting
+ * dateOfBirthEnc alongside) so they keep working after the plaintext column is
+ * dropped in the expand→contract migration.
+ */
+export function resolveEncryptedDob(
+  dateOfBirthEnc: string | null | undefined,
+  plaintextDob?: string | Date | null,
+): string | null {
+  const decrypted = dateOfBirthEnc ? decryptField(dateOfBirthEnc) : null;
+  const raw: string | Date | null = decrypted ?? (plaintextDob ?? null);
+  if (raw == null) return null;
+  if (raw instanceof Date) return raw.toISOString().split('T')[0];
+  const s = String(raw);
+  return s.length >= 10 ? s.slice(0, 10) : s; // normalize 'YYYY-MM-DD...' → 'YYYY-MM-DD'
+}
+
 export function decryptField(encrypted: EncryptedField | string | null | undefined): string | null {
   if (!encrypted) return null;
 
