@@ -392,7 +392,9 @@ router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
     // Tenant isolation — admins can cross practices when explicitly asked
     // elsewhere, but insurance edits stay scoped to the user's practice.
     const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
-    if (userPracticeId && existing.practiceId !== userPracticeId) {
+    // Insurance edits stay scoped to the user's practice (even for admins, by
+    // design). Fail closed: a missing practice context is a deny.
+    if (!userPracticeId || existing.practiceId !== userPracticeId) {
       return res.status(403).json({ error: 'Patient is not in your practice' });
     }
 
