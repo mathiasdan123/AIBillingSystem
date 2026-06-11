@@ -16,7 +16,7 @@ one-time backfill to normalize existing data, plus the related `taxId` normaliza
 |---|---|---|
 | `patients.insuranceProvider`, `secondaryInsuranceProvider`, `secondaryInsurancePolicyNumber`, `secondaryInsuranceMemberId`, `secondaryInsuranceGroupNumber`, `secondaryInsuranceSubscriberName`, `insuranceEmployerName` | encrypted on write | **Yes** — legacy rows still plaintext |
 | `patients.firstName/lastName/email/phone/address/insuranceId/policyNumber/groupNumber` | already encrypted pre-PR | only rows created before encryption was first added |
-| `patients.dateOfBirth`, `secondaryInsuranceSubscriberDob` | `date` columns — NOT encrypted | deferred (needs schema migration, see issue #211 item 3) |
+| `patients.dateOfBirth`, `secondaryInsuranceSubscriberDob` | encrypted into sibling `*_enc` text columns (dual-write, item 3) | **Yes** — covered by the default patient backfill; CONTRACT (drop plaintext date cols) is a follow-up migration after one release |
 | `practices.taxId` | encrypted; double-encryption guard in place | **Normalize** legacy double-encrypted rows, then drop the heuristic |
 | `remittanceLineItems.patientName/memberId` | encrypted on write (item 4) | **Yes** — `--remittance` mode; legacy rows plaintext until backfilled |
 
@@ -123,6 +123,24 @@ Legacy double-encrypted `practices.taxId` rows may still exist (the PR's guard p
    (peel nested layers), then `encryptField` once and write back.
 2. After confirming all rows are single-encrypted, remove the heuristic double-encrypt
    guard in `server/routes/provider-profile.ts` so the code path is simple again.
+
+## DOB date-columns — CONTRACT phase (separate follow-up release)
+
+Item 3 added `date_of_birth_enc` / `secondary_insurance_subscriber_dob_enc` text columns and
+dual-writes them alongside the plaintext `date` columns. The plaintext columns still hold the
+DOB, so the at-rest protection is only fully realized once they're dropped. Sequence:
+
+1. **Deploy + backfill** (this release): `*_enc` populated for all rows (default patient backfill
+   covers them). `decryptPatientRecord` already prefers `*_enc`, falling back to the plaintext col.
+2. **Audit readers** before contracting: every consumer of `dateOfBirth` /
+   `secondaryInsuranceSubscriberDob` must go through `decryptPatientRecord` (or select the `*_enc`
+   column), NOT a raw `select({ dateOfBirth })`. Grep for raw selects of those columns and route
+   them through the decrypt path first. (Confirmed at item-3 time: the only writers are
+   create/updatePatient via `encryptPatientRecord`, so `*_enc` never goes stale.)
+3. **Contract migration** (next release): stop writing the plaintext columns, then
+   `ALTER TABLE patients DROP COLUMN date_of_birth, DROP COLUMN secondary_insurance_subscriber_dob`.
+   This is a `DROP COLUMN` — `scripts/lint-migrations.sh` will flag it; ship it only after step 2,
+   with the expand→contract reasoning, using the documented `-- migration-lint: ignore` override.
 
 ## Rollback
 

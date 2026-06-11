@@ -133,6 +133,14 @@ const PATIENT_PHI_JSONB_FIELDS = [
   'intakeData',
 ] as const;
 
+// Date-typed PHI columns mapped to their encrypted text counterpart. These can't
+// be encrypted in place (the column is a Postgres `date`), so the ciphertext goes
+// in a sibling `*_enc` text column (expand→contract). plaintext date col -> enc col.
+const PATIENT_DATE_ENC_MAP: Record<string, string> = {
+  dateOfBirth: 'dateOfBirthEnc',
+  secondaryInsuranceSubscriberDob: 'secondaryInsuranceSubscriberDobEnc',
+};
+
 const SOAP_NOTE_PHI_FIELDS = [
   'subjective', 'objective', 'assessment', 'plan',
   'progressNotes', 'homeProgram',
@@ -217,6 +225,22 @@ export function encryptPatientRecord(patient: Record<string, any>): Record<strin
     }
   }
 
+  // Date-typed PHI columns: dual-write an encrypted text copy (`*_enc`) alongside
+  // the plaintext `date` column. Expand→contract — the plaintext date column is
+  // dropped in a follow-up release once all readers prefer the encrypted copy.
+  // We keep writing the plaintext column so old code in the rolling-deploy window
+  // still sees the value. A partial update that omits the date leaves both alone;
+  // an explicit null clears both.
+  for (const [plain, enc] of Object.entries(PATIENT_DATE_ENC_MAP)) {
+    if (encrypted[plain] === undefined) continue;
+    if (encrypted[plain] === null || encrypted[plain] === '') {
+      encrypted[enc] = null;
+    } else {
+      const result = encryptField(String(encrypted[plain]));
+      encrypted[enc] = result ? JSON.stringify(result) : null;
+    }
+  }
+
   return encrypted;
 }
 
@@ -236,6 +260,17 @@ export function decryptPatientRecord(patient: Record<string, any> | null | undef
     if (decrypted[field] !== undefined && decrypted[field] !== null) {
       decrypted[field] = decryptValue(decrypted[field], true); // parseJson = true
     }
+  }
+
+  // Date PHI: prefer the encrypted copy when present, falling back to the
+  // plaintext date column (for rows not yet backfilled). Strip the `*_enc`
+  // helper column from the returned record so the API shape is unchanged.
+  for (const [plain, enc] of Object.entries(PATIENT_DATE_ENC_MAP)) {
+    if (decrypted[enc] !== undefined && decrypted[enc] !== null) {
+      const val = decryptField(decrypted[enc]);
+      if (val !== null) decrypted[plain] = val;
+    }
+    delete decrypted[enc];
   }
 
   return decrypted;

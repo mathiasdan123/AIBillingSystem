@@ -303,4 +303,40 @@ describe('PHI Encryption Service', () => {
     expect(enc.memberId).toBeNull();
     expect(decryptRemittanceLineItem(enc)!.memberId).toBeNull();
   });
+
+  // ---- date-typed PHI columns (DOB) via *_enc expand→contract ----
+
+  it('dual-writes an encrypted dateOfBirth copy while keeping the plaintext date column', async () => {
+    const { encryptPatientRecord } = await loadModule();
+    const enc = encryptPatientRecord({ practiceId: 1, dateOfBirth: '2010-05-01', secondaryInsuranceSubscriberDob: '1980-12-31' });
+    // plaintext date columns preserved (dual-write for rolling-deploy old code)
+    expect(enc.dateOfBirth).toBe('2010-05-01');
+    expect(enc.secondaryInsuranceSubscriberDob).toBe('1980-12-31');
+    // encrypted copies populated
+    expect(JSON.parse(enc.dateOfBirthEnc)).toHaveProperty('ciphertext');
+    expect(JSON.parse(enc.secondaryInsuranceSubscriberDobEnc)).toHaveProperty('ciphertext');
+  });
+
+  it('decrypt prefers the encrypted DOB copy and strips the *_enc column', async () => {
+    const { encryptPatientRecord, decryptPatientRecord } = await loadModule();
+    const enc = encryptPatientRecord({ dateOfBirth: '2010-05-01' });
+    // Simulate a row where the plaintext column was later cleared but enc remains.
+    const row = { ...enc, dateOfBirth: null };
+    const dec = decryptPatientRecord(row)!;
+    expect(dec.dateOfBirth).toBe('2010-05-01');
+    expect(dec).not.toHaveProperty('dateOfBirthEnc');
+  });
+
+  it('falls back to the plaintext date column when no encrypted copy exists (legacy row)', async () => {
+    const { decryptPatientRecord } = await loadModule();
+    const dec = decryptPatientRecord({ dateOfBirth: '1999-01-15', dateOfBirthEnc: null })!;
+    expect(dec.dateOfBirth).toBe('1999-01-15');
+    expect(dec).not.toHaveProperty('dateOfBirthEnc');
+  });
+
+  it('clears the encrypted copy when the date is set to null', async () => {
+    const { encryptPatientRecord } = await loadModule();
+    const enc = encryptPatientRecord({ dateOfBirth: null });
+    expect(enc.dateOfBirthEnc).toBeNull();
+  });
 });

@@ -206,6 +206,10 @@ export const patients = pgTable("patients", {
   firstName: varchar("first_name").notNull(),
   lastName: varchar("last_name").notNull(),
   dateOfBirth: date("date_of_birth"),
+  // Encrypted-at-rest copy of dateOfBirth (AES-256-GCM, JSON-stringified).
+  // Expand→contract: dual-written alongside dateOfBirth; reads prefer this.
+  // The plaintext `date_of_birth` column is dropped in a follow-up release.
+  dateOfBirthEnc: text("date_of_birth_enc"),
   email: varchar("email"),
   phone: varchar("phone"),
   address: text("address"),
@@ -232,6 +236,8 @@ export const patients = pgTable("patients", {
   secondaryInsuranceRelationship: varchar("secondary_insurance_relationship"), // self, spouse, child, other
   secondaryInsuranceSubscriberName: varchar("secondary_insurance_subscriber_name"),
   secondaryInsuranceSubscriberDob: date("secondary_insurance_subscriber_dob"),
+  // Encrypted-at-rest copy (see dateOfBirthEnc note). Dual-written; reads prefer it.
+  secondaryInsuranceSubscriberDobEnc: text("secondary_insurance_subscriber_dob_enc"),
   // Contact preferences
   phoneType: varchar("phone_type").default("mobile"), // mobile, landline, work
   preferredContactMethod: varchar("preferred_contact_method").default("email"), // email, sms, both

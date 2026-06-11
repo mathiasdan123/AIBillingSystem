@@ -43,6 +43,12 @@ const PATIENT_STRING_FIELDS = [
   'secondaryInsuranceSubscriberName',
 ] as const;
 
+// Date-typed PHI columns → their encrypted text counterpart (expand→contract).
+const PATIENT_DATE_ENC_MAP: Record<string, string> = {
+  dateOfBirth: 'dateOfBirthEnc',
+  secondaryInsuranceSubscriberDob: 'secondaryInsuranceSubscriberDobEnc',
+};
+
 const REMITTANCE_FIELDS = ['patientName', 'memberId'] as const;
 
 const BATCH = 200;
@@ -89,6 +95,19 @@ async function backfillPatients() {
         if (enc) {
           patch[field] = JSON.stringify(enc);
           fieldCounts[field] = (fieldCounts[field] ?? 0) + 1;
+        }
+      }
+      // Date columns: encrypt the plaintext date into its `*_enc` text column if
+      // not already populated. Leaves the plaintext date column intact (dropped
+      // in a later contract migration).
+      for (const [plain, encCol] of Object.entries(PATIENT_DATE_ENC_MAP)) {
+        const val = row[plain];
+        if (val === null || val === undefined || val === '') continue;
+        if (looksEncrypted(row[encCol])) continue; // already backfilled
+        const enc = encryptField(String(val));
+        if (enc) {
+          patch[encCol] = JSON.stringify(enc);
+          fieldCounts[encCol] = (fieldCounts[encCol] ?? 0) + 1;
         }
       }
       if (Object.keys(patch).length > 0) {
