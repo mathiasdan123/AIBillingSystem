@@ -45,6 +45,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, ne, lt, isNull, count, sql } from "drizzle-orm";
+import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
   encryptTelehealthSessionRecord,
   decryptTelehealthSessionRecord,
@@ -154,7 +155,7 @@ export async function getAppointment(id: number): Promise<Appointment | undefine
 export async function updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment> {
   const [updated] = await db
     .update(appointments)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...stripImmutable(data), updatedAt: new Date() })
     .where(eq(appointments.id, id))
     .returning();
   return updated;
@@ -514,7 +515,7 @@ export async function getWaitlistEntry(id: number): Promise<WaitlistEntry | unde
 export async function updateWaitlistEntry(id: number, updates: Partial<InsertWaitlistEntry>): Promise<WaitlistEntry> {
   const [result] = await db
     .update(waitlist)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(waitlist.id, id))
     .returning();
   return result;
@@ -677,7 +678,7 @@ export async function getReviewRequest(id: number): Promise<ReviewRequest | unde
 export async function updateReviewRequest(id: number, updates: Partial<InsertReviewRequest>): Promise<ReviewRequest> {
   const [result] = await db
     .update(reviewRequests)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(reviewRequests.id, id))
     .returning();
   return result;
@@ -779,7 +780,7 @@ export async function getGoogleReview(id: number): Promise<GoogleReview | undefi
 export async function updateGoogleReview(id: number, updates: Partial<InsertGoogleReview>): Promise<GoogleReview> {
   const [result] = await db
     .update(googleReviews)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(googleReviews.id, id))
     .returning();
   return result;
@@ -870,7 +871,7 @@ export async function getPatientFeedbackByReviewRequest(reviewRequestId: number)
 export async function updatePatientFeedback(id: number, updates: Partial<InsertPatientFeedback>): Promise<PatientFeedback> {
   const [result] = await db
     .update(patientFeedback)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(patientFeedback.id, id))
     .returning();
   return result;
@@ -950,7 +951,7 @@ export async function getAppointmentType(id: number): Promise<AppointmentType | 
 export async function updateAppointmentType(id: number, updates: Partial<InsertAppointmentType>): Promise<AppointmentType> {
   const [result] = await db
     .update(appointmentTypes)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(appointmentTypes.id, id))
     .returning();
   return result;
@@ -1091,7 +1092,7 @@ export async function getOnlineBookingByCode(code: string): Promise<OnlineBookin
 export async function updateOnlineBooking(id: number, updates: Partial<InsertOnlineBooking>): Promise<OnlineBooking> {
   const [result] = await db
     .update(onlineBookings)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(onlineBookings.id, id))
     .returning();
   return result;
@@ -1608,7 +1609,7 @@ export async function updateEligibilityAlert(id: number, updates: Partial<Insert
   resolutionNotes?: string;
 }): Promise<EligibilityAlert | undefined> {
   const [updated] = await db.update(eligibilityAlerts)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(eligibilityAlerts.id, id))
     .returning();
   return updated;
@@ -1800,7 +1801,7 @@ export async function getPracticeAppointmentRequests(practiceId: number, status?
 export async function updateAppointmentRequest(id: number, updates: Partial<InsertAppointmentRequest> & { processedAt?: Date; processedById?: string; appointmentId?: number }): Promise<AppointmentRequest> {
   const [result] = await db
     .update(appointmentRequests)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(appointmentRequests.id, id))
     .returning();
   return result;

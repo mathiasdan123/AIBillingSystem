@@ -30,6 +30,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, isNull, lt, inArray, sql, or } from "drizzle-orm";
+import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
   encryptPatientRecord,
   decryptPatientRecord,
@@ -85,7 +86,10 @@ export async function getPatientByEmail(email: string): Promise<Patient | undefi
 }
 
 export async function updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient> {
-  const encrypted = encryptPatientRecord(patient as any);
+  // Strip immutable identity/ownership columns (id, practiceId, patientId, audit
+  // timestamps) so a mass-assigned body can't re-parent the patient to another
+  // practice. Encrypt the remaining caller-supplied PHI fields.
+  const encrypted = encryptPatientRecord(stripImmutable(patient) as any);
   const [updatedPatient] = await db
     .update(patients)
     .set({ ...encrypted, updatedAt: new Date() })
@@ -549,7 +553,7 @@ export async function getPatientStatement(id: number): Promise<PatientStatement 
 export async function updatePatientStatement(id: number, updates: Partial<InsertPatientStatement>): Promise<PatientStatement> {
   const [result] = await db
     .update(patientStatements)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(patientStatements.id, id))
     .returning();
   return result;

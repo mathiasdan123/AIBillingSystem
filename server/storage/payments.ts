@@ -23,6 +23,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, lt, inArray } from "drizzle-orm";
+import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
   encryptPracticePaymentSettingsRecord,
   decryptPracticePaymentSettingsRecord,
@@ -74,7 +75,7 @@ export async function getDefaultPaymentMethod(patientId: number): Promise<Patien
 
 export async function updatePatientPaymentMethod(id: number, updates: Partial<InsertPatientPaymentMethod>): Promise<PatientPaymentMethod | undefined> {
   const [updated] = await db.update(patientPaymentMethods)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(patientPaymentMethods.id, id))
     .returning();
   return updated;
@@ -150,7 +151,7 @@ export async function getPaymentTransaction(id: number): Promise<PaymentTransact
 
 export async function updatePaymentTransaction(id: number, updates: Partial<InsertPaymentTransaction>): Promise<PaymentTransaction | undefined> {
   const [updated] = await db.update(paymentTransactions)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(paymentTransactions.id, id))
     .returning();
   return updated;
@@ -198,7 +199,7 @@ export async function getPaymentPlan(id: number): Promise<PaymentPlan | undefine
 
 export async function updatePaymentPlan(id: number, updates: Partial<InsertPaymentPlan>): Promise<PaymentPlan | undefined> {
   const [updated] = await db.update(paymentPlans)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(paymentPlans.id, id))
     .returning();
   return updated;
@@ -237,7 +238,7 @@ export async function getPaymentPlanInstallments(planId: number): Promise<Paymen
 
 export async function updatePaymentPlanInstallment(id: number, updates: Partial<InsertPaymentPlanInstallment>): Promise<PaymentPlanInstallment | undefined> {
   const [updated] = await db.update(paymentPlanInstallments)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(paymentPlanInstallments.id, id))
     .returning();
   return updated;

@@ -52,6 +52,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, isNull, inArray, sql, or } from "drizzle-orm";
+import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
   encryptSoapNoteRecord,
   decryptSoapNoteRecord,
@@ -355,7 +356,7 @@ export async function getTreatmentPlan(id: number): Promise<TreatmentPlan | unde
 export async function updateTreatmentPlan(id: number, updates: Partial<InsertTreatmentPlan>): Promise<TreatmentPlan | undefined> {
   const [updated] = await db
     .update(treatmentPlans)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(treatmentPlans.id, id))
     .returning();
   return updated;
@@ -432,7 +433,7 @@ export async function updateTreatmentGoal(id: number, updates: Partial<InsertTre
 }): Promise<TreatmentGoal | undefined> {
   const [updated] = await db
     .update(treatmentGoals)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(treatmentGoals.id, id))
     .returning();
   return updated;
@@ -469,7 +470,7 @@ export async function updateTreatmentObjective(id: number, updates: Partial<Inse
 }): Promise<TreatmentObjective | undefined> {
   const [updated] = await db
     .update(treatmentObjectives)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(treatmentObjectives.id, id))
     .returning();
   return updated;
@@ -497,7 +498,7 @@ export async function getTreatmentInterventions(treatmentPlanId: number): Promis
 export async function updateTreatmentIntervention(id: number, updates: Partial<InsertTreatmentIntervention>): Promise<TreatmentIntervention | undefined> {
   const [updated] = await db
     .update(treatmentInterventions)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(treatmentInterventions.id, id))
     .returning();
   return updated;
@@ -662,7 +663,7 @@ export async function getOutcomeMeasureTemplate(id: number): Promise<OutcomeMeas
 export async function updateOutcomeMeasureTemplate(id: number, updates: Partial<InsertOutcomeMeasureTemplate>): Promise<OutcomeMeasureTemplate | undefined> {
   const [updated] = await db
     .update(outcomeMeasureTemplates)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(outcomeMeasureTemplates.id, id))
     .returning();
   return updated;
@@ -723,7 +724,7 @@ export async function getLatestPatientAssessment(patientId: number, templateId: 
 export async function updatePatientAssessment(id: number, updates: Partial<InsertPatientAssessment>): Promise<PatientAssessment | undefined> {
   const [updated] = await db
     .update(patientAssessments)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(patientAssessments.id, id))
     .returning();
   return updated;
@@ -810,7 +811,7 @@ export async function getAssessmentSchedule(id: number): Promise<AssessmentSched
 export async function updateAssessmentSchedule(id: number, updates: Partial<InsertAssessmentSchedule>): Promise<AssessmentSchedule | undefined> {
   const [updated] = await db
     .update(assessmentSchedules)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(assessmentSchedules.id, id))
     .returning();
   return updated;
@@ -898,7 +899,7 @@ export async function getReferralSource(id: number): Promise<ReferralSource | un
 export async function updateReferralSource(id: number, updates: Partial<InsertReferralSource>): Promise<ReferralSource | undefined> {
   const [updated] = await db
     .update(referralSources)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(referralSources.id, id))
     .returning();
   return updated;
@@ -947,7 +948,7 @@ export async function updateReferral(id: number, updates: Partial<InsertReferral
 }): Promise<Referral | undefined> {
   const [updated] = await db
     .update(referrals)
-    .set({ ...updates, updatedAt: new Date() })
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
     .where(eq(referrals.id, id))
     .returning();
   return updated;
