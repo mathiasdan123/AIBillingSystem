@@ -116,6 +116,7 @@ export async function softDeletePatient(id: number): Promise<void> {
       phone: null,
       address: null,
       dateOfBirth: null,
+      dateOfBirthEnc: null,
       // Primary insurance
       insuranceProvider: null,
       insuranceId: null,
@@ -130,6 +131,7 @@ export async function softDeletePatient(id: number): Promise<void> {
       secondaryInsuranceRelationship: null,
       secondaryInsuranceSubscriberName: null,
       secondaryInsuranceSubscriberDob: null,
+      secondaryInsuranceSubscriberDobEnc: null,
       // Intake blob: HIPAA, medical history, developmental, sensory data
       intakeData: null,
       updatedAt: new Date(),
