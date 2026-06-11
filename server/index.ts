@@ -67,14 +67,15 @@ import { swaggerSpec } from "./swagger";
 const isProduction = process.env.NODE_ENV === 'production';
 const isRenderDemo = !!process.env.RENDER;
 // Demo mode disables the production secret-validation gate, injects an all-zeros
-// PHI key, and opens CORS. It must therefore be IMPOSSIBLE to activate alongside
-// real data: require it to be explicitly non-production AND have no real
-// PHI_ENCRYPTION_KEY configured. Without these guards, a stray RENDER env var in
-// an environment that also has a real DATABASE_URL would boot real PHI under the
-// demo key with the gate off.
-const isDemoMode = isRenderDemo && !isProduction && !process.env.PHI_ENCRYPTION_KEY;
+// PHI key, and opens CORS. Gate it so it can't coexist with real data: require
+// the absence of a real PHI_ENCRYPTION_KEY. The genuine Render demo runs
+// NODE_ENV=production (it's the prod image) but sets no PHI key, so it still
+// boots; a stray RENDER var in an environment that DOES have a real PHI key
+// (i.e. real prod) will NOT enable demo mode and keeps full safeguards.
+// NOTE: we intentionally do NOT key on NODE_ENV — the demo is a production build.
+const isDemoMode = isRenderDemo && !process.env.PHI_ENCRYPTION_KEY;
 if (isRenderDemo && !isDemoMode) {
-  console.warn('RENDER is set but demo mode was refused (production and/or a real PHI key is configured) — running with full production safeguards.');
+  console.warn('RENDER is set but a real PHI_ENCRYPTION_KEY is configured — demo mode refused, running with full production safeguards.');
 }
 
 // For Render demo, provide defaults for non-critical demo environment
