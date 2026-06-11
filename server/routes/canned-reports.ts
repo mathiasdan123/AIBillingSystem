@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { isAuthenticated } from '../replitAuth';
+import { decryptField } from '../services/phiEncryptionService';
 import {
   appointments,
   claims,
@@ -613,9 +614,10 @@ router.get('/patient-credits', isAuthenticated, async (req: any, res) => {
       for (const c of credits) {
         const p = pMap.get(c.patientId);
         if (p) {
-          c.firstName = p.firstName;
-          c.lastName = p.lastName;
-          c.email = p.email;
+          // PHI-encrypted (raw select) — decrypt for the report.
+          c.firstName = decryptField(p.firstName);
+          c.lastName = decryptField(p.lastName);
+          c.email = decryptField(p.email);
         }
       }
     }

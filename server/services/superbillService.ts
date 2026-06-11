@@ -18,6 +18,7 @@ import {
 } from '@shared/schema';
 import { db } from '../db';
 import logger from './logger';
+import { decryptTreatmentSessionRecord } from './phiEncryptionService';
 
 export interface ProcedureCodeEntry {
   code: string;
@@ -99,7 +100,7 @@ export async function generateFromAppointment(
 
   // Find treatment session linked to this appointment date
   const sessionDate = appointment.startTime.toISOString().split('T')[0];
-  const [session] = await db
+  const [sessionRaw] = await db
     .select()
     .from(treatmentSessions)
     .where(
@@ -110,6 +111,10 @@ export async function generateFromAppointment(
         eq(treatmentSessions.sessionDate, sessionDate),
       ),
     );
+
+  // treatmentSessions.notes is PHI-encrypted at rest — decrypt before copying it
+  // into the superbill (a raw select returns ciphertext).
+  const session = sessionRaw ? (decryptTreatmentSessionRecord(sessionRaw) as any) : undefined;
 
   // Build diagnosis codes from session's ICD-10 code
   const diagnosisCodes: string[] = [];

@@ -20,6 +20,7 @@
 
 import { db } from '../db';
 import { eq, and, gte, lte, inArray } from 'drizzle-orm';
+import { decryptField } from './phiEncryptionService';
 import {
   appointments,
   patients,
@@ -109,8 +110,9 @@ export async function getAppointmentsNeedingAuthCoverage(
       ),
   ]);
 
+  // firstName/lastName are PHI-encrypted (raw select) — decrypt for display.
   const patientMap = new Map<number, { firstName: string; lastName: string }>(
-    patientRows.map((p: any) => [p.id, p]),
+    patientRows.map((p: any) => [p.id, { firstName: decryptField(p.firstName) || '', lastName: decryptField(p.lastName) || '' }]),
   );
   const authsByPatient = new Map<number, TreatmentAuthorization[]>();
   for (const a of allAuths as TreatmentAuthorization[]) {

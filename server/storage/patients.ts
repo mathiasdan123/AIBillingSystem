@@ -36,6 +36,7 @@ import {
   decryptPatientRecord,
   encryptTreatmentSessionRecord,
   decryptTreatmentSessionRecord,
+  decryptField,
 } from "../services/phiEncryptionService";
 import { cache, CacheKeys } from "../services/cacheService";
 
@@ -797,7 +798,8 @@ export async function getPatientArAging(practiceId: number): Promise<{
 
     const nameMap = new Map<number, string>();
     for (const p of patientRecords) {
-      nameMap.set(p.id, `${p.firstName} ${p.lastName}`);
+      // firstName/lastName are PHI-encrypted (raw select) — decrypt for display.
+      nameMap.set(p.id, `${decryptField(p.firstName) || ''} ${decryptField(p.lastName) || ''}`.trim());
     }
 
     for (const [pidStr, data] of Object.entries(patientMap)) {

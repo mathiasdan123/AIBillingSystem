@@ -13,6 +13,7 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { storage } from '../storage';
+import { decryptField } from '../services/phiEncryptionService';
 import { isAuthenticated } from '../replitAuth';
 import {
   claims,
@@ -437,7 +438,7 @@ async function generateClaimsReport(
   // Filter by therapist if specified (via sessions)
   let data = rows.map((r: any) => ({
     ...r,
-    patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+    patientName: `${decryptField(r.patientFirstName) || ''} ${decryptField(r.patientLastName) || ''}`.trim(),
     totalAmount: Number(r.totalAmount) || 0,
     paidAmount: Number(r.paidAmount) || 0,
     submittedAmount: Number(r.submittedAmount) || 0,
@@ -536,7 +537,7 @@ async function generateRevenueReport(
 
   const data = rows.map((r: any) => ({
     ...r,
-    patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+    patientName: `${decryptField(r.patientFirstName) || ''} ${decryptField(r.patientLastName) || ''}`.trim(),
     amount: Number(r.amount) || 0,
   }));
 
@@ -619,10 +620,22 @@ async function generatePatientsReport(
     .where(and(...conditions))
     .orderBy(desc(patients.createdAt));
 
-  const data = rows.map((r: any) => ({
-    ...r,
-    patientName: `${r.firstName || ''} ${r.lastName || ''}`.trim(),
-  }));
+  const data = rows.map((r: any) => {
+    // firstName/lastName/email/phone/insuranceProvider are PHI-encrypted (raw
+    // select) — decrypt before emitting them to the report / CSV. dateOfBirth is
+    // a plaintext date column.
+    const firstName = decryptField(r.firstName);
+    const lastName = decryptField(r.lastName);
+    return {
+      ...r,
+      firstName,
+      lastName,
+      email: decryptField(r.email),
+      phone: decryptField(r.phone),
+      insuranceProvider: decryptField(r.insuranceProvider),
+      patientName: `${firstName || ''} ${lastName || ''}`.trim(),
+    };
+  });
 
   const insuranceBreakdown: Record<string, number> = {};
   for (const d of data) {
@@ -698,7 +711,7 @@ async function generateAppointmentsReport(
 
   const data = rows.map((r: any) => ({
     ...r,
-    patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+    patientName: `${decryptField(r.patientFirstName) || ''} ${decryptField(r.patientLastName) || ''}`.trim(),
     therapistName: `${r.therapistFirstName || ''} ${r.therapistLastName || ''}`.trim(),
   }));
 
@@ -928,7 +941,7 @@ async function generateClinicalReport(
 
   const data = rows.map((r: any) => ({
     sessionId: r.sessionId,
-    patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+    patientName: `${decryptField(r.patientFirstName) || ''} ${decryptField(r.patientLastName) || ''}`.trim(),
     therapistName: `${r.therapistFirstName || ''} ${r.therapistLastName || ''}`.trim(),
     sessionDate: r.sessionDate,
     duration: r.duration || 0,
