@@ -26,7 +26,7 @@ import {
 } from '@shared/schema';
 import { eq, and, desc, count, sql, ilike, or, lte, gte } from 'drizzle-orm';
 import logger from '../services/logger';
-import { encryptRemittanceLineItem, decryptRemittanceLineItem } from '../services/phiEncryptionService';
+import { encryptRemittanceLineItem, decryptRemittanceLineItem, decryptField } from '../services/phiEncryptionService';
 
 const router = Router();
 
@@ -326,6 +326,14 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
       .from(claims)
       .innerJoin(patients, eq(claims.patientId, patients.id))
       .where(eq(claims.practiceId, practiceId));
+
+    // patients.firstName/lastName are PHI-encrypted at rest and this is a raw
+    // join, so decrypt them — otherwise the name-matching below compares the
+    // (decrypted) remittance name against ciphertext and never matches.
+    for (const c of practiceClaims) {
+      c.patientFirstName = decryptField(c.patientFirstName) as any;
+      c.patientLastName = decryptField(c.patientLastName) as any;
+    }
 
     // Get claim line items for service date + CPT matching
     const allClaimLineItems = await db

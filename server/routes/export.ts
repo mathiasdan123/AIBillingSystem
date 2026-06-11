@@ -29,6 +29,7 @@ import {
 } from '../../shared/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import logger from '../services/logger';
+import { decryptPatientRecord } from '../services/phiEncryptionService';
 
 const router = Router();
 
@@ -140,11 +141,14 @@ router.get('/patients', isAuthenticated, async (req: any, res) => {
     if (startDate) conditions.push(gte(patients.createdAt, startDate));
     if (endDate) conditions.push(lte(patients.createdAt, endDate));
 
-    const results = await db
+    const rawResults = await db
       .select()
       .from(patients)
       .where(and(...conditions))
       .orderBy(desc(patients.createdAt));
+
+    // Decrypt PHI before writing the CSV — a raw select returns encrypted blobs.
+    const results = rawResults.map((r: any) => decryptPatientRecord(r));
 
     const headers = [
       'id', 'firstName', 'lastName', 'dateOfBirth', 'email', 'phone', 'address',

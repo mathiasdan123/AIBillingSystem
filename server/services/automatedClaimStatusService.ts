@@ -214,9 +214,12 @@ async function processClaimStatusCheck(
       taxId: decryptField(claim.practiceTaxId) ?? undefined,
     },
     subscriber: {
-      memberId: claim.patientInsuranceId,
-      firstName: claim.patientFirstName,
-      lastName: claim.patientLastName,
+      // Patient name + member ID are PHI-encrypted at rest and this is a raw
+      // join, so decrypt before sending on the 276 status request (otherwise the
+      // payer receives ciphertext and the status check never matches).
+      memberId: decryptField(claim.patientInsuranceId) as string,
+      firstName: decryptField(claim.patientFirstName) as string,
+      lastName: decryptField(claim.patientLastName) as string,
       dateOfBirth: claim.patientDateOfBirth.toISOString().split('T')[0],
     },
     dateOfService: claim.submittedAt?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],

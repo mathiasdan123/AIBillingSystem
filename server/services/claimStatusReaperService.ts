@@ -280,9 +280,11 @@ async function processClaim(
     // storage decryption), so decrypt before sending on the 276 status request.
     provider: { npi: claim.practiceNpi, taxId: decryptField(claim.practiceTaxId) ?? undefined },
     subscriber: {
-      memberId: claim.patientInsuranceId,
-      firstName: claim.patientFirstName,
-      lastName: claim.patientLastName,
+      // Patient name + member ID are PHI-encrypted at rest (raw join) — decrypt
+      // before sending the 276, else the payer gets ciphertext and never matches.
+      memberId: decryptField(claim.patientInsuranceId) as string,
+      firstName: decryptField(claim.patientFirstName) as string,
+      lastName: decryptField(claim.patientLastName) as string,
       dateOfBirth: dob,
     },
     dateOfService:

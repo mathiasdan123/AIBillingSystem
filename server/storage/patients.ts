@@ -254,19 +254,23 @@ export async function getExpiredSoftDeletedPatients(retentionDays: number): Prom
 }
 
 export async function updatePatientIntakeData(patientId: number, intakeData: any): Promise<Patient> {
+  // intakeData is PHI (developmental/medical history) — encrypt before storing.
+  // These two functions wrote it raw; encryptPatientRecord matches create/updatePatient.
+  const { intakeData: encryptedIntake } = encryptPatientRecord({ intakeData });
   const [updated] = await db
     .update(patients)
-    .set({ intakeData, updatedAt: new Date() })
+    .set({ intakeData: encryptedIntake, updatedAt: new Date() })
     .where(eq(patients.id, patientId))
     .returning();
   return decryptPatientRecord(updated) as Patient;
 }
 
 export async function completePatientIntake(patientId: number, intakeData: any): Promise<Patient> {
+  const { intakeData: encryptedIntake } = encryptPatientRecord({ intakeData });
   const [updated] = await db
     .update(patients)
     .set({
-      intakeData,
+      intakeData: encryptedIntake,
       intakeCompletedAt: new Date(),
       updatedAt: new Date(),
     })
