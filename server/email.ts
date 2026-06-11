@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import type { Claim, Patient, ReimbursementOptimization } from '@shared/schema';
+import logger from './services/logger';
 
 // Email configuration from environment variables
 const emailConfig = {
@@ -383,7 +384,7 @@ ${practiceName}`,
       `,
     });
 
-    console.log('Authorization confirmation email sent to:', patient.email);
+    logger.info('Authorization confirmation email sent', { patientId: patient.id });
     return { success: true };
   } catch (error) {
     console.error('Failed to send authorization confirmation email:', error);
@@ -444,7 +445,7 @@ ${practiceName}`,
       `,
     });
 
-    console.log('Authorization request email sent to:', patient.email);
+    logger.info('Authorization request email sent', { patientId: patient.id });
     return { success: true };
   } catch (error) {
     console.error('Failed to send authorization request email:', error);
@@ -502,7 +503,7 @@ ${practiceName}`,
       `,
     });
 
-    console.log('Authorization reminder email sent to:', patient.email);
+    logger.info('Authorization reminder email sent', { patientId: patient.id });
     return { success: true };
   } catch (error) {
     console.error('Failed to send authorization reminder email:', error);
@@ -957,7 +958,7 @@ export async function sendAuthorizationSMS(
 ): Promise<{ success: boolean; error?: string }> {
   // SMS integration would go here (e.g., Twilio)
   // For now, just log and return success
-  console.log(`SMS would be sent to ${patient.phone}: ${message}`);
+  logger.info('SMS dispatch (stub — no SMS provider wired)', { patientId: patient.id });
   return { success: true };
 }
 

@@ -516,7 +516,7 @@ router.post('/public/feedback/:token', async (req: any, res) => {
             });
           }
 
-          logger.info(`[AUTO] Negative feedback #${feedback.id}: AI follow-up email sent to ${patient.email}`);
+          logger.info('[AUTO] Negative feedback: AI follow-up email sent', { feedbackId: feedback.id, patientId: patient.id });
         }
       } catch (err) {
         logger.error('[AUTO] Failed to send negative feedback response', { error: err instanceof Error ? err.message : String(err) });
@@ -558,7 +558,7 @@ router.post('/public/feedback/:token', async (req: any, res) => {
               });
 
               googleRequestSent = true;
-              logger.info(`[AUTO] Positive feedback #${feedback.id}: Google post request email sent to ${patient.email}`);
+              logger.info('[AUTO] Positive feedback: Google post request email sent', { feedbackId: feedback.id, patientId: patient.id });
             }
           } catch (err) {
             logger.error('[AUTO] Email send failed', { error: err instanceof Error ? err.message : String(err) });
@@ -579,7 +579,7 @@ router.post('/public/feedback/:token', async (req: any, res) => {
               const smsResult = await sendSMS(patient.phone, message.body);
               if (smsResult.success) {
                 googleRequestSent = true;
-                logger.info(`[AUTO] Positive feedback #${feedback.id}: Google post request SMS sent to ${patient.phone}`);
+                logger.info('[AUTO] Positive feedback: Google post request SMS sent', { feedbackId: feedback.id, patientId: patient.id });
               }
             }
           } catch (err) {

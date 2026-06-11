@@ -504,7 +504,7 @@ router.post('/session-recorder/process', isAuthenticated, async (req: any, res) 
       return res.status(400).json({ error: 'Patient name and session duration are required' });
     }
 
-    logger.info(`Processing session recording for ${patientName}, ${sessionDuration} minutes`);
+    logger.info('Processing session recording', { patientId: patientId || null, sessionDuration });
 
     const result = await processSessionRecording({
       audioBase64,
@@ -540,7 +540,7 @@ router.post('/session-recorder/process-text', isAuthenticated, async (req: any, 
       return res.status(400).json({ error: 'Patient name and session duration are required' });
     }
 
-    logger.info(`Processing transcription text for ${patientName}, ${sessionDuration} minutes`);
+    logger.info('Processing transcription text', { patientId: patientId || null, sessionDuration });
 
     const result = await processTranscriptionText(transcription, {
       patientId: patientId || 0,
