@@ -13,6 +13,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import * as oidc from 'openid-client';
 import { storage } from '../storage';
+import { assertSafeOutboundUrl } from '../utils/ssrf';
 import { isAuthenticated } from '../replitAuth';
 import { encryptField, decryptField } from '../services/phiEncryptionService';
 import logger from '../services/logger';
@@ -148,6 +149,19 @@ router.post('/config', isAuthenticated, isAdmin, async (req: any, res: Response)
 
     if (protocol === 'oidc' && (!clientId || !issuerUrl)) {
       return res.status(400).json({ message: 'Client ID and Issuer URL are required for OIDC' });
+    }
+
+    // SSRF guard: the server performs OIDC discovery / userinfo fetches against
+    // these admin-supplied URLs. Reject internal/metadata/private targets so an
+    // admin can't point discovery at the VPC or the instance metadata endpoint.
+    for (const [label, value] of [['issuerUrl', issuerUrl], ['metadataUrl', metadataUrl]] as const) {
+      if (value) {
+        try {
+          await assertSafeOutboundUrl(value);
+        } catch (e) {
+          return res.status(400).json({ message: `${label}: ${e instanceof Error ? e.message : 'invalid URL'}` });
+        }
+      }
     }
 
     // Build config data
@@ -390,6 +404,7 @@ router.get('/callback/oidc', async (req: Request, res: Response) => {
             lastName: (userinfo.family_name as string) || lastName,
             provider: ssoConfig.provider,
             practiceId,
+            expectedEmailDomain: (ssoConfig as any).emailDomain ?? null,
           });
         }
       } catch (userinfoErr) {
@@ -407,6 +422,7 @@ router.get('/callback/oidc', async (req: Request, res: Response) => {
       lastName,
       provider: ssoConfig.provider,
       practiceId,
+      expectedEmailDomain: (ssoConfig as any).emailDomain ?? null,
     });
   } catch (error) {
     logger.error('SSO callback error', { error: error instanceof Error ? error.message : String(error) });
@@ -427,9 +443,26 @@ async function completeOidcLogin(
     lastName: string;
     provider: string;
     practiceId: number;
+    expectedEmailDomain?: string | null;
   },
 ): Promise<void> {
-  const { externalId, email, firstName, lastName, provider, practiceId } = params;
+  const { externalId, email, firstName, lastName, provider, practiceId, expectedEmailDomain } = params;
+
+  // Account-takeover guard: if the practice configured an SSO email domain,
+  // refuse any token whose email isn't in that domain BEFORE we link or
+  // provision. A malicious/misconfigured IdP can mint arbitrary `email` claims;
+  // without this, a crafted claim would silently link the SSO identity to (and
+  // take over) an existing local account, or provision users at will.
+  if (expectedEmailDomain) {
+    const tokenDomain = email.split('@')[1]?.toLowerCase() ?? '';
+    if (tokenDomain !== expectedEmailDomain.toLowerCase()) {
+      logger.warn('SSO: email domain mismatch — refusing login', {
+        provider, practiceId, expectedEmailDomain, tokenDomain,
+      });
+      res.redirect('/?sso_error=domain_mismatch');
+      return;
+    }
+  }
 
   // Find or create user
   let user = await storage.getUserBySsoExternalId(provider, externalId);
@@ -439,6 +472,25 @@ async function completeOidcLogin(
     user = await storage.getUserByEmail(email);
 
     if (user) {
+      // Only link an SSO identity to a pre-existing local account when the
+      // practice has a verified email domain (checked above). Without a
+      // configured domain we cannot trust the email claim enough to take over
+      // an existing account, so refuse and direct the admin to configure one.
+      if (!expectedEmailDomain) {
+        logger.warn('SSO: refusing to link to existing account without a configured email domain', {
+          provider, practiceId, userId: user.id,
+        });
+        res.redirect('/?sso_error=linking_requires_domain');
+        return;
+      }
+      // Also require the existing account to belong to this practice.
+      if (user.practiceId && user.practiceId !== practiceId) {
+        logger.warn('SSO: existing account belongs to a different practice — refusing link', {
+          provider, practiceId, userPracticeId: user.practiceId, userId: user.id,
+        });
+        res.redirect('/?sso_error=practice_mismatch');
+        return;
+      }
       // Link the existing user to this SSO provider
       await storage.updateUser(user.id, {
         ssoProvider: provider,
