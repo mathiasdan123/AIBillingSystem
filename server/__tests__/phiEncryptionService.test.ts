@@ -270,4 +270,37 @@ describe('PHI Encryption Service', () => {
     expect(key).toHaveLength(64);
     expect(/^[0-9a-f]{64}$/.test(key)).toBe(true);
   });
+
+  // ---- remittance line item (835/ERA PHI) ----
+
+  it('should encrypt patientName + memberId on a remittance line item and round-trip', async () => {
+    const { encryptRemittanceLineItem, decryptRemittanceLineItem } = await loadModule();
+    const item = { id: 1, patientName: 'Jane Doe', memberId: 'M12345', cptCode: '90837', paidAmount: '120.00' };
+    const enc = encryptRemittanceLineItem(item);
+    expect(enc.patientName).not.toBe('Jane Doe');
+    expect(JSON.parse(enc.patientName)).toHaveProperty('ciphertext');
+    expect(enc.memberId).not.toBe('M12345');
+    expect(enc.cptCode).toBe('90837');
+    expect(enc.paidAmount).toBe('120.00');
+
+    const dec = decryptRemittanceLineItem(enc)!;
+    expect(dec.patientName).toBe('Jane Doe');
+    expect(dec.memberId).toBe('M12345');
+  });
+
+  it('should tolerate legacy plaintext remittance rows on decrypt', async () => {
+    const { decryptRemittanceLineItem } = await loadModule();
+    const legacy = { id: 2, patientName: 'John Smith', memberId: 'OLD-PLAINTEXT' };
+    const dec = decryptRemittanceLineItem(legacy)!;
+    expect(dec.patientName).toBe('John Smith');
+    expect(dec.memberId).toBe('OLD-PLAINTEXT');
+  });
+
+  it('should leave a null memberId null', async () => {
+    const { encryptRemittanceLineItem, decryptRemittanceLineItem } = await loadModule();
+    const item = { id: 3, patientName: 'A B', memberId: null };
+    const enc = encryptRemittanceLineItem(item);
+    expect(enc.memberId).toBeNull();
+    expect(decryptRemittanceLineItem(enc)!.memberId).toBeNull();
+  });
 });

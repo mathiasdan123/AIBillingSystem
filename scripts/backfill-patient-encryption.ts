@@ -28,7 +28,7 @@
  */
 import { gt, eq } from 'drizzle-orm';
 import { getDb } from '../server/db.js';
-import { patients, practices } from '../shared/schema.js';
+import { patients, practices, remittanceLineItems } from '../shared/schema.js';
 import { encryptField, decryptField } from '../server/services/phiEncryptionService.js';
 
 // Mirrors PATIENT_PHI_STRING_FIELDS + PATIENT_INSURANCE_EXTRA_FIELDS in
@@ -43,9 +43,12 @@ const PATIENT_STRING_FIELDS = [
   'secondaryInsuranceSubscriberName',
 ] as const;
 
+const REMITTANCE_FIELDS = ['patientName', 'memberId'] as const;
+
 const BATCH = 200;
 const DRY_RUN = process.argv.includes('--dry-run');
 const TAXID_MODE = process.argv.includes('--taxid');
+const REMITTANCE_MODE = process.argv.includes('--remittance');
 
 /** True if a stored value is already an EncryptedField JSON blob (ciphertext+iv+tag). */
 function looksEncrypted(value: unknown): boolean {
@@ -102,6 +105,50 @@ async function backfillPatients() {
   console.log('Per-field plaintext→encrypted counts:', fieldCounts);
 }
 
+async function backfillRemittanceLineItems() {
+  const db = await getDb();
+  let lastId = 0;
+  let scanned = 0;
+  let changed = 0;
+  const fieldCounts: Record<string, number> = {};
+
+  for (;;) {
+    const rows: any[] = await db
+      .select()
+      .from(remittanceLineItems)
+      .where(gt(remittanceLineItems.id, lastId))
+      .orderBy(remittanceLineItems.id)
+      .limit(BATCH);
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      scanned++;
+      lastId = row.id;
+      const patch: Record<string, any> = {};
+      for (const field of REMITTANCE_FIELDS) {
+        const val = row[field];
+        if (val === null || val === undefined || val === '') continue;
+        if (looksEncrypted(val)) continue;
+        const enc = encryptField(String(val));
+        if (enc) {
+          patch[field] = JSON.stringify(enc);
+          fieldCounts[field] = (fieldCounts[field] ?? 0) + 1;
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        changed++;
+        if (!DRY_RUN) {
+          await db.update(remittanceLineItems).set(patch).where(eq(remittanceLineItems.id, row.id));
+        }
+      }
+    }
+    console.log(`  …scanned ${scanned} (through id ${lastId}), ${changed} need${DRY_RUN ? '' : 'ed'} update`);
+  }
+
+  console.log(`\nRemittance line items: scanned ${scanned}, ${DRY_RUN ? 'would update' : 'updated'} ${changed}.`);
+  console.log('Per-field plaintext→encrypted counts:', fieldCounts);
+}
+
 async function normalizeTaxIds() {
   const db = await getDb();
   const rows: any[] = await db.select().from(practices);
@@ -139,9 +186,12 @@ async function main() {
     console.error('FATAL: PHI_ENCRYPTION_KEY is not set. Refusing to run.');
     process.exit(1);
   }
-  console.log(`Mode: ${TAXID_MODE ? 'taxId normalization' : 'patient backfill'}${DRY_RUN ? ' (DRY RUN — no writes)' : ''}\n`);
+  const mode = TAXID_MODE ? 'taxId normalization' : REMITTANCE_MODE ? 'remittance line-item backfill' : 'patient backfill';
+  console.log(`Mode: ${mode}${DRY_RUN ? ' (DRY RUN — no writes)' : ''}\n`);
   if (TAXID_MODE) {
     await normalizeTaxIds();
+  } else if (REMITTANCE_MODE) {
+    await backfillRemittanceLineItems();
   } else {
     await backfillPatients();
   }

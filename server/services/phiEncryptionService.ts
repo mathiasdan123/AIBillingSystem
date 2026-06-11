@@ -286,6 +286,34 @@ export function decryptSoapNoteRecord(note: Record<string, any> | null | undefin
   return decrypted;
 }
 
+// Remittance (835/ERA) line items carry the patient's name and insurance member
+// ID parsed from the payer file — both PHI. varchar columns, so store the
+// EncryptedField JSON-stringified like the patient fields (decryptField tolerates
+// legacy plaintext, so existing rows keep working until re-saved/backfilled).
+const REMITTANCE_LINE_ITEM_PHI_FIELDS = ['patientName', 'memberId'] as const;
+
+export function encryptRemittanceLineItem(item: Record<string, any>): Record<string, any> {
+  const encrypted = { ...item };
+  for (const field of REMITTANCE_LINE_ITEM_PHI_FIELDS) {
+    if (encrypted[field] !== undefined && encrypted[field] !== null && encrypted[field] !== '') {
+      const result = encryptField(String(encrypted[field]));
+      encrypted[field] = result ? JSON.stringify(result) : null;
+    }
+  }
+  return encrypted;
+}
+
+export function decryptRemittanceLineItem(item: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!item) return null;
+  const decrypted = { ...item };
+  for (const field of REMITTANCE_LINE_ITEM_PHI_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  return decrypted;
+}
+
 export function encryptTreatmentSessionRecord(session: Record<string, any>): Record<string, any> {
   const encrypted = { ...session };
   for (const field of TREATMENT_SESSION_PHI_STRING_FIELDS) {
