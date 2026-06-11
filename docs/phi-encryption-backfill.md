@@ -38,9 +38,25 @@ one-time backfill to normalize existing data, plus the related `taxId` normaliza
 3. **Run on a copy first.** Restore the snapshot to a scratch instance and dry-run there.
 4. **Off-peak window.** Low write volume reduces the chance of racing a concurrent edit.
 
-## Backfill script (to add under `scripts/`, run as a one-off ECS task)
+## Backfill script
 
-Pseudocode — implement as `scripts/backfill-patient-encryption.ts`, run with `tsx`:
+Implemented at **`scripts/backfill-patient-encryption.ts`** — run as a one-off ECS task
+(or locally against a snapshot restore) with `tsx`. It detects already-encrypted fields
+and skips them, so it's a true no-op on re-run.
+
+```bash
+# Dry run — counts what WOULD change, writes nothing:
+tsx scripts/backfill-patient-encryption.ts --dry-run
+
+# Apply the patient backfill:
+tsx scripts/backfill-patient-encryption.ts
+
+# Normalize double-encrypted practice taxIds (separate mode):
+tsx scripts/backfill-patient-encryption.ts --taxid
+```
+
+It refuses to run without `PHI_ENCRYPTION_KEY`, batches by id (200/page), and only
+writes the fields that were plaintext. Reference implementation outline:
 
 ```ts
 import { db } from '../server/db';
