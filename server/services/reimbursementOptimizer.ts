@@ -382,8 +382,11 @@ export async function analyzeFeeSchedule(
       const lowest = categoryRates[categoryRates.length - 1];
       const difference = highest.rate - lowest.rate;
       if (difference > 10) {
+        // Informational only — surface the rate spread between clinically-
+        // equivalent codes, but do NOT direct a preference toward the higher
+        // payer. Code selection must reflect the documented service.
         recommendations.push(
-          `For ${category.replace(/_/g, " ")}, prefer ${highest.cptCode} ($${highest.rate.toFixed(2)}) over ${lowest.cptCode} ($${lowest.rate.toFixed(2)}) - $${difference.toFixed(2)} difference per unit`
+          `For ${category.replace(/_/g, " ")}, ${highest.cptCode} ($${highest.rate.toFixed(2)}) and ${lowest.cptCode} ($${lowest.rate.toFixed(2)}) are clinically-equivalent options with a $${difference.toFixed(2)}/unit rate spread. Choose the code that accurately describes the documented service.`
         );
       }
     }
