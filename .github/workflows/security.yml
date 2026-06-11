@@ -25,8 +25,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run npm audit
-        run: npm audit --audit-level=high
+      # Block the build on CRITICAL vulns in runtime deps; report (don't block)
+      # on high. --omit=dev focuses on what actually ships to production.
+      - name: Run npm audit (critical = blocking)
+        run: npm audit --omit=dev --audit-level=critical
+
+      - name: Run npm audit (high = report only)
+        run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
 
   codeql:
