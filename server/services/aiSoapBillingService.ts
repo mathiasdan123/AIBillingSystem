@@ -427,12 +427,12 @@ CLINICAL TERMINOLOGY (use when supported by observations):
 - "anti-gravity positions"
 - "skilled occupational therapy services remain medically necessary"
 
-BILLING CODE ASSIGNMENT:
-- CPT code rates (highest to lowest):
-  * 97533 Sensory Integration: $62.25/unit - Use for sensory-based interventions
-  * 97530 Therapeutic Activities: $58.50/unit - Use for functional, dynamic activities
-  * 97112 Neuromuscular Re-ed: $55.00/unit - Use for balance, coordination, motor control
-  * 97110 Therapeutic Exercise: $48.00/unit - Use for pure strengthening/ROM
+BILLING CODE ASSIGNMENT (choose codes by the interventions actually performed —
+do NOT choose by reimbursement; the treating provider makes the final decision):
+  * 97533 Sensory Integration - sensory-based interventions
+  * 97530 Therapeutic Activities - functional, dynamic activities
+  * 97112 Neuromuscular Re-ed - balance, coordination, motor control
+  * 97110 Therapeutic Exercise - pure strengthening/ROM
 
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
@@ -612,15 +612,12 @@ function validateAndEnhanceResponse(
   // Ensure all units are distributed
   const totalUnits = cptCodes.reduce((sum, c) => sum + c.units, 0);
   if (totalUnits < billingUnits && cptCodes.length > 0) {
-    // Add remaining units to highest-paying code
-    const sortedCodes = [...cptCodes].sort((a, b) => {
-      const rateA = CPT_CODE_INFO[a.code as keyof typeof CPT_CODE_INFO]?.rate || 0;
-      const rateB = CPT_CODE_INFO[b.code as keyof typeof CPT_CODE_INFO]?.rate || 0;
-      return rateB - rateA;
-    });
-    const rate = request.ratePerUnit || CPT_CODE_INFO[sortedCodes[0].code as keyof typeof CPT_CODE_INFO]?.rate || DEFAULT_UNIT_RATE;
-    sortedCodes[0].units += (billingUnits - totalUnits);
-    sortedCodes[0].reimbursement = rate * sortedCodes[0].units;
+    // Accuracy framing: assign any remaining units to the PRIMARY (first
+    // documented) code, not the highest-paying one.
+    const primary = cptCodes[0];
+    const rate = request.ratePerUnit || CPT_CODE_INFO[primary.code as keyof typeof CPT_CODE_INFO]?.rate || DEFAULT_UNIT_RATE;
+    primary.units += (billingUnits - totalUnits);
+    primary.reimbursement = rate * primary.units;
   }
 
   const totalReimbursement = cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
@@ -690,7 +687,9 @@ function fallbackGeneration(
   const cptCodes: GeneratedCptCode[] = [];
   let remainingUnits = billingUnits;
 
-  // Assign to highest-paying codes first (all use $289/unit by default)
+  // Assign codes by the activities actually documented (sensory/functional/
+  // balance/exercise), distributing units proportionally by category — not by
+  // reimbursement rate. (Codes default to the same $/unit anyway.)
   if (sensoryActivities.length > 0 && remainingUnits > 0) {
     const units = Math.min(Math.ceil(billingUnits * 0.4), remainingUnits);
     cptCodes.push({
