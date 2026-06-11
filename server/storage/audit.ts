@@ -40,24 +40,63 @@ import { getPatient, getPatientStatements } from "./patients";
 
 // ==================== AUDIT LOG ====================
 
+// Fixed advisory-lock key so concurrent audit writers serialize on the chain
+// head (prevents two writers reading the same previousHash and forking the chain).
+const AUDIT_CHAIN_LOCK_KEY = 4815162342;
+
+// Deterministic JSON with recursively sorted keys, so a jsonb round-trip that
+// reorders `details` keys can't produce a false "tampered" verdict.
+function stableStringify(value: any): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(",")}}`;
+}
+
+// Canonical projection of the hashed columns, in a fixed order, computed
+// identically at write and verify time. Defaults are applied here so the hashed
+// value matches what is actually stored.
+function canonicalAuditPayload(e: Partial<InsertAuditLog>): string {
+  return stableStringify({
+    eventCategory: e.eventCategory ?? null,
+    eventType: e.eventType ?? null,
+    resourceType: e.resourceType ?? null,
+    resourceId: e.resourceId ?? null,
+    userId: e.userId ?? null,
+    practiceId: e.practiceId ?? null,
+    ipAddress: e.ipAddress ?? null,
+    userAgent: e.userAgent ?? null,
+    details: e.details ?? null,
+    success: e.success ?? true,
+  });
+}
+
 export async function createAuditLog(entry: InsertAuditLog): Promise<AuditLog> {
-  const [lastEntry] = await db
-    .select({ integrityHash: auditLog.integrityHash })
-    .from(auditLog)
-    .orderBy(desc(auditLog.id))
-    .limit(1);
+  // Normalize defaults once so the stored row and the hashed payload agree.
+  const normalized: InsertAuditLog = { ...entry, success: entry.success ?? true };
 
-  const previousHash = lastEntry?.integrityHash || "GENESIS";
-  const entryData = JSON.stringify(entry);
-  const hash = createHash("sha256")
-    .update(previousHash + entryData)
-    .digest("hex");
+  // Serialize chain appends so previousHash can't be read concurrently by two
+  // writers (which would fork the chain and make verification fail benignly).
+  return db.transaction(async (tx: any) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${AUDIT_CHAIN_LOCK_KEY})`);
 
-  const [created] = await db
-    .insert(auditLog)
-    .values({ ...entry, integrityHash: hash })
-    .returning();
-  return created;
+    const [lastEntry] = await tx
+      .select({ integrityHash: auditLog.integrityHash })
+      .from(auditLog)
+      .orderBy(desc(auditLog.id))
+      .limit(1);
+
+    const previousHash = lastEntry?.integrityHash || "GENESIS";
+    const hash = createHash("sha256")
+      .update(previousHash + canonicalAuditPayload(normalized))
+      .digest("hex");
+
+    const [created] = await tx
+      .insert(auditLog)
+      .values({ ...normalized, integrityHash: hash })
+      .returning();
+    return created;
+  });
 }
 
 /**
@@ -88,21 +127,28 @@ export async function verifyAuditLogIntegrity(limit?: number): Promise<{ valid: 
     .limit(limit || 1000);
 
   let previousHash = "GENESIS";
+  let inHashedRegion = false;
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (!entry.integrityHash) {
+      // A hash-less row inside the hashed region is a gap — either a row written
+      // around the chain (e.g. a raw insert bypassing createAuditLog) or a
+      // deletion/insertion. Once the chain has started, that is a failure, not a
+      // skip. Leading legacy rows (pre-chain) are tolerated until the first hash.
+      if (inHashedRegion) {
+        return { valid: false, checkedCount: i + 1, brokenAtId: entry.id };
+      }
       continue;
     }
-    const { integrityHash, id, createdAt, ...entryFields } = entry;
-    const entryData = JSON.stringify(entryFields);
+    inHashedRegion = true;
     const expectedHash = createHash("sha256")
-      .update(previousHash + entryData)
+      .update(previousHash + canonicalAuditPayload(entry as Partial<InsertAuditLog>))
       .digest("hex");
 
-    if (integrityHash !== expectedHash) {
+    if (entry.integrityHash !== expectedHash) {
       return { valid: false, checkedCount: i + 1, brokenAtId: entry.id };
     }
-    previousHash = integrityHash;
+    previousHash = entry.integrityHash;
   }
   return { valid: true, checkedCount: entries.length };
 }
