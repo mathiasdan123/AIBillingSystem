@@ -16,6 +16,7 @@ import { reviewDeniedClaims, suggestClaimCorrection } from '../services/denialRe
 import { reviewUnderpayments, draftUnderpaymentDispute } from '../services/underpaymentReviewService';
 import * as stripeService from '../services/stripeService';
 import { db } from '../db';
+import { decryptField } from '../services/phiEncryptionService';
 import { getRedisClient, isRedisReady } from '../services/redisClient';
 import {
   claims,
@@ -4339,7 +4340,7 @@ export async function executeTool(
           return {
             documentId: doc.id,
             patientId: doc.patientId,
-            patientName: `${doc.patientFirstName} ${doc.patientLastName}`,
+            patientName: `${decryptField(doc.patientFirstName) ?? ''} ${decryptField(doc.patientLastName) ?? ''}`.trim(),
             fileName: doc.fileName,
             status: doc.status,
             uploadedAt: doc.createdAt,

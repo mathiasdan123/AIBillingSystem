@@ -8,6 +8,7 @@
  */
 
 import { db } from '../db';
+import { decryptField } from './phiEncryptionService';
 import { claimFollowUps, claims, patients, appeals } from '../../shared/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { storage } from '../storage';
@@ -151,7 +152,7 @@ async function buildActionQueue(practiceId: number): Promise<RevenueAtRiskAction
     claimNumber: r.claimNumber,
     patientName:
       r.patientFirstName || r.patientLastName
-        ? `${r.patientFirstName ?? ''} ${r.patientLastName ?? ''}`.trim()
+        ? `${decryptField(r.patientFirstName) ?? ''} ${decryptField(r.patientLastName) ?? ''}`.trim()
         : null,
     amount: Number(r.totalAmount || 0),
     priority: r.priority,
