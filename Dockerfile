@@ -15,12 +15,13 @@ ENV VITE_RELEASE_SHA=${RELEASE_SHA}
 # Set working directory
 WORKDIR /app
 
-# Copy package.json only (not package-lock.json to force fresh install)
-COPY package.json ./
+# Copy package.json AND the committed lockfile for a reproducible install.
+COPY package*.json ./
 
-# Install ALL dependencies fresh to get platform-specific binaries
-# This generates a new package-lock.json for Linux
-RUN npm install --include=dev
+# Install ALL dependencies from the lockfile (npm ci verifies integrity hashes
+# and installs exactly the pinned versions — no fresh resolution against the
+# registry, so a poisoned transitive release can't slip into the image).
+RUN npm ci --include=dev
 
 # Copy source files
 COPY . .
@@ -56,8 +57,8 @@ RUN groupadd -g 1001 nodejs && \
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only
-RUN npm install --omit=dev && \
+# Install production dependencies only, from the lockfile.
+RUN npm ci --omit=dev && \
     npm cache clean --force
 
 # Copy built files from builder stage
@@ -88,8 +89,8 @@ FROM public.ecr.aws/docker/library/node:20-slim AS migrate
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --include=dev && npm cache clean --force
+COPY package*.json ./
+RUN npm ci --include=dev && npm cache clean --force
 
 COPY drizzle.config.ts ./
 COPY shared ./shared
