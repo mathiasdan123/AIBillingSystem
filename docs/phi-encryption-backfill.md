@@ -132,11 +132,20 @@ DOB, so the at-rest protection is only fully realized once they're dropped. Sequ
 
 1. **Deploy + backfill** (this release): `*_enc` populated for all rows (default patient backfill
    covers them). `decryptPatientRecord` already prefers `*_enc`, falling back to the plaintext col.
-2. **Audit readers** before contracting: every consumer of `dateOfBirth` /
-   `secondaryInsuranceSubscriberDob` must go through `decryptPatientRecord` (or select the `*_enc`
-   column), NOT a raw `select({ dateOfBirth })`. Grep for raw selects of those columns and route
-   them through the decrypt path first. (Confirmed at item-3 time: the only writers are
-   create/updatePatient via `encryptPatientRecord`, so `*_enc` never goes stale.)
+2. **Audit readers AND writers** before contracting. Known raw `dateOfBirth` selectors that
+   bypass `decryptPatientRecord` and will read NULL once the plaintext column is dropped — route
+   each through the decrypt path (or select `*_enc`) first:
+   - `server/services/automatedClaimStatusService.ts` (~152, ~377) and
+     `server/services/claimStatusReaperService.ts` (~168) — DOB into 837/276 transactions.
+   - `server/routes/reports.ts` (~614) — patient report.
+
+   Known writers that must dual-write `*_enc` (or route through `encryptPatientRecord`) before the
+   contract, else their rows lose DOB at drop:
+   - `server/routes/data-import.ts` — **fixed** (now uses `storage.createPatient`).
+   - `server/seeds.ts` (~980) — dev/demo seed (writes `is_demo` patients); update before any
+     contract that could run against an env with seeded data.
+
+   Re-run the backfill after the last bulk import so every row has `*_enc` populated.
 3. **Contract migration** (next release): stop writing the plaintext columns, then
    `ALTER TABLE patients DROP COLUMN date_of_birth, DROP COLUMN secondary_insurance_subscriber_dob`.
    This is a `DROP COLUMN` — `scripts/lint-migrations.sh` will flag it; ship it only after step 2,
