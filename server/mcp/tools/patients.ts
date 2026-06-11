@@ -89,7 +89,7 @@ export function registerPatientTools(
     'update_patient_insurance',
     'patient',
     true,
-    async (input: {
+    withMcpMutationGate(async (input: {
       patientId: number;
       insuranceProvider?: string;
       insuranceId?: string;
@@ -124,7 +124,7 @@ export function registerPatientTools(
         patient: { id: updated.id, firstName: updated.firstName, lastName: updated.lastName },
         updatedFields: Object.keys(patch),
       };
-    },
+    }),
   );
 
   server.tool(
