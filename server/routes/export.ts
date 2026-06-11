@@ -29,7 +29,7 @@ import {
 } from '../../shared/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import logger from '../services/logger';
-import { decryptPatientRecord } from '../services/phiEncryptionService';
+import { decryptPatientRecord, decryptSoapNoteRecord, decryptTreatmentSessionRecord } from '../services/phiEncryptionService';
 
 const router = Router();
 
@@ -462,12 +462,16 @@ router.post('/full-backup', isAuthenticated, isAdmin, async (req: any, res) => {
         payments: paymentData.length,
       },
       data: {
-        patients: patientData,
+        // This backup is for compliance / migration — decrypt PHI so the export
+        // is human- and system-readable (a migration target can't decrypt this
+        // practice's ciphertext). decryptPatientRecord also strips the *_enc
+        // helper columns and resolves DOB.
+        patients: patientData.map((p: any) => decryptPatientRecord(p)),
         claims: claimData,
         claimLineItems: claimLineItemData,
         appointments: appointmentData,
-        treatmentSessions: sessionData,
-        soapNotes: soapNoteData,
+        treatmentSessions: sessionData.map((s: any) => decryptTreatmentSessionRecord(s)),
+        soapNotes: soapNoteData.map((n: any) => decryptSoapNoteRecord(n)),
         statements: statementData,
         payments: paymentData,
       },
