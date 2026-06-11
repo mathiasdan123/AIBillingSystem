@@ -88,8 +88,12 @@ export async function getPatientByEmail(email: string): Promise<Patient | undefi
 export async function updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient> {
   // Strip immutable identity/ownership columns (id, practiceId, patientId, audit
   // timestamps) so a mass-assigned body can't re-parent the patient to another
-  // practice. Encrypt the remaining caller-supplied PHI fields.
-  const encrypted = encryptPatientRecord(stripImmutable(patient) as any);
+  // practice. Also strip the encrypted-DOB helper columns — they are derived
+  // from dateOfBirth by encryptPatientRecord; accepting them from the caller would
+  // let a mass-assigned blob plant a false DOB (decrypt prefers the *_enc copy).
+  const encrypted = encryptPatientRecord(
+    stripImmutable(patient, ['dateOfBirthEnc', 'secondaryInsuranceSubscriberDobEnc']) as any,
+  );
   const [updatedPatient] = await db
     .update(patients)
     .set({ ...encrypted, updatedAt: new Date() })
