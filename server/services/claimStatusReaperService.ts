@@ -40,7 +40,7 @@ import { claims, claimStatusChecks, patients, insurances, practices } from '@sha
 import { eq, and, isNull, lt, or, sql } from 'drizzle-orm';
 import { storage } from '../storage';
 import logger from './logger';
-import { decryptField } from './phiEncryptionService';
+import { decryptField, resolveEncryptedDob } from './phiEncryptionService';
 import {
   checkClaimStatus,
   type ClaimStatusRequest,
@@ -118,6 +118,7 @@ export interface StaleClaimRow {
   patientFirstName: string | null;
   patientLastName: string | null;
   patientDateOfBirth: Date | string | null;
+  patientDateOfBirthEnc: string | null;
   patientInsuranceId: string | null;
   insurancePayerCode: string | null;
   insuranceName: string | null;
@@ -166,6 +167,7 @@ async function defaultGetStaleSubmittedClaims(
       patientFirstName: patients.firstName,
       patientLastName: patients.lastName,
       patientDateOfBirth: patients.dateOfBirth,
+      patientDateOfBirthEnc: patients.dateOfBirthEnc,
       patientInsuranceId: patients.insuranceId,
       insurancePayerCode: insurances.payerCode,
       insuranceName: insurances.name,
@@ -264,14 +266,12 @@ async function processClaim(
   if (!claim.patientInsuranceId) {
     throw new Error('Patient missing insurance member ID');
   }
-  if (!claim.patientFirstName || !claim.patientLastName || !claim.patientDateOfBirth) {
+  // Resolve DOB from the encrypted column (preferred) or the legacy plaintext
+  // date column, so this keeps working after the plaintext column is dropped.
+  const dob = resolveEncryptedDob(claim.patientDateOfBirthEnc, claim.patientDateOfBirth);
+  if (!claim.patientFirstName || !claim.patientLastName || !dob) {
     throw new Error('Patient missing required demographics');
   }
-
-  const dob =
-    typeof claim.patientDateOfBirth === 'string'
-      ? claim.patientDateOfBirth
-      : (claim.patientDateOfBirth as Date).toISOString().split('T')[0];
 
   const request: ClaimStatusRequest = {
     claimId: claim.claimNumber,

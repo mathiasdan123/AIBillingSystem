@@ -339,4 +339,26 @@ describe('PHI Encryption Service', () => {
     const enc = encryptPatientRecord({ dateOfBirth: null });
     expect(enc.dateOfBirthEnc).toBeNull();
   });
+
+  // ---- resolveEncryptedDob (raw-join readers, contract-safe) ----
+
+  it('resolveEncryptedDob prefers the encrypted column over the plaintext fallback', async () => {
+    const { encryptField, resolveEncryptedDob } = await loadModule();
+    const enc = JSON.stringify(encryptField('2010-05-01'));
+    expect(resolveEncryptedDob(enc, '1999-12-31')).toBe('2010-05-01');
+  });
+
+  it('resolveEncryptedDob falls back to the plaintext date (string or Date)', async () => {
+    const { resolveEncryptedDob } = await loadModule();
+    expect(resolveEncryptedDob(null, '1999-01-15')).toBe('1999-01-15');
+    expect(resolveEncryptedDob(null, new Date('1985-07-04T00:00:00Z'))).toBe('1985-07-04');
+    // a full timestamp string is normalized to the date part
+    expect(resolveEncryptedDob(null, '2001-02-03T12:00:00.000Z')).toBe('2001-02-03');
+  });
+
+  it('resolveEncryptedDob returns null when neither source is present', async () => {
+    const { resolveEncryptedDob } = await loadModule();
+    expect(resolveEncryptedDob(null, null)).toBeNull();
+    expect(resolveEncryptedDob(undefined, undefined)).toBeNull();
+  });
 });
