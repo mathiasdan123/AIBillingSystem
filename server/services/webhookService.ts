@@ -10,6 +10,7 @@ import { db } from '../db';
 import { webhookEndpoints, type WebhookEndpoint } from '../../shared/schema';
 import { eq, and } from 'drizzle-orm';
 import logger from './logger';
+import { safeOutboundFetch } from '../utils/ssrf';
 
 // Supported webhook event types
 export const WEBHOOK_EVENT_TYPES = [
@@ -150,7 +151,9 @@ async function deliverWebhookEvent(
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
       try {
-        const response = await fetch(endpoint.url, {
+        // SSRF guard: re-validate at delivery (DNS may have changed since
+        // registration — TOCTOU) and never auto-follow redirects to an internal host.
+        const response = await safeOutboundFetch(endpoint.url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

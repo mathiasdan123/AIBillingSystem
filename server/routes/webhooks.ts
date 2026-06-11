@@ -19,6 +19,7 @@ import {
 } from '../services/webhookService';
 import type { WebhookEndpoint } from '../../shared/schema';
 import logger from '../services/logger';
+import { assertSafeOutboundUrl } from '../utils/ssrf';
 
 const router = Router();
 
@@ -85,6 +86,13 @@ router.post('/webhooks', isAuthenticated, async (req: any, res: Response) => {
     // Validate required fields
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ message: 'url is required and must be a string' });
+    }
+
+    // SSRF guard: reject internal/metadata/private targets at registration time.
+    try {
+      await assertSafeOutboundUrl(url);
+    } catch (e) {
+      return res.status(400).json({ message: e instanceof Error ? e.message : 'Invalid webhook url' });
     }
 
     if (!secret || typeof secret !== 'string') {
