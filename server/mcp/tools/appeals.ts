@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { storage } from '../../storage';
 import { generateClaudeAppeal } from '../../services/claudeAppealService';
 import { withAudit } from '../audit';
+import { withMcpMutationGate } from '../confirmation';
 import type { McpPracticeContext } from '../types';
 
 export function registerAppealTools(
@@ -13,7 +14,7 @@ export function registerAppealTools(
     'generate_appeal_letter',
     'appeal',
     true,
-    async (input: {
+    withMcpMutationGate(async (input: {
       claimId: number;
       denialReason: string;
       appealLevel?: string;
@@ -64,7 +65,7 @@ export function registerAppealTools(
         appealLevel: input.appealLevel,
         previousAppealOutcome: input.previousAppealOutcome,
       });
-    },
+    }),
   );
 
   server.tool(

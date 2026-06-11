@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { generateSoapNoteAndBilling } from '../../services/aiSoapBillingService';
 import { storage } from '../../storage';
 import { withAudit } from '../audit';
+import { withMcpMutationGate } from '../confirmation';
 import type { McpPracticeContext } from '../types';
 
 export function registerSoapTools(
@@ -13,7 +14,7 @@ export function registerSoapTools(
     'generate_soap_note',
     'soap_note',
     true,
-    async (input: {
+    withMcpMutationGate(async (input: {
       patientId: number;
       activities: string[];
       mood: string;
@@ -43,7 +44,7 @@ export function registerSoapTools(
         ratePerUnit: input.ratePerUnit,
         therapistName: input.therapistName,
       });
-    },
+    }),
   );
 
   server.tool(
@@ -146,7 +147,7 @@ export function registerSoapTools(
     'update_soap_draft',
     'soap_note',
     true,
-    async (input: {
+    withMcpMutationGate(async (input: {
       patientId: number;
       subjective?: string;
       objective?: string;
@@ -184,7 +185,7 @@ export function registerSoapTools(
         draft: { id: draft.id, patientId: draft.patientId, lastSavedAt: (draft as any).lastSavedAt },
         updatedFields,
       };
-    },
+    }),
   );
 
   server.tool(
@@ -214,7 +215,7 @@ export function registerSoapTools(
     'sign_soap_note',
     'soap_note',
     true,
-    async (input: { noteId: number }) => {
+    withMcpMutationGate(async (input: { noteId: number }) => {
       if (!context.userId) {
         throw new Error('Cannot sign a SOAP note without an authenticated therapist');
       }
@@ -253,7 +254,7 @@ export function registerSoapTools(
         signedAt: updated.therapistSignedAt,
         signedBy: updated.therapistSignedName,
       };
-    },
+    }),
   );
 
   server.tool(
