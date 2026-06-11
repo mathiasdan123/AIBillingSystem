@@ -98,6 +98,10 @@ export async function updatePatient(id: number, patient: Partial<InsertPatient>)
 }
 
 export async function softDeletePatient(id: number): Promise<void> {
+  // Right-to-erasure: null out EVERY PHI column, not just the primary demographics.
+  // The API reports "PHI anonymized", so this must actually clear secondary
+  // insurance, employer, and the intake blob (developmental/medical history) too —
+  // previously these were left intact, making the claim false.
   await db
     .update(patients)
     .set({
@@ -108,9 +112,22 @@ export async function softDeletePatient(id: number): Promise<void> {
       phone: null,
       address: null,
       dateOfBirth: null,
+      // Primary insurance
+      insuranceProvider: null,
       insuranceId: null,
       policyNumber: null,
       groupNumber: null,
+      insuranceEmployerName: null,
+      // Secondary insurance
+      secondaryInsuranceProvider: null,
+      secondaryInsurancePolicyNumber: null,
+      secondaryInsuranceMemberId: null,
+      secondaryInsuranceGroupNumber: null,
+      secondaryInsuranceRelationship: null,
+      secondaryInsuranceSubscriberName: null,
+      secondaryInsuranceSubscriberDob: null,
+      // Intake blob: HIPAA, medical history, developmental, sensory data
+      intakeData: null,
       updatedAt: new Date(),
     })
     .where(eq(patients.id, id));

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import logger from './logger';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -106,10 +107,17 @@ export function decryptField(encrypted: EncryptedField | string | null | undefin
     plaintext += decipher.final('utf8');
     return plaintext;
   } catch (error) {
-    // If decryption fails, the data might be plaintext (migration scenario)
-    if (typeof encrypted === 'object' && encrypted.ciphertext) {
-      return null;
-    }
+    // We only reach here with a well-formed EncryptedField (ciphertext+iv+tag);
+    // legacy plaintext was already returned as-is above. So a failure here is a
+    // GCM auth-tag mismatch — tampering, corruption, or a wrong/rotated key — NOT
+    // a migration plaintext case. That used to be swallowed as a silent null,
+    // defeating the integrity guarantee GCM exists to provide. Emit a CRITICAL
+    // alert (no PHI) so monitoring can page on it; return null rather than throw
+    // to avoid turning a single bad row into a full read-path outage.
+    logger.error('CRITICAL: PHI decryption integrity failure (auth-tag mismatch)', {
+      reason: error instanceof Error ? error.message : 'unknown',
+      ivLen: enc.iv?.length, tagLen: enc.tag?.length,
+    });
     return null;
   }
 }
@@ -163,8 +171,19 @@ const PRACTICE_PHI_STRING_FIELDS = [
 
 // Patient insurance fields on the patients table are already covered in PATIENT_PHI_STRING_FIELDS.
 // Insurance provider name ('insuranceProvider') should also be encrypted as it reveals health plan info.
+// Secondary-insurance + employer fields are the same class of insurance PHI as the primary fields
+// and were previously stored in plaintext (audit finding). Encrypt them too.
+// NOTE: secondaryInsuranceSubscriberDob and dateOfBirth are `date` columns and cannot be
+// string-encrypted without a schema migration to text (tracked separately); they remain protected
+// at rest by RDS encryption in the meantime.
 const PATIENT_INSURANCE_EXTRA_FIELDS = [
   'insuranceProvider',
+  'insuranceEmployerName',
+  'secondaryInsuranceProvider',
+  'secondaryInsurancePolicyNumber',
+  'secondaryInsuranceMemberId',
+  'secondaryInsuranceGroupNumber',
+  'secondaryInsuranceSubscriberName',
 ] as const;
 
 // Data capture events may contain PHI in original/extracted data
