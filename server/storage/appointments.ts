@@ -412,14 +412,15 @@ export async function updateSeriesBySeriesId(
       const [updated] = await db
         .update(appointments)
         .set({
-          ...updates,
+          // stripImmutable blocks id/practiceId/patientId/audit columns (a
+          // mass-assigned practiceId here would re-parent the series); the
+          // explicit undefineds additionally protect series-structure columns.
+          ...stripImmutable(updates),
           updatedAt: new Date(),
-          id: undefined,
           recurrenceParentId: undefined,
           recurrenceRule: undefined,
           isRecurringInstance: undefined,
           seriesId: undefined,
-          createdAt: undefined,
         })
         .where(eq(appointments.id, apt.id))
         .returning();

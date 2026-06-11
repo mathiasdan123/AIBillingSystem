@@ -1068,6 +1068,39 @@ router.get('/:id/eligibility-alerts', isAuthenticated, async (req: any, res) => 
 // ==================== SERIES ENDPOINTS (by seriesId) ====================
 
 // Get all appointments in a series
+/**
+ * Tenant-isolation guard for the recurring-series routes keyed by the string
+ * `seriesId` (GET/PUT/DELETE /series/:seriesId and /series/:seriesId/cancel).
+ * Those storage functions filter by seriesId only, so without this a user could
+ * read/modify/cancel/delete another practice's series by guessing the id. Loads
+ * the series and verifies every appointment belongs to the caller's practice.
+ * The /:id/series routes are already covered by the /:id appointment guard.
+ */
+router.use('/series/:seriesId', isAuthenticated, async (req: any, res: Response, next: NextFunction) => {
+  const { seriesId } = req.params;
+  if (!seriesId) return next();
+  try {
+    const series = await storage.getAppointmentsBySeriesId(seriesId);
+    if (series.length === 0) {
+      return res.status(404).json({ message: 'Series not found' });
+    }
+    if (req.userRole !== 'admin') {
+      const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
+      if (!userPracticeId || series.some((a: any) => a.practiceId !== userPracticeId)) {
+        logger.warn('Unauthorized appointment-series access attempt', {
+          userId: req.user?.claims?.sub, userPracticeId, seriesId,
+        });
+        return res.status(404).json({ message: 'Series not found' });
+      }
+    }
+    req.series = series;
+    next();
+  } catch (error) {
+    logger.error('Series access guard failed', { seriesId, error: error instanceof Error ? error.message : String(error) });
+    return res.status(500).json({ message: 'Failed to verify series access' });
+  }
+});
+
 router.get('/series/:seriesId', isAuthenticated, async (req: any, res) => {
   try {
     const { seriesId } = req.params;
