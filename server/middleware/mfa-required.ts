@@ -21,8 +21,9 @@ import type { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
 import logger from '../services/logger';
 
-// MFA session timeout in milliseconds (8 hours for usability — re-verify on new login)
-const MFA_SESSION_TIMEOUT = 8 * 60 * 60 * 1000;
+// MFA re-verification window for PHI/admin routes (HIPAA 164.312(d)).
+// 15 minutes per the documented security spec; override via MFA_SESSION_TIMEOUT_MS.
+const MFA_SESSION_TIMEOUT = Number(process.env.MFA_SESSION_TIMEOUT_MS) || 15 * 60 * 1000;
 
 // Extend Express session type to include MFA verification
 declare module 'express-session' {
@@ -251,9 +252,15 @@ export const conditionalMfaRequired = async (req: Request, res: Response, next: 
   const userEmail = (req as any).user?.claims?.email || (req as any).userEmail;
   const userId = (req as any).user?.claims?.sub;
 
-  // Demo accounts bypass MFA verification entirely
-  if (userId?.startsWith('demo-') || userEmail?.endsWith('@therapybill.com') || userEmail?.endsWith('@demo.com')) {
-    return next();
+  // MFA bypass is restricted to non-production AND an explicit env allowlist.
+  // Never bypass on a guessable email domain in production — that would defeat
+  // HIPAA 164.312(d) for the whole company domain (e.g. demo@therapybill.com is
+  // a real prod admin). Real demo accounts have MFA enrolled and don't need this.
+  if (process.env.NODE_ENV !== 'production' && process.env.MFA_BYPASS_EMAILS) {
+    const allowlist = process.env.MFA_BYPASS_EMAILS.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+    if (userEmail && allowlist.includes(String(userEmail).toLowerCase())) {
+      return next();
+    }
   }
 
   // Use originalUrl to get the full path including mount prefix (e.g., /api/patients not /patients)

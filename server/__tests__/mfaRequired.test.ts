@@ -130,9 +130,9 @@ describe('MFA Required Middleware', () => {
   it('should return positive time when session is still valid', () => {
     const session = { mfaVerifiedAt: Date.now() - (5 * 60 * 1000) }; // 5 min ago
     const remaining = getMfaSessionTimeRemaining(session);
-    // Should be roughly 7h55m give or take (8h timeout - 5min elapsed)
-    expect(remaining).toBeGreaterThan(7 * 60 * 60 * 1000);
-    expect(remaining).toBeLessThanOrEqual(8 * 60 * 60 * 1000);
+    // Should be roughly 10 min (15-min timeout - 5 min elapsed)
+    expect(remaining).toBeGreaterThan(8 * 60 * 1000);
+    expect(remaining).toBeLessThanOrEqual(15 * 60 * 1000);
   });
 
   // ---- requireMfaSetup middleware ----
@@ -238,7 +238,8 @@ describe('MFA Required Middleware', () => {
   // ---- MFA_CONFIG ----
 
   it('should export correct MFA session timeout config', () => {
-    expect(MFA_CONFIG.sessionTimeout).toBe(8 * 60 * 60 * 1000);
-    expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(480);
+    // 15-minute re-verification window for PHI/admin per HIPAA 164.312(d) spec.
+    expect(MFA_CONFIG.sessionTimeout).toBe(15 * 60 * 1000);
+    expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(15);
   });
 });

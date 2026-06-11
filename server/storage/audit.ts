@@ -35,7 +35,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, inArray, ne } from "drizzle-orm";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { getPatient, getPatientStatements } from "./patients";
 
 // ==================== AUDIT LOG ====================
@@ -324,10 +324,9 @@ export async function upsertComplianceCheck(data: InsertComplianceCheck): Promis
 // ==================== SECURE MESSAGING ====================
 
 export function generatePatientAccessToken(): string {
-  return createHash('sha256')
-    .update(Math.random().toString() + Date.now().toString())
-    .digest('hex')
-    .substring(0, 64);
+  // CSPRNG: 32 random bytes -> 64 hex chars. Gates unauthenticated PHI access,
+  // so must be unguessable (was Math.random()+Date.now(), predictable).
+  return randomBytes(32).toString('hex');
 }
 
 export async function createConversation(conversation: InsertConversation): Promise<Conversation> {
@@ -598,17 +597,13 @@ export async function getConversationWithMessages(id: number): Promise<{
 // ==================== PATIENT PORTAL ====================
 
 export function generatePortalToken(): string {
-  return createHash('sha256')
-    .update(Math.random().toString() + Date.now().toString() + 'portal')
-    .digest('hex')
-    .substring(0, 64);
+  // CSPRNG: 32 random bytes -> 64 hex chars (was predictable Math.random()+Date.now()).
+  return randomBytes(32).toString('hex');
 }
 
 export function generateMagicLinkToken(): string {
-  return createHash('sha256')
-    .update(Math.random().toString() + Date.now().toString() + 'magic')
-    .digest('hex')
-    .substring(0, 64);
+  // CSPRNG: 32 random bytes -> 64 hex chars (was predictable Math.random()+Date.now()).
+  return randomBytes(32).toString('hex');
 }
 
 export async function createPatientPortalAccess(dataOrPatientId: InsertPatientPortalAccess | number, practiceId?: number): Promise<PatientPortalAccess> {
