@@ -93,10 +93,9 @@ export async function reviewBillingCodeAccuracy(
     const payerRates = await getPayerRatesSummary(insuranceName);
     if (payerRates.rates.length > 0) {
       reimbursementOptimized = true;
-      reimbursementContext = `\nREIMBURSEMENT DATA FOR ${insuranceName.toUpperCase()}:
-${payerRates.rates.slice(0, 10).map(r => `- ${r.cptCode}: $${r.inNetworkRate?.toFixed(2)} (Rank #${r.rank})`).join('\n')}
-Average rate: $${payerRates.averageRate.toFixed(2)} per unit
-OPTIMIZATION TIP: When clinically appropriate, favor higher-reimbursing codes.`;
+      reimbursementContext = `\nREIMBURSEMENT DATA FOR ${insuranceName.toUpperCase()} (reference only — do NOT choose codes based on these amounts):
+${payerRates.rates.slice(0, 10).map(r => `- ${r.cptCode}: $${r.inNetworkRate?.toFixed(2)}`).join('\n')}
+Average rate: $${payerRates.averageRate.toFixed(2)} per unit`;
     }
   } catch (error) {
     console.log("No reimbursement data available for", insuranceName);
@@ -144,7 +143,7 @@ ${availableCptCodes.map(c => `- ${c.code}: ${c.description} (Rate: $${c.baseRate
 
 BILLING RULES TO FOLLOW:
 1. CLINICAL ACCURACY IS PRIMARY - only use codes that accurately describe documented services
-2. When multiple codes could accurately describe an intervention, prefer higher-reimbursing codes
+2. When multiple codes could accurately describe an intervention, choose the one that most precisely matches the documented service — NOT the one that reimburses more. The treating provider makes the final coding decision.
 3. Total units across all codes should not exceed ${insurancePreferences?.maxTotalUnitsPerVisit || totalAvailableUnits} units
 4. Document must support medical necessity for each code billed
 5. ${requiresDifferentCodes ? 'Use DIFFERENT codes for each 15-minute unit (payer requirement)' : 'May bill multiple units of same code if clinically appropriate'}
@@ -160,11 +159,11 @@ Based on the session documentation, recommend the optimal billing codes. Return 
       "reasoning": "Brief explanation of why this code applies"
     }
   ],
-  "optimizationNotes": "Overall explanation of billing strategy including any reimbursement optimization applied",
+  "optimizationNotes": "Overall explanation of the clinical coding rationale (based on documented services, not reimbursement)",
   "complianceScore": 95
 }
 
-Focus on accuracy and compliance. When multiple codes are clinically valid for the documented service, choose the one that reimburses better.`;
+Focus on accuracy and compliance. When multiple codes are clinically valid for the documented service, choose the one that most accurately describes it; the treating provider makes the final coding decision.`;
 
   try {
     const client = getAnthropic();
