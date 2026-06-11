@@ -11,6 +11,7 @@
 
 import { Router } from 'express';
 import { db } from '../db';
+import { decryptField } from '../services/phiEncryptionService';
 import { eq, and, desc, inArray, isNull } from 'drizzle-orm';
 import {
   surveyTemplates,
@@ -355,7 +356,7 @@ router.get('/responses', isAuthenticated, async (req: any, res) => {
       ...r.response,
       templateName: r.templateName,
       templateType: r.templateType,
-      patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+      patientName: `${decryptField(r.patientFirstName) || ''} ${decryptField(r.patientLastName) || ''}`.trim(),
     }));
 
     res.json(formatted);
@@ -447,7 +448,7 @@ router.get('/assignments', isAuthenticated, async (req: any, res) => {
       ...a.assignment,
       templateName: a.templateName,
       templateType: a.templateType,
-      patientName: `${a.patientFirstName || ''} ${a.patientLastName || ''}`.trim(),
+      patientName: `${decryptField(a.patientFirstName) || ''} ${decryptField(a.patientLastName) || ''}`.trim(),
     }));
 
     res.json(formatted);

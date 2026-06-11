@@ -17,6 +17,7 @@
 import { claims, appeals, claimFollowUps, patients } from "@shared/schema";
 import { db } from "../db";
 import { and, eq, sql, desc, lt, isNotNull, notExists } from "drizzle-orm";
+import { decryptField } from "../services/phiEncryptionService";
 
 export interface CockpitClaimSample {
   id: number;
@@ -65,7 +66,7 @@ async function sampleClaims(practiceId: number, whereExtra: any, limit = 5): Pro
   return rows.map((r: any) => ({
     id: r.id,
     claimNumber: r.claimNumber ?? null,
-    patientName: [r.firstName, r.lastName].filter(Boolean).join(" ") || null,
+    patientName: [decryptField(r.firstName), decryptField(r.lastName)].filter(Boolean).join(" ") || null,
     totalAmount: r.totalAmount ?? null,
     status: r.status ?? null,
     createdAt: r.createdAt ?? null,

@@ -16,6 +16,7 @@ import {
   type TreatmentAuthorization,
 } from '@shared/schema';
 import { db } from '../db';
+import { decryptField } from './phiEncryptionService';
 import logger from './logger';
 
 export interface AuthorizationCreateData {
@@ -427,7 +428,7 @@ export async function getAtRiskAuthorizations(
 
     atRisk.push({
       auth,
-      patientName: `${patient.firstName} ${patient.lastName}`,
+      patientName: `${decryptField(patient.firstName) ?? ''} ${decryptField(patient.lastName) ?? ''}`.trim(),
       predictedEndDate: predicted.toISOString().split('T')[0],
       daysUntilPredictedEnd: daysUntil,
       reason,
