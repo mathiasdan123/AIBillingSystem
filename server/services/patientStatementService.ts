@@ -15,6 +15,7 @@ import {
 } from '@shared/schema';
 import { db } from '../db';
 import logger from './logger';
+import { decryptField } from './phiEncryptionService';
 
 export interface StatementLineItem {
   dateOfService: string;
@@ -319,7 +320,8 @@ export async function getOutstandingBalances(
 
   return results.map((r: typeof results[number]) => ({
     patientId: r.patientId,
-    patientName: `${r.patientFirstName || ''} ${r.patientLastName || ''}`.trim(),
+    // firstName/lastName are PHI-encrypted (raw join) — decrypt for display.
+    patientName: `${decryptField(r.patientFirstName) || ''} ${decryptField(r.patientLastName) || ''}`.trim(),
     totalBalance: parseFloat(r.totalBalance || '0').toFixed(2),
     statementCount: r.statementCount,
     oldestDueDate: r.oldestDueDate,
