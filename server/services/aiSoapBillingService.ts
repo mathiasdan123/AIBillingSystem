@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
+import { assertPhiAiAllowed } from "../utils/phiAiGuard";
 
 // Lazy initialization of Anthropic client (only when API key is present)
 let anthropicClient: Anthropic | null = null;
@@ -116,6 +117,7 @@ export async function generateSoapNoteAndBilling(
   request: AiSoapBillingRequest,
   options: GenerateSoapOptions = {}
 ): Promise<AiSoapBillingResponse> {
+  assertPhiAiAllowed('SOAP note generation');
 
   // Get patient and insurance information
   const patient = await storage.getPatient(request.patientId);
@@ -472,9 +474,10 @@ function buildUserPrompt(
 
 PATIENT INFORMATION:
 - Name: ${patient.firstName} ${patient.lastName}
-- DOB: ${patient.dateOfBirth} (Age: ${age} years)
-- Insurance: ${patient.insuranceProvider || 'Not specified'}
-- Policy: ${patient.policyNumber || 'Not specified'}`;
+- Age: ${age} years`;
+  // Minimum-necessary: the clinical note only needs name + age. Full DOB,
+  // insurance provider, and policy number are not used to write the note, so
+  // they are deliberately NOT sent to the model.
 
   // Add diagnosis information if available
   if (treatmentPlan?.diagnosisCodes && Array.isArray(treatmentPlan.diagnosisCodes)) {

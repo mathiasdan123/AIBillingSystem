@@ -8,6 +8,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from './logger';
+import { assertPhiAiAllowed } from '../utils/phiAiGuard';
 import type { ClaimPrecedent } from './claimPrecedentService';
 import { formatPrecedentsForAppeal } from './claimPrecedentService';
 import type { ProvenArgument } from './appealOutcomeLearningService';
@@ -533,6 +534,7 @@ export async function generateClaudeAppeal(
   params: GenerateClaudeAppealParams
 ): Promise<AppealResult> {
   const startTime = Date.now();
+  assertPhiAiAllowed('Appeal letter generation');
 
   try {
     logger.info('Generating Claude appeal letter', {
