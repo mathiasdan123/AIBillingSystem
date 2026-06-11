@@ -472,18 +472,12 @@ async function completeOidcLogin(
     user = await storage.getUserByEmail(email);
 
     if (user) {
-      // Only link an SSO identity to a pre-existing local account when the
-      // practice has a verified email domain (checked above). Without a
-      // configured domain we cannot trust the email claim enough to take over
-      // an existing account, so refuse and direct the admin to configure one.
-      if (!expectedEmailDomain) {
-        logger.warn('SSO: refusing to link to existing account without a configured email domain', {
-          provider, practiceId, userId: user.id,
-        });
-        res.redirect('/?sso_error=linking_requires_domain');
-        return;
-      }
-      // Also require the existing account to belong to this practice.
+      // Tenant guard: never link an SSO identity onto an account from a DIFFERENT
+      // practice (cross-practice takeover). Same-practice linking is allowed — the
+      // IdP is configured by this practice's admin, and when an email domain IS
+      // configured it was already enforced above. (We deliberately do NOT require
+      // emailDomain here: many existing SSO configs leave it null, and refusing
+      // would lock those users out of SSO entirely.)
       if (user.practiceId && user.practiceId !== practiceId) {
         logger.warn('SSO: existing account belongs to a different practice — refusing link', {
           provider, practiceId, userPracticeId: user.practiceId, userId: user.id,

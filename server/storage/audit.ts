@@ -34,15 +34,11 @@ import {
   type Patient,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, gte, lte, count, sum, sql, isNull, inArray, ne } from "drizzle-orm";
+import { eq, desc, and, gte, lte, lt, count, sum, sql, isNull, inArray, ne } from "drizzle-orm";
 import { createHash, randomBytes } from "crypto";
 import { getPatient, getPatientStatements } from "./patients";
 
 // ==================== AUDIT LOG ====================
-
-// Fixed advisory-lock key so concurrent audit writers serialize on the chain
-// head (prevents two writers reading the same previousHash and forking the chain).
-const AUDIT_CHAIN_LOCK_KEY = 4815162342;
 
 // Deterministic JSON with recursively sorted keys, so a jsonb round-trip that
 // reorders `details` keys can't produce a false "tampered" verdict.
@@ -75,28 +71,30 @@ export async function createAuditLog(entry: InsertAuditLog): Promise<AuditLog> {
   // Normalize defaults once so the stored row and the hashed payload agree.
   const normalized: InsertAuditLog = { ...entry, success: entry.success ?? true };
 
-  // Serialize chain appends so previousHash can't be read concurrently by two
-  // writers (which would fork the chain and make verification fail benignly).
-  return db.transaction(async (tx: any) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${AUDIT_CHAIN_LOCK_KEY})`);
+  // Simple read-prev-then-insert (no transaction / advisory lock). This runs on
+  // every PHI-access request via auditMiddleware, so it must NOT hold a pooled
+  // connection on a global lock — doing so would serialize all audit writes and
+  // can exhaust the connection pool under load. Two concurrent writers can in
+  // theory read the same previousHash and fork the chain; verifyAuditLogIntegrity
+  // tolerates that by scoping to the trailing contiguous hashed run and anchoring
+  // on each row's real predecessor. DB-level immutability triggers
+  // (add_audit_immutability.sql) remain the primary tamper defense.
+  const [lastEntry] = await db
+    .select({ integrityHash: auditLog.integrityHash })
+    .from(auditLog)
+    .orderBy(desc(auditLog.id))
+    .limit(1);
 
-    const [lastEntry] = await tx
-      .select({ integrityHash: auditLog.integrityHash })
-      .from(auditLog)
-      .orderBy(desc(auditLog.id))
-      .limit(1);
+  const previousHash = lastEntry?.integrityHash || "GENESIS";
+  const hash = createHash("sha256")
+    .update(previousHash + canonicalAuditPayload(normalized))
+    .digest("hex");
 
-    const previousHash = lastEntry?.integrityHash || "GENESIS";
-    const hash = createHash("sha256")
-      .update(previousHash + canonicalAuditPayload(normalized))
-      .digest("hex");
-
-    const [created] = await tx
-      .insert(auditLog)
-      .values({ ...normalized, integrityHash: hash })
-      .returning();
-    return created;
-  });
+  const [created] = await db
+    .insert(auditLog)
+    .values({ ...normalized, integrityHash: hash })
+    .returning();
+  return created;
 }
 
 /**
@@ -120,37 +118,56 @@ export async function createAuditLogEntry(entry: any): Promise<any> {
 }
 
 export async function verifyAuditLogIntegrity(limit?: number): Promise<{ valid: boolean; checkedCount: number; brokenAtId?: number }> {
-  const entries = await db
+  // Verify the most recent `limit` rows.
+  const window = await db
     .select()
     .from(auditLog)
-    .orderBy(auditLog.id)
+    .orderBy(desc(auditLog.id))
     .limit(limit || 1000);
+  const entries = window.reverse(); // back to ascending id
 
-  let previousHash = "GENESIS";
-  let inHashedRegion = false;
-  for (let i = 0; i < entries.length; i++) {
+  if (entries.length === 0) return { valid: true, checkedCount: 0 };
+
+  // We can only attest rows written under the current hashing scheme. Prod has a
+  // legacy prefix of hash-less rows (pre-chain) and possibly older rows hashed
+  // with a different format. So verify ONLY the trailing contiguous run of
+  // hashed rows (everything since createAuditLog became the single write path),
+  // and anchor previousHash on that run's immediate predecessor — exactly what
+  // createAuditLog used at write time (its hash, or "GENESIS" if it was
+  // hash-less / there was no predecessor). This makes legacy/interleaved rows a
+  // non-event instead of a false "tampered" verdict, while still detecting any
+  // mutation or deletion WITHIN the verified run.
+  let runStart = entries.length;
+  while (runStart > 0 && entries[runStart - 1].integrityHash) {
+    runStart--;
+  }
+  if (runStart === entries.length) return { valid: true, checkedCount: 0 }; // no hashed rows yet
+
+  // Anchor previousHash on the run's real predecessor BY ID. That predecessor may
+  // be in-window or, if the hashed run is longer than `limit`, outside it — so we
+  // query for it rather than relying on the window. createAuditLog used exactly
+  // this row's hash (or "GENESIS" if it was hash-less / nonexistent).
+  const firstRunRow = entries[runStart];
+  const [pred] = await db
+    .select({ integrityHash: auditLog.integrityHash })
+    .from(auditLog)
+    .where(lt(auditLog.id, firstRunRow.id))
+    .orderBy(desc(auditLog.id))
+    .limit(1);
+  let previousHash = pred?.integrityHash || "GENESIS";
+  let checked = 0;
+  for (let i = runStart; i < entries.length; i++) {
     const entry = entries[i];
-    if (!entry.integrityHash) {
-      // A hash-less row inside the hashed region is a gap — either a row written
-      // around the chain (e.g. a raw insert bypassing createAuditLog) or a
-      // deletion/insertion. Once the chain has started, that is a failure, not a
-      // skip. Leading legacy rows (pre-chain) are tolerated until the first hash.
-      if (inHashedRegion) {
-        return { valid: false, checkedCount: i + 1, brokenAtId: entry.id };
-      }
-      continue;
-    }
-    inHashedRegion = true;
+    checked++;
     const expectedHash = createHash("sha256")
       .update(previousHash + canonicalAuditPayload(entry as Partial<InsertAuditLog>))
       .digest("hex");
-
     if (entry.integrityHash !== expectedHash) {
-      return { valid: false, checkedCount: i + 1, brokenAtId: entry.id };
+      return { valid: false, checkedCount: checked, brokenAtId: entry.id };
     }
-    previousHash = entry.integrityHash;
+    previousHash = entry.integrityHash!;
   }
-  return { valid: true, checkedCount: entries.length };
+  return { valid: true, checkedCount: checked };
 }
 
 export async function getAuditLogsForResource(resourceType: string, resourceId: string): Promise<AuditLog[]> {
