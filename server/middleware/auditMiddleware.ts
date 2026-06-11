@@ -1,7 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
-import { db } from '../db';
-import { auditLog } from '@shared/schema';
 import logger from '../services/logger';
+import { createAuditLog } from '../storage/audit';
 
 // Map route patterns to resource types and event categories
 interface RouteClassification {
@@ -145,8 +144,10 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
       auditDetails.queryParams = Object.keys(req.query || {});
     }
 
-    // Fire-and-forget audit log insert
-    db.insert(auditLog).values({
+    // Fire-and-forget audit log insert — routed through createAuditLog so the
+    // PHI-access trail is part of the tamper-evident integrity hash chain (a raw
+    // insert here previously wrote hash-less rows that verification skipped).
+    createAuditLog({
       eventCategory: classification.eventCategory,
       eventType,
       resourceType: classification.resourceType,
@@ -205,7 +206,7 @@ export async function logAuditEvent(params: {
   success?: boolean;
 }) {
   try {
-    await db.insert(auditLog).values({
+    await createAuditLog({
       eventCategory: params.eventCategory,
       eventType: params.eventType,
       resourceType: params.resourceType || null,
