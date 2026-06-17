@@ -179,7 +179,12 @@ export async function generateSoapNoteAndBilling(
     // failure on real errors.
     const stream = client.messages.stream({
       model: "claude-sonnet-4-5",
-      max_tokens: 6000,
+      // Real notes generate ~1300-1400 output tokens; the prior 6000 ceiling
+      // was never the latency bottleneck (generation stops at end_turn well
+      // below it). 2500 leaves comfortable headroom for a complete note while
+      // capping any runaway. Latency is driven by tokens generated, which the
+      // "LENGTH DISCIPLINE" system-prompt rule keeps tight (~20s vs ~38s).
+      max_tokens: 2500,
       temperature: 0.5,
       system:
         systemPrompt +
@@ -192,6 +197,13 @@ export async function generateSoapNoteAndBilling(
     }
 
     const finalMessage = await stream.finalMessage();
+
+    // Output-token visibility: latency is dominated by tokens generated, so
+    // log it alongside the route's durationMs for future diagnosis. A
+    // stop_reason of "max_tokens" means we truncated and should raise the cap.
+    console.log(
+      `SOAP AI usage: output_tokens=${finalMessage.usage.output_tokens} stop_reason=${finalMessage.stop_reason}`,
+    );
 
     const textBlock = finalMessage.content.find(
       (b): b is Anthropic.TextBlock => b.type === "text"
@@ -437,6 +449,11 @@ do NOT choose by reimbursement; the treating provider makes the final decision):
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
 fabricated specifics.
+
+LENGTH DISCIPLINE (also a latency/cost control): aim for the LOW end of
+each section's word target above, and keep the entire note under ~450
+words total. Do not restate the same observation across sections. A
+tight, complete, audit-defensible note is the goal — not a long one.
 
 You must respond with a JSON object.`;
 
