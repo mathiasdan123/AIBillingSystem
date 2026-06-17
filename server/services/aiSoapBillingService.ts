@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 import { assertPhiAiAllowed } from "../utils/phiAiGuard";
+import logger from "./logger";
 
 // Lazy initialization of Anthropic client (only when API key is present)
 let anthropicClient: Anthropic | null = null;
@@ -118,6 +119,8 @@ export interface GenerateSoapOptions {
    * extracts the in-progress section text for a readable preview.
    */
   onTextDelta?: (text: string) => void;
+  /** Aborts the in-flight Claude generation (e.g. when the HTTP client disconnects). */
+  signal?: AbortSignal;
 }
 
 export async function generateSoapNoteAndBilling(
@@ -186,12 +189,14 @@ export async function generateSoapNoteAndBilling(
     // failure on real errors.
     const stream = client.messages.stream({
       model: "claude-sonnet-4-5",
-      // Real notes generate ~1300-1400 output tokens; the prior 6000 ceiling
-      // was never the latency bottleneck (generation stops at end_turn well
-      // below it). 2500 leaves comfortable headroom for a complete note while
-      // capping any runaway. Latency is driven by tokens generated, which the
-      // "LENGTH DISCIPLINE" system-prompt rule keeps tight (~20s vs ~38s).
-      max_tokens: 2500,
+      // Latency is driven by tokens GENERATED, not this ceiling — the model
+      // stops at end_turn when the note is complete (~1300-1400 tokens for a
+      // typical note; more for a clinically rich session). Keep the ceiling
+      // generous so a long-but-legitimate note is never truncated mid-JSON
+      // (truncation fails JSON.parse below → silent fallback to a rule-based
+      // note). Perceived speed comes from streaming the note as it's written,
+      // not from a tight cap. See the audit notes in adversarial review.
+      max_tokens: 6000,
       temperature: 0.5,
       system:
         systemPrompt +
@@ -205,15 +210,31 @@ export async function generateSoapNoteAndBilling(
         options.onTextDelta?.(t);
       });
     }
+    // Abort the upstream generation if the HTTP client disconnects, so an
+    // abandoned request doesn't keep burning output tokens to completion.
+    if (options.signal) {
+      if (options.signal.aborted) stream.abort();
+      else options.signal.addEventListener("abort", () => stream.abort(), { once: true });
+    }
 
     const finalMessage = await stream.finalMessage();
 
-    // Output-token visibility: latency is dominated by tokens generated, so
-    // log it alongside the route's durationMs for future diagnosis. A
-    // stop_reason of "max_tokens" means we truncated and should raise the cap.
-    console.log(
-      `SOAP AI usage: output_tokens=${finalMessage.usage.output_tokens} stop_reason=${finalMessage.stop_reason}`,
-    );
+    // Output-token visibility for latency diagnosis (alongside the route's
+    // durationMs). stop_reason "max_tokens" means the note hit the ceiling and
+    // was truncated — the JSON.parse below then fails and we fall back to a
+    // rule-based note, so surface it loudly for alerting rather than letting a
+    // templated note ship silently.
+    if (finalMessage.stop_reason === "max_tokens") {
+      logger.warn(
+        "SOAP AI generation hit max_tokens — note truncated, will fall back to rule-based",
+        { outputTokens: finalMessage.usage.output_tokens },
+      );
+    } else {
+      logger.info("SOAP AI usage", {
+        outputTokens: finalMessage.usage.output_tokens,
+        stopReason: finalMessage.stop_reason,
+      });
+    }
 
     const textBlock = finalMessage.content.find(
       (b): b is Anthropic.TextBlock => b.type === "text"
@@ -460,10 +481,11 @@ Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
 fabricated specifics.
 
-LENGTH DISCIPLINE (also a latency/cost control): aim for the LOW end of
-each section's word target above, and keep the entire note under ~450
-words total. Do not restate the same observation across sections. A
-tight, complete, audit-defensible note is the goal — not a long one.
+LENGTH DISCIPLINE: do not pad. Never restate the same observation across
+sections, and never invent detail to reach a section's word target — the
+per-section targets are ceilings on verbosity, not a quota to fill. When
+the supplied data is thin, a shorter, fully-supported note is correct and
+expected. A tight, complete, audit-defensible note is the goal.
 
 You must respond with a JSON object.`;
 

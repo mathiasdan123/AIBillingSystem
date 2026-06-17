@@ -428,6 +428,12 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
   // Safety-net heartbeat in case Claude stalls before streaming any tokens.
   const heartbeat = setInterval(writeKeepalive, 5000);
 
+  // Abort the upstream Claude generation if the client disconnects mid-request
+  // (tab closed, navigation, network drop) so an abandoned request doesn't keep
+  // burning output tokens to completion.
+  const abort = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+
   try {
     const result = await generateSoapNoteAndBilling(
       {
@@ -454,6 +460,7 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         // heartbeat interval still covers a stall before the first token.
         onProgress: wantStream ? undefined : writeKeepalive,
         onTextDelta: wantStream ? (t) => sendEvent('delta', { text: t }) : undefined,
+        signal: abort.signal,
       }
     );
 

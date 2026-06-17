@@ -4951,9 +4951,19 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
         /* socket closed mid-write */
       }
     };
+    // Tracks the controller for the model call currently in flight, so we can
+    // abort it on (a) client disconnect and (b) a turn timeout — preventing an
+    // abandoned/timed-out stream from continuing to generate (and, when
+    // streaming, from writing deltas concurrently with a fallback stream).
+    let activeController: AbortController | null = null;
+    res.on('close', () => {
+      if (!res.writableEnded) activeController?.abort();
+    });
     // Runs one model turn. Streams text deltas to the client when wantStream;
     // returns the same Anthropic.Message either way so loop logic is identical.
     const runModel = async (model: string): Promise<Anthropic.Message> => {
+      const controller = new AbortController();
+      activeController = controller;
       const params = {
         model,
         system: systemPrompt,
@@ -4963,11 +4973,36 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
         temperature: 0.4,
       };
       if (!wantStream) {
-        return (await client.messages.create(params)) as Anthropic.Message;
+        return (await client.messages.create(params, { signal: controller.signal })) as Anthropic.Message;
       }
-      const s = client.messages.stream(params);
+      const s = client.messages.stream(params, { signal: controller.signal });
       s.on('text', (t: string) => sendEvent('delta', { text: t }));
       return await s.finalMessage();
+    };
+    // Bounds a single model turn to ANTHROPIC_TIMEOUT_MS. On timeout it aborts
+    // the in-flight call (so a streaming turn stops emitting deltas before any
+    // fallback starts) and rejects. Each call gets its OWN fresh timer — the
+    // previous implementation reused one timeoutPromise across the Haiku→Sonnet
+    // fallback, so once it fired the fallback race rejected immediately and the
+    // fallback never actually ran.
+    const ANTHROPIC_TIMEOUT_MS = 60_000;
+    const runModelWithTimeout = async (model: string): Promise<Anthropic.Message> => {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          activeController?.abort();
+          reject(new Error('API timeout'));
+        }, ANTHROPIC_TIMEOUT_MS);
+      });
+      const modelPromise = runModel(model);
+      // If the timeout wins, modelPromise becomes an orphan; swallow its
+      // post-abort rejection so it can't surface as an unhandledRejection.
+      modelPromise.catch(() => {});
+      try {
+        return (await Promise.race([modelPromise, timeoutPromise])) as Anthropic.Message;
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
     };
 
     // First API call - may include tool use (with fallback to Sonnet if Haiku fails)
@@ -5068,24 +5103,14 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       // mutations now do a read-tool lookup first, which adds 5-10s of
       // latency to any "cancel/reschedule by description" turn). The
       // previous 30s cap was clipping legitimate multi-action requests.
-      const ANTHROPIC_TIMEOUT_MS = 60_000;
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('API timeout')), ANTHROPIC_TIMEOUT_MS)
-      );
       try {
-        response = await Promise.race([
-          runModel(currentModel),
-          timeoutPromise,
-        ]) as Anthropic.Message;
+        response = await runModelWithTimeout(currentModel);
       } catch (toolLoopErr: any) {
         // If Haiku failed, fall back to Sonnet
         if (currentModel === MODEL_HAIKU) {
           logger.warn('Tool-loop Haiku failed, falling back to Sonnet', { error: toolLoopErr.message });
           currentModel = MODEL_SONNET;
-          response = await Promise.race([
-            runModel(currentModel),
-            timeoutPromise,
-          ]) as Anthropic.Message;
+          response = await runModelWithTimeout(currentModel);
         } else {
           throw toolLoopErr;
         }

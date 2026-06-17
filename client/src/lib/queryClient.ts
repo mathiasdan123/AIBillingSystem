@@ -101,32 +101,39 @@ export async function streamRequest(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let sep: number;
-    // SSE frames are separated by a blank line ("\n\n").
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let event = "message";
-      let dataStr = "";
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataStr += line.slice(5).trimStart();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      // SSE frames are separated by a blank line ("\n\n").
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        let event = "message";
+        let dataStr = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataStr += line.slice(5).trimStart();
+        }
+        if (!dataStr) continue;
+        let payload: any;
+        try {
+          payload = JSON.parse(dataStr);
+        } catch {
+          payload = dataStr;
+        }
+        if (event === "delta") handlers.onDelta?.(payload?.text ?? "");
+        else if (event === "done") handlers.onDone?.(payload);
+        else if (event === "error") handlers.onError?.(payload);
       }
-      if (!dataStr) continue;
-      let payload: any;
-      try {
-        payload = JSON.parse(dataStr);
-      } catch {
-        payload = dataStr;
-      }
-      if (event === "delta") handlers.onDelta?.(payload?.text ?? "");
-      else if (event === "done") handlers.onDone?.(payload);
-      else if (event === "error") handlers.onError?.(payload);
     }
+  } finally {
+    // Release the lock / abort the connection on every exit path — including
+    // when a handler (e.g. a throwing onError) unwinds mid-stream — so the
+    // reader and underlying fetch connection don't leak.
+    reader.cancel().catch(() => {});
   }
 }
 

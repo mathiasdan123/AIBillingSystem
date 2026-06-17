@@ -453,7 +453,10 @@ export default function AiBillingAssistant() {
       // adds `stream: true` and falls back to a plain-JSON read if the server
       // didn't stream (cache hit, rate limit, error) — those land in onDone /
       // onError just the same.
-      streamTs = Date.now();
+      // Strictly after (and never equal to) the user message's timestamp, which
+      // was created in the same tick — guarantees patchStream matches only this
+      // bubble even if Date.now() returns the same millisecond.
+      streamTs = Math.max(Date.now(), userMsg.timestamp + 1);
       let acc = "";
       let finalized = false;
       setMessages((prev) => [
