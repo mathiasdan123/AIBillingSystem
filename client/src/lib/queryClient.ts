@@ -52,6 +52,84 @@ export async function apiRequest(
   return res;
 }
 
+export interface SSEHandlers {
+  /** Called for each streamed text chunk (Server-Sent `event: delta`). */
+  onDelta?: (text: string) => void;
+  /** Called once with the final payload (`event: done`, or a plain-JSON 2xx body if the server didn't stream). */
+  onDone?: (data: any) => void;
+  /** Called on `event: error`, or a non-2xx JSON body if the server didn't stream. */
+  onError?: (data: any) => void;
+}
+
+/**
+ * POST a request that opts into a Server-Sent-Events response (adds
+ * `stream: true` to the body). Text chunks arrive via onDelta as the model
+ * generates; the terminal payload via onDone.
+ *
+ * Graceful fallback: the server may legitimately answer the same endpoint with
+ * plain JSON instead of a stream (cache hit, rate limit, validation/auth error,
+ * or no API key). When the response isn't `text/event-stream`, the JSON body is
+ * routed to onDone (2xx) or onError (non-2xx) so callers need only one path.
+ */
+export async function streamRequest(
+  url: string,
+  data: Record<string, unknown>,
+  handlers: SSEHandlers,
+): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ ...data, stream: true }),
+    credentials: "include",
+  });
+
+  const ctype = res.headers.get("content-type") || "";
+  if (!res.body || !ctype.includes("text/event-stream")) {
+    // Server didn't stream — parse the JSON body and route by status.
+    let body: any = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = { message: res.statusText || `${res.status}` };
+    }
+    if (res.ok) handlers.onDone?.(body);
+    else handlers.onError?.(body ?? { message: `${res.status}` });
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep: number;
+    // SSE frames are separated by a blank line ("\n\n").
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let event = "message";
+      let dataStr = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataStr += line.slice(5).trimStart();
+      }
+      if (!dataStr) continue;
+      let payload: any;
+      try {
+        payload = JSON.parse(dataStr);
+      } catch {
+        payload = dataStr;
+      }
+      if (event === "delta") handlers.onDelta?.(payload?.text ?? "");
+      else if (event === "done") handlers.onDone?.(payload);
+      else if (event === "error") handlers.onError?.(payload);
+    }
+  }
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 
 // A queryKey segment is "missing" if it would produce a meaningless URL when

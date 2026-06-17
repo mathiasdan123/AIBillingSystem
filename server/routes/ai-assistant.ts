@@ -4924,30 +4924,62 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Track which model is actually used (may upgrade mid-conversation)
     let currentModel = selectedModel;
 
-    // First API call - may include tool use (with fallback to Sonnet if Haiku fails)
-    let response: any;
-    try {
-      response = await client.messages.create({
-        model: currentModel,
+    // --- Streaming (opt-in via body.stream) -------------------------------
+    // When the client requests a stream, we forward the model's text deltas
+    // over SSE so the answer materializes live instead of arriving after the
+    // full (often multi-second, multi-tool) turn completes. Every downstream
+    // branch below — tool loop, proposal gating, hallucination safeguard,
+    // persistence — is UNCHANGED: it operates on the resolved final message,
+    // which `.finalMessage()` returns in the exact same shape as
+    // `messages.create()`. Non-streaming callers (tests, MCP, older clients)
+    // hit the original code path. The cache-hit / rate-limit early returns
+    // above already responded with plain JSON before we get here, and the
+    // client's streamRequest() falls back to JSON when the response isn't SSE.
+    const wantStream = req.body?.stream === true;
+    if (wantStream) {
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+    }
+    const sendEvent = (event: string, data: unknown) => {
+      if (!wantStream || res.writableEnded || res.destroyed) return;
+      try {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        /* socket closed mid-write */
+      }
+    };
+    // Runs one model turn. Streams text deltas to the client when wantStream;
+    // returns the same Anthropic.Message either way so loop logic is identical.
+    const runModel = async (model: string): Promise<Anthropic.Message> => {
+      const params = {
+        model,
         system: systemPrompt,
         messages,
         tools: assistantTools,
         max_tokens: 1500,
         temperature: 0.4,
-      });
+      };
+      if (!wantStream) {
+        return (await client.messages.create(params)) as Anthropic.Message;
+      }
+      const s = client.messages.stream(params);
+      s.on('text', (t: string) => sendEvent('delta', { text: t }));
+      return await s.finalMessage();
+    };
+
+    // First API call - may include tool use (with fallback to Sonnet if Haiku fails)
+    let response: any;
+    try {
+      response = await runModel(currentModel);
     } catch (modelErr: any) {
       // If Haiku fails (404, overloaded, etc.), retry with Sonnet
       if (currentModel === MODEL_HAIKU) {
         logger.warn('Haiku failed, falling back to Sonnet', { error: modelErr.message });
         currentModel = MODEL_SONNET;
-        response = await client.messages.create({
-          model: currentModel,
-          system: systemPrompt,
-          messages,
-          tools: assistantTools,
-          max_tokens: 1500,
-          temperature: 0.4,
-        });
+        response = await runModel(currentModel);
       } else {
         throw modelErr;
       }
@@ -5042,14 +5074,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       );
       try {
         response = await Promise.race([
-          client.messages.create({
-            model: currentModel,
-            system: systemPrompt,
-            messages,
-            tools: assistantTools,
-            max_tokens: 1500,
-            temperature: 0.4,
-          }),
+          runModel(currentModel),
           timeoutPromise,
         ]) as Anthropic.Message;
       } catch (toolLoopErr: any) {
@@ -5058,14 +5083,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
           logger.warn('Tool-loop Haiku failed, falling back to Sonnet', { error: toolLoopErr.message });
           currentModel = MODEL_SONNET;
           response = await Promise.race([
-            client.messages.create({
-              model: currentModel,
-              system: systemPrompt,
-              messages,
-              tools: assistantTools,
-              max_tokens: 1500,
-              temperature: 0.4,
-            }),
+            runModel(currentModel),
             timeoutPromise,
           ]) as Anthropic.Message;
         } else {
@@ -5206,7 +5224,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       }
     }
 
-    res.json({
+    const responsePayload = {
       response: cleanContent,
       suggestedActions,
       // Phase 4: deferred mutations awaiting user confirmation. Empty array
@@ -5221,49 +5239,65 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       cacheReadInputTokens,
       cacheCreationInputTokens,
       model: currentModel,
-    });
+    };
+    if (wantStream) {
+      // The streamed `delta` text was the model's raw output; `done` carries
+      // the authoritative post-processed text (action tags stripped, any
+      // hallucinated-success warning prepended) plus proposals/actions. The
+      // client replaces the live text with responsePayload.response on done.
+      sendEvent('done', responsePayload);
+      res.end();
+    } else {
+      res.json(responsePayload);
+    }
   } catch (error) {
     logger.error('AI assistant error', {
       error: error instanceof Error ? error.message : String(error),
     });
 
+    // Classify the error into a status + body once, then deliver it via the
+    // right channel: a normal JSON response if we haven't started streaming,
+    // or an SSE `error` event if headers were already flushed (a streaming
+    // turn that failed mid-flight — res.status().json() would throw here).
+    let status = 500;
+    let body: Record<string, unknown> = {
+      message: 'An error occurred while processing your request. Please try again.',
+    };
     if (error instanceof Error) {
       if (error.message.includes('401') || error.message.includes('authentication') || error.message.includes('api_key')) {
-        return res.status(503).json({
-          message: 'The Claude API key appears to be invalid. Please check your configuration.',
-          requiresConfig: true,
-        });
-      }
-      if (error.message.includes('429') || error.message.includes('rate_limit')) {
-        return res.status(429).json({
-          message: 'Too many requests to the AI service. Please wait a moment and try again.',
-        });
-      }
-      if (error.message.includes('overloaded') || error.message.includes('529')) {
-        return res.status(503).json({
-          message: "Blanche is experiencing high demand right now. Please try again in a moment — it usually clears up within a minute or two!",
-        });
-      }
-      // Anthropic returns a 400 with the literal text "credit balance is too
-      // low" when the organization runs out of API credits. Surface that
-      // distinctly so the admin knows to top up at console.anthropic.com,
-      // and the user understands this isn't a transient failure to retry —
-      // previously this fell through to the generic 500 and looked like a
-      // random "Sorry, something went wrong" for every Blanche call.
-      if (error.message.toLowerCase().includes('credit balance is too low')) {
-        return res.status(503).json({
+        status = 503;
+        body = { message: 'The Claude API key appears to be invalid. Please check your configuration.', requiresConfig: true };
+      } else if (error.message.includes('429') || error.message.includes('rate_limit')) {
+        status = 429;
+        body = { message: 'Too many requests to the AI service. Please wait a moment and try again.' };
+      } else if (error.message.includes('overloaded') || error.message.includes('529')) {
+        status = 503;
+        body = { message: "Blanche is experiencing high demand right now. Please try again in a moment — it usually clears up within a minute or two!" };
+      } else if (error.message.toLowerCase().includes('credit balance is too low')) {
+        // Anthropic returns a 400 with this literal text when the org runs out
+        // of API credits — surface it distinctly so the admin knows to top up
+        // and the user understands it isn't a transient retry-able blip.
+        status = 503;
+        body = {
           message:
             "Blanche is temporarily unavailable — the AI provider account is out of credits. " +
             "Admin: please top up at https://console.anthropic.com/settings/billing. " +
             "Once credits land, Blanche will work again immediately (no redeploy needed).",
           requiresConfig: true,
-        });
+        };
       }
     }
 
-    res.status(500).json({
-      message: 'An error occurred while processing your request. Please try again.',
-    });
+    if (res.headersSent) {
+      try {
+        res.write(`event: error\ndata: ${JSON.stringify(body)}\n\n`);
+        res.end();
+      } catch {
+        /* socket already closed */
+      }
+    } else {
+      res.status(status).json(body);
+    }
   }
 });
 

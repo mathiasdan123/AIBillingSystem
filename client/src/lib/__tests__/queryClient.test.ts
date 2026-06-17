@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../supabase', () => ({ supabase: null }));
 
-import { getQueryFn } from '../queryClient';
+import { getQueryFn, streamRequest } from '../queryClient';
 
 const fetchMock = vi.fn();
 const originalFetch = globalThis.fetch;
@@ -77,5 +77,91 @@ describe('getQueryFn missing-segment guard', () => {
       '/api/foo/0',
       expect.objectContaining({ credentials: 'include' }),
     );
+  });
+});
+
+// Build a fake fetch Response whose body streams the given chunks as an SSE
+// response (content-type text/event-stream).
+function sseResponse(chunks: string[]) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(encoder.encode(c));
+      controller.close();
+    },
+  });
+  return { ok: true, status: 200, headers: new Headers({ 'content-type': 'text/event-stream' }), body };
+}
+
+describe('streamRequest', () => {
+  it('adds stream:true to the body and posts JSON', async () => {
+    fetchMock.mockResolvedValueOnce(sseResponse(['event: done\ndata: {}\n\n']));
+    await streamRequest('/api/ai/assistant', { message: 'hi' }, {});
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ message: 'hi', stream: true });
+    expect(init.credentials).toBe('include');
+  });
+
+  it('emits onDelta for each delta frame, then onDone', async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse([
+        'event: delta\ndata: {"text":"Hello"}\n\n',
+        'event: delta\ndata: {"text":" world"}\n\n',
+        'event: done\ndata: {"response":"Hello world","proposals":[]}\n\n',
+      ]),
+    );
+    const deltas: string[] = [];
+    let done: any = null;
+    await streamRequest('/x', {}, {
+      onDelta: (t) => deltas.push(t),
+      onDone: (d) => { done = d; },
+    });
+    expect(deltas).toEqual(['Hello', ' world']);
+    expect(done).toEqual({ response: 'Hello world', proposals: [] });
+  });
+
+  it('reassembles frames split across chunk boundaries', async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(['event: del', 'ta\ndata: {"text":"', 'split"}\n\nevent: done\ndata: {}\n\n']),
+    );
+    const deltas: string[] = [];
+    await streamRequest('/x', {}, { onDelta: (t) => deltas.push(t) });
+    expect(deltas).toEqual(['split']);
+  });
+
+  it('routes an error frame to onError', async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(['event: error\ndata: {"message":"boom"}\n\n']),
+    );
+    let err: any = null;
+    await streamRequest('/x', {}, { onError: (e) => { err = e; } });
+    expect(err).toEqual({ message: 'boom' });
+  });
+
+  it('falls back to JSON onDone when the server did not stream (2xx)', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      body: {}, // non-stream body; ignored because content-type isn't SSE
+      json: async () => ({ response: 'cached', cached: true }),
+    });
+    let done: any = null;
+    await streamRequest('/x', {}, { onDone: (d) => { done = d; } });
+    expect(done).toEqual({ response: 'cached', cached: true });
+  });
+
+  it('falls back to JSON onError when the server returns a non-2xx body', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      body: {},
+      json: async () => ({ message: 'rate limited' }),
+    });
+    let err: any = null;
+    await streamRequest('/x', {}, { onError: (e) => { err = e; } });
+    expect(err).toEqual({ message: 'rate limited' });
   });
 });

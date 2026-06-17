@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, streamRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { BLANCHE_OPEN_EVENT, type BlancheOpenDetail } from "@/lib/blancheControl";
@@ -26,6 +26,8 @@ interface ChatMessage {
   // history so Blanche has context, but are NOT rendered in the chat —
   // showing them would surface implementation detail to the user.
   hidden?: boolean;
+  // True while this assistant message is being streamed in token-by-token.
+  streaming?: boolean;
   timestamp: number;
 }
 
@@ -402,6 +404,19 @@ export default function AiBillingAssistant() {
     if (!options?.hidden) setInput("");
     setIsLoading(true);
 
+    // The assistant reply streams into a single placeholder bubble. We track
+    // its timestamp so both the success path and the error/catch path update
+    // that same bubble instead of appending a second message.
+    let streamTs: number | null = null;
+    const patchStream = (patch: Partial<ChatMessage>) => {
+      if (streamTs === null) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.timestamp === streamTs && m.role === "assistant" ? { ...m, ...patch } : m,
+        ),
+      );
+    };
+
     try {
       // Build conversation history for context (exclude timestamps and actions)
       const conversationHistory = messages.slice(-18).map((m) => ({
@@ -434,35 +449,71 @@ export default function AiBillingAssistant() {
         return `${y}-${m}-${day}`;
       })();
 
-      const res = await apiRequest("POST", "/api/ai/assistant", {
-        message: trimmed,
-        conversationHistory,
-        pageContext,
-        clientDate: localDate,
-      });
+      // Append the live placeholder, then stream tokens into it. streamRequest
+      // adds `stream: true` and falls back to a plain-JSON read if the server
+      // didn't stream (cache hit, rate limit, error) — those land in onDone /
+      // onError just the same.
+      streamTs = Date.now();
+      let acc = "";
+      let finalized = false;
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "", streaming: true, timestamp: streamTs! },
+      ]);
 
-      const data = await res.json();
-
-      const assistantMsg: ChatMessage = {
-        role: "assistant",
-        content: data.response,
-        suggestedActions: data.suggestedActions,
-        // Phase 4: any mutation Blanche tried becomes a proposal card the
-        // user must Confirm or Cancel. The server stages these; we just
-        // render and round-trip the user's decision to /confirm-tool.
-        proposals: Array.isArray(data.proposals)
-          ? data.proposals.map((p: any) => ({
+      const mapProposals = (proposals: any): BlancheProposal[] | undefined =>
+        Array.isArray(proposals)
+          ? proposals.map((p: any) => ({
               id: String(p.id),
               toolName: String(p.toolName),
               summary: String(p.summary ?? p.toolName),
               args: p.args ?? {},
               status: "pending" as const,
             }))
-          : undefined,
-        timestamp: Date.now(),
-      };
+          : undefined;
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      await streamRequest(
+        "/api/ai/assistant",
+        { message: trimmed, conversationHistory, pageContext, clientDate: localDate },
+        {
+          onDelta: (t) => {
+            acc += t;
+            patchStream({ content: acc });
+          },
+          onDone: (data) => {
+            finalized = true;
+            // `data.response` is the server's authoritative, post-processed text
+            // (action tags stripped, hallucinated-success warning applied); it
+            // replaces the raw streamed text. Phase 4: any mutation Blanche
+            // tried becomes a Confirm/Cancel proposal card.
+            patchStream({
+              content:
+                typeof data?.response === "string" && data.response.length > 0
+                  ? data.response
+                  : acc,
+              suggestedActions: data?.suggestedActions,
+              proposals: mapProposals(data?.proposals),
+              streaming: false,
+            });
+          },
+          onError: (data) => {
+            finalized = true;
+            const msg =
+              (data && typeof data.message === "string" && data.message) ||
+              "Sorry, something went wrong. Please try again.";
+            patchStream({ content: msg, streaming: false });
+          },
+        },
+      );
+
+      // Stream ended without a terminal event (e.g. dropped connection) — don't
+      // leave the bubble stuck "typing".
+      if (!finalized) {
+        patchStream({
+          content: acc || "Sorry, the connection dropped before I finished. Please try again.",
+          streaming: false,
+        });
+      }
     } catch (err: unknown) {
       // apiRequest throws with the shape "STATUS: BODY" — try to extract the
       // server's actual `message` field so the user sees the real cause (e.g.
@@ -494,14 +545,20 @@ export default function AiBillingAssistant() {
         }
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: errorMessage,
-          timestamp: Date.now(),
-        },
-      ]);
+      // If a streaming placeholder is already on screen, fold the error into
+      // it; otherwise (error before the placeholder was created) append one.
+      if (streamTs !== null) {
+        patchStream({ content: errorMessage, streaming: false });
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: errorMessage,
+            timestamp: Date.now(),
+          },
+        ]);
+      }
     } finally {
       setIsLoading(false);
     }
