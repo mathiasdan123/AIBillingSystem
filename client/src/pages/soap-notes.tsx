@@ -2197,10 +2197,10 @@ export default function SoapNotes() {
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
                       <Brain className="w-5 h-5 text-green-600" />
-                      Optimized Billing
+                      Suggested Billing Codes
                     </CardTitle>
                     <CardDescription className="text-xs">
-                      {isAdmin ? "AI-selected codes for maximum reimbursement (audit-defensible)" : "AI-selected billing codes (audit-defensible)"}
+                      AI-suggested codes based on the documented care — the treating provider reviews and approves all coding decisions.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2">

@@ -493,10 +493,12 @@ You must respond with a JSON object.`;
     prompt += `\n\nPATIENT'S INSURANCE CONTRACT DATA:
 ${JSON.stringify(insuranceData, null, 2)}
 
-Use this contract data to:
-- Prioritize codes that are covered at higher rates
-- Avoid codes that require prior authorization (if not obtained)
-- Stay within visit limits if applicable`;
+Use this contract data ONLY to surface coverage constraints for the provider —
+NEVER to choose codes by reimbursement amount:
+- Note if a clinically appropriate code requires prior authorization (and it has not been obtained)
+- Note if the documented services would exceed the plan's visit limits
+Code selection must be driven solely by the interventions actually documented;
+the treating provider makes the final coding decision.`;
   }
 
   return prompt;
@@ -715,7 +717,8 @@ function fallbackGeneration(
   // Use manual rate override if provided, otherwise use default $289/unit
   const unitRate = request.ratePerUnit || DEFAULT_UNIT_RATE;
 
-  // Simple rule-based assignment prioritizing higher rates
+  // Simple rule-based assignment by documented clinical activity type (all
+  // codes share the same default unit rate — assignment is never by rate).
   const sensoryKeywords = ["swing", "crash", "weighted", "body sock", "trampoline", "rice bin", "tactile", "brushing", "compression", "vestibular", "proprioceptive"];
   const functionalKeywords = ["obstacle", "pegboard", "puzzle", "cutting", "writing", "ADL", "lacing", "buttoning", "feeding"];
   const balanceKeywords = ["balance", "foam beam", "one-leg", "ladder", "scooter", "yoga"];
