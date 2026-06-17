@@ -35,6 +35,17 @@ describe("extractSoapPreview", () => {
     );
   });
 
+  it("strips a leading ```json code fence and never shows backticks", () => {
+    const raw = '```json\n{\n  "subjective": "Caregiver reported no concerns';
+    const out = extractSoapPreview(raw);
+    expect(out).toBe("Subjective\nCaregiver reported no concerns");
+    expect(out).not.toContain("`");
+  });
+
+  it("handles a bare ``` fence with no language tag", () => {
+    expect(extractSoapPreview('```\n{"subjective":"Hi"}')).toBe("Subjective\nHi");
+  });
+
   it("parses a complete, well-formed note", () => {
     const raw = JSON.stringify({
       subjective: "Caregiver report.",

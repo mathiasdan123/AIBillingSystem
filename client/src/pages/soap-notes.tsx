@@ -17,7 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   FileText, Brain, CheckCircle, Clock, Lightbulb, Sparkles,
-  Plus, X, ChevronDown, ChevronUp, Loader2, Mic, ChevronsUpDown, Check
+  Plus, X, ChevronDown, ChevronUp, Loader2, Mic, ChevronsUpDown, Check, AlertTriangle
 } from "lucide-react";
 import { VoiceInput } from "@/components/VoiceInput";
 import { TextToSpeech } from "@/components/TextToSpeech";
@@ -311,6 +311,7 @@ export default function SoapNotes() {
     billingRationale?: string;
     auditNotes?: string[];
     totalReimbursement?: number;
+    generationMode?: "ai" | "fallback";
   } | null>(null);
 
   // Post-save state: tracks the just-saved note so we can show a confirmation
@@ -857,6 +858,7 @@ export default function SoapNotes() {
             totalReimbursement: number;
             billingRationale: string;
             auditNotes: string[];
+            generationMode?: "ai" | "fallback";
           }) => {
             received = true;
             setGeneratedNote({
@@ -868,7 +870,8 @@ export default function SoapNotes() {
               timeBlocks: aiResponse.timeBlocks || [],
               totalReimbursement: aiResponse.totalReimbursement || 0,
               billingRationale: aiResponse.billingRationale || "",
-              auditNotes: aiResponse.auditNotes || []
+              auditNotes: aiResponse.auditNotes || [],
+              generationMode: aiResponse.generationMode || "ai"
             });
             generatedNoteForPatientRef.current = selectedPatient;
 
@@ -2192,6 +2195,17 @@ export default function SoapNotes() {
             {generatedNote ? (
               <>
                 <DraftSavedIndicator saving={draftSaving} lastSavedAt={draftLastSavedAt} />
+                {generatedNote.generationMode === "fallback" && (
+                  <Alert className="border-amber-300 bg-amber-50">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    <AlertDescription className="text-amber-800 text-sm">
+                      <strong>Rule-based draft — AI was unavailable.</strong> This note was
+                      generated from a template, not from the AI reading this session's
+                      documentation, so it may contain generic content. Review every section
+                      carefully and edit as needed before signing or billing.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {/* CPT Codes Card */}
                 <Card className="border-green-200 bg-green-50">
                   <CardHeader className="pb-2">

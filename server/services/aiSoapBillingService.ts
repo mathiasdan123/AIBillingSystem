@@ -95,6 +95,13 @@ export interface AiSoapBillingResponse {
   totalReimbursement: number;
   billingRationale: string;
   auditNotes: string[];
+  /**
+   * How the note was produced. "ai" = Claude-generated from the documented
+   * session. "fallback" = the rule-based template (AI unavailable, or the AI
+   * output was truncated/unparseable) — a templated note the provider MUST
+   * review especially carefully before signing/billing, so the UI surfaces it.
+   */
+  generationMode: "ai" | "fallback";
 }
 
 /**
@@ -701,7 +708,8 @@ function validateAndEnhanceResponse(
     timeBlocks,
     totalReimbursement,
     billingRationale: aiResponse.billingRationale || "",
-    auditNotes: aiResponse.auditNotes || []
+    auditNotes: aiResponse.auditNotes || [],
+    generationMode: "ai",
   };
 }
 
@@ -850,7 +858,8 @@ function fallbackGeneration(
     timeBlocks,
     totalReimbursement,
     billingRationale: "Billing codes assigned using rule-based accuracy checks. AI unavailable.",
-    auditNotes: ["Documentation supports assigned CPT codes", "Activities match code descriptions"]
+    auditNotes: ["Documentation supports assigned CPT codes", "Activities match code descriptions"],
+    generationMode: "fallback",
   };
 }
 

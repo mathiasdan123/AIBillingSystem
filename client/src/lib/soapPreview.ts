@@ -4,6 +4,11 @@
 // assessment→plan order), so we pull each section's string value — including
 // the final, still-unterminated one — and unescape it for display.
 export function extractSoapPreview(raw: string): string {
+  // The model sometimes wraps the JSON in a ```json code fence despite the
+  // prompt. Drop a leading fence so the preview is never polluted by it. (The
+  // per-section regex below already skips it, but this makes the intent explicit
+  // and keeps the preview clean for any future rendering changes.)
+  raw = raw.replace(/^\s*```(?:json)?\s*/i, "");
   const sections: Array<[label: string, key: string]> = [
     ["Subjective", "subjective"],
     ["Objective", "objective"],
