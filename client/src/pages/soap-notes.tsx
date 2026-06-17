@@ -21,7 +21,8 @@ import {
 } from "lucide-react";
 import { VoiceInput } from "@/components/VoiceInput";
 import { TextToSpeech } from "@/components/TextToSpeech";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, streamRequest } from "@/lib/queryClient";
+import { extractSoapPreview } from "@/lib/soapPreview";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
@@ -283,6 +284,8 @@ export default function SoapNotes() {
 
   // AI Generated content
   const [isGenerating, setIsGenerating] = useState(false);
+  // Live preview text assembled from streamed SOAP deltas while generating.
+  const [streamPreview, setStreamPreview] = useState("");
   const [generatedNote, setGeneratedNote] = useState<{
     subjective: string;
     objective: string;
@@ -784,79 +787,104 @@ export default function SoapNotes() {
     }
 
     setIsGenerating(true);
+    setStreamPreview("");
 
     try {
-      // Call the AI backend service
-      const response = await apiRequest("POST", "/api/ai/generate-soap-billing", {
-        patientId: selectedPatient || 0,
-        activities: selectedActivities.map(a => a.name), // Activity names for backward compatibility
-        activityAssessments: selectedActivities, // Full activity objects with assessments
-        additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
-        interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
-        mood: mood || "Cooperative",
-        caregiverReport: caregiverReport || undefined,
-        duration,
-        sessionType,
-        location,
-        assessment: {
-          performance: assessment.performance || "Stable",
-          assistance: assessment.assistance || "Minimal Assist",
-          strength: assessment.strength || "Adequate",
-          motorPlanning: assessment.motorPlanning || "Mild Difficulty",
-          sensoryRegulation: assessment.sensoryRegulation || "Needed Minimal Supports"
+      // Stream the generation so the note materializes live in the preview
+      // pane. streamRequest adds `stream: true`; if the server answers with
+      // plain JSON instead (back-compat / error), the body still arrives via
+      // onDone / onError, so this one path covers both.
+      let received = false;
+      let raw = "";
+      await streamRequest(
+        "/api/ai/generate-soap-billing",
+        {
+          patientId: selectedPatient || 0,
+          activities: selectedActivities.map(a => a.name), // Activity names for backward compatibility
+          activityAssessments: selectedActivities, // Full activity objects with assessments
+          additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
+          interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
+          mood: mood || "Cooperative",
+          caregiverReport: caregiverReport || undefined,
+          duration,
+          sessionType,
+          location,
+          assessment: {
+            performance: assessment.performance || "Stable",
+            assistance: assessment.assistance || "Minimal Assist",
+            strength: assessment.strength || "Adequate",
+            motorPlanning: assessment.motorPlanning || "Mild Difficulty",
+            sensoryRegulation: assessment.sensoryRegulation || "Needed Minimal Supports"
+          },
+          planNextSteps: planNextSteps || "Continue Current Goals",
+          nextSessionFocus: nextSessionFocus,
+          homeProgram: homeProgram || undefined,
+          ratePerUnit: ratePerUnit // Manual rate override
         },
-        planNextSteps: planNextSteps || "Continue Current Goals",
-        nextSessionFocus: nextSessionFocus,
-        homeProgram: homeProgram || undefined,
-        ratePerUnit: ratePerUnit // Manual rate override
-      });
+        {
+          onDelta: (t) => {
+            raw += t;
+            setStreamPreview(extractSoapPreview(raw));
+          },
+          onError: (data) => {
+            throw new Error(
+              (data && typeof data.message === "string" && data.message) ||
+                "Unable to generate note. Please try again.",
+            );
+          },
+          onDone: (aiResponse: {
+            subjective: string;
+            objective: string;
+            assessment: string;
+            plan: string;
+            cptCodes: Array<{
+              code: string;
+              name: string;
+              units: number;
+              rationale: string;
+              reimbursement: number;
+              activitiesAssigned?: string[];
+            }>;
+            timeBlocks: Array<{
+              blockNumber: number;
+              startMinute: number;
+              endMinute: number;
+              code: string;
+              codeName: string;
+              rate: number;
+              activities: string[];
+            }>;
+            totalReimbursement: number;
+            billingRationale: string;
+            auditNotes: string[];
+          }) => {
+            received = true;
+            setGeneratedNote({
+              subjective: aiResponse.subjective || "",
+              objective: aiResponse.objective || "",
+              assessment: aiResponse.assessment || "",
+              plan: aiResponse.plan || "",
+              cptCodes: aiResponse.cptCodes || [],
+              timeBlocks: aiResponse.timeBlocks || [],
+              totalReimbursement: aiResponse.totalReimbursement || 0,
+              billingRationale: aiResponse.billingRationale || "",
+              auditNotes: aiResponse.auditNotes || []
+            });
+            generatedNoteForPatientRef.current = selectedPatient;
 
-      const aiResponse = await response.json() as {
-        subjective: string;
-        objective: string;
-        assessment: string;
-        plan: string;
-        cptCodes: Array<{
-          code: string;
-          name: string;
-          units: number;
-          rationale: string;
-          reimbursement: number;
-          activitiesAssigned?: string[];
-        }>;
-        timeBlocks: Array<{
-          blockNumber: number;
-          startMinute: number;
-          endMinute: number;
-          code: string;
-          codeName: string;
-          rate: number;
-          activities: string[];
-        }>;
-        totalReimbursement: number;
-        billingRationale: string;
-        auditNotes: string[];
-      };
+            toast({
+              title: "AI Generated Note & Codes",
+              description: isAdmin
+                ? `Generated SOAP note with ${(aiResponse.cptCodes || []).length} suggested CPT codes. Est. reimbursement: $${(aiResponse.totalReimbursement || 0).toFixed(2)}`
+                : `Generated SOAP note with ${(aiResponse.cptCodes || []).length} suggested CPT codes.`,
+            });
+          },
+        },
+      );
 
-      setGeneratedNote({
-        subjective: aiResponse.subjective || "",
-        objective: aiResponse.objective || "",
-        assessment: aiResponse.assessment || "",
-        plan: aiResponse.plan || "",
-        cptCodes: aiResponse.cptCodes || [],
-        timeBlocks: aiResponse.timeBlocks || [],
-        totalReimbursement: aiResponse.totalReimbursement || 0,
-        billingRationale: aiResponse.billingRationale || "",
-        auditNotes: aiResponse.auditNotes || []
-      });
-      generatedNoteForPatientRef.current = selectedPatient;
-
-      toast({
-        title: "AI Generated Note & Codes",
-        description: isAdmin
-          ? `Generated SOAP note with ${(aiResponse.cptCodes || []).length} suggested CPT codes. Est. reimbursement: $${(aiResponse.totalReimbursement || 0).toFixed(2)}`
-          : `Generated SOAP note with ${(aiResponse.cptCodes || []).length} suggested CPT codes.`,
-      });
+      if (!received) {
+        throw new Error("The connection dropped before the note finished. Please try again.");
+      }
 
     } catch (error) {
       console.error("AI generation error:", error);
@@ -867,6 +895,7 @@ export default function SoapNotes() {
       });
     } finally {
       setIsGenerating(false);
+      setStreamPreview("");
     }
   };
 
@@ -2139,6 +2168,23 @@ export default function SoapNotes() {
                 </>
               )}
             </Button>
+
+            {/* Live preview: the note materializes here while Claude writes it. */}
+            {isGenerating && streamPreview && (
+              <Card className="border-purple-200 bg-purple-50/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2 text-purple-700">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Writing your note…
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <pre className="whitespace-pre-wrap break-words text-xs text-gray-700 font-sans max-h-72 overflow-y-auto">
+                    {streamPreview}
+                  </pre>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Right Column - Generated Output */}

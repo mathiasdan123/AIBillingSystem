@@ -394,18 +394,34 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
     return res.status(400).json({ error: 'Duration must be at least 15 minutes' });
   }
 
-  // Start a chunked response and flush headers immediately so the ALB sees
-  // an open pipe. JSON.parse accepts leading whitespace, so we can write
-  // space bytes as keepalives and then the real JSON at the end.
+  // Response transport. Either way we flush headers immediately so the ALB
+  // sees an open pipe during the multi-second generation.
+  //  - SSE (body.stream === true): forward Claude's text deltas as `event:
+  //    delta` so the client renders the note materializing live, then a final
+  //    `event: done` carrying the full structured result.
+  //  - Chunked JSON (default, back-compat for older clients): keepalive space
+  //    bytes during generation, then the full JSON. JSON.parse tolerates the
+  //    leading whitespace.
+  const wantStream = req.body?.stream === true;
   res.status(200);
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
+  if (wantStream) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Connection', 'keep-alive');
+  } else {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  }
   res.flushHeaders();
-  res.write(' ');
+  if (!wantStream) res.write(' ');
 
+  const sendEvent = (event: string, data: unknown) => {
+    if (res.writableEnded || res.destroyed) return;
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* socket closed */ }
+  };
   const writeKeepalive = () => {
     if (!res.writableEnded && !res.destroyed) {
-      try { res.write(' '); } catch { /* socket closed */ }
+      // SSE comment line (`: ...`) is a no-op keepalive the client ignores.
+      try { res.write(wantStream ? ': keepalive\n\n' : ' '); } catch { /* socket closed */ }
     }
   };
 
@@ -433,11 +449,20 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         homeProgram,
         ratePerUnit
       },
-      { onProgress: writeKeepalive }
+      {
+        // In streaming mode the deltas themselves keep the pipe warm; the
+        // heartbeat interval still covers a stall before the first token.
+        onProgress: wantStream ? undefined : writeKeepalive,
+        onTextDelta: wantStream ? (t) => sendEvent('delta', { text: t }) : undefined,
+      }
     );
 
     clearInterval(heartbeat);
-    res.write(JSON.stringify(result));
+    if (wantStream) {
+      sendEvent('done', result);
+    } else {
+      res.write(JSON.stringify(result));
+    }
     res.end();
     logger.info('SOAP generation completed', {
       patientId,
@@ -450,9 +475,13 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
       durationMs: Date.now() - startedAt,
     });
     // Headers already flushed, so we can't change the status. Emit an error
-    // payload the client can still parse.
+    // the client can still surface.
     try {
-      res.write(JSON.stringify({ error: 'Failed to generate SOAP note and billing' }));
+      if (wantStream) {
+        sendEvent('error', { message: 'Failed to generate SOAP note and billing' });
+      } else {
+        res.write(JSON.stringify({ error: 'Failed to generate SOAP note and billing' }));
+      }
     } catch { /* ignore */ }
     res.end();
   }

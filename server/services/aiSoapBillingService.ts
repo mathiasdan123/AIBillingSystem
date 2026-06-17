@@ -111,6 +111,13 @@ export interface GenerateSoapOptions {
    * timeout doesn't fire on long generations. Safe to ignore.
    */
   onProgress?: () => void;
+  /**
+   * Optional callback invoked with each streamed text chunk from Claude. The
+   * route uses this to forward live deltas over SSE so the user watches the
+   * note materialize. The chunks are the raw JSON the model emits; the client
+   * extracts the in-progress section text for a readable preview.
+   */
+  onTextDelta?: (text: string) => void;
 }
 
 export async function generateSoapNoteAndBilling(
@@ -192,8 +199,11 @@ export async function generateSoapNoteAndBilling(
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    if (options.onProgress) {
-      stream.on("text", () => options.onProgress!());
+    if (options.onProgress || options.onTextDelta) {
+      stream.on("text", (t: string) => {
+        options.onProgress?.();
+        options.onTextDelta?.(t);
+      });
     }
 
     const finalMessage = await stream.finalMessage();
