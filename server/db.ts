@@ -1,5 +1,6 @@
 import * as schema from "@shared/schema";
 import { enableSlowQueryLogging, startPoolMonitor } from "./services/dbOptimizer";
+import logger from "./services/logger";
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -47,6 +48,19 @@ dbReady = (async () => {
     db = drizzleNeon({ client: pool, schema });
     console.error('Using Neon serverless driver');
   }
+
+  // CRITICAL resilience: attach an error handler to the pool. node-postgres
+  // emits 'error' on an IDLE pooled client when the server drops the connection
+  // — RDS maintenance windows, failovers, reboots, or idle kills (Postgres
+  // 57P01 "terminating connection due to administrator command"). With NO
+  // listener, Node re-throws it as an uncaught exception that can crash the
+  // task. With this listener, the pool simply discards the dead client and the
+  // next query transparently acquires a fresh one — no crash, no fatal Sentry.
+  pool.on('error', (err: Error) => {
+    logger.error('Idle PostgreSQL client error — connection dropped (likely RDS maintenance/failover); client discarded, pool reconnects on next query', {
+      error: err.message,
+    });
+  });
 
   // Enable slow query logging and pool monitoring
   enableSlowQueryLogging(pool);

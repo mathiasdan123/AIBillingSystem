@@ -181,7 +181,16 @@ app.use(cors({
       return callback(null, true);
     }
 
-    callback(new Error('Not allowed by CORS'));
+    // Deny gracefully: withhold the CORS headers (so the browser blocks the
+    // cross-origin read) but do NOT throw. Throwing turned a routine
+    // disallowed-origin — almost always a bot/scanner sending a spoofed Origin
+    // to a probe path like /Student/ — into a 500 + a *fatal* Sentry event
+    // (was the top project issue). Security is unchanged: protected routes
+    // still require auth, and SameSite=Strict session cookies are never sent
+    // cross-site. Logged at warn so a genuinely mis-set legit origin stays
+    // visible without polluting Sentry.
+    console.warn(`CORS: denied disallowed origin: ${origin}`);
+    callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
