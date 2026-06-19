@@ -3,6 +3,8 @@ version: 0.2
 env:
   variables:
     SENTRY_ORG: "therapybillai"
+    ECR_REPO: "773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app"
+    DOCKER_BUILDKIT: "1"
 
 phases:
   pre_build:
@@ -16,19 +18,47 @@ phases:
       # Defaults to "unknown" for ad-hoc builds that skipped the deploy script.
       - export RELEASE_SHA=$(cat .release-sha 2>/dev/null || echo "unknown")
       - echo "Release SHA:" $RELEASE_SHA
+      # Create a buildx builder backed by the docker-container driver. That driver is
+      # required to export/import a registry-backed layer cache (--cache-to/--cache-from);
+      # the default "docker" driver cannot. mode=max (set in the build phase) caches ALL
+      # multi-stage layers — including the builder/`npm ci` stage — across CodeBuild runs,
+      # which is the bulk of the build time.
+      - echo Setting up Docker buildx...
+      - docker buildx create --use --name tbbuilder --driver docker-container || docker buildx use tbbuilder
+      - docker buildx inspect --bootstrap
   build:
     commands:
       - echo Building Docker image...
-      - docker build --build-arg SENTRY_RELEASE=$SENTRY_RELEASE --build-arg RELEASE_SHA=$RELEASE_SHA --target production -t therapybill-app .
-      - docker tag therapybill-app:latest 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
+      # --load brings the built image into the local docker daemon so the existing
+      # post_build steps (source-map extraction via `docker create`, then push) keep
+      # working unchanged. The cross-run layer cache lives at the :buildcache* ECR tags.
+      - >-
+        docker buildx build
+        --build-arg SENTRY_RELEASE=$SENTRY_RELEASE
+        --build-arg RELEASE_SHA=$RELEASE_SHA
+        --target production
+        --cache-from type=registry,ref=$ECR_REPO:buildcache
+        --cache-to type=registry,ref=$ECR_REPO:buildcache,mode=max
+        --load
+        -t therapybill-app:latest .
+      - docker tag therapybill-app:latest $ECR_REPO:latest
       - echo Building migrate image...
-      - docker build --target migrate -t therapybill-app:migrate .
-      - docker tag therapybill-app:migrate 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:migrate
+      # Imports the shared base + npm-ci layers from the production build's cache, and
+      # keeps its own cache tag for the drizzle-kit dev-deps layer.
+      - >-
+        docker buildx build
+        --target migrate
+        --cache-from type=registry,ref=$ECR_REPO:buildcache
+        --cache-from type=registry,ref=$ECR_REPO:buildcache-migrate
+        --cache-to type=registry,ref=$ECR_REPO:buildcache-migrate,mode=max
+        --load
+        -t therapybill-app:migrate .
+      - docker tag therapybill-app:migrate $ECR_REPO:migrate
   post_build:
     commands:
       - echo Pushing Docker images...
-      - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:latest
-      - docker push 773320320189.dkr.ecr.us-east-1.amazonaws.com/therapybill-app:migrate
+      - docker push $ECR_REPO:latest
+      - docker push $ECR_REPO:migrate
       # Upload source maps to Sentry (requires SENTRY_AUTH_TOKEN in Secrets Manager)
       - |
         SENTRY_AUTH_TOKEN=$(aws secretsmanager get-secret-value --secret-id therapybill/sentry-auth-token --region us-east-1 --query SecretString --output text 2>/dev/null || echo "")
