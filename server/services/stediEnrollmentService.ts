@@ -7,12 +7,18 @@
  * provider record (Phase 2) and submitting enrollment requests (Phase 3),
  * so practices no longer need the manual portal CSV.
  *
- * Stedi enrollment API (confirmed 2026-05-30):
+ * Stedi enrollment API (verified against Stedi's OpenAPI spec 2026-07-02 —
+ * the original guessed paths /enrollment/create-provider and
+ * /enrollment/create-enrollment returned 404 in production):
  *   Base:  https://enrollments.us.stedi.com/2024-09-01
  *   Auth:  Authorization: Key <apiKey>   (same scheme as healthcare API)
- *   POST /enrollment/create-provider     { displayName, npi, taxId, contacts:[...] }
- *   POST /enrollment/create-enrollment   { providerId, payerId, transaction, userEmail, ... }
- *   GET  /enrollments                    list (used by the sync service)
+ *   POST /providers    { name, npi, taxId, taxIdType: EIN|SSN, contacts:[{firstName,lastName,organizationName,email,phone,streetAddress1,city,state,zipCode}] }
+ *   POST /enrollments  { provider:{id}, payer:{idOrAlias}, transactions:{<txn>:{enroll:true}}, primaryContact:{...}, userEmail, status: DRAFT|STEDI_ACTION_REQUIRED }
+ *   GET  /enrollments  list (used by the sync service)
+ * Notes:
+ *   - aggregationPreference is ONLY valid for claimPayment (ERA) enrollments;
+ *     Stedi rejects non-ERA requests that include it with HTTP 400.
+ *   - status defaults to DRAFT; STEDI_ACTION_REQUIRED submits it for processing.
  *
  * Transaction values: eligibilityCheck (270/271), claimStatus (276/277),
  * professionalClaimSubmission (837P), claimPayment (835 ERA).
@@ -84,14 +90,47 @@ function authHeaders(apiKey: string): Record<string, string> {
 
 // ---- Phase 2: provider record ------------------------------------------
 
+/** Contact shape shared by provider records and enrollment primary contacts. */
+export interface StediContactInput {
+  firstName?: string;
+  lastName?: string;
+  organizationName?: string;
+  email?: string;
+  phone?: string;
+  streetAddress1?: string;
+  streetAddress2?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+}
+
 export interface CreateProviderInput {
   displayName: string;
   npi: string;
   taxId: string;
-  contactName?: string;
-  address?: string;
-  email?: string;
-  phone?: string;
+  /** Defaults to EIN (organizations). Pass SSN for individual providers billing under one. */
+  taxIdType?: 'EIN' | 'SSN';
+  contact?: StediContactInput;
+}
+
+/**
+ * Strip undefined/empty values so we don't send empty strings to Stedi, and
+ * enforce Stedi's contact-name rule: a contact is EITHER a person
+ * (firstName + lastName) OR an organization (organizationName) — sending all
+ * three is a 400. Prefer the person when both names are present.
+ */
+function compactContact(c: StediContactInput): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(c)) {
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim();
+  }
+  if (out.firstName && out.lastName) {
+    delete out.organizationName;
+  } else {
+    delete out.firstName;
+    delete out.lastName;
+  }
+  return out;
 }
 
 export interface CreateProviderResult {
@@ -111,22 +150,17 @@ export async function createStediProvider(
   input: CreateProviderInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<CreateProviderResult> {
-  const body = {
-    displayName: input.displayName,
+  const contact = input.contact ? compactContact(input.contact) : undefined;
+  const body: Record<string, any> = {
+    name: input.displayName,
     npi: input.npi,
     taxId: input.taxId,
-    contacts: [
-      {
-        name: input.contactName || input.displayName,
-        address: input.address || undefined,
-        email: input.email || undefined,
-        phone: input.phone || undefined,
-      },
-    ],
+    taxIdType: input.taxIdType || 'EIN',
   };
+  if (contact && Object.keys(contact).length > 0) body.contacts = [contact];
 
   try {
-    const resp = await fetchImpl(`${ENROLLMENT_API_BASE}/enrollment/create-provider`, {
+    const resp = await fetchImpl(`${ENROLLMENT_API_BASE}/providers`, {
       method: 'POST',
       headers: authHeaders(apiKey),
       body: JSON.stringify(body),
@@ -136,8 +170,7 @@ export async function createStediProvider(
       logger.warn('Stedi create-provider failed', { status: resp.status, error: data?.message });
       return { ok: false, status: resp.status, raw: data, error: data?.message || `http_${resp.status}` };
     }
-    const providerId =
-      data?.providerId || data?.id || data?.provider?.id || data?.provider?.providerId;
+    const providerId = data?.id || data?.providerId;
     if (!providerId) {
       return { ok: false, raw: data, error: 'no_provider_id_in_response' };
     }
@@ -148,17 +181,76 @@ export async function createStediProvider(
   }
 }
 
+/**
+ * Find an existing Stedi provider record by NPI (GET /providers has no
+ * server-side filter, so this pages through and matches client-side).
+ */
+export async function findStediProviderByNpi(
+  apiKey: string,
+  npi: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CreateProviderResult> {
+  try {
+    let pageToken: string | undefined;
+    do {
+      const url = new URL(`${ENROLLMENT_API_BASE}/providers`);
+      url.searchParams.set('pageSize', '100');
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+      const resp = await fetchImpl(url.toString(), { headers: authHeaders(apiKey) });
+      const data: any = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        return { ok: false, status: resp.status, raw: data, error: data?.message || `http_${resp.status}` };
+      }
+      const hit = (data?.items || []).find((x: any) => String(x?.npi) === npi);
+      if (hit?.id) return { ok: true, providerId: String(hit.id), raw: hit };
+      pageToken = data?.nextPageToken || undefined;
+    } while (pageToken);
+    return { ok: false, error: 'provider_not_found' };
+  } catch (err: any) {
+    logger.error('Stedi list-providers error', { error: err?.message || String(err) });
+    return { ok: false, error: err?.message || 'network_error' };
+  }
+}
+
+/**
+ * Create the provider record, or — if Stedi reports one already exists for
+ * this NPI (e.g. it was created manually in the Stedi console) — look it up
+ * and return the existing id.
+ */
+export async function ensureStediProvider(
+  apiKey: string,
+  input: CreateProviderInput,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CreateProviderResult> {
+  const created = await createStediProvider(apiKey, input, fetchImpl);
+  if (created.ok) return created;
+  if (created.status === 400 && /already exists/i.test(created.error || '')) {
+    const found = await findStediProviderByNpi(apiKey, input.npi, fetchImpl);
+    if (found.ok) {
+      logger.info('Stedi provider already existed — reusing', { providerId: found.providerId });
+      return found;
+    }
+  }
+  return created;
+}
+
 // ---- Phase 3: enrollment request ---------------------------------------
 
 export interface CreateEnrollmentInput {
   providerId: string;
+  /** Stedi payer id or any alias (sent as payer.idOrAlias). */
   payerId: string;
   /** Stedi transaction value, e.g. from mapTransactionTypeToStedi(). */
   transaction: string;
   userEmail: string;
-  /** YYYYMMDD; defaults to undefined (Stedi uses today). */
+  /** Required by Stedi: email, phone, streetAddress1, city, state, zipCode. */
+  primaryContact: StediContactInput;
+  /** YYYY-MM-DD; defaults to undefined (Stedi uses today). */
   requestedEffectiveDate?: string;
+  /** ERA (claimPayment) only — Stedi 400s if sent on other transactions. */
   aggregationPreference?: 'NPI' | 'TIN';
+  /** true → submit for processing (STEDI_ACTION_REQUIRED); false → DRAFT. */
+  submit?: boolean;
 }
 
 export interface CreateEnrollmentResult {
@@ -180,16 +272,20 @@ export async function createStediEnrollment(
   fetchImpl: typeof fetch = fetch,
 ): Promise<CreateEnrollmentResult> {
   const body: Record<string, any> = {
-    providerId: input.providerId,
-    payerId: input.payerId,
-    transaction: input.transaction,
+    provider: { id: input.providerId },
+    payer: { idOrAlias: input.payerId },
+    transactions: { [input.transaction]: { enroll: true } },
+    primaryContact: compactContact(input.primaryContact),
     userEmail: input.userEmail,
-    aggregationPreference: input.aggregationPreference || 'NPI',
+    status: input.submit ? 'STEDI_ACTION_REQUIRED' : 'DRAFT',
   };
+  if (input.transaction === 'claimPayment' && input.aggregationPreference) {
+    body.aggregationPreference = input.aggregationPreference;
+  }
   if (input.requestedEffectiveDate) body.requestedEffectiveDate = input.requestedEffectiveDate;
 
   try {
-    const resp = await fetchImpl(`${ENROLLMENT_API_BASE}/enrollment/create-enrollment`, {
+    const resp = await fetchImpl(`${ENROLLMENT_API_BASE}/enrollments`, {
       method: 'POST',
       headers: authHeaders(apiKey),
       body: JSON.stringify(body),

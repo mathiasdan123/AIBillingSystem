@@ -335,13 +335,45 @@ router.post('/submit', isAuthenticated, async (req: any, res: Response) => {
       });
     }
 
+    // Stedi requires a primary contact with email, phone, and full address.
+    if (
+      !practice.billingContactEmail ||
+      !practice.billingContactPhone ||
+      !practice.addressStreet ||
+      !practice.addressCity ||
+      !practice.addressState ||
+      !practice.addressZip
+    ) {
+      return res.status(412).json({
+        message:
+          'Enrollment needs a billing contact email + phone and a structured practice address — complete the provider profile first.',
+      });
+    }
+    const contactName = practice.billingContactName || practice.ownerName || '';
+    const [contactFirst, ...contactRest] = contactName.trim().split(/\s+/);
+
     const { apiKey } = await getStediApiKeyForPractice(practiceId);
     const result = await createStediEnrollment(apiKey, {
       providerId: practice.stediProviderId,
       payerId,
       transaction: stediTransaction,
       userEmail,
-      aggregationPreference: 'NPI',
+      primaryContact: {
+        firstName: contactFirst || undefined,
+        lastName: contactRest.join(' ') || undefined,
+        organizationName: practice.name || undefined,
+        email: practice.billingContactEmail,
+        phone: practice.billingContactPhone,
+        streetAddress1: practice.addressStreet,
+        city: practice.addressCity,
+        state: practice.addressState,
+        zipCode: practice.addressZip,
+      },
+      // Deliberately no aggregationPreference: it's ERA-only AND payer-gated —
+      // Stedi 400s (empty body) when the payer doesn't accept a preference
+      // (verified against Horizon BCBS NJ 2026-07-02, which auto-derives
+      // TIN aggregation). Payers that support it apply their default.
+      submit: true,
     });
 
     if (!result.ok) {

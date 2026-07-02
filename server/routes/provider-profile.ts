@@ -28,7 +28,7 @@ import { isValidNpi, lookupNpi } from '../services/npiValidation';
 import { computeReadiness } from '../services/enrollmentReadiness';
 import { decryptField } from '../services/phiEncryptionService';
 import { getStediApiKeyForPractice } from '../services/stediService';
-import { createStediProvider } from '../services/stediEnrollmentService';
+import { ensureStediProvider } from '../services/stediEnrollmentService';
 import { sanitizeExternalError } from '../services/errorSanitizer';
 
 const router = Router();
@@ -254,19 +254,24 @@ router.post('/stedi-provider', isAuthenticated, async (req: any, res: Response) 
     if (!taxId) return res.status(400).json({ message: 'Tax ID missing or undecryptable' });
 
     const { apiKey } = await getStediApiKeyForPractice(practiceId);
-    const street =
-      [p.addressStreet, p.addressCity, p.addressState, p.addressZip].filter(Boolean).join(', ') ||
-      p.address ||
-      undefined;
-
-    const result = await createStediProvider(apiKey, {
+    const contactName = p.billingContactName || p.ownerName || '';
+    const [firstName, ...rest] = contactName.trim().split(/\s+/);
+    const result = await ensureStediProvider(apiKey, {
       displayName: p.name!,
       npi: p.npi!,
       taxId,
-      contactName: p.billingContactName || p.ownerName || undefined,
-      address: street,
-      email: p.billingContactEmail || p.enrollmentNotificationEmail || undefined,
-      phone: p.billingContactPhone || undefined,
+      taxIdType: 'EIN',
+      contact: {
+        firstName: firstName || undefined,
+        lastName: rest.join(' ') || undefined,
+        organizationName: p.name!,
+        email: p.billingContactEmail || p.enrollmentNotificationEmail || undefined,
+        phone: p.billingContactPhone || undefined,
+        streetAddress1: p.addressStreet || p.address || undefined,
+        city: p.addressCity || undefined,
+        state: p.addressState || undefined,
+        zipCode: p.addressZip || undefined,
+      },
     });
 
     if (!result.ok || !result.providerId) {
