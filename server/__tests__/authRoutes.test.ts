@@ -43,6 +43,13 @@ const mockStorage = vi.hoisted(() => ({
 
 vi.mock('../storage', () => ({ storage: mockStorage }));
 
+// demo-login dynamically imports the demo-practice provisioner (which pulls in
+// the DB layer). Mock it so the auth route test stays DB-free; ensureDemoPractice
+// is unit-tested separately in demoPractice.test.ts.
+vi.mock('../services/demoPractice', () => ({
+  ensureDemoPractice: vi.fn(async () => ({ id: 99, isDemo: true })),
+}));
+
 // ---------------------------------------------------------------------------
 // Mocks for replitAuth (isAuthenticated)
 // ---------------------------------------------------------------------------

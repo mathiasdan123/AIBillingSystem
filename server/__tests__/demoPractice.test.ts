@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockStorage } = vi.hoisted(() => ({
+const { mockStorage, mockClient } = vi.hoisted(() => ({
   mockStorage: {
     getDemoPractice: vi.fn(),
     createPractice: vi.fn(),
@@ -9,9 +9,12 @@ const { mockStorage } = vi.hoisted(() => ({
     createAppointment: vi.fn(),
     createClaim: vi.fn(),
   },
+  // Fake pooled client for the pg_advisory_lock path.
+  mockClient: { query: vi.fn().mockResolvedValue({}), release: vi.fn() },
 }));
 vi.mock('../storage', () => ({ storage: mockStorage }));
 vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../db', () => ({ getPool: vi.fn(async () => ({ connect: vi.fn(async () => mockClient) })) }));
 
 import { ensureDemoPractice } from '../services/demoPractice';
 
@@ -42,6 +45,11 @@ describe('ensureDemoPractice', () => {
     expect(mockStorage.createClaim).toHaveBeenCalled();
     // Seeded patients are NOT row-level demo (so the demo dashboard shows data).
     expect(mockStorage.createPatient.mock.calls[0][0].isDemo).toBe(false);
+    // Provisioning is serialized under an advisory lock and the connection is released.
+    const queries = mockClient.query.mock.calls.map((c) => c[0]);
+    expect(queries.some((q: string) => q.includes('pg_advisory_lock'))).toBe(true);
+    expect(queries.some((q: string) => q.includes('pg_advisory_unlock'))).toBe(true);
+    expect(mockClient.release).toHaveBeenCalled();
   });
 
   it('is idempotent: reuses the existing demo practice and does not re-seed', async () => {

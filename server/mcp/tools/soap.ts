@@ -32,8 +32,16 @@ export function registerSoapTools(
       ratePerUnit?: number;
       therapistName?: string;
     }) => {
+      // Tenant isolation: patientId is caller-controlled. Refuse a patient from
+      // another practice before embedding their PHI into a generated note
+      // (mirrors get_prior_session_notes / update_soap_draft / sign_soap_note).
+      const patient = await storage.getPatient(input.patientId);
+      if (!patient || (patient as any).practiceId !== context.practiceId) {
+        throw new Error(`Patient ${input.patientId} not found`);
+      }
       return generateSoapNoteAndBilling({
         patientId: input.patientId,
+        practiceId: context.practiceId,
         activities: input.activities,
         mood: input.mood,
         caregiverReport: input.caregiverReport,

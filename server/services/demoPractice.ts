@@ -22,8 +22,15 @@
  */
 
 import { storage } from '../storage';
+import { getPool } from '../db';
 import logger from './logger';
 import type { Practice } from '@shared/schema';
+
+// Advisory-lock key that serializes concurrent ensureDemoPractice() calls, so
+// two visitors clicking "Try Free Demo" at the same moment on a fresh DB can't
+// both create/seed (the unique npi already blocks a duplicate practice, but the
+// seed-if-empty check could otherwise double-insert patients/appointments).
+const DEMO_LOCK_KEY = 918273645;
 
 export const DEMO_PRACTICE_NAME = 'Bright Steps Pediatric Therapy (Demo)';
 // Clearly-fake placeholder NPI. The demo practice never bills for real, and
@@ -47,34 +54,53 @@ function isoDate(offsetDays: number): string {
  * the first time. Safe to call on every demo-login.
  */
 export async function ensureDemoPractice(): Promise<Practice> {
-  let practice = await storage.getDemoPractice();
-
-  if (!practice) {
-    practice = await storage.createPractice({
-      name: DEMO_PRACTICE_NAME,
-      isDemo: true,
-      sandboxMode: true,
-      npi: DEMO_NPI,
-      email: 'demo@therapybill.com',
-      phone: '(555) 010-0000',
-      addressStreet: '123 Demo Way',
-      addressCity: 'Springfield',
-      addressState: 'NJ',
-      addressZip: '07000',
-      specialty: 'occupational_therapy',
-      onboardingCompleted: true,
-    } as any);
-    logger.info('Demo practice created', { practiceId: practice.id });
+  // Fast path: already provisioned + seeded — no lock needed.
+  const existing = await storage.getDemoPractice();
+  if (existing) {
+    const patients = await storage.getPatients(existing.id);
+    if (patients.length > 0) return existing;
   }
 
-  // Seed the dataset only if this practice has no patients yet (idempotent).
-  const existingPatients = await storage.getPatients(practice.id);
-  if (existingPatients.length === 0) {
-    await seedDemoData(practice.id);
-    logger.info('Demo practice dataset seeded', { practiceId: practice.id });
-  }
+  // Slow path (first provision, or a prior run that crashed mid-seed): take a
+  // session advisory lock on a dedicated connection so concurrent callers
+  // serialize instead of double-creating/seeding.
+  const pool = await getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [DEMO_LOCK_KEY]);
 
-  return practice;
+    let practice = await storage.getDemoPractice();
+    if (!practice) {
+      practice = await storage.createPractice({
+        name: DEMO_PRACTICE_NAME,
+        isDemo: true,
+        sandboxMode: true,
+        npi: DEMO_NPI,
+        email: 'demo@therapybill.com',
+        phone: '(555) 010-0000',
+        addressStreet: '123 Demo Way',
+        addressCity: 'Springfield',
+        addressState: 'NJ',
+        addressZip: '07000',
+        specialty: 'occupational_therapy',
+        onboardingCompleted: true,
+      } as any);
+      logger.info('Demo practice created', { practiceId: practice.id });
+    }
+
+    // Seed only if empty (idempotent; also recovers a crashed-mid-seed run).
+    const existingPatients = await storage.getPatients(practice.id);
+    if (existingPatients.length === 0) {
+      await seedDemoData(practice.id);
+      logger.info('Demo practice dataset seeded', { practiceId: practice.id });
+    }
+
+    return practice;
+  } finally {
+    // Unlock on the SAME connection, then return it to the pool.
+    await client.query('SELECT pg_advisory_unlock($1)', [DEMO_LOCK_KEY]).catch(() => {});
+    client.release();
+  }
 }
 
 // Fake-but-realistic pediatric OT/ST caseload. Names are obviously demo.
@@ -88,17 +114,19 @@ const DEMO_PATIENTS = [
 ];
 
 // Representative claim mix so the dashboard shows revenue, a clean-claim /
-// denial rate, and AR aging. amounts in dollars.
+// denial rate, and AR aging. amounts in dollars. paidOffset/submitOffset drive
+// the paidAt/submittedAt timestamps so the monthly-revenue and revenue-trend
+// widgets (which group by paidAt) aren't empty — spread across recent months.
 const DEMO_CLAIMS = [
-  { patientIdx: 0, status: 'paid', total: '289.00', paid: '241.13', serviceOffset: -38 },
-  { patientIdx: 1, status: 'paid', total: '216.00', paid: '198.72', serviceOffset: -31 },
-  { patientIdx: 2, status: 'paid', total: '289.00', paid: '246.65', serviceOffset: -24 },
-  { patientIdx: 3, status: 'submitted', total: '216.00', paid: null, serviceOffset: -12 },
-  { patientIdx: 4, status: 'submitted', total: '289.00', paid: null, serviceOffset: -9 },
-  { patientIdx: 5, status: 'denied', total: '150.00', paid: null, serviceOffset: -20 },
-  { patientIdx: 0, status: 'denied', total: '216.00', paid: null, serviceOffset: -15 },
-  { patientIdx: 1, status: 'draft', total: '289.00', paid: null, serviceOffset: -2 },
-  { patientIdx: 2, status: 'draft', total: '216.00', paid: null, serviceOffset: -1 },
+  { patientIdx: 0, status: 'paid', total: '289.00', paid: '241.13', serviceOffset: -68, submitOffset: -66, paidOffset: -50 },
+  { patientIdx: 1, status: 'paid', total: '216.00', paid: '198.72', serviceOffset: -40, submitOffset: -38, paidOffset: -22 },
+  { patientIdx: 2, status: 'paid', total: '289.00', paid: '246.65', serviceOffset: -24, submitOffset: -22, paidOffset: -6 },
+  { patientIdx: 3, status: 'submitted', total: '216.00', paid: null, serviceOffset: -12, submitOffset: -10, paidOffset: null },
+  { patientIdx: 4, status: 'submitted', total: '289.00', paid: null, serviceOffset: -9, submitOffset: -7, paidOffset: null },
+  { patientIdx: 5, status: 'denied', total: '150.00', paid: null, serviceOffset: -20, submitOffset: -18, paidOffset: null },
+  { patientIdx: 0, status: 'denied', total: '216.00', paid: null, serviceOffset: -15, submitOffset: -13, paidOffset: null },
+  { patientIdx: 1, status: 'draft', total: '289.00', paid: null, serviceOffset: -2, submitOffset: null, paidOffset: null },
+  { patientIdx: 2, status: 'draft', total: '216.00', paid: null, serviceOffset: -1, submitOffset: null, paidOffset: null },
 ];
 
 async function seedDemoData(practiceId: number): Promise<void> {
@@ -163,6 +191,8 @@ async function seedDemoData(practiceId: number): Promise<void> {
       paidAmount: c.paid,
       status: c.status,
       dateOfService: isoDate(c.serviceOffset),
+      submittedAt: c.submitOffset != null ? dayAt(c.submitOffset) : null,
+      paidAt: c.paidOffset != null ? dayAt(c.paidOffset) : null,
       denialReason: c.status === 'denied' ? 'CO-197: Precertification/authorization absent' : null,
     } as any);
   }
