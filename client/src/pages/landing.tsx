@@ -881,7 +881,7 @@ export default function Landing() {
               <ul className="space-y-3">
                 <li><a href="/privacy" className="hover:text-white transition-colors">Privacy Policy</a></li>
                 <li><a href="/terms" className="hover:text-white transition-colors">Terms of Service</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">HIPAA Compliance</a></li>
+                <li><a href="mailto:daniel@therapybillai.com?subject=HIPAA%20Compliance" className="hover:text-white transition-colors">HIPAA Compliance</a></li>
                 <li><a href="mailto:daniel@therapybillai.com" className="hover:text-white transition-colors">BAA Request</a></li>
               </ul>
             </div>

@@ -122,10 +122,10 @@ export default function ReimbursementPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <TrendingUp className="w-8 h-8 text-green-600" />
-            Reimbursement Optimization
+            Reimbursement Accuracy
           </h1>
           <p className="text-slate-600 mt-1">
-            Ensure accurate reimbursement by selecting appropriate CPT codes for each payer
+            Support accurate reimbursement by selecting the appropriate CPT codes for each payer — the provider makes the final coding decision
           </p>
         </div>
       </div>
@@ -140,7 +140,7 @@ export default function ReimbursementPage() {
           </TabsTrigger>
           <TabsTrigger value="optimizer" className="flex items-center gap-2">
             <Lightbulb className="w-4 h-4" />
-            Session Optimizer
+            Code Selection
           </TabsTrigger>
           <TabsTrigger value="rules" className="flex items-center gap-2">
             <FileText className="w-4 h-4" />
@@ -382,22 +382,22 @@ export default function ReimbursementPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Lightbulb className="w-5 h-5 text-yellow-500" />
-                  Optimization Result
+                  Suggested Coding
                 </CardTitle>
                 <CardDescription>
-                  Recommended billing codes for maximum reimbursement
+                  Accurate billing codes suggested for the documented services — provider reviews and approves
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 {!selectedPayer || selectedInterventions.length === 0 ? (
                   <div className="text-center py-6 text-slate-400">
                     <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>Select a payer and interventions to see optimization</p>
+                    <p>Select a payer and interventions to see suggested coding</p>
                   </div>
                 ) : loadingOptimization ? (
                   <div className="text-center py-6">
                     <div className="animate-spin w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto" />
-                    <p className="text-sm text-slate-500 mt-2">Optimizing...</p>
+                    <p className="text-sm text-slate-500 mt-2">Reviewing codes...</p>
                   </div>
                 ) : sessionOptimization ? (
                   <div className="space-y-4">
@@ -439,7 +439,7 @@ export default function ReimbursementPage() {
                     {/* Optimization Notes */}
                     {sessionOptimization.optimizationNotes.length > 0 && (
                       <div className="p-3 bg-blue-50 rounded-lg">
-                        <p className="text-xs font-medium text-blue-700 mb-1">Optimization Notes:</p>
+                        <p className="text-xs font-medium text-blue-700 mb-1">Coding Notes:</p>
                         <ul className="text-xs text-blue-600 space-y-1">
                           {sessionOptimization.optimizationNotes.map((note, idx) => (
                             <li key={idx}>• {note}</li>
@@ -458,7 +458,7 @@ export default function ReimbursementPage() {
             <CardHeader>
               <CardTitle>Code Equivalencies Reference</CardTitle>
               <CardDescription>
-                These interventions can be coded multiple ways - system selects highest-reimbursing option
+                These interventions can be coded multiple ways — the provider selects the code that most accurately reflects the documented service
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -528,13 +528,14 @@ export default function ReimbursementPage() {
                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                   <h3 className="font-medium text-blue-800 flex items-center gap-2">
                     <Lightbulb className="w-5 h-5" />
-                    Optimization Strategy
+                    Coding Accuracy Principles
                   </h3>
                   <ul className="text-sm text-blue-700 mt-2 space-y-1">
-                    <li>• <strong>Clinical accuracy is always primary</strong> - only use codes that accurately describe documented services</li>
-                    <li>• When multiple codes could accurately describe an intervention, choose the higher-reimbursing option</li>
-                    <li>• For payers requiring different codes, distribute units across the highest-paying applicable codes</li>
+                    <li>• <strong>Clinical accuracy is always primary</strong> — only use codes that accurately describe the documented services</li>
+                    <li>• When multiple codes could each accurately describe an intervention, choose the one that most precisely matches the documented service — not the one that reimburses more</li>
+                    <li>• Follow payer-specific coding requirements when distributing units across applicable codes</li>
                     <li>• Always ensure documentation supports medical necessity for each code billed</li>
+                    <li>• The treating provider reviews and approves all suggested codes — the final coding decision is theirs</li>
                   </ul>
                 </div>
               </div>

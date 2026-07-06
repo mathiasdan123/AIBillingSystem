@@ -35,6 +35,14 @@ const CPT_CODE_INFO = {
 
 export interface AiSoapBillingRequest {
   patientId: number;
+  /**
+   * The authenticated caller's practice. When set, the patient MUST belong to
+   * it or generation is refused — this is the tenant-isolation guard for a
+   * feature that embeds patient PHI (name, dx, goals) into the prompt. Callers
+   * that have a practice context MUST pass it; leaving it undefined skips the
+   * check and is only for trusted internal/no-context callers.
+   */
+  practiceId?: number;
   activities: string[];
   mood: string;
   caregiverReport?: string;
@@ -139,6 +147,12 @@ export async function generateSoapNoteAndBilling(
   // Get patient and insurance information
   const patient = await storage.getPatient(request.patientId);
   if (!patient) {
+    throw new Error("Patient not found");
+  }
+  // Tenant isolation: never generate a note (which embeds this patient's PHI)
+  // for a patient outside the caller's practice. getPatient() is not
+  // practice-scoped, so the ownership check must happen here.
+  if (request.practiceId != null && (patient as any).practiceId !== request.practiceId) {
     throw new Error("Patient not found");
   }
 

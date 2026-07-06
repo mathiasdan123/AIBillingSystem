@@ -620,8 +620,16 @@ const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastN
   'reviewer2@demo.com': { password: _demoReviewerPassword, firstName: 'Reviewer', lastName: 'Two', role: 'admin' },
 };
 
-// Demo login endpoint - creates demo user if needed and logs in (no rate limit for easy reviewer access)
+// Demo login endpoint - creates demo user if needed and logs in.
+// DISABLED IN PRODUCTION: this is passwordless and, when it auto-creates a
+// demo user, assigns the first practice in the DB — which in production is a
+// real practice. Handing an anonymous visitor an MFA-verified admin session on
+// a real HIPAA practice is not acceptable, so the endpoint is refused in prod.
+// (Reviewer/demo walkthroughs run against a non-production environment.)
 router.post('/demo-login', async (req: any, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ message: 'Not found' });
+  }
   try {
     const { hashPassword } = await import('../services/passwordService');
     const requestedEmail = (req.body?.email || 'demo@therapybill.com').toLowerCase().trim();

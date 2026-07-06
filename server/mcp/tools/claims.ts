@@ -4,6 +4,7 @@ import { storage } from '../../storage';
 import * as stediService from '../../services/stediService';
 import { withAudit } from '../audit';
 import { withMcpMutationGate } from '../confirmation';
+import { rejectIfDemoDataMessage } from '../../services/bulkEligibilityService';
 import type { McpPracticeContext } from '../types';
 
 export function registerClaimTools(
@@ -22,13 +23,34 @@ export function registerClaimTools(
         throw new Error('Access denied: claim belongs to a different practice');
       }
 
+      // Idempotency: never re-transmit a claim already sent to the payer. A
+      // retried tool call must not file a duplicate 837P.
+      const status = String((claim as any).status || '').toLowerCase();
+      if (['submitted', 'paid', 'appeal', 'denied'].includes(status)) {
+        throw new Error(
+          `Claim ${input.claimId} is already '${status}' — it has been submitted and cannot be re-submitted.`,
+        );
+      }
+
       const patient = await storage.getPatient((claim as any).patientId);
       if (!patient) throw new Error('Patient not found for claim');
+
+      // Never transmit a real 837P for demo data.
+      const demoBlock =
+        rejectIfDemoDataMessage(claim as any, 'claim') ||
+        rejectIfDemoDataMessage(patient as any, 'patient');
+      if (demoBlock) throw new Error(demoBlock);
 
       const practice = await storage.getPractice(ctx.practiceId);
       if (!practice) throw new Error('Practice not found');
 
       const lineItems = await storage.getClaimLineItems(input.claimId);
+      // Refuse to transmit an empty/malformed claim (no billable service lines).
+      if (!lineItems || lineItems.length === 0) {
+        throw new Error(
+          `Claim ${input.claimId} has no line items — add the billed CPT codes (provider-reviewed) before submitting.`,
+        );
+      }
 
       const submission: stediService.ClaimSubmission = {
         claimId: String(claim.id),
@@ -88,7 +110,7 @@ export function registerClaimTools(
 
   server.tool(
     'submit_claim',
-    'Submit a claim to the clearinghouse (Stedi 837P). The claim must already exist in the database.',
+    'Transmit an existing claim to the clearinghouse as a real 837P (an irreversible external action that files with the payer). The claim must already exist with billed CPT line items that the treating provider has reviewed and approved — the provider makes the final coding decision. Already-submitted claims and demo data are refused.',
     { claimId: z.number().describe('Internal claim ID to submit') },
     (input) => submitClaim(input, context),
   );

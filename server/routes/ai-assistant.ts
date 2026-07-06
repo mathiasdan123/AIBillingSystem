@@ -3260,7 +3260,11 @@ export async function executeTool(
         if (!patientId) return JSON.stringify({ error: 'Please provide a patient name or ID to generate a SOAP note.' });
 
         const soapPatient = await storage.getPatient(patientId);
-        if (!soapPatient) return JSON.stringify({ error: 'Patient not found.' });
+        // Tenant isolation: a raw patientId arg could reference another
+        // practice's patient (the name-search path above is already scoped).
+        if (!soapPatient || (soapPatient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient not found.' });
+        }
 
         const activities = (args.activities as string[]) || [];
         if (activities.length === 0) return JSON.stringify({ error: 'Please provide at least one activity performed during the session.' });
@@ -3275,6 +3279,7 @@ export async function executeTool(
         // Call the AI SOAP note + billing generation service
         const soapResult = await generateSoapNoteAndBilling({
           patientId,
+          practiceId,
           activities,
           mood: soapMood,
           duration: soapDuration,
@@ -4835,11 +4840,16 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       return res.status(400).json({ error: 'Message is too long. Please keep it under 2000 characters.' });
     }
 
-    // Get practice context for data queries
+    // Get practice context for data queries. Fail closed: no context means we
+    // must NOT default to practice 1 (a real practice) and expose its data via
+    // the assistant's tools.
     const context = await getUserPracticeContext(req);
-    const practiceId = context?.practiceId || 1;
-    const userId = context?.userId;
-    const userRole = context?.role;
+    if (!context) {
+      return res.status(403).json({ error: 'No practice context for this user' });
+    }
+    const practiceId = context.practiceId;
+    const userId = context.userId;
+    const userRole = context.role;
     // Skip server-side chat persistence for shared "Try Demo" accounts so
     // each demo visitor sees a clean slate and prior visitors' questions
     // (which may include PHI-shaped test data) don't leak to the next one.

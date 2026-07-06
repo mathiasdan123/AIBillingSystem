@@ -30,11 +30,15 @@ export async function getUserPracticeContext(req: Request): Promise<PracticeCont
   const dbUser = await storage.getUser(userId);
   if (!dbUser) return null;
 
+  // Fail closed: a user with no practice must NOT silently fall through to
+  // practice 1 (a real practice). Callers treat null as "no context" and 403.
+  if (!dbUser.practiceId) return null;
+
   const email = (dbUser.email || '').toLowerCase();
 
   return {
     userId: dbUser.id,
-    practiceId: dbUser.practiceId || 1, // Default practice
+    practiceId: dbUser.practiceId,
     role: dbUser.role || 'therapist',
     isDemoUser: DEMO_USER_EMAILS.has(email),
   };

@@ -186,7 +186,7 @@ router.get('/export-training-data', exportLimiter, isAuthenticated, isAdminOrBil
 });
 
 // Predict OON reimbursement for a single CPT code
-router.post('/oon-predict', async (req, res) => {
+router.post('/oon-predict', isAuthenticated, async (req, res) => {
   try {
     const {
       cptCode, insuranceProvider, zipCode, billedAmount,
@@ -224,7 +224,7 @@ router.post('/oon-predict', async (req, res) => {
 });
 
 // Predict OON reimbursement for multiple CPT codes (full session)
-router.post('/oon-predict/batch', async (req, res) => {
+router.post('/oon-predict/batch', isAuthenticated, async (req, res) => {
   try {
     const {
       cptCodes, insuranceProvider, zipCode, billedAmounts,
@@ -394,6 +394,14 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
     return res.status(400).json({ error: 'Duration must be at least 15 minutes' });
   }
 
+  // Resolve the caller's practice for tenant isolation. req.user only carries
+  // { claims: { sub } }, so practiceId must be looked up. Without a practice
+  // context we refuse rather than generate a note for an unknown tenant.
+  const soapUser = await storage.getUser(req.user?.claims?.sub);
+  if (!soapUser?.practiceId) {
+    return res.status(403).json({ error: 'No practice context for this user' });
+  }
+
   // Response transport. Either way we flush headers immediately so the ALB
   // sees an open pipe during the multi-second generation.
   //  - SSE (body.stream === true): forward Claude's text deltas as `event:
@@ -438,6 +446,7 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
     const result = await generateSoapNoteAndBilling(
       {
         patientId,
+        practiceId: soapUser.practiceId,
         activities,
         mood: mood || 'Cooperative',
         caregiverReport,
