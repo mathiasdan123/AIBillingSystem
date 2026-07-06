@@ -32,6 +32,13 @@ const mockStorage = vi.hoisted(() => ({
   updateUser: vi.fn(),
   upsertUser: vi.fn(),
   updateUserMfa: vi.fn(),
+  // Demo-login now resolves the isolated demo practice via ensureDemoPractice().
+  getDemoPractice: vi.fn(),
+  createPractice: vi.fn(),
+  getPatients: vi.fn(),
+  createPatient: vi.fn(),
+  createAppointment: vi.fn(),
+  createClaim: vi.fn(),
 }));
 
 vi.mock('../storage', () => ({ storage: mockStorage }));
@@ -330,6 +337,13 @@ describe('auth routes (server/routes/auth.ts)', () => {
   // ---- POST /api/demo-login ----
 
   describe('POST /api/demo-login', () => {
+    beforeEach(() => {
+      // ensureDemoPractice() resolves the isolated demo practice; return an
+      // already-provisioned one so no create/seed happens in these tests.
+      mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
+      mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+    });
+
     it('should log in an existing demo user', async () => {
       const existingDemo = {
         id: 'demo-user-1',

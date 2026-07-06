@@ -45,6 +45,17 @@ export async function getAllPracticeIds(): Promise<number[]> {
   return result.map((p: { id: number }) => p.id);
 }
 
+// The isolated demo practice (target of the public "Try Free Demo" login), if
+// one has been provisioned. Returns undefined until ensureDemoPractice() runs.
+export async function getDemoPractice(): Promise<Practice | undefined> {
+  const [practice] = await db
+    .select()
+    .from(practices)
+    .where(eq(practices.isDemo, true))
+    .limit(1);
+  return practice ? (decryptPracticeRecord(practice) as Practice) : undefined;
+}
+
 export async function updatePractice(id: number, practice: Partial<InsertPractice>): Promise<Practice> {
   const encrypted = encryptPracticeRecord(practice as any);
   const [updatedPractice] = await db

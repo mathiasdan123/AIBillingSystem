@@ -77,6 +77,7 @@ export const storage = {
   createPractice: practiceFns.createPractice,
   getPractice: practiceFns.getPractice,
   getAllPracticeIds: practiceFns.getAllPracticeIds,
+  getDemoPractice: practiceFns.getDemoPractice,
   updatePractice: practiceFns.updatePractice,
   getPayerCredentials: practiceFns.getPayerCredentials,
   upsertPayerCredentials: practiceFns.upsertPayerCredentials,

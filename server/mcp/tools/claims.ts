@@ -43,6 +43,11 @@ export function registerClaimTools(
 
       const practice = await storage.getPractice(ctx.practiceId);
       if (!practice) throw new Error('Practice not found');
+      // The isolated demo practice is a sandbox — never transmit a real 837P
+      // for it, even though its seed rows are not individually flagged isDemo.
+      if ((practice as any).isDemo) {
+        throw new Error('This is the demo practice — claims are not transmitted to a real payer.');
+      }
 
       const lineItems = await storage.getClaimLineItems(input.claimId);
       // Refuse to transmit an empty/malformed claim (no billable service lines).

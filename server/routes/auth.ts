@@ -621,21 +621,28 @@ const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastN
 };
 
 // Demo login endpoint - creates demo user if needed and logs in.
-// DISABLED IN PRODUCTION: this is passwordless and, when it auto-creates a
-// demo user, assigns the first practice in the DB — which in production is a
-// real practice. Handing an anonymous visitor an MFA-verified admin session on
-// a real HIPAA practice is not acceptable, so the endpoint is refused in prod.
-// (Reviewer/demo walkthroughs run against a non-production environment.)
+// SAFE IN PRODUCTION: every demo account is bound to the isolated demo practice
+// (practices.isDemo = true), provisioned + seeded by ensureDemoPractice(). This
+// endpoint can NEVER land on a real practice — the earlier prod exposure was
+// caused by defaulting to the first practice in the DB; that is now impossible.
 router.post('/demo-login', async (req: any, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(404).json({ message: 'Not found' });
-  }
   try {
     const { hashPassword } = await import('../services/passwordService');
+    const { ensureDemoPractice } = await import('../services/demoPractice');
     const requestedEmail = (req.body?.email || 'demo@therapybill.com').toLowerCase().trim();
     const demoAccount = DEMO_ACCOUNTS[requestedEmail];
     if (!demoAccount) {
       return res.status(400).json({ message: 'Invalid demo account' });
+    }
+
+    // Provision (idempotent) and resolve the isolated demo practice. A demo
+    // account is only ever bound to this practice.
+    const demoPractice = await ensureDemoPractice();
+    if (!demoPractice?.isDemo) {
+      logger.error('Demo login aborted: resolved practice is not a demo practice', {
+        practiceId: demoPractice?.id,
+      });
+      return res.status(500).json({ message: 'Demo unavailable' });
     }
 
     let user = await storage.getUserByEmail(requestedEmail);
@@ -644,25 +651,22 @@ router.post('/demo-login', async (req: any, res) => {
       await storage.updateUserRole(user.id, demoAccount.role);
       user = await storage.getUserByEmail(requestedEmail);
     }
+    // Keep the demo account pinned to the demo practice (repairs any user that
+    // predates the isolated demo practice, e.g. bound to practice 1).
+    if (user && user.practiceId !== demoPractice.id) {
+      await storage.updateUser(user.id, { practiceId: demoPractice.id } as any);
+      user = await storage.getUserByEmail(requestedEmail);
+    }
     if (!user) {
-      // Find a practice to assign
-      let practiceId: number | undefined;
-      try {
-        const practiceIds = await storage.getAllPracticeIds();
-        if (practiceIds.length > 0) practiceId = practiceIds[0];
-      } catch (e) {
-        logger.warn('Could not fetch practice IDs for demo user', { error: e instanceof Error ? e.message : String(e) });
-      }
-
       user = await storage.createUserWithPassword({
         email: requestedEmail,
         passwordHash: await hashPassword(demoAccount.password),
         firstName: demoAccount.firstName,
         lastName: demoAccount.lastName,
-        practiceId,
+        practiceId: demoPractice.id,
         role: demoAccount.role,
       });
-      logger.info('Demo user created', { email: requestedEmail, practiceId });
+      logger.info('Demo user created', { email: requestedEmail, practiceId: demoPractice.id });
     }
     // Log in the demo user directly via session
     const userObj = { claims: { sub: user.id } };

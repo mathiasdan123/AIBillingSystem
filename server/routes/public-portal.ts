@@ -796,23 +796,20 @@ router.get('/patient-portal/login/:token', async (req, res) => {
   }
 });
 
-// Demo login for patient portal (development/demo only).
-// DISABLED IN PRODUCTION: this logs the caller in as the first real patient of
-// the first real practice and mints a long-lived portal token — direct PHI
-// exposure to an anonymous visitor. Refused in prod.
+// Demo login for patient portal.
+// SAFE IN PRODUCTION: scoped to the isolated demo practice (practices.isDemo)
+// and one of its seeded fake patients — never a real patient. The earlier prod
+// exposure came from using the first real practice's first real patient.
 router.get('/patient-portal/demo-login', async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(404).json({ message: 'Not found' });
-  }
   try {
-    // Find first patient with portal access from first available practice
-    const practiceIds = await storage.getAllPracticeIds();
-    if (!practiceIds.length) {
-      return res.status(404).json({ message: 'No practices found for demo', step: 'getAllPracticeIds' });
+    const { ensureDemoPractice } = await import('../services/demoPractice');
+    const demoPractice = await ensureDemoPractice();
+    if (!demoPractice?.isDemo) {
+      return res.status(500).json({ message: 'Demo unavailable' });
     }
-    const patients = await storage.getPatients(practiceIds[0]);
+    const patients = await storage.getPatients(demoPractice.id);
     if (!patients.length) {
-      return res.status(404).json({ message: 'No patients found for demo', step: 'getPatients', practiceId: practiceIds[0] });
+      return res.status(404).json({ message: 'No demo patients found', step: 'getPatients', practiceId: demoPractice.id });
     }
 
     const patient = patients[0];

@@ -132,6 +132,13 @@ export const practices = pgTable("practices", {
   stediApiKey: varchar("stedi_api_key"),
   stediPartnerId: varchar("stedi_partner_id"),
   sandboxMode: boolean("sandbox_mode").default(true),
+  // When true, this whole practice is an isolated demo sandbox (the target of
+  // the public "Try Free Demo" login). Its data is fake and it must NEVER
+  // perform real external actions — submit_claim and other clearinghouse/payment
+  // tools refuse demo practices. Real practices are isDemo=false. This is the
+  // isolation boundary that lets demo-login run safely in production without
+  // ever touching a real practice's data.
+  isDemo: boolean("is_demo").notNull().default(false),
   // Onboarding fields
   onboardingCompleted: boolean("onboarding_completed").default(false),
   onboardingStep: integer("onboarding_step").default(0),
