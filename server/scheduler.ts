@@ -261,6 +261,14 @@ export function startScheduler() {
 }
 
 function registerJobs() {
+  // Defensive: never double-register. cron.schedule auto-starts each task, and
+  // scheduledTasks.set would overwrite the map entry while leaving the old task
+  // running — so a second call must be a no-op, not a silent duplicate.
+  if (scheduledTasks.size > 0) {
+    logger.warn('registerJobs called while jobs already registered — skipping');
+    return;
+  }
+
   // Schedule daily report at 8:00 AM
   // Cron format: minute hour day-of-month month day-of-week
   const dailyReportTask = cron.schedule('0 8 * * *', () => {
