@@ -31,6 +31,13 @@ export interface DailyPostingSummary {
   claimsAffected: number;
 }
 
+// Money must be compared in integer cents. parseFloat on a numeric string
+// reintroduces binary-float error, so a claim paid to the exact penny could be
+// misclassified 'partial' (or vice-versa) right at the boundary.
+function toCents(amount: string | null | undefined): number {
+  return Math.round(parseFloat(amount ?? '0') * 100);
+}
+
 /**
  * Post a payment against a claim.
  * Updates the claim status to 'paid' if fully paid, or 'partial' if underpaid.
@@ -39,80 +46,85 @@ export async function postPayment(
   practiceId: number,
   data: Omit<InsertPaymentPosting, 'practiceId'>,
 ): Promise<PaymentPosting> {
-  // Verify the claim exists and belongs to this practice
-  const claimResults = await db
-    .select()
-    .from(claims)
-    .where(and(eq(claims.id, data.claimId), eq(claims.practiceId, practiceId)));
+  // The posting insert and the claim status/paidAmount update must commit
+  // together — otherwise a crash between them leaves the payment recorded but
+  // the claim showing the wrong balance/status (and vice-versa).
+  return await db.transaction(async (tx: any) => {
+    // Verify the claim exists and belongs to this practice
+    const claimResults = await tx
+      .select()
+      .from(claims)
+      .where(and(eq(claims.id, data.claimId), eq(claims.practiceId, practiceId)));
 
-  if (claimResults.length === 0) {
-    throw new Error(`Claim ${data.claimId} not found for practice ${practiceId}`);
-  }
+    if (claimResults.length === 0) {
+      throw new Error(`Claim ${data.claimId} not found for practice ${practiceId}`);
+    }
 
-  const claim = claimResults[0];
+    const claim = claimResults[0];
 
-  // Insert the payment posting
-  const insertData: InsertPaymentPosting = {
-    ...data,
-    practiceId,
-  };
+    // Insert the payment posting
+    const insertData: InsertPaymentPosting = {
+      ...data,
+      practiceId,
+    };
 
-  const result = await db
-    .insert(paymentPostings)
-    .values(insertData)
-    .returning();
+    const result = await tx
+      .insert(paymentPostings)
+      .values(insertData)
+      .returning();
 
-  if (result.length === 0) {
-    throw new Error('Failed to insert payment posting');
-  }
+    if (result.length === 0) {
+      throw new Error('Failed to insert payment posting');
+    }
 
-  const posting = result[0];
+    const posting = result[0];
 
-  // Calculate total payments for this claim (excluding reversed)
-  const paymentTotals = await db
-    .select({
-      totalPaid: sql<string>`COALESCE(SUM(CASE WHEN ${paymentPostings.reversed} = false THEN ${paymentPostings.paymentAmount}::numeric ELSE 0 END), 0)`,
-    })
-    .from(paymentPostings)
-    .where(
-      and(
-        eq(paymentPostings.claimId, data.claimId),
-        eq(paymentPostings.practiceId, practiceId),
-      ),
-    );
+    // Calculate total payments for this claim (excluding reversed)
+    const paymentTotals = await tx
+      .select({
+        totalPaid: sql<string>`COALESCE(SUM(CASE WHEN ${paymentPostings.reversed} = false THEN ${paymentPostings.paymentAmount}::numeric ELSE 0 END), 0)`,
+      })
+      .from(paymentPostings)
+      .where(
+        and(
+          eq(paymentPostings.claimId, data.claimId),
+          eq(paymentPostings.practiceId, practiceId),
+        ),
+      );
 
-  const totalPaid = parseFloat(paymentTotals[0]?.totalPaid ?? '0');
-  const claimTotal = parseFloat(claim.totalAmount);
+    const totalPaidCents = toCents(paymentTotals[0]?.totalPaid);
+    const claimTotalCents = toCents(claim.totalAmount);
 
-  // Update claim status and paidAmount
-  let newStatus: string;
-  if (totalPaid >= claimTotal) {
-    newStatus = 'paid';
-  } else if (totalPaid > 0) {
-    newStatus = 'partial';
-  } else {
-    newStatus = claim.status ?? 'submitted';
-  }
+    // Update claim status and paidAmount
+    let newStatus: string;
+    if (totalPaidCents >= claimTotalCents) {
+      newStatus = 'paid';
+    } else if (totalPaidCents > 0) {
+      newStatus = 'partial';
+    } else {
+      newStatus = claim.status ?? 'submitted';
+    }
 
-  await db
-    .update(claims)
-    .set({
-      paidAmount: totalPaid.toFixed(2),
-      status: newStatus,
-      paidAt: newStatus === 'paid' ? new Date() : claim.paidAt,
-      updatedAt: new Date(),
-    })
-    .where(eq(claims.id, data.claimId));
+    await tx
+      .update(claims)
+      .set({
+        paidAmount: (totalPaidCents / 100).toFixed(2),
+        status: newStatus,
+        paidAt: newStatus === 'paid' ? new Date() : claim.paidAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(claims.id, data.claimId));
 
-  logger.info('Payment posted', {
-    paymentId: posting.id,
-    claimId: data.claimId,
-    practiceId,
-    amount: data.paymentAmount,
-    newClaimStatus: newStatus,
+    logger.info('Payment posted', {
+      paymentId: posting.id,
+      claimId: data.claimId,
+      practiceId,
+      amount: data.paymentAmount,
+      newClaimStatus: newStatus,
+    });
+
+    return posting;
   });
-
-  return posting;
 }
 
 /**
@@ -193,93 +205,100 @@ export async function reversePayment(
   practiceId: number,
   reason: string,
 ): Promise<PaymentPosting> {
-  // Find the payment
-  const paymentResults = await db
-    .select()
-    .from(paymentPostings)
-    .where(
-      and(
-        eq(paymentPostings.id, paymentId),
-        eq(paymentPostings.practiceId, practiceId),
-      ),
-    );
+  // The reversal flag and the claim recalculation must commit atomically —
+  // otherwise a crash between them leaves a reversed payment against a claim
+  // that still reads as fully paid.
+  return await db.transaction(async (tx: any) => {
+    // Find the payment
+    const paymentResults = await tx
+      .select()
+      .from(paymentPostings)
+      .where(
+        and(
+          eq(paymentPostings.id, paymentId),
+          eq(paymentPostings.practiceId, practiceId),
+        ),
+      );
 
-  if (paymentResults.length === 0) {
-    throw new Error(`Payment ${paymentId} not found for practice ${practiceId}`);
-  }
+    if (paymentResults.length === 0) {
+      throw new Error(`Payment ${paymentId} not found for practice ${practiceId}`);
+    }
 
-  const payment = paymentResults[0];
+    const payment = paymentResults[0];
 
-  if (payment.reversed) {
-    throw new Error(`Payment ${paymentId} has already been reversed`);
-  }
+    if (payment.reversed) {
+      throw new Error(`Payment ${paymentId} has already been reversed`);
+    }
 
-  // Mark the payment as reversed
-  const updatedResults = await db
-    .update(paymentPostings)
-    .set({
-      reversed: true,
-      reversedAt: new Date(),
-      reversalReason: reason,
-    })
-    .where(eq(paymentPostings.id, paymentId))
-    .returning();
+    // Mark the payment as reversed
+    const updatedResults = await tx
+      .update(paymentPostings)
+      .set({
+        reversed: true,
+        reversedAt: new Date(),
+        reversalReason: reason,
+      })
+      .where(eq(paymentPostings.id, paymentId))
+      .returning();
 
-  if (updatedResults.length === 0) {
-    throw new Error('Failed to reverse payment');
-  }
+    if (updatedResults.length === 0) {
+      throw new Error('Failed to reverse payment');
+    }
 
-  // Recalculate total payments for this claim
-  const paymentTotals = await db
-    .select({
-      totalPaid: sql<string>`COALESCE(SUM(CASE WHEN ${paymentPostings.reversed} = false THEN ${paymentPostings.paymentAmount}::numeric ELSE 0 END), 0)`,
-    })
-    .from(paymentPostings)
-    .where(
-      and(
-        eq(paymentPostings.claimId, payment.claimId),
-        eq(paymentPostings.practiceId, practiceId),
-      ),
-    );
+    // Recalculate total payments for this claim
+    const paymentTotals = await tx
+      .select({
+        totalPaid: sql<string>`COALESCE(SUM(CASE WHEN ${paymentPostings.reversed} = false THEN ${paymentPostings.paymentAmount}::numeric ELSE 0 END), 0)`,
+      })
+      .from(paymentPostings)
+      .where(
+        and(
+          eq(paymentPostings.claimId, payment.claimId),
+          eq(paymentPostings.practiceId, practiceId),
+        ),
+      );
 
-  const totalPaid = parseFloat(paymentTotals[0]?.totalPaid ?? '0');
+    const totalPaidCents = toCents(paymentTotals[0]?.totalPaid);
 
-  // Fetch the claim to get its total
-  const claimResults = await db
-    .select()
-    .from(claims)
-    .where(eq(claims.id, payment.claimId));
+    // Fetch the claim to get its total
+    const claimResults = await tx
+      .select()
+      .from(claims)
+      .where(eq(claims.id, payment.claimId));
 
-  const claim = claimResults[0];
-  const claimTotal = parseFloat(claim.totalAmount);
+    const claim = claimResults[0];
+    const claimTotalCents = toCents(claim.totalAmount);
 
-  let newStatus: string;
-  if (totalPaid >= claimTotal) {
-    newStatus = 'paid';
-  } else if (totalPaid > 0) {
-    newStatus = 'partial';
-  } else {
-    newStatus = 'submitted';
-  }
+    let newStatus: string;
+    if (totalPaidCents >= claimTotalCents) {
+      newStatus = 'paid';
+    } else if (totalPaidCents > 0) {
+      newStatus = 'partial';
+    } else {
+      newStatus = 'submitted';
+    }
 
-  await db
-    .update(claims)
-    .set({
-      paidAmount: totalPaid.toFixed(2),
-      status: newStatus,
-      updatedAt: new Date(),
-    })
-    .where(eq(claims.id, payment.claimId));
+    await tx
+      .update(claims)
+      .set({
+        paidAmount: (totalPaidCents / 100).toFixed(2),
+        status: newStatus,
+        // A claim that is no longer fully paid must not keep a paidAt stamp.
+        paidAt: newStatus === 'paid' ? claim.paidAt : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(claims.id, payment.claimId));
 
-  logger.info('Payment reversed', {
-    paymentId,
-    claimId: payment.claimId,
-    practiceId,
-    reason,
-    newClaimStatus: newStatus,
+    logger.info('Payment reversed', {
+      paymentId,
+      claimId: payment.claimId,
+      practiceId,
+      reason,
+      newClaimStatus: newStatus,
+    });
+
+    return updatedResults[0];
   });
-
-  return updatedResults[0];
 }
 
 /**

@@ -121,6 +121,31 @@ export async function createClaimLineItem(lineItem: InsertClaimLineItem): Promis
   return newLineItem;
 }
 
+/**
+ * Create a claim and all of its line items atomically. Use this whenever a
+ * claim is meaningless without its lines (e.g. a secondary/COB claim) — a crash
+ * partway through a per-item insert loop would otherwise leave an orphaned claim
+ * whose totalAmount doesn't match its (partial) line items.
+ */
+export async function createClaimWithLineItems(
+  claim: InsertClaim,
+  lineItems: Omit<InsertClaimLineItem, 'claimId'>[],
+): Promise<Claim> {
+  const newClaim = await db.transaction(async (tx: any) => {
+    const [inserted] = await tx.insert(claims).values(claim).returning();
+    if (lineItems.length > 0) {
+      await tx
+        .insert(claimLineItems)
+        .values(lineItems.map((li) => ({ ...li, claimId: inserted.id })));
+    }
+    return inserted;
+  });
+  if (newClaim.practiceId) {
+    await cache.delPattern(CacheKeys.analyticsPattern(newClaim.practiceId));
+  }
+  return newClaim;
+}
+
 export async function getClaimLineItems(claimId: number): Promise<ClaimLineItem[]> {
   return await db
     .select()

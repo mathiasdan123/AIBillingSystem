@@ -1920,42 +1920,55 @@ router.post('/:id/submit-secondary', isAuthenticated, isAdminOrBilling, async (r
       remainingBalance: secondaryBilledAmount,
     };
 
-    // Create the secondary claim
-    const claimNumber = generateSecureClaimNumber("SEC");
-    const secondaryClaim = await storage.createClaim({
-      practiceId,
-      patientId: primaryClaim.patientId,
-      sessionId: primaryClaim.sessionId,
-      claimNumber,
-      insuranceId: primaryClaim.insuranceId,
-      totalAmount: secondaryBilledAmount.toFixed(2),
-      submittedAmount: secondaryBilledAmount.toFixed(2),
-      status: 'draft',
-      billingOrder: 'secondary',
-      primaryClaimId: primaryClaimId,
-      primaryPaidAmount: primaryPaidAmount.toFixed(2),
-      primaryAdjustmentAmount: primaryAdjustment.toFixed(2),
-      cobData,
-    });
-
-    // Copy line items to the secondary claim, adjusting amounts proportionally
-    for (const item of primaryLineItems) {
-      const itemAmount = parseFloat(item.amount || '0');
-      const ratio = secondaryBilledAmount / totalAmount;
-      const adjustedAmount = (itemAmount * ratio).toFixed(2);
-
-      await storage.createClaimLineItem({
-        claimId: secondaryClaim.id,
+    // Allocate the secondary balance across the copied line items in integer
+    // cents. Rounding each line independently with toFixed(2) drifts, so the
+    // lines wouldn't sum back to the claim total; instead we round each share
+    // and hand the leftover cents to the last line so the sum is exact.
+    const totalCents = Math.round(totalAmount * 100);
+    const secondaryCents = Math.round(secondaryBilledAmount * 100);
+    let allocatedCents = 0;
+    const secondaryLineItems = primaryLineItems.map((item, idx) => {
+      const itemCents = Math.round(parseFloat(item.amount || '0') * 100);
+      let shareCents: number;
+      if (idx === primaryLineItems.length - 1) {
+        // Last line absorbs the rounding remainder so the sum equals the total.
+        shareCents = secondaryCents - allocatedCents;
+      } else {
+        shareCents = totalCents > 0 ? Math.round((itemCents * secondaryCents) / totalCents) : 0;
+        allocatedCents += shareCents;
+      }
+      return {
         cptCodeId: item.cptCodeId,
         icd10CodeId: item.icd10CodeId,
         units: item.units,
         rate: item.rate,
-        amount: adjustedAmount,
+        amount: (shareCents / 100).toFixed(2),
         dateOfService: item.dateOfService,
         modifier: item.modifier,
         notes: item.notes ? `${item.notes} (Secondary to ${primaryClaim.claimNumber})` : `Secondary to ${primaryClaim.claimNumber}`,
-      });
-    }
+      };
+    });
+
+    // Create the secondary claim and its line items atomically.
+    const claimNumber = generateSecureClaimNumber("SEC");
+    const secondaryClaim = await storage.createClaimWithLineItems(
+      {
+        practiceId,
+        patientId: primaryClaim.patientId,
+        sessionId: primaryClaim.sessionId,
+        claimNumber,
+        insuranceId: primaryClaim.insuranceId,
+        totalAmount: secondaryBilledAmount.toFixed(2),
+        submittedAmount: secondaryBilledAmount.toFixed(2),
+        status: 'draft',
+        billingOrder: 'secondary',
+        primaryClaimId: primaryClaimId,
+        primaryPaidAmount: primaryPaidAmount.toFixed(2),
+        primaryAdjustmentAmount: primaryAdjustment.toFixed(2),
+        cobData,
+      },
+      secondaryLineItems,
+    );
 
     logger.info('Secondary claim created', {
       primaryClaimId,

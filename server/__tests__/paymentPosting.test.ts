@@ -10,13 +10,17 @@ const mockFrom = vi.fn();
 const mockWhere = vi.fn();
 const mockSet = vi.fn();
 
-vi.mock('../db', () => ({
-  db: {
+vi.mock('../db', () => {
+  const dbMock: any = {
     insert: (...args: any[]) => mockInsert(...args),
     select: (...args: any[]) => mockSelect(...args),
     update: (...args: any[]) => mockUpdate(...args),
-  },
-}));
+    // postPayment/reversePayment now run inside db.transaction — the callback
+    // gets the same query surface, so run it against the mock db directly.
+    transaction: (fn: (tx: any) => any) => fn(dbMock),
+  };
+  return { db: dbMock };
+});
 
 vi.mock('../services/logger', () => ({
   default: {
