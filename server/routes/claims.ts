@@ -1922,32 +1922,48 @@ router.post('/:id/submit-secondary', isAuthenticated, isAdminOrBilling, async (r
 
     // Allocate the secondary balance across the copied line items in integer
     // cents. Rounding each line independently with toFixed(2) drifts, so the
-    // lines wouldn't sum back to the claim total; instead we round each share
-    // and hand the leftover cents to the last line so the sum is exact.
+    // lines wouldn't sum back to the claim total. We use the largest-remainder
+    // method: floor each proportional share, then hand out the leftover cents
+    // one at a time to the lines with the biggest fractional remainder. This
+    // guarantees (a) the shares sum EXACTLY to secondaryCents and (b) no share
+    // is ever negative — flooring a non-negative proportion can only round down,
+    // and we only ever ADD leftover cents (a naive "remainder on the last line"
+    // scheme can go negative when earlier lines round past the balance).
     const totalCents = Math.round(totalAmount * 100);
     const secondaryCents = Math.round(secondaryBilledAmount * 100);
-    let allocatedCents = 0;
-    const secondaryLineItems = primaryLineItems.map((item, idx) => {
+
+    const shareCentsByIdx: number[] = primaryLineItems.map((item) => {
       const itemCents = Math.round(parseFloat(item.amount || '0') * 100);
-      let shareCents: number;
-      if (idx === primaryLineItems.length - 1) {
-        // Last line absorbs the rounding remainder so the sum equals the total.
-        shareCents = secondaryCents - allocatedCents;
-      } else {
-        shareCents = totalCents > 0 ? Math.round((itemCents * secondaryCents) / totalCents) : 0;
-        allocatedCents += shareCents;
-      }
-      return {
-        cptCodeId: item.cptCodeId,
-        icd10CodeId: item.icd10CodeId,
-        units: item.units,
-        rate: item.rate,
-        amount: (shareCents / 100).toFixed(2),
-        dateOfService: item.dateOfService,
-        modifier: item.modifier,
-        notes: item.notes ? `${item.notes} (Secondary to ${primaryClaim.claimNumber})` : `Secondary to ${primaryClaim.claimNumber}`,
-      };
+      const exact = totalCents > 0 ? (itemCents * secondaryCents) / totalCents : 0;
+      return Math.floor(exact);
     });
+    let leftover = secondaryCents - shareCentsByIdx.reduce((a, b) => a + b, 0);
+    if (leftover > 0 && primaryLineItems.length > 0) {
+      // Order line indices by descending fractional remainder; the first
+      // `leftover` of them each get one extra cent. leftover < line count, so
+      // every line gains at most one cent.
+      const byFrac = primaryLineItems
+        .map((item, idx) => {
+          const itemCents = Math.round(parseFloat(item.amount || '0') * 100);
+          const exact = totalCents > 0 ? (itemCents * secondaryCents) / totalCents : 0;
+          return { idx, frac: exact - Math.floor(exact) };
+        })
+        .sort((a, b) => b.frac - a.frac);
+      for (let k = 0; k < leftover; k++) {
+        shareCentsByIdx[byFrac[k % byFrac.length].idx] += 1;
+      }
+    }
+
+    const secondaryLineItems = primaryLineItems.map((item, idx) => ({
+      cptCodeId: item.cptCodeId,
+      icd10CodeId: item.icd10CodeId,
+      units: item.units,
+      rate: item.rate,
+      amount: (shareCentsByIdx[idx] / 100).toFixed(2),
+      dateOfService: item.dateOfService,
+      modifier: item.modifier,
+      notes: item.notes ? `${item.notes} (Secondary to ${primaryClaim.claimNumber})` : `Secondary to ${primaryClaim.claimNumber}`,
+    }));
 
     // Create the secondary claim and its line items atomically.
     const claimNumber = generateSecureClaimNumber("SEC");

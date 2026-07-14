@@ -12,18 +12,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const h = vi.hoisted(() => {
-  const state = { lockAcquired: true };
-  const scheduleMock = vi.fn(() => ({ stop: vi.fn() }));
+  const state = { lockAcquired: true, pingFails: false };
+  const stopTaskMock = vi.fn();
+  const scheduleMock = vi.fn(() => ({ stop: stopTaskMock }));
   const releaseMock = vi.fn();
   const queryMock = vi.fn(async (sql: string) => {
     if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: state.lockAcquired }] };
+    if (sql.trim() === 'SELECT 1' && state.pingFails) throw new Error('connection dead');
     return { rows: [] };
   });
   const fakeClient = { query: queryMock, release: releaseMock, on: vi.fn() };
   const getPoolMock = vi.fn(async () => ({ connect: vi.fn(async () => fakeClient) }));
-  return { state, scheduleMock, releaseMock, queryMock, getPoolMock };
+  return { state, scheduleMock, stopTaskMock, releaseMock, queryMock, getPoolMock };
 });
-const { scheduleMock, releaseMock, getPoolMock } = h;
+const { scheduleMock, stopTaskMock, releaseMock, getPoolMock } = h;
 
 vi.mock('node-cron', () => ({ default: { schedule: h.scheduleMock } }));
 vi.mock('../db', () => ({ getPool: h.getPoolMock }));
@@ -41,6 +43,7 @@ describe('scheduler leader election', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.state.lockAcquired = true;
+    h.state.pingFails = false;
     delete process.env.DISABLE_SCHEDULER;
   });
   afterEach(() => {
@@ -64,6 +67,28 @@ describe('scheduler leader election', () => {
 
     expect(scheduleMock).not.toHaveBeenCalled();
     expect(releaseMock).toHaveBeenCalled();
+  });
+
+  it('relinquishes leadership (stops jobs) when the liveness ping fails', async () => {
+    vi.useFakeTimers();
+    try {
+      h.state.lockAcquired = true;
+      startScheduler();
+      await vi.advanceTimersByTimeAsync(0); // settle initial election
+      expect(scheduleMock).toHaveBeenCalled();
+
+      // Connection silently died and another task grabbed the freed lock.
+      h.state.pingFails = true;
+      h.state.lockAcquired = false;
+
+      // Next 60s election tick: ping fails → relinquish (stop jobs), and the
+      // re-acquire probe returns false so this task does not resume leadership.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(stopTaskMock).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('opts out entirely when DISABLE_SCHEDULER=1', async () => {

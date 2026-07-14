@@ -35,6 +35,13 @@ dbReady = (async () => {
       connectionTimeoutMillis: 5000,   // fail fast if no connection available in 5s
       idleTimeoutMillis: 30000,        // close idle connections after 30s
       statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000', 10),        // kill queries that run longer than 30s
+      // TCP keepalive so a silently-dropped idle connection (NLB/NAT idle
+      // timeout with no RST) surfaces as an error promptly instead of hanging.
+      // Matters for the scheduler leader, which holds one idle connection to
+      // keep its advisory lock — without this, a silent drop could free the
+      // lock in Postgres while the leader keeps running jobs (split-brain).
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
     db = drizzlePg({ client: pool, schema });
     console.error('Using regular PostgreSQL driver (pg)');

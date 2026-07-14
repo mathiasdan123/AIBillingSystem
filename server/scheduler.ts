@@ -197,8 +197,34 @@ const ELECTION_RETRY_MS = 60_000;
 let leaderClient: any = null;
 let electionTimer: ReturnType<typeof setInterval> | null = null;
 
+// Give up leadership: stop the jobs and drop the lock-holding connection so a
+// standby can take over. Idempotent and safe to call from an event handler or
+// the liveness check. Passing a truthy arg to release() destroys the client
+// (ends the PG session → Postgres auto-frees the advisory lock).
+function relinquishLeadership(reason: string): void {
+  if (!leaderClient) return;
+  logger.warn('Scheduler: relinquishing leadership', { reason });
+  const client = leaderClient;
+  leaderClient = null;
+  stopJobs();
+  try { client.release(true); } catch { /* already gone */ }
+}
+
 async function tryBecomeLeaderAndRegister(): Promise<void> {
-  if (leaderClient) return; // already leading
+  if (leaderClient) {
+    // Already leading — but the held connection could have been silently dropped
+    // (NLB/NAT idle timeout with no RST), which frees the lock in Postgres while
+    // we keep running. Ping it; if the ping fails, relinquish so a standby (or
+    // this task on the next tick) can re-acquire the freed lock. This closes the
+    // split-brain window that TCP keepalive alone might miss.
+    try {
+      await leaderClient.query('SELECT 1');
+      return; // still healthy — stay leader
+    } catch (err: any) {
+      relinquishLeadership(`liveness ping failed: ${err?.message}`);
+      // fall through and attempt to re-acquire below
+    }
+  }
 
   const pool = await getPool();
   let client: any;
@@ -223,19 +249,25 @@ async function tryBecomeLeaderAndRegister(): Promise<void> {
     return;
   }
 
+  // Won the lock. Guard against a concurrent probe that also just won on this
+  // same process (shouldn't happen — the lock is a cross-session mutex — but be
+  // defensive): if we somehow already have a leader connection, drop this one.
+  if (leaderClient) {
+    try { client.query('SELECT pg_advisory_unlock($1)', [SCHEDULER_LEADER_LOCK_KEY]).catch(() => {}); } catch { /* noop */ }
+    try { client.release(); } catch { /* noop */ }
+    return;
+  }
+
   // We are the leader. Hold this connection open for the process lifetime so the
   // session-level lock persists. If it errors/ends (task dying, RDS failover),
   // relinquish leadership and let the next election tick re-elect a survivor.
   leaderClient = client;
-  const relinquish = (reason: string) => {
-    if (leaderClient !== client) return;
-    logger.warn('Scheduler leader connection lost — relinquishing leadership', { reason });
-    leaderClient = null;
-    stopJobs();
-    try { client.release(true); } catch { /* already gone */ }
-  };
-  client.on('error', (err: Error) => relinquish(err.message));
-  client.on('end', () => relinquish('connection ended'));
+  client.on('error', (err: Error) => {
+    if (leaderClient === client) relinquishLeadership(`connection error: ${err.message}`);
+  });
+  client.on('end', () => {
+    if (leaderClient === client) relinquishLeadership('connection ended');
+  });
 
   logger.info('Scheduler: acquired leadership, registering jobs');
   registerJobs();
