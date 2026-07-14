@@ -352,16 +352,14 @@ export async function checkEligibility(request: EligibilityRequest, practiceId?:
     const data = await response.json();
     const parsed = parseEligibilityResponse(data);
 
-    // Phase 2: attach STC audit metadata. We use the coverageDetails[].serviceType
-    // values the payer returned as the canonical answer, because Stedi
-    // normalizes each benefit entry to its STC.
-    const returnedStcs = Array.from(
-      new Set(
-        (parsed.coverageDetails ?? [])
-          .map((d: any) => d?.serviceType)
-          .filter((s: any): s is string => typeof s === 'string' && s.length > 0)
-      )
-    );
+    // Phase 2: attach STC audit metadata. Read the service-type codes straight
+    // from the raw 271 (`benefitsInformation[].serviceTypeCodes`) via the shared
+    // helper. The realtime path's parser (parseEligibilityResponse) never sets
+    // `parsed.coverageDetails` — only the separate detailed-benefits parser
+    // does — so reading that here always yielded [] and flagged EVERY check as
+    // stcDowngraded, turning the "payer only returned generic benefits" warning
+    // into noise.
+    const returnedStcs = extractReturnedStcsFromRawStediResponse(data);
     const therapySpecificRequested = resolvedStcs.some((c) => c !== '30');
     const onlyGenericReturned =
       therapySpecificRequested &&

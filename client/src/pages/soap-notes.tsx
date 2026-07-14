@@ -416,7 +416,12 @@ export default function SoapNotes() {
     }
   }, []);
 
-  // Save form data to localStorage when it changes
+  // Save the in-progress draft to sessionStorage on every change so an
+  // accidental refresh doesn't lose work. This is clinical PHI at rest in the
+  // browser: it lives in sessionStorage (cleared on tab close) and is also
+  // explicitly wiped on logout, idle-timeout, and successful submit via
+  // clearSensitiveStorage. Keep it that way — do not move this to localStorage
+  // (survives tab close) without a PHI review.
   useEffect(() => {
     const data = {
       selectedPatient,

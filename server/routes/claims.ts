@@ -205,15 +205,21 @@ router.get('/', isAuthenticated, async (req: any, res) => {
       );
       const rejectedClaims = (claims as any[]).filter((c) => isClaimInRejectionState(c));
       if (rejectedClaims.length > 0) {
-        // One-time lookups — shared across all rejected claims in this list.
-        const [cptCodes] = await Promise.all([storage.getCptCodes()]);
+        // Batch every lookup up front (3 queries total) instead of 2 per claim
+        // — the old per-claim loop was an N+1 that got slow for practices with
+        // many denials.
+        const claimIds = rejectedClaims.map((c) => c.id);
+        const patientIds = Array.from(new Set(rejectedClaims.map((c) => c.patientId)));
+        const [cptCodes, lineItemsByClaim, eligibilityByPatient] = await Promise.all([
+          storage.getCptCodes(),
+          storage.getClaimLineItemsForClaims(claimIds),
+          storage.getPatientEligibilityForPatients(patientIds),
+        ]);
         const hintsByClaimId = new Map<number, string[]>();
         for (const c of rejectedClaims) {
           try {
-            const [lineItems, eligibility] = await Promise.all([
-              storage.getClaimLineItems(c.id),
-              storage.getPatientEligibility(c.patientId),
-            ]);
+            const lineItems = lineItemsByClaim.get(c.id) ?? [];
+            const eligibility = eligibilityByPatient.get(c.patientId);
             const enrichedItems = (lineItems || []).map((li: any) => {
               const cpt = cptCodes.find((x: any) => x.id === li.cptCodeId);
               return {

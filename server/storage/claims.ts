@@ -153,6 +153,28 @@ export async function getClaimLineItems(claimId: number): Promise<ClaimLineItem[
     .where(eq(claimLineItems.claimId, claimId));
 }
 
+/**
+ * Batch variant of getClaimLineItems: fetches line items for many claims in a
+ * single query, grouped by claimId. Used to avoid an N+1 when enriching a
+ * claims list. Claims with no line items are absent from the map.
+ */
+export async function getClaimLineItemsForClaims(
+  claimIds: number[],
+): Promise<Map<number, ClaimLineItem[]>> {
+  const map = new Map<number, ClaimLineItem[]>();
+  if (claimIds.length === 0) return map;
+  const rows = await db
+    .select()
+    .from(claimLineItems)
+    .where(inArray(claimLineItems.claimId, claimIds));
+  for (const row of rows) {
+    const arr = map.get(row.claimId);
+    if (arr) arr.push(row);
+    else map.set(row.claimId, [row]);
+  }
+  return map;
+}
+
 export async function deleteClaimLineItems(claimId: number): Promise<void> {
   await db
     .delete(claimLineItems)

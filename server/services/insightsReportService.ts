@@ -10,6 +10,7 @@ import { getDb } from '../db';
 import { claims, appointments } from '@shared/schema';
 import { eq, and, gte, lte, lt, sql, count, sum } from 'drizzle-orm';
 import { getExpiringAuthorizations } from './authorizationService';
+import { getBusinessTimeZone, zonedStartOfDay, zonedStartOfNextDay, zonedAddDays } from '../utils/timezone';
 import logger from './logger';
 
 // ==================== TYPE DEFINITIONS ====================
@@ -179,14 +180,14 @@ export async function generateDailyReport(
 ): Promise<DailyInsightReport> {
   const db = await getDb();
   const reportDate = date || new Date();
-  const dayStart = new Date(reportDate);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setDate(dayEnd.getDate() + 1);
+  // Bound the day in the business timezone, not the server's (UTC on ECS) —
+  // otherwise evening payments land in the wrong calendar day.
+  const tz = getBusinessTimeZone();
+  const dayStart = zonedStartOfDay(reportDate, tz);
+  const dayEnd = zonedStartOfNextDay(reportDate, tz);
 
-  // 7 days ago for trailing denial rate
-  const sevenDaysAgo = new Date(dayStart);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  // 7 days ago for trailing denial rate (business-zone midnight)
+  const sevenDaysAgo = zonedStartOfDay(new Date(dayStart.getTime() - 7 * 24 * 60 * 60 * 1000), tz);
 
   // Practice name
   const practice = await storage.getPractice(practiceId);
@@ -337,19 +338,18 @@ export async function generateWeeklyReport(
   weekOf?: Date,
 ): Promise<WeeklyInsightReport> {
   const db = await getDb();
-  const startOfWeek = weekOf ? new Date(weekOf) : new Date();
-  // Normalize to Monday
-  const day = startOfWeek.getDay();
-  const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
-  startOfWeek.setDate(diff);
-  startOfWeek.setHours(0, 0, 0, 0);
+  // All week boundaries are business-zone midnights (not the server's UTC day).
+  const tz = getBusinessTimeZone();
+  const base = zonedStartOfDay(weekOf ? new Date(weekOf) : new Date(), tz);
+  // Normalize to the Monday of that week. base is business-midnight-as-UTC, so
+  // its UTC weekday equals the business weekday.
+  const dow = base.getUTCDay(); // 0=Sun..6=Sat
+  const daysFromMonday = dow === 0 ? 6 : dow - 1;
+  const startOfWeek = zonedAddDays(base, -daysFromMonday, tz);
 
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(endOfWeek.getDate() + 7);
-
-  const prevWeekStart = new Date(startOfWeek);
-  prevWeekStart.setDate(prevWeekStart.getDate() - 7);
-  const prevWeekEnd = new Date(startOfWeek);
+  const endOfWeek = zonedAddDays(startOfWeek, 7, tz);
+  const prevWeekStart = zonedAddDays(startOfWeek, -7, tz);
+  const prevWeekEnd = startOfWeek;
 
   // Practice name
   const practice = await storage.getPractice(practiceId);

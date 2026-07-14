@@ -12,7 +12,7 @@ import {
   type Patient,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import { getPatient } from "./patients";
 
 // ==================== ELIGIBILITY CHECKS ====================
@@ -33,6 +33,29 @@ export async function getPatientEligibility(patientId: number): Promise<Eligibil
     .orderBy(desc(eligibilityChecks.checkDate))
     .limit(1);
   return check;
+}
+
+/**
+ * Batch variant of getPatientEligibility: returns the most-recent eligibility
+ * check per patient for a set of patients in a single query. Used to avoid an
+ * N+1 when enriching a list of claims. Patients with no check are absent.
+ */
+export async function getPatientEligibilityForPatients(
+  patientIds: number[],
+): Promise<Map<number, EligibilityCheck>> {
+  const map = new Map<number, EligibilityCheck>();
+  if (patientIds.length === 0) return map;
+  const rows = await db
+    .select()
+    .from(eligibilityChecks)
+    .where(inArray(eligibilityChecks.patientId, patientIds))
+    .orderBy(eligibilityChecks.patientId, desc(eligibilityChecks.checkDate));
+  // Rows are grouped by patientId with the newest check first within each
+  // group, so the first row seen per patient is that patient's latest.
+  for (const row of rows) {
+    if (!map.has(row.patientId)) map.set(row.patientId, row);
+  }
+  return map;
 }
 
 export async function getEligibilityHistory(patientId: number): Promise<EligibilityCheck[]> {

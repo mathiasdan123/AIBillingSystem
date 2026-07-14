@@ -167,6 +167,7 @@ export const storage = {
   createClaimLineItem: claimFns.createClaimLineItem,
   createClaimWithLineItems: claimFns.createClaimWithLineItems,
   getClaimLineItems: claimFns.getClaimLineItems,
+  getClaimLineItemsForClaims: claimFns.getClaimLineItemsForClaims,
   deleteClaimLineItems: claimFns.deleteClaimLineItems,
   createExpense: claimFns.createExpense,
   getExpenses: claimFns.getExpenses,
@@ -454,6 +455,7 @@ export const storage = {
   // ==================== INSURANCE ====================
   createEligibilityCheck: insuranceFns.createEligibilityCheck,
   getPatientEligibility: insuranceFns.getPatientEligibility,
+  getPatientEligibilityForPatients: insuranceFns.getPatientEligibilityForPatients,
   getEligibilityHistory: insuranceFns.getEligibilityHistory,
   createPatientInsuranceAuth: insuranceFns.createPatientInsuranceAuth,
   getPatientInsuranceAuth: insuranceFns.getPatientInsuranceAuth,
