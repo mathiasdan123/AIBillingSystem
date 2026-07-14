@@ -492,7 +492,6 @@ export const storage = {
   createAuditLogEntry: auditFns.createAuditLogEntry,
   verifyAuditLogIntegrity: auditFns.verifyAuditLogIntegrity,
   getAuditLogsForResource: auditFns.getAuditLogsForResource,
-  getAuditLogs: auditFns.getAuditLogs,
   getAuditLogsPaginated: auditFns.getAuditLogsPaginated,
   createBaaRecord: auditFns.createBaaRecord,
   getBaaRecords: auditFns.getBaaRecords,

@@ -178,14 +178,6 @@ export async function getAuditLogsForResource(resourceType: string, resourceId: 
     .orderBy(desc(auditLog.createdAt));
 }
 
-export async function getAuditLogs(filters: any): Promise<any[]> {
-  return await db
-    .select()
-    .from(auditLog)
-    .orderBy(desc(auditLog.createdAt))
-    .limit(100);
-}
-
 export async function getAuditLogsPaginated(filters: {
   practiceId?: number;
   userId?: string;

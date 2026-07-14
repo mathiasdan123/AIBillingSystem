@@ -58,6 +58,12 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
     if (!patient) {
       return res.status(404).json({ message: 'Patient not found' });
     }
+    // Tenant isolation: the patient must belong to the caller's practice —
+    // otherwise a user could mint an auth request (and email/SMS a magic link)
+    // for another practice's patient.
+    if (!req.userPracticeId || patient.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
 
     // Check rate limit
     const rateLimit = checkRateLimit(patientId);
@@ -173,6 +179,15 @@ router.get('/patients/:id/insurance-authorizations', isAuthenticated, async (req
       return res.status(400).json({ message: 'Invalid patient ID' });
     }
 
+    // Tenant isolation: only list authorizations for the caller's own patients.
+    const patient = await storage.getPatient(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!req.userPracticeId || patient.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
     const authorizations = await storage.getPatientAuthorizations(patientId);
 
     // Mask tokens for security
@@ -201,6 +216,10 @@ router.post('/:id/resend', isAuthenticated, async (req: any, res: Response) => {
     const authorization = await storage.getAuthorizationById(authorizationId);
     if (!authorization) {
       return res.status(404).json({ message: 'Authorization not found' });
+    }
+    // Tenant isolation: the authorization must belong to the caller's practice.
+    if (!req.userPracticeId || authorization.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
     if (authorization.status !== 'pending') {
@@ -282,6 +301,10 @@ router.post('/:id/revoke', isAuthenticated, async (req: any, res: Response) => {
     const authorization = await storage.getAuthorizationById(authorizationId);
     if (!authorization) {
       return res.status(404).json({ message: 'Authorization not found' });
+    }
+    // Tenant isolation: the authorization must belong to the caller's practice.
+    if (!req.userPracticeId || authorization.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
     if (authorization.status === 'revoked') {

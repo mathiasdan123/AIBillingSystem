@@ -268,6 +268,10 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
     // - intakeCompletedAt is a Postgres timestamp; Drizzle requires a Date,
     //   not an ISO string, so we coerce here.
     const payload: Record<string, any> = { ...req.body };
+    // Tenant safety: never trust a client-supplied practiceId on create — bind
+    // the new patient to the caller's own practice so a user in practice A can't
+    // plant records in practice B.
+    payload.practiceId = getAuthorizedPracticeId(req);
     if (typeof payload.intakeData === 'string') {
       try {
         payload.intakeData = JSON.parse(payload.intakeData);

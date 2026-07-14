@@ -20,6 +20,9 @@ router.get('/patients/:id/insurance-data', isAuthenticated, async (req: any, res
     if (!patient) {
       return res.status(404).json({ message: 'Patient not found' });
     }
+    if (!req.userPracticeId || patient.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
 
     // Check for active authorization
     const authorizations = await storage.getPatientAuthorizations(patientId);
@@ -97,6 +100,9 @@ router.post('/patients/:id/insurance-data/refresh', isAuthenticated, async (req:
     const patient = await storage.getPatient(patientId);
     if (!patient) {
       return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!req.userPracticeId || patient.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
     // Check for active authorization
@@ -183,6 +189,9 @@ router.get('/patients/:id/insurance-data/:type', isAuthenticated, async (req: an
     const patient = await storage.getPatient(patientId);
     if (!patient) {
       return res.status(404).json({ message: 'Patient not found' });
+    }
+    if (!req.userPracticeId || patient.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
     // Check for active authorization
@@ -312,34 +321,10 @@ router.get('/payer-integrations/health', isAuthenticated, async (req: any, res: 
   }
 });
 
-// GET /api/audit-logs - Get audit logs (admin only)
-router.get('/audit-logs', isAuthenticated, async (req: any, res: Response) => {
-  try {
-    const {
-      practiceId,
-      patientId,
-      authorizationId,
-      eventType,
-      startDate,
-      endDate,
-    } = req.query;
-
-    const filters: any = {};
-
-    if (practiceId) filters.practiceId = parseInt(practiceId as string);
-    if (patientId) filters.patientId = parseInt(patientId as string);
-    if (authorizationId) filters.authorizationId = parseInt(authorizationId as string);
-    if (eventType) filters.eventType = eventType as string;
-    if (startDate) filters.startDate = new Date(startDate as string);
-    if (endDate) filters.endDate = new Date(endDate as string);
-
-    const logs = await storage.getAuditLogs(filters);
-
-    res.json(logs);
-  } catch (error) {
-    console.error('Error fetching audit logs:', error);
-    res.status(500).json({ message: 'Failed to fetch audit logs' });
-  }
-});
+// NOTE: The former `GET /api/audit-logs` route was removed — it applied no
+// admin-role check and no tenant scoping, and its storage.getAuditLogs()
+// ignored all filters and returned the 100 most-recent rows of the GLOBAL
+// audit log (every practice's HIPAA access trail). The correct, admin-guarded,
+// practice-scoped implementation lives in routes/audit-reports.ts.
 
 export default router;
