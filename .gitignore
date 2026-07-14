@@ -149,3 +149,6 @@ openapi.json
 
 # Office app lockfiles
 ~$*
+
+# MS Office lock files
+~$*

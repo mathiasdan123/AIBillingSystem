@@ -1,5 +1,4 @@
 import { QueryClient, QueryCache, QueryFunction } from "@tanstack/react-query";
-import { supabase } from "./supabase";
 
 // API version header — signals to the server which API version the client expects
 const API_VERSION_ACCEPT = "application/vnd.therapybill.v1+json";
@@ -11,24 +10,10 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-// Get auth headers from Supabase session
-async function getAuthHeaders(): Promise<HeadersInit> {
-  const headers: Record<string, string> = {
-    Accept: API_VERSION_ACCEPT,
-  };
-
-  // If Supabase isn't configured, skip auth headers (demo/dev mode)
-  if (!supabase) {
-    return headers;
-  }
-
-  const { data: { session } } = await supabase.auth.getSession();
-
-  if (session?.access_token) {
-    headers.Authorization = `Bearer ${session.access_token}`;
-  }
-
-  return headers;
+// Auth is session-cookie based (credentials: "include"); only the version
+// Accept header is needed here.
+function getAuthHeaders(): Record<string, string> {
+  return { Accept: API_VERSION_ACCEPT };
 }
 
 export async function apiRequest(

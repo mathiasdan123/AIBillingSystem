@@ -52,12 +52,9 @@ export default defineConfig({
             "@radix-ui/react-radio-group",
             "@radix-ui/react-scroll-area",
             "@radix-ui/react-separator",
-            "@radix-ui/react-slider",
             "@radix-ui/react-switch",
             "@radix-ui/react-toast",
           ],
-          // Animation libraries
-          animation: ["framer-motion"],
         },
       },
     },
