@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { getPool } from './db';
 import { storage } from './storage';
 import { sendDeniedClaimsReport, isEmailConfigured, type DeniedClaimsReportInput, sendWeeklyCancellationReport, type WeeklyCancellationReportInput, sendBaaExpirationAlert, sendCoverageChangeAlert, sendBreachNotificationAlert, sendAmendmentDeadlineAlert } from './email';
 import logger from './services/logger';
@@ -178,7 +179,88 @@ async function generateAndSendWeeklyCancellationReport(practiceId: number = 1) {
   }
 }
 
+// ─── Leader election ────────────────────────────────────────────────────────
+//
+// Production runs 2+ ECS tasks. Without coordination, all 24 cron jobs below
+// fire on EVERY task — duplicate reminder emails/SMS to patients, double-billed
+// Stedi API calls, and (worst) the PHI hard-deletion purge running twice.
+//
+// We elect a single leader with a session-level Postgres advisory lock held on
+// a DEDICATED connection for the process lifetime (same idiom as
+// demoPractice.ts). Exactly one task acquires the lock and registers the jobs;
+// the rest stand by. If the leader dies, its connection drops, Postgres frees
+// the lock automatically, and a standby promotes on its next election tick — no
+// external coordinator, no orphaned lock.
+const SCHEDULER_LEADER_LOCK_KEY = 728104953;
+const ELECTION_RETRY_MS = 60_000;
+
+let leaderClient: any = null;
+let electionTimer: ReturnType<typeof setInterval> | null = null;
+
+async function tryBecomeLeaderAndRegister(): Promise<void> {
+  if (leaderClient) return; // already leading
+
+  const pool = await getPool();
+  let client: any;
+  try {
+    client = await pool.connect();
+  } catch (err: any) {
+    logger.warn('Scheduler election: could not get DB connection, will retry', { error: err?.message });
+    return;
+  }
+
+  try {
+    const result = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [SCHEDULER_LEADER_LOCK_KEY]);
+    const acquired = result.rows?.[0]?.locked === true;
+    if (!acquired) {
+      // Another task is the leader — release this probe connection and stand by.
+      client.release();
+      return;
+    }
+  } catch (err: any) {
+    logger.warn('Scheduler election: advisory-lock probe failed, will retry', { error: err?.message });
+    client.release();
+    return;
+  }
+
+  // We are the leader. Hold this connection open for the process lifetime so the
+  // session-level lock persists. If it errors/ends (task dying, RDS failover),
+  // relinquish leadership and let the next election tick re-elect a survivor.
+  leaderClient = client;
+  const relinquish = (reason: string) => {
+    if (leaderClient !== client) return;
+    logger.warn('Scheduler leader connection lost — relinquishing leadership', { reason });
+    leaderClient = null;
+    stopJobs();
+    try { client.release(true); } catch { /* already gone */ }
+  };
+  client.on('error', (err: Error) => relinquish(err.message));
+  client.on('end', () => relinquish('connection ended'));
+
+  logger.info('Scheduler: acquired leadership, registering jobs');
+  registerJobs();
+}
+
+/**
+ * Start the scheduler. Safe to call on every task — leader election ensures the
+ * jobs run on exactly one instance. Set DISABLE_SCHEDULER=1 to opt a task out
+ * entirely (e.g. a dedicated web-only fleet).
+ */
 export function startScheduler() {
+  if (process.env.DISABLE_SCHEDULER === '1') {
+    logger.info('Scheduler disabled via DISABLE_SCHEDULER=1');
+    return;
+  }
+  // Fire an election now, then keep retrying so a standby can promote if the
+  // current leader dies. tryBecomeLeaderAndRegister() no-ops once we're leader.
+  void tryBecomeLeaderAndRegister();
+  if (!electionTimer) {
+    electionTimer = setInterval(() => { void tryBecomeLeaderAndRegister(); }, ELECTION_RETRY_MS);
+    electionTimer.unref?.(); // don't keep the event loop alive just for elections
+  }
+}
+
+function registerJobs() {
   // Schedule daily report at 8:00 AM
   // Cron format: minute hour day-of-month month day-of-week
   const dailyReportTask = cron.schedule('0 8 * * *', () => {
@@ -1475,12 +1557,32 @@ export function startScheduler() {
   });
 }
 
-export function stopScheduler() {
+// Stop and clear the cron jobs only (used when leadership is lost — the process
+// keeps running as a standby and may re-register later).
+function stopJobs() {
   scheduledTasks.forEach((task, name) => {
     task.stop();
     logger.info('Stopped scheduled task', { name });
   });
   scheduledTasks.clear();
+}
+
+// Full teardown for process shutdown: stop jobs, stop electing, and release the
+// leader lock so a peer can take over immediately instead of waiting out the
+// TCP timeout on our dropped connection.
+export function stopScheduler() {
+  stopJobs();
+  if (electionTimer) {
+    clearInterval(electionTimer);
+    electionTimer = null;
+  }
+  if (leaderClient) {
+    const client = leaderClient;
+    leaderClient = null;
+    client.query('SELECT pg_advisory_unlock($1)', [SCHEDULER_LEADER_LOCK_KEY])
+      .catch(() => {})
+      .finally(() => { try { client.release(); } catch { /* already gone */ } });
+  }
 }
 
 // Manual trigger for testing
