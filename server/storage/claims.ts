@@ -38,7 +38,7 @@ import {
   type InsertClaimOutcome,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, or, gte, lte, isNull, inArray, sql, count, sum } from "drizzle-orm";
+import { eq, desc, and, or, gte, lte, isNull, inArray, sql, count, sum, ilike } from "drizzle-orm";
 import { stripImmutable } from "../utils/sanitizeUpdate";
 import { cache, CacheKeys } from "../services/cacheService";
 
@@ -73,6 +73,107 @@ export async function countClaims(practiceId: number): Promise<number> {
     .from(claims)
     .where(eq(claims.practiceId, practiceId));
   return result?.total ?? 0;
+}
+
+export interface ClaimListFilters {
+  status?: string;   // exact status, or 'all'/undefined for no status filter
+  // `search` matches the claim NUMBER only. Patient names are PHI-encrypted at
+  // rest (PATIENT_PHI_STRING_FIELDS), so they can't be searched in SQL — the
+  // client resolves a name query against the decrypted patient list and passes
+  // the matching ids in `patientIds`. The two are OR'd: a search matches if the
+  // claim number matches OR the claim belongs to one of the named patients.
+  search?: string;
+  patientIds?: number[];
+  limit?: number;
+  offset?: number;
+}
+
+function claimListWhere(practiceId: number, filters: ClaimListFilters) {
+  const conds: any[] = [eq(claims.practiceId, practiceId)];
+  if (filters.status && filters.status !== 'all') {
+    conds.push(eq(claims.status, filters.status));
+  }
+  const term = filters.search?.trim();
+  const patientIds = filters.patientIds?.filter((n) => Number.isFinite(n));
+  const searchConds: any[] = [];
+  if (term) searchConds.push(ilike(claims.claimNumber, `%${term}%`));
+  if (patientIds && patientIds.length > 0) searchConds.push(inArray(claims.patientId, patientIds));
+  if (searchConds.length === 1) conds.push(searchConds[0]);
+  else if (searchConds.length > 1) conds.push(or(...searchConds));
+  return and(...conds);
+}
+
+/**
+ * Practice-scoped, filtered, paginated claims for the claims management page.
+ */
+export async function getClaimsFiltered(
+  practiceId: number,
+  filters: ClaimListFilters,
+): Promise<Claim[]> {
+  let q: any = db
+    .select()
+    .from(claims)
+    .where(claimListWhere(practiceId, filters))
+    .orderBy(desc(claims.createdAt))
+    .$dynamic();
+  if (filters.limit) q = q.limit(filters.limit);
+  if (filters.offset) q = q.offset(filters.offset);
+  return await q;
+}
+
+/** Count of claims matching the same filters as getClaimsFiltered. */
+export async function countClaimsFiltered(
+  practiceId: number,
+  filters: ClaimListFilters,
+): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(claims)
+    .where(claimListWhere(practiceId, filters));
+  return result?.total ?? 0;
+}
+
+/**
+ * Status counts and dollar sums across ALL of a practice's claims — the source
+ * for the claims page stat tiles, computed in one query instead of shipping the
+ * whole list to the client.
+ */
+export async function getClaimsStatusSummary(practiceId: number): Promise<{
+  total: number;
+  draft: number;
+  submitted: number;
+  paid: number;
+  denied: number;
+  held: number;
+  totalAmount: number;
+  paidAmount: number;
+  pendingAmount: number;
+}> {
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      draft: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'draft')::int`,
+      submitted: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'submitted')::int`,
+      paid: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
+      denied: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'denied')::int`,
+      held: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'held')::int`,
+      totalAmount: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
+      paidAmount: sql<string>`COALESCE(SUM(${claims.paidAmount}::numeric) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
+      pendingAmount: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric) FILTER (WHERE ${claims.status} = 'submitted'), 0)`,
+    })
+    .from(claims)
+    .where(eq(claims.practiceId, practiceId));
+  return {
+    total: row?.total ?? 0,
+    draft: row?.draft ?? 0,
+    submitted: row?.submitted ?? 0,
+    paid: row?.paid ?? 0,
+    denied: row?.denied ?? 0,
+    held: row?.held ?? 0,
+    totalAmount: parseFloat(row?.totalAmount ?? '0'),
+    paidAmount: parseFloat(row?.paidAmount ?? '0'),
+    pendingAmount: parseFloat(row?.pendingAmount ?? '0'),
+  };
 }
 
 export async function getClaim(id: number): Promise<Claim | undefined> {

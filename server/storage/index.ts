@@ -161,6 +161,9 @@ export const storage = {
   createClaim: claimFns.createClaim,
   getClaims: claimFns.getClaims,
   countClaims: claimFns.countClaims,
+  getClaimsFiltered: claimFns.getClaimsFiltered,
+  countClaimsFiltered: claimFns.countClaimsFiltered,
+  getClaimsStatusSummary: claimFns.getClaimsStatusSummary,
   getClaim: claimFns.getClaim,
   getClaimsByIds: claimFns.getClaimsByIds,
   updateClaim: claimFns.updateClaim,
@@ -475,6 +478,7 @@ export const storage = {
 
   // ==================== ANALYTICS ====================
   getDashboardStats: analyticsFns.getDashboardStats,
+  getClaimsAnalyticsRollup: analyticsFns.getClaimsAnalyticsRollup,
   getRevenueByMonth: analyticsFns.getRevenueByMonth,
   getClaimsByStatus: analyticsFns.getClaimsByStatus,
   getTopDenialReasons: analyticsFns.getTopDenialReasons,

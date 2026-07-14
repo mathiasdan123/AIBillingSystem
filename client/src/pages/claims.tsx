@@ -687,6 +687,17 @@ export default function Claims() {
   const [practiceId] = useState(user?.practiceId || 1);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // Server-side pagination: the claims list is fetched a page at a time with
+  // status/search applied on the server (the full table is no longer shipped).
+  const CLAIMS_PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+  // Any filter change returns to page 1 so the user isn't stranded past the end.
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter]);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showSessionsDialog, setShowSessionsDialog] = useState(false);
   const [showSuperbillDialog, setShowSuperbillDialog] = useState(false);
@@ -780,17 +791,67 @@ export default function Claims() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: claims, isLoading: claimsLoading } = useQuery<Claim[]>({
-    queryKey: [`/api/claims?practiceId=${practiceId}`],
-    enabled: isAuthenticated && !!practiceId,
-    retry: false,
-  });
-
   const { data: patients } = useQuery<any[]>({
     queryKey: [`/api/patients?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
+
+  // Patient names are PHI-encrypted server-side and can't be searched in SQL, so
+  // resolve the search term against the decrypted patient list here and pass the
+  // matching patient ids along; the server ORs them with a claim-number match.
+  const matchedPatientIds = debouncedSearch
+    ? (patients || [])
+        .filter((p: any) =>
+          `${p.firstName ?? ''} ${p.lastName ?? ''}`.toLowerCase().includes(debouncedSearch.toLowerCase()),
+        )
+        .map((p: any) => p.id)
+    : [];
+
+  // Build the paginated/filtered claims URL. The server returns
+  // { data: Claim[], pagination: {...} }.
+  const claimsListUrl =
+    `/api/claims?practiceId=${practiceId}&page=${page}&limit=${CLAIMS_PAGE_SIZE}` +
+    (statusFilter && statusFilter !== 'all' ? `&status=${encodeURIComponent(statusFilter)}` : '') +
+    (debouncedSearch ? `&search=${encodeURIComponent(debouncedSearch)}` : '') +
+    (matchedPatientIds.length > 0 ? `&patientIds=${matchedPatientIds.join(',')}` : '');
+
+  const { data: claimsResp, isLoading: claimsLoading } = useQuery<{
+    data: Claim[];
+    pagination: { page: number; limit: number; total: number; totalPages: number; hasMore: boolean };
+  }>({
+    queryKey: [claimsListUrl],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  });
+  const claims = claimsResp?.data;
+  const totalClaims = claimsResp?.pagination?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalClaims / CLAIMS_PAGE_SIZE));
+  // If the result set shrinks (e.g. a mutation) while we're past the last page,
+  // snap back so the user isn't stranded on an empty page.
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  // Status counts + sums for the stat tiles, across ALL claims (not just this page).
+  const { data: claimsSummary } = useQuery<{
+    total: number; draft: number; submitted: number; paid: number; denied: number; held: number;
+    totalAmount: number; paidAmount: number; pendingAmount: number;
+  }>({
+    queryKey: [`/api/claims/summary?practiceId=${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  });
+
+  // Claim keys now carry page/status/search, so a fixed-key invalidation won't
+  // match. Invalidate every claims query (list pages + summary) by prefix.
+  const invalidateClaims = () =>
+    queryClient.invalidateQueries({
+      predicate: (q) =>
+        typeof q.queryKey[0] === 'string' &&
+        ((q.queryKey[0] as string).startsWith('/api/claims') ||
+          (q.queryKey[0] as string).startsWith('/api/analytics/claims-rollup')),
+    });
 
   const { data: insurances } = useQuery<any[]>({
     queryKey: ['/api/insurances'],
@@ -824,7 +885,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      invalidateClaims();
       queryClient.invalidateQueries({ queryKey: [`/api/sessions/unbilled?practiceId=${practiceId}`] });
       toast({
         title: "Superbill Generated",
@@ -852,7 +913,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      invalidateClaims();
       toast({
         title: "Superbill Created",
         description: `Claim ${data.claim.claimNumber} created for $${data.totalAmount}`,
@@ -935,7 +996,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       toast({
         title: "Success",
         description: "Claim created successfully with AI review",
@@ -982,7 +1043,7 @@ export default function Claims() {
       return data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       // Show scrub warnings if present
       if (data.scrubResult?.warnings?.length > 0) {
         setScrubWarnings(data.scrubResult.warnings);
@@ -1011,7 +1072,7 @@ export default function Claims() {
       }
       // Handle scrub failure (422)
       if (error.status === 422 && error.scrubResult) {
-        queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+        invalidateClaims();
         setScrubErrors(error.scrubResult.errors || []);
         setScrubWarnings(error.scrubResult.warnings || []);
         setShowScrubResults(true);
@@ -1046,7 +1107,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       toast({
         title: "Authorization Saved",
         description: data.message,
@@ -1078,7 +1139,7 @@ export default function Claims() {
         errors: data.errors || [],
         results: data.results || [],
       });
-      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      invalidateClaims();
       setSelectedClaimIds(new Set());
       toast({
         title: "Batch Submission Complete",
@@ -1108,7 +1169,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       if (data.statusResult) {
         const status = data.statusResult.status;
         toast({
@@ -1141,7 +1202,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       toast({
         title: "Success",
         description: "Claim marked as paid",
@@ -1165,7 +1226,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       toast({
         title: "Secondary Claim Created",
         description: `Secondary claim ${data.claim?.claimNumber || ''} created for $${parseFloat(data.claim?.totalAmount || '0').toFixed(2)}`,
@@ -1189,7 +1250,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       toast({
         title: "Claim reopened",
         description:
@@ -1213,7 +1274,7 @@ export default function Claims() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
       if (data.appealGenerated) {
         toast({
           title: "Claim Denied - AI Appeal Generated",
@@ -1275,7 +1336,7 @@ export default function Claims() {
       setDenialPredictionResult(data);
       setShowDenialPrediction(true);
       // Refresh claims to pick up stored prediction
-      queryClient.invalidateQueries({ queryKey: [`/api/claims?practiceId=${practiceId}`] });
+      invalidateClaims();
       toast({
         title: "Denial Risk Analysis Complete",
         description: `Risk score: ${data.riskScore}/100 (${data.riskLevel})`,
@@ -1320,7 +1381,7 @@ export default function Claims() {
     onSuccess: () => {
       toast({ title: "Success", description: "Appeal marked as completed (won)" });
       if (selectedClaim) fetchAppeals(selectedClaim.id);
-      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      invalidateClaims();
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to update appeal", variant: "destructive" });
@@ -1481,25 +1542,21 @@ export default function Claims() {
     }
   };
 
-  const filteredClaims = claims?.filter((claim) => {
-    const patient = patients?.find(p => p.id === claim.patientId);
-    const matchesSearch = claim.claimNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         patient?.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         patient?.lastName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === "all" || claim.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  }) || [];
+  // The server already applied status + search, so this page's rows are the
+  // filtered result set for the current page.
+  const filteredClaims = claims || [];
 
-  // Calculate summary stats
+  // Stat tiles come from the practice-wide summary endpoint (all claims), not
+  // the current page.
   const stats = {
-    total: claims?.length || 0,
-    draft: claims?.filter(c => c.status === 'draft').length || 0,
-    submitted: claims?.filter(c => c.status === 'submitted').length || 0,
-    paid: claims?.filter(c => c.status === 'paid').length || 0,
-    denied: claims?.filter(c => c.status === 'denied').length || 0,
-    totalAmount: claims?.reduce((sum, c) => sum + parseFloat(c.totalAmount || '0'), 0) || 0,
-    paidAmount: claims?.filter(c => c.status === 'paid').reduce((sum, c) => sum + parseFloat(c.paidAmount || '0'), 0) || 0,
-    pendingAmount: claims?.filter(c => c.status === 'submitted').reduce((sum, c) => sum + parseFloat(c.totalAmount || '0'), 0) || 0,
+    total: claimsSummary?.total || 0,
+    draft: claimsSummary?.draft || 0,
+    submitted: claimsSummary?.submitted || 0,
+    paid: claimsSummary?.paid || 0,
+    denied: claimsSummary?.denied || 0,
+    totalAmount: claimsSummary?.totalAmount || 0,
+    paidAmount: claimsSummary?.paidAmount || 0,
+    pendingAmount: claimsSummary?.pendingAmount || 0,
   };
 
   const getPatientName = (patientId: number) => {
@@ -1516,10 +1573,18 @@ export default function Claims() {
     createClaimMutation.mutate(data);
   };
 
-  // Batch selection helpers
-  const draftClaims = filteredClaims.filter(c => c.status === 'draft');
-  const allDraftSelected = draftClaims.length > 0 && draftClaims.every(c => selectedClaimIds.has(c.id));
-  const someDraftSelected = draftClaims.some(c => selectedClaimIds.has(c.id));
+  // Batch selection helpers.
+  //
+  // Selection spans pages: the row checkbox only renders on draft claims, so
+  // every id in selectedClaimIds is a draft. With server pagination the current
+  // page is NOT the full working set, so select-all and submit operate on the
+  // practice-wide draft population (via ?all=1&status=draft) and on the whole
+  // selection — never scoped to the visible page (which silently dropped
+  // off-page selections at submit time).
+  const draftTotal = claimsSummary?.draft ?? 0;
+  const selectedCount = selectedClaimIds.size;
+  const allDraftSelected = draftTotal > 0 && selectedCount >= draftTotal;
+  const someDraftSelected = selectedCount > 0;
 
   const toggleClaimSelection = (claimId: number) => {
     setSelectedClaimIds(prev => {
@@ -1533,29 +1598,25 @@ export default function Claims() {
     });
   };
 
-  const toggleSelectAllDraft = () => {
+  const toggleSelectAllDraft = async () => {
     if (allDraftSelected) {
-      // Deselect all draft claims
-      setSelectedClaimIds(prev => {
-        const next = new Set(prev);
-        draftClaims.forEach(c => next.delete(c.id));
-        return next;
-      });
-    } else {
-      // Select all draft claims
-      setSelectedClaimIds(prev => {
-        const next = new Set(prev);
-        draftClaims.forEach(c => next.add(c.id));
-        return next;
-      });
+      setSelectedClaimIds(new Set());
+      return;
+    }
+    try {
+      // Fetch EVERY draft in the practice (across all pages), then select them.
+      const res = await apiRequest("GET", `/api/claims?practiceId=${practiceId}&all=1&status=draft`);
+      const drafts: Claim[] = await res.json();
+      setSelectedClaimIds(new Set(drafts.map(c => c.id)));
+    } catch {
+      toast({ title: "Selection Failed", description: "Could not select all drafts. Please try again.", variant: "destructive" });
     }
   };
 
   const handleBatchSubmit = () => {
-    const ids = Array.from(selectedClaimIds).filter(id => {
-      const claim = filteredClaims.find(c => c.id === id);
-      return claim && claim.status === 'draft';
-    });
+    // Every selected id is a draft (checkboxes only appear on drafts), so submit
+    // the whole selection — do not intersect with the current page.
+    const ids = Array.from(selectedClaimIds);
     if (ids.length === 0) {
       toast({ title: "No Draft Claims Selected", description: "Select draft claims to submit", variant: "destructive" });
       return;
@@ -1600,27 +1661,39 @@ export default function Claims() {
           <Button
             variant="outline"
             className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0"
-            onClick={() => {
-              if (!filteredClaims || filteredClaims.length === 0) {
-                toast({ title: "No Claims", description: "No claims to export with current filters.", variant: "destructive" });
-                return;
+            onClick={async () => {
+              try {
+                // Export ALL rows matching the current filters, not just the
+                // visible page — the `all=1` path returns every match.
+                const exportUrl =
+                  `/api/claims?practiceId=${practiceId}&all=1` +
+                  (statusFilter && statusFilter !== 'all' ? `&status=${encodeURIComponent(statusFilter)}` : '') +
+                  (debouncedSearch ? `&search=${encodeURIComponent(debouncedSearch)}` : '');
+                const res = await apiRequest("GET", exportUrl);
+                const allMatching: Claim[] = await res.json();
+                if (!allMatching || allMatching.length === 0) {
+                  toast({ title: "No Claims", description: "No claims to export with current filters.", variant: "destructive" });
+                  return;
+                }
+                const rows = allMatching.map((c) => ({
+                  claimNumber: c.claimNumber,
+                  patient: getPatientName(c.patientId),
+                  insurance: getInsuranceName(c.insuranceId),
+                  status: c.status,
+                  totalAmount: c.totalAmount,
+                  submittedAmount: c.submittedAmount || "",
+                  paidAmount: c.paidAmount || "",
+                  createdAt: c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "",
+                  submittedAt: c.submittedAt ? new Date(c.submittedAt).toLocaleDateString() : "",
+                  paidAt: c.paidAt ? new Date(c.paidAt).toLocaleDateString() : "",
+                  denialReason: c.denialReason || "",
+                  billingOrder: c.billingOrder || "primary",
+                }));
+                exportToCsv(`claims-export-${new Date().toISOString().split("T")[0]}.csv`, rows);
+                toast({ title: "Export Complete", description: `Exported ${rows.length} claims to CSV.` });
+              } catch {
+                toast({ title: "Export Failed", description: "Could not export claims. Please try again.", variant: "destructive" });
               }
-              const rows = filteredClaims.map((c) => ({
-                claimNumber: c.claimNumber,
-                patient: getPatientName(c.patientId),
-                insurance: getInsuranceName(c.insuranceId),
-                status: c.status,
-                totalAmount: c.totalAmount,
-                submittedAmount: c.submittedAmount || "",
-                paidAmount: c.paidAmount || "",
-                createdAt: c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "",
-                submittedAt: c.submittedAt ? new Date(c.submittedAt).toLocaleDateString() : "",
-                paidAt: c.paidAt ? new Date(c.paidAt).toLocaleDateString() : "",
-                denialReason: c.denialReason || "",
-                billingOrder: c.billingOrder || "primary",
-              }));
-              exportToCsv(`claims-export-${new Date().toISOString().split("T")[0]}.csv`, rows);
-              toast({ title: "Export Complete", description: `Exported ${rows.length} claims to CSV.` });
             }}
           >
             <Download className="w-4 h-4 mr-1 md:mr-2" />
@@ -2180,7 +2253,7 @@ export default function Claims() {
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="draft">Draft ({stats.draft})</SelectItem>
-            <SelectItem value="held">Held ({(claims as Claim[])?.filter((c: Claim) => c.status === 'held').length || 0})</SelectItem>
+            <SelectItem value="held">Held ({claimsSummary?.held || 0})</SelectItem>
             <SelectItem value="submitted">Submitted ({stats.submitted})</SelectItem>
             <SelectItem value="paid">Paid ({stats.paid})</SelectItem>
             <SelectItem value="denied">Denied ({stats.denied})</SelectItem>
@@ -2190,7 +2263,7 @@ export default function Claims() {
       </div>
 
       {/* Batch Actions Bar - sticky at bottom on mobile when items selected */}
-      {draftClaims.length > 0 && (
+      {draftTotal > 0 && (
         <div className={`flex flex-wrap items-center gap-2 md:gap-4 mb-3 md:mb-4 p-3 bg-slate-50 rounded-lg border ${selectedClaimIds.size > 0 ? 'fixed bottom-16 md:bottom-auto left-4 right-4 md:static z-30 shadow-lg md:shadow-none' : ''}`}>
           <div className="flex items-center gap-2">
             <Checkbox
@@ -2199,7 +2272,7 @@ export default function Claims() {
               onCheckedChange={toggleSelectAllDraft}
             />
             <Label htmlFor="select-all-draft" className="text-sm font-medium cursor-pointer">
-              Select All Draft ({draftClaims.length})
+              Select All Draft ({draftTotal})
             </Label>
           </div>
           {selectedClaimIds.size > 0 && (
@@ -2594,6 +2667,39 @@ export default function Claims() {
           </Card>
         )}
       </div>
+
+      {/* Pagination controls */}
+      {totalClaims > CLAIMS_PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-4 pt-4">
+          <p className="text-sm text-muted-foreground">
+            Showing {(page - 1) * CLAIMS_PAGE_SIZE + 1}
+            –{Math.min(page * CLAIMS_PAGE_SIZE, totalClaims)} of {totalClaims}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-[40px]"
+              disabled={page <= 1 || claimsLoading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground whitespace-nowrap">
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-[40px]"
+              disabled={page >= totalPages || claimsLoading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Claim Detail Dialog - full-screen on mobile */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>

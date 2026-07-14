@@ -708,3 +708,89 @@ export async function getWaitTimes(
     })),
   };
 }
+
+export interface ClaimsAnalyticsRollup {
+  byPatient: Array<{
+    patientId: number;
+    totalBilled: number;
+    totalPaid: number;
+    insurancePaid: number;
+    claimCount: number;
+    paidCount: number;
+  }>;
+  byTherapist: Array<{
+    therapistId: string;
+    totalRevenue: number;
+    totalBilled: number;
+    sessionCount: number;
+  }>;
+  activePatientIds: number[];
+}
+
+/**
+ * Per-patient and per-therapist claim aggregates for the analytics page,
+ * computed in SQL so the client no longer fetches every claim to reduce them.
+ *
+ * Parity with the prior client math: totalPaid uses paidAmount and falls back to
+ * totalAmount; insurancePaid keeps the same 80% heuristic the client used (the
+ * claims table has no insurance-vs-patient split column). Therapist attribution
+ * comes through the claim's session (claims have no therapistId) — this also
+ * fixes the old client code, which filtered on a non-existent claim.therapistId
+ * and therefore always produced empty therapist stats. Demo claims excluded.
+ */
+export async function getClaimsAnalyticsRollup(practiceId: number): Promise<ClaimsAnalyticsRollup> {
+  const paidPaidExpr = sql<string>`COALESCE(SUM(COALESCE(${claims.paidAmount}::numeric, ${claims.totalAmount}::numeric)) FILTER (WHERE ${claims.status} = 'paid'), 0)`;
+
+  const byPatientRows = await db
+    .select({
+      patientId: claims.patientId,
+      totalBilled: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
+      totalPaid: paidPaidExpr,
+      insurancePaid: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric * 0.8) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
+      claimCount: sql<number>`count(*)::int`,
+      paidCount: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
+    })
+    .from(claims)
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM))
+    .groupBy(claims.patientId);
+
+  const byTherapistRows = await db
+    .select({
+      therapistId: treatmentSessions.therapistId,
+      totalRevenue: paidPaidExpr,
+      totalBilled: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
+      sessionCount: sql<number>`count(*)::int`,
+    })
+    .from(claims)
+    .innerJoin(treatmentSessions, eq(claims.sessionId, treatmentSessions.id))
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM))
+    .groupBy(treatmentSessions.therapistId);
+
+  // Patients with any claim in the last 3 months (the "active patients" count).
+  const threeMonthsAgo = new Date();
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+  const activeRows = await db
+    .selectDistinct({ patientId: claims.patientId })
+    .from(claims)
+    .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM, gte(claims.createdAt, threeMonthsAgo)));
+
+  return {
+    byPatient: byPatientRows.map((r: any) => ({
+      patientId: r.patientId,
+      totalBilled: parseFloat(r.totalBilled ?? '0'),
+      totalPaid: parseFloat(r.totalPaid ?? '0'),
+      insurancePaid: parseFloat(r.insurancePaid ?? '0'),
+      claimCount: r.claimCount ?? 0,
+      paidCount: r.paidCount ?? 0,
+    })),
+    byTherapist: byTherapistRows
+      .filter((r: any) => r.therapistId != null)
+      .map((r: any) => ({
+        therapistId: r.therapistId,
+        totalRevenue: parseFloat(r.totalRevenue ?? '0'),
+        totalBilled: parseFloat(r.totalBilled ?? '0'),
+        sessionCount: r.sessionCount ?? 0,
+      })),
+    activePatientIds: activeRows.map((r: any) => r.patientId),
+  };
+}

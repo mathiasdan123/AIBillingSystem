@@ -188,11 +188,35 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const practiceId = getAuthorizedPracticeId(req);
     const { page, limit, offset } = parsePagination(req.query);
     const usePagination = !!(req.query.page || req.query.limit);
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    // Patient-name searches are resolved to ids on the client (names are
+    // PHI-encrypted and unsearchable in SQL); accept a comma-separated list.
+    const patientIds = typeof req.query.patientIds === 'string'
+      ? req.query.patientIds.split(',').map((s: string) => parseInt(s, 10)).filter((n: number) => Number.isFinite(n))
+      : undefined;
+    const hasFilters = (!!status && status !== 'all') || !!(search && search.trim()) || !!(patientIds && patientIds.length > 0);
+    // Export/select-all path: return every matching row (bounded high) for CSV
+    // export and cross-page "select all drafts".
+    const isExport = req.query.all === '1' || req.query.export === '1';
+    // Default (no pagination, no filters, no export) is bounded so we never scan
+    // or ship the whole table — dashboard and analytics no longer hit this path.
+    const DEFAULT_CAP = 100;
 
-    const [claims, total] = await Promise.all([
-      storage.getClaims(practiceId, usePagination ? { limit, offset } : undefined),
-      usePagination ? storage.countClaims(practiceId) : Promise.resolve(0),
-    ]);
+    let claims: any[];
+    let total: number;
+    if (isExport) {
+      claims = await storage.getClaimsFiltered(practiceId, { status, search, patientIds, limit: 10000 });
+      total = claims.length;
+    } else if (usePagination || hasFilters) {
+      [claims, total] = await Promise.all([
+        storage.getClaimsFiltered(practiceId, { status, search, patientIds, limit, offset }),
+        storage.countClaimsFiltered(practiceId, { status, search, patientIds }),
+      ]);
+    } else {
+      claims = await storage.getClaimsFiltered(practiceId, { limit: DEFAULT_CAP });
+      total = claims.length;
+    }
 
     // Phase 5 — attach STC-aware rejection hints to every rejected/denied
     // claim so billers see the actionable context inline in the list view,
@@ -260,14 +284,29 @@ router.get('/', isAuthenticated, async (req: any, res) => {
       });
     }
 
-    if (!usePagination) {
-      res.json(enrichedClaims);
-    } else {
+    if (isExport) {
+      res.json(enrichedClaims); // bare array of all matching rows
+    } else if (usePagination || hasFilters) {
       res.json(paginatedResponse(enrichedClaims, total, page, limit));
+    } else {
+      res.json(enrichedClaims); // bounded bare array (default)
     }
   } catch (error) {
     logger.error('Error fetching claims', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch claims' });
+  }
+});
+
+// Status counts + dollar sums across ALL of the practice's claims — powers the
+// claims page stat tiles without shipping the whole list to the client.
+router.get('/summary', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const summary = await storage.getClaimsStatusSummary(practiceId);
+    res.json(summary);
+  } catch (error) {
+    logger.error('Error fetching claims summary', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch claims summary' });
   }
 });
 

@@ -92,6 +92,19 @@ router.get('/dashboard', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// Per-patient / per-therapist claim aggregates for the analytics page — replaces
+// the page's former full `/api/claims` fetch + client-side reduction.
+router.get('/claims-rollup', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const rollup = await storage.getClaimsAnalyticsRollup(practiceId);
+    res.json(rollup);
+  } catch (error) {
+    logger.error('Error fetching claims rollup', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch claims rollup' });
+  }
+});
+
 // ==================== REVENUE ANALYTICS ====================
 
 // Revenue analytics

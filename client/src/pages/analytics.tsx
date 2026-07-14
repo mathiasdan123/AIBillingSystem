@@ -129,8 +129,14 @@ export default function Analytics() {
     enabled: isAuthenticated,
   });
 
-  const { data: claims = [] } = useQuery<any[]>({
-    queryKey: ["/api/claims"],
+  // Per-patient / per-therapist claim aggregates, computed server-side — replaces
+  // the former full-claims fetch that reduced the entire table on the client.
+  const { data: claimsRollup } = useQuery<{
+    byPatient: Array<{ patientId: number; totalBilled: number; totalPaid: number; insurancePaid: number; claimCount: number; paidCount: number }>;
+    byTherapist: Array<{ therapistId: string; totalRevenue: number; totalBilled: number; sessionCount: number }>;
+    activePatientIds: number[];
+  }>({
+    queryKey: ["/api/analytics/claims-rollup"],
     enabled: isAuthenticated,
   });
 
@@ -144,46 +150,39 @@ export default function Analytics() {
     enabled: isAuthenticated,
   });
 
+  // Index the server rollup by id for O(1) lookups.
+  const patientAggById = new Map((claimsRollup?.byPatient || []).map((r) => [r.patientId, r]));
+  const therapistAggById = new Map((claimsRollup?.byTherapist || []).map((r) => [r.therapistId, r]));
+
   // Calculate patient payment stats
   const patientPaymentStats = (patients || []).map((patient: any) => {
-    const patientClaims = (claims || []).filter((c: any) => c.patientId === patient.id);
-    const totalBilled = patientClaims.reduce((sum: number, c: any) => sum + parseFloat(c.totalAmount || 0), 0);
-    const paidClaims = patientClaims.filter((c: any) => c.status === 'paid');
-    const totalPaid = paidClaims.reduce((sum: number, c: any) => sum + parseFloat(c.paidAmount || c.totalAmount || 0), 0);
-    const insurancePaid = paidClaims.reduce((sum: number, c: any) => sum + parseFloat(c.insurancePaid || c.totalAmount * 0.8 || 0), 0);
-    const patientPaid = totalPaid - insurancePaid;
+    const agg = patientAggById.get(patient.id) || { totalBilled: 0, totalPaid: 0, insurancePaid: 0, claimCount: 0, paidCount: 0 };
+    const patientPaid = agg.totalPaid - agg.insurancePaid;
 
     return {
       id: patient.id,
       name: `${patient.firstName} ${patient.lastName}`,
       insurance: patient.insuranceProvider || 'Self-Pay',
-      totalBilled,
-      totalPaid,
-      insurancePaid,
+      totalBilled: agg.totalBilled,
+      totalPaid: agg.totalPaid,
+      insurancePaid: agg.insurancePaid,
       patientPaid,
-      claimCount: patientClaims.length,
-      paidCount: paidClaims.length,
+      claimCount: agg.claimCount,
+      paidCount: agg.paidCount,
     };
   }).sort((a: any, b: any) => b.totalPaid - a.totalPaid);
 
-  // Calculate therapist revenue stats
+  // Calculate therapist revenue stats (attribution via claim → session → therapist,
+  // computed server-side)
   const therapistStats = (therapists || []).map((therapist: any) => {
-    // Find claims/sessions for this therapist
-    const therapistClaims = (claims || []).filter((c: any) => c.therapistId === therapist.id);
-    const totalRevenue = therapistClaims.reduce((sum: number, c: any) => {
-      if (c.status === 'paid') return sum + parseFloat(c.paidAmount || c.totalAmount || 0);
-      return sum;
-    }, 0);
-    const totalBilled = therapistClaims.reduce((sum: number, c: any) => sum + parseFloat(c.totalAmount || 0), 0);
-    const sessionCount = therapistClaims.length;
-
+    const agg = therapistAggById.get(therapist.id) || { totalRevenue: 0, totalBilled: 0, sessionCount: 0 };
     return {
       id: therapist.id,
       name: `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || therapist.email,
-      totalRevenue,
-      totalBilled,
-      sessionCount,
-      avgPerSession: sessionCount > 0 ? totalRevenue / sessionCount : 0,
+      totalRevenue: agg.totalRevenue,
+      totalBilled: agg.totalBilled,
+      sessionCount: agg.sessionCount,
+      avgPerSession: agg.sessionCount > 0 ? agg.totalRevenue / agg.sessionCount : 0,
     };
   }).filter((t: any) => t.name).sort((a: any, b: any) => b.totalRevenue - a.totalRevenue);
 
@@ -214,16 +213,9 @@ export default function Analytics() {
 
   // Summary stats
   const totalPatients = (patients || []).length;
-  const activePatients = (patients || []).filter((p: any) => {
-    const patientClaims = (claims || []).filter((c: any) => c.patientId === p.id);
-    const recentClaim = patientClaims.find((c: any) => {
-      const claimDate = new Date(c.serviceDate || c.createdAt);
-      const threeMonthsAgo = new Date();
-      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      return claimDate >= threeMonthsAgo;
-    });
-    return !!recentClaim;
-  }).length;
+  // "Active" = has a claim in the last 3 months (computed server-side).
+  const activePatientIdSet = new Set(claimsRollup?.activePatientIds || []);
+  const activePatients = (patients || []).filter((p: any) => activePatientIdSet.has(p.id)).length;
 
   const totalInsurancePaid = patientPaymentStats.reduce((sum: any, p: any) => sum + p.insurancePaid, 0);
   const totalPatientPaid = patientPaymentStats.reduce((sum: any, p: any) => sum + p.patientPaid, 0);
