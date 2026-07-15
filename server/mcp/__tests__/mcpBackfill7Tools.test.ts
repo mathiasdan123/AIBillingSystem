@@ -56,6 +56,8 @@ const ctx: McpPracticeContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // PHI gate default: enabled, so these tests exercise the handlers themselves.
+  vi.mocked(storage.getPractice).mockResolvedValue({ id: PRACTICE_ID, mcpPhiEnabled: true } as any);
 });
 
 describe('MCP backfill (7 tools) — registrations', () => {
@@ -77,7 +79,7 @@ describe('MCP backfill (7 tools) — cross-practice tenant guard', () => {
     } as any);
     const { withAudit } = await import('../audit');
     const { withMcpMutationGate } = await import('../confirmation');
-    vi.mocked(storage.getPractice).mockResolvedValue({ id: PRACTICE_ID } as any);
+    vi.mocked(storage.getPractice).mockResolvedValue({ id: PRACTICE_ID, mcpPhiEnabled: true } as any);
     const handler = withAudit(
       'create_appointment',
       'appointment',

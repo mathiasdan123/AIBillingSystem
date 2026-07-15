@@ -69,6 +69,8 @@ const ctx: McpPracticeContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // PHI gate default: enabled, so these tests exercise the handlers themselves.
+  vi.mocked(storage.getPractice).mockResolvedValue({ id: PRACTICE_ID, mcpPhiEnabled: true } as any);
 });
 
 describe('P0.6.5 MCP backfill — tool registrations', () => {

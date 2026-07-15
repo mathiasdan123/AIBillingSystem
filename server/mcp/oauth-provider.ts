@@ -14,6 +14,11 @@
  *
  * The access token IS the user's TherapyBill API key (validated at auth time).
  * This avoids maintaining a separate token store while keeping the OAuth flow standard.
+ *
+ * All transient state (DCR clients, pending authorize sessions, one-time auth
+ * codes) lives in Postgres via OauthStateStore — NOT in-memory Maps — because
+ * prod runs 2+ ECS tasks behind an ALB with no stickiness: registration can
+ * land on task A and the /token exchange on task B.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -30,17 +35,25 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { authenticateKey } from './auth';
+import { PgOauthStateStore, type OauthStateStore } from './oauth-state-store';
 import logger from '../services/logger';
 
+// TTLs. Clients are long-lived (Claude re-registers transparently if one
+// lapses); sessions and codes are short-lived per OAuth 2.1 guidance.
+const CLIENT_TTL_MS = 365 * 24 * 3600 * 1000;
+const SESSION_TTL_MS = 15 * 60 * 1000;
+const CODE_TTL_MS = 10 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
-// In-memory client store for Dynamic Client Registration (DCR)
+// Postgres-backed client store for Dynamic Client Registration (DCR)
 // ---------------------------------------------------------------------------
 
 export class McpClientsStore implements OAuthRegisteredClientsStore {
-  private clients = new Map<string, OAuthClientInformationFull>();
+  constructor(private store: OauthStateStore) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
-    return this.clients.get(clientId);
+    return this.store.get('client', clientId);
   }
 
   async registerClient(
@@ -52,33 +65,25 @@ export class McpClientsStore implements OAuthRegisteredClientsStore {
       client_id: clientId,
       client_id_issued_at: Math.floor(Date.now() / 1000),
     } as OAuthClientInformationFull;
-    this.clients.set(clientId, full);
+    await this.store.put('client', clientId, full, CLIENT_TTL_MS);
     logger.info('MCP OAuth: registered client', { clientId, clientName: full.client_name });
     return full;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Authorization code store
+// Stored payload shapes
 // ---------------------------------------------------------------------------
 
 interface AuthCodeEntry {
   client: OAuthClientInformationFull;
   params: AuthorizationParams;
-  apiKey: string; // The validated TherapyBill API key
-  createdAt: number;
+  apiKey: string; // The validated TherapyBill API key (encrypted at rest by the store)
 }
 
-// ---------------------------------------------------------------------------
-// Access token store
-// ---------------------------------------------------------------------------
-
-interface TokenEntry {
-  apiKey: string;
-  clientId: string;
-  scopes: string[];
-  expiresAt: number;
-  resource?: URL;
+interface PendingSessionEntry {
+  client: OAuthClientInformationFull;
+  params: AuthorizationParams;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,25 +92,19 @@ interface TokenEntry {
 
 export class TherapyBillOAuthProvider implements OAuthServerProvider {
   clientsStore: McpClientsStore;
+  private store: OauthStateStore;
 
-  /** code -> AuthCodeEntry (one-time use) */
-  private codes = new Map<string, AuthCodeEntry>();
+  constructor(store: OauthStateStore = new PgOauthStateStore()) {
+    this.store = store;
+    this.clientsStore = new McpClientsStore(store);
 
-  /** accessToken -> TokenEntry */
-  private tokens = new Map<string, TokenEntry>();
-
-  /** Pending authorization sessions waiting for user to submit their API key */
-  private pendingSessions = new Map<string, {
-    client: OAuthClientInformationFull;
-    params: AuthorizationParams;
-    createdAt: number;
-  }>();
-
-  constructor() {
-    this.clientsStore = new McpClientsStore();
-
-    // Clean up expired entries every 10 minutes
-    setInterval(() => this.cleanup(), 10 * 60 * 1000);
+    // Purge expired rows periodically. Runs on every task; the DELETE is
+    // idempotent so concurrent runs are harmless. unref() so the timer never
+    // keeps the process alive (tests, graceful shutdown).
+    const timer = setInterval(() => {
+      void this.store.cleanup();
+    }, CLEANUP_INTERVAL_MS);
+    timer.unref?.();
   }
 
   // -------------------------------------------------------------------------
@@ -117,13 +116,10 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    // Create a pending session ID
+    // Create a pending session
     const sessionId = randomUUID();
-    this.pendingSessions.set(sessionId, {
-      client,
-      params,
-      createdAt: Date.now(),
-    });
+    const entry: PendingSessionEntry = { client, params };
+    await this.store.put('session', sessionId, entry, SESSION_TTL_MS);
 
     // Render an HTML page where the user pastes their API key
     const html = this.renderAuthorizePage(sessionId, client.client_name);
@@ -139,7 +135,9 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
     sessionId: string,
     apiKey: string,
   ): Promise<{ redirectUrl: string } | { error: string }> {
-    const session = this.pendingSessions.get(sessionId);
+    // Peek first: an invalid API key should NOT consume the session, so the
+    // user can correct a typo and resubmit the same form.
+    const session: PendingSessionEntry | undefined = await this.store.get('session', sessionId);
     if (!session) {
       return { error: 'Invalid or expired authorization session.' };
     }
@@ -151,17 +149,20 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
       return { error: 'Invalid API key. Please check your key and try again.' };
     }
 
-    // Remove the pending session
-    this.pendingSessions.delete(sessionId);
+    // Consume the session atomically (guards double-submit races across tasks)
+    const consumed = await this.store.take('session', sessionId);
+    if (!consumed) {
+      return { error: 'Invalid or expired authorization session.' };
+    }
 
     // Issue authorization code
     const code = randomUUID();
-    this.codes.set(code, {
+    const codeEntry: AuthCodeEntry = {
       client: session.client,
       params: session.params,
       apiKey,
-      createdAt: Date.now(),
-    });
+    };
+    await this.store.put('code', code, codeEntry, CODE_TTL_MS);
 
     // Build redirect URL with code and state
     const redirectUrl = new URL(session.params.redirectUri);
@@ -185,7 +186,9 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
     _client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<string> {
-    const codeData = this.codes.get(authorizationCode);
+    // Read-only: the SDK calls this to verify PKCE before exchange; the code
+    // is consumed (one-time) in exchangeAuthorizationCode.
+    const codeData: AuthCodeEntry | undefined = await this.store.get('code', authorizationCode);
     if (!codeData) {
       throw new Error('Invalid authorization code');
     }
@@ -203,7 +206,8 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
     _redirectUri?: string,
     _resource?: URL,
   ): Promise<OAuthTokens> {
-    const codeData = this.codes.get(authorizationCode);
+    // One-time use, atomic across tasks: DELETE ... RETURNING under the hood.
+    const codeData: AuthCodeEntry | undefined = await this.store.take('code', authorizationCode);
     if (!codeData) {
       throw new Error('Invalid authorization code');
     }
@@ -212,21 +216,10 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
       throw new Error('Authorization code was not issued to this client');
     }
 
-    // One-time use
-    this.codes.delete(authorizationCode);
-
-    // The access token is the validated API key itself.
-    // This way, the MCP transport handler can authenticate with it directly.
+    // The access token is the validated API key itself, so verification on
+    // any future request is a DB key lookup — no server-side token store.
     const accessToken = codeData.apiKey;
     const expiresIn = 365 * 24 * 3600; // 1 year — API keys don't expire by time
-
-    this.tokens.set(accessToken, {
-      apiKey: codeData.apiKey,
-      clientId: client.client_id,
-      scopes: codeData.params.scopes || [],
-      expiresAt: Date.now() + expiresIn * 1000,
-      resource: codeData.params.resource,
-    });
 
     logger.info('MCP OAuth: token issued', { clientId: client.client_id });
 
@@ -256,24 +249,10 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
   // -------------------------------------------------------------------------
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    // First check our token store
-    const tokenData = this.tokens.get(token);
-    if (tokenData) {
-      if (tokenData.expiresAt < Date.now()) {
-        this.tokens.delete(token);
-        throw new Error('Token expired');
-      }
-      return {
-        token,
-        clientId: tokenData.clientId,
-        scopes: tokenData.scopes,
-        expiresAt: Math.floor(tokenData.expiresAt / 1000),
-        resource: tokenData.resource,
-      };
-    }
-
-    // Fall back to direct API key validation (for keys that were not
-    // issued through the OAuth flow, e.g. direct Bearer token usage)
+    // The token IS an API key — validate it against the database. This works
+    // identically whether the key arrived via the OAuth flow or was pasted
+    // directly as a Bearer token, and on any ECS task. Revoked keys
+    // (mcpApiKeys.revokedAt) fail here immediately.
     try {
       const context = await authenticateKey(token);
       return {
@@ -295,36 +274,17 @@ export class TherapyBillOAuthProvider implements OAuthServerProvider {
     _client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest,
   ): Promise<void> {
-    this.tokens.delete(request.token);
+    // The access token is the API key itself; real revocation is setting
+    // mcpApiKeys.revokedAt (Settings -> MCP Integration), after which
+    // verifyAccessToken rejects it everywhere. Nothing to delete here.
+    logger.info('MCP OAuth: revoke requested (no-op — revoke the API key to revoke access)', {
+      tokenPrefix: request.token.slice(0, 12),
+    });
   }
 
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
-
-  private cleanup() {
-    const now = Date.now();
-    const codeMaxAge = 10 * 60 * 1000; // 10 minutes
-    const sessionMaxAge = 15 * 60 * 1000; // 15 minutes
-
-    this.codes.forEach((entry, code) => {
-      if (now - entry.createdAt > codeMaxAge) {
-        this.codes.delete(code);
-      }
-    });
-
-    this.pendingSessions.forEach((session, id) => {
-      if (now - session.createdAt > sessionMaxAge) {
-        this.pendingSessions.delete(id);
-      }
-    });
-
-    this.tokens.forEach((entry, token) => {
-      if (entry.expiresAt < now) {
-        this.tokens.delete(token);
-      }
-    });
-  }
 
   private renderAuthorizePage(sessionId: string, clientName?: string): string {
     const displayName = clientName || 'Claude Desktop';

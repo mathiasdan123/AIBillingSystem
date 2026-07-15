@@ -85,6 +85,8 @@ describe('MCP tools registration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // PHI gate default: enabled, so these tests exercise the handlers themselves.
+    vi.mocked(storage.getPractice).mockResolvedValue({ id: 1, mcpPhiEnabled: true } as any);
     server = new McpServer({ name: 'test', version: '0.0.1' });
   });
 

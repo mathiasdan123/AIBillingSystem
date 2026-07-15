@@ -147,6 +147,14 @@ export const practices = pgTable("practices", {
   // own "Allow tool call?" prompt. Default false: trust Claude Desktop's
   // prompt as the user's consent. Admins can flip on for belt-and-suspenders.
   mcpRequiresConfirmation: boolean("mcp_requires_confirmation").notNull().default(false),
+  // PHI kill-switch for the MCP connector. Tools whose responses are marked
+  // containsPhi refuse while this is false, because PHI flowing through a
+  // customer's own Claude (Desktop/claude.ai) is only HIPAA-covered once the
+  // Anthropic BAA question is settled for that path. Default false so a new
+  // practice can use scheduling/analytics tools immediately and PHI access is
+  // an explicit opt-in flag flip. Demo practices (isDemo) bypass this gate —
+  // their data is fake, so there is no PHI to protect.
+  mcpPhiEnabled: boolean("mcp_phi_enabled").notNull().default(false),
   // Practice therapy specialty — drives Service Type Codes sent on Stedi 270
   // eligibility requests. One of 'OT' | 'PT' | 'ST' | 'MH' | 'MIXED'.
   // Null is treated as 'MIXED' (sends all therapy STCs) to keep legacy
@@ -4116,6 +4124,25 @@ export const insertMcpApiKeySchema = createInsertSchema(mcpApiKeys).omit({
 });
 export type McpApiKey = typeof mcpApiKeys.$inferSelect;
 export type InsertMcpApiKey = z.infer<typeof insertMcpApiKeySchema>;
+
+// MCP OAuth 2.1 transient state — DCR client registrations, pending authorize
+// sessions, and one-time authorization codes. Persisted in Postgres (not
+// in-memory Maps) because prod runs 2+ ECS tasks behind an ALB with no
+// stickiness: a client that registers on task A must be resolvable when its
+// /token exchange lands on task B. Same split-brain class as the stateless
+// /mcp transport fix (PR #210). Payloads are AES-256-GCM encrypted at rest
+// because auth-code entries transiently contain the user's raw API key.
+export const mcpOauthState = pgTable("mcp_oauth_state", {
+  key: varchar("key").primaryKey(), // client_id / session_id / auth code
+  kind: varchar("kind").notNull(), // 'client' | 'session' | 'code'
+  encryptedPayload: jsonb("encrypted_payload").notNull(), // encryptValue() of the JSON payload
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+}, (table) => [
+  index("idx_mcp_oauth_state_expires").on(table.expiresAt),
+]);
+
+export type McpOauthState = typeof mcpOauthState.$inferSelect;
 
 // Provider Credentialing - tracks provider enrollment status with each payer
 export const providerCredentials = pgTable("provider_credentials", {
