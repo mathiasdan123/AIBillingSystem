@@ -53,7 +53,13 @@ export function checkDocumentationSupport(
     return issues;
   }
 
-  // Per-CPT keyword support (OT-first; speech codes added when ST scope opens).
+  // Per-CPT keyword support (OT + speech treatment codes).
+  //
+  // NOTE on speech codes: 92507 is expected to be deleted 2027-01-01 and
+  // replaced by ~10 time-based codes. Speech documentation/billing logic is
+  // organized by treatment category in services/speechCptMapping.ts — when
+  // the 2027 codes finalize, update that mapping and mirror the new code keys
+  // here. Do not spread additional 92507 literals through the codebase.
   const CPT_SUPPORT: Record<string, { label: string; terms: string[] }> = {
     "97112": {
       label: "Neuromuscular re-education",
@@ -74,6 +80,19 @@ export function checkDocumentationSupport(
     "97533": {
       label: "Sensory integrative",
       terms: ["sensory"],
+    },
+    // Speech treatment codes (labels track speechCptMapping.ts)
+    "92507": {
+      label: "Individual speech-language treatment",
+      terms: ["speech", "language", "articulation", "phonolog", "intelligib", "expressive", "receptive", "fluency", "stutter", "voice", "pragmatic", "communication", "aac"],
+    },
+    "92526": {
+      label: "Swallowing/oral function treatment",
+      terms: ["swallow", "feeding", "oral motor", "oral-motor", "texture", "bolus", "chewing"],
+    },
+    "92609": {
+      label: "Speech-generating device services",
+      terms: ["aac", "speech-generating", "sgd", "device"],
     },
   };
 

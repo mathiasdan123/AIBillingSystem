@@ -654,6 +654,33 @@ async function seedGoalTemplates(db: any) {
         ],
         measure: 'Topic-maintained 3-4 turn exchanges 4/5; appropriate nonverbal use at min cues.',
       },
+      {
+        category: 'language_organization_executive',
+        goalText: '{patient} will improve language organization and executive-language skills to formulate and sequence ideas for functional communication.',
+        objectives: [
+          '{patient} will retell or sequence a 3-4 step event/narrative in logical order with no more than minimal cues in 4 of 5 opportunities.',
+          '{patient} will use an organizational support (visual/graphic) to plan and produce a multi-sentence response across 3 consecutive sessions.',
+        ],
+        measure: 'Logically sequenced 3-4 step retell 4/5; organized multi-sentence output with support.',
+      },
+      {
+        category: 'voice_resonance',
+        goalText: '{patient} will improve vocal quality/resonance to communicate effectively across daily speaking situations.',
+        objectives: [
+          '{patient} will use a taught vocal-hygiene/easy-onset strategy during structured speech tasks in 4 of 5 opportunities.',
+          '{patient} will maintain the target vocal quality at conversation level with no more than minimal cues across 3 consecutive sessions.',
+        ],
+        measure: 'Strategy use 4/5; target vocal quality at conversation level with min cues.',
+      },
+      {
+        category: 'caregiver_education',
+        goalText: "{patient}'s caregivers will implement communication-support strategies to carry over skills into daily routines.",
+        objectives: [
+          'Caregiver will demonstrate a taught language-facilitation strategy (modeling, expansion, wait time) during a play/routine activity in 4 of 5 opportunities.',
+          'Caregiver will report/demonstrate home-routine carryover of the target strategy across 3 consecutive sessions.',
+        ],
+        measure: 'Caregiver strategy demonstration 4/5; carryover reported/observed 3 consecutive sessions.',
+      },
     ],
   };
 
