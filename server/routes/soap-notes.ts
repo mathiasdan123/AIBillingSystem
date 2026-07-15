@@ -208,7 +208,7 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               claimNumber,
               totalAmount: accuracyReview.estimatedAmount.toFixed(2),
               status: 'draft',
-              aiReviewNotes: `AI Billing Accuracy Review (${accuracyReview.complianceScore}% compliance): ${accuracyReview.optimizationNotes}`,
+              aiReviewNotes: `AI Billing Accuracy Review (${accuracyReview.complianceScore}% compliance): ${accuracyReview.accuracyNotes}`,
             });
 
             const createdLineItems = [];
@@ -244,7 +244,8 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               optimization: {
                 totalUnits: accuracyReview.totalUnits,
                 complianceScore: accuracyReview.complianceScore,
-                notes: accuracyReview.optimizationNotes,
+                notes: accuracyReview.accuracyNotes,
+                suppressedCodes: accuracyReview.suppressedCodes,
               },
             };
 

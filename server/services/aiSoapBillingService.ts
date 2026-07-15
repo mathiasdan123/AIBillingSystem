@@ -491,12 +491,28 @@ CLINICAL TERMINOLOGY (use when supported by observations):
 - "anti-gravity positions"
 - "skilled occupational therapy services remain medically necessary"
 
-BILLING CODE ASSIGNMENT (choose codes by the interventions actually performed —
-do NOT choose by reimbursement; the treating provider makes the final decision):
-  * 97533 Sensory Integration - sensory-based interventions
-  * 97530 Therapeutic Activities - functional, dynamic activities
-  * 97112 Neuromuscular Re-ed - balance, coordination, motor control
-  * 97110 Therapeutic Exercise - pure strengthening/ROM
+BILLING CODE ASSIGNMENT:
+Assign codes by the PRIMARY SKILLED OBJECTIVE the documentation supports —
+NOT by reimbursement rate. Never reach for a code because it pays more.
+  * 97530 Therapeutic Activities - functional/dynamic activities, obstacle
+    courses, transitions, fine-motor and play/ADL tasks framed by functional
+    participation.
+  * 97112 Neuromuscular Re-education - balance, coordination, motor control,
+    postural control, bilateral coordination, motor planning/praxis, body
+    awareness — including vestibular-proprioceptive work whose skilled
+    objective is one of these motor outcomes.
+  * 97110 Therapeutic Exercise - strengthening, ROM, endurance.
+  * 97535 Self-Care/Home Management - ADL/IADL training.
+  * 97533 Sensory Integration - use SPARINGLY and ONLY when the documentation
+    pairs sensory work with clear functional deficits, measurable assistance
+    levels, and skilled therapeutic analysis. If sensory activities were done
+    but documented in functional/motor terms, code them as 97112 or 97530 by
+    their skilled objective. Do NOT default sensory-based activities to 97533,
+    and do NOT document treatment primarily as "sensory integration" or
+    "sensory play" — payers read that as developmental/non-specific and deny.
+Only assign a code the documentation defensibly supports. If support is thin,
+use fewer codes; it is safer to omit a code than to bill one the note can't
+justify.
 
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
@@ -580,7 +596,7 @@ ${request.therapistName ? `- Treating Therapist: ${request.therapistName}` : ''}
 
 SUBJECTIVE DATA:
 - Mood/Presentation: ${request.mood}
-- Caregiver Report: ${request.caregiverReport || "No specific concerns reported today"}
+- Caregiver Report: ${request.caregiverReport || "(none provided — state that it was not obtained; do not invent one)"}
 
 ACTIVITIES/EXERCISES PERFORMED:
 ${request.activities.map(a => `- ${a}`).join('\n')}
@@ -616,18 +632,23 @@ CLINICAL OBSERVATIONS:
 
 PLAN NOTES:
 - Next Steps: ${request.planNextSteps}
-- Next Session Focus: ${request.nextSessionFocus || "Continue current goals"}
-- Home Program: ${request.homeProgram || "Recommendations provided to caregiver"}
+- Next Session Focus: ${request.nextSessionFocus || "(none specified — continue current goals)"}
+- Home Program: ${request.homeProgram || "(none provided this session — use the no-change continuation wording; do not invent exercises or imply parent education)"}
 
-RESPOND WITH THIS JSON STRUCTURE:
+RESPOND WITH THIS JSON STRUCTURE.
+IMPORTANT: the bracketed examples below show the STRUCTURE only. Fill them
+using ONLY data from the input. The word-count targets are CEILINGS for when
+the input is rich — never pad to reach them, and never invent specifics
+(trial counts, scores, prior-session comparisons, equipment adjectives) to
+fill space. The anti-fabrication rules above OVERRIDE every example here.
 {
-  "subjective": "Target 75-150 words (1-2 paragraphs), scaled to what was actually reported. Example structure:\\n\\nCaregiver reports [specific observations at home since last session, including any functional changes noticed]. [Parent/Mom/Dad] notes [specific examples of progress or difficulty with daily activities such as dressing, feeding, handwriting, playground participation]. Home program compliance has been [consistent/inconsistent], with caregiver reporting [specific details about home exercise completion and response].\\n\\n[Patient] presented as [mood/affect] upon arrival to today's session. [He/She] [specific behavioral observations - eagerness, reluctance, social interaction details]. [Patient] self-reported [any relevant statements from the child about pain, preferences, or feelings about therapy].\\n\\n[Any relevant context: school reports, medication changes, sleep changes, or comparison to previous session presentation].",
+  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: reflect ONLY what the caregiver actually reported (or state it wasn't obtained). Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\n[Patient] presented as [mood from the mood field]. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.",
 
-  "objective": "Target 150-250 words ONLY if the supplied data supports it — never pad with invented detail. Describe the session using ONLY what the therapist provided (the activities listed, the assistance level given, the location/duration). Structure:\\n\\nSession conducted in [location] for [duration] minutes.\\n- Include standardized scores, trial counts, timings, ROM/grip measurements, or specific equipment specs (e.g. resistance level, ball size, vest weight) ONLY if the therapist actually recorded them in the inputs. If they are not in the inputs, OMIT them — do NOT invent numbers, scores, or equipment specifications.\\n\\nFor each activity the therapist listed: describe participation and the assistance level provided (using the therapist's stated level and standard terminology — Independent, Modified Independent, Supervision, Min/Mod/Max Assist, Dependent), and the cueing type if stated.\\n\\nSkilled interventions provided: describe the clinical interventions that correspond to the activities listed.\\n\\nDo NOT state a comparison to a previous session unless prior-session data was supplied.",
+  "objective": "Scaled to the richness of the input (120-300 words when rich; shorter when sparse). Structure:\\n\\nSession conducted in [location] for [duration] minutes. Standardized measures: include scores ONLY if the input explicitly states a measure was administered and gives the value; otherwise write 'Standardized measurements were not administered; observations were qualitative.'\\n\\nActivities & performance:\\n- [Activity from the activities list]: describe with the assistance level the therapist provided and qualitative performance. Do NOT invent trial counts (e.g. '8/10 trials'), timings, or percentages that weren't provided.\\n\\nAssistance levels: use the assistance field. Standard terms (Independent / Modified Independent / Supervision / Min / Mod / Max Assist / Dependent). Cue types (verbal/visual/tactile/hand-over-hand) when they describe how an activity was supported — no invented cue counts.\\n\\nEquipment/materials: name ONLY items in the activities list, with ONLY the adjectives the therapist used (no '55cm', 'medium resistance', '2 lb' unless stated).\\n\\nSkilled interventions: describe the techniques corresponding to the activities, framed by their skilled/functional objective (e.g. neuromuscular re-education for postural control; graded vestibular-proprioceptive input to support motor planning).",
 
-  "assessment": "Target 200-300 words across 3-4 focused paragraphs (this is the medical-necessity core — keep it substantive but not padded). Example structure:\\n\\nDuring today's occupational therapy session, [Patient] demonstrated [engagement level] throughout therapist-directed activities, with [tolerance observations] as the session progressed. [He/She] benefited from structured activities and graded sensory input to support regulation and sustained participation.\\n\\n[Patient] continues to present with decreased core and postural strength, which impacted [his/her] ability to sustain prone extension and maintain upright postural control during dynamic activities. [He/She] required verbal cueing and physical support to facilitate appropriate weight-bearing through [his/her] upper extremities and to maintain alignment during anti-gravity positions. [Motor planning observations with specific examples].\\n\\nPrimitive reflex integration challenges remain evident, including patterns consistent with retained TLR, STNR, ATNR, and possible Moro reflex, which continue to interfere with separation of upper and lower body movements, postural control, and coordinated transitions. These reflex patterns contributed to [specific observations].\\n\\nFine-motor skills continue to emerge; however, performance remains impacted by proximal weakness and decreased postural stability. [Patient] demonstrated [specific observations] with external postural support.\\n\\n[Patient] benefited from graded vestibular and proprioceptive input, which supported improved regulation, motor organization, and task engagement.\\n\\nProgress toward treatment goals: describe progress in the goal areas ONLY as supported by the supplied data and treatment goals. Include a comparison to a previous session ONLY if prior-session data was provided — do NOT invent measurable comparisons, trial data, or assistance-level changes. Clinical reasoning supports continued treatment at current frequency due to [rationale grounded in the documented deficits].\\n\\nOverall, [Patient] continues to demonstrate deficits in core strength, postural control, motor planning, primitive reflex integration, and sensory-motor regulation, which impact [his/her] ability to efficiently participate in age-appropriate gross-motor, fine-motor, and functional activities including [specific ADLs, school tasks, play activities]. Skilled occupational therapy services remain medically necessary to address these deficits through targeted intervention.",
+  "assessment": "Clinical interpretation anchored to the observations actually provided (200-400 words when the input supports it; fewer paragraphs when it doesn't — omit sub-sections you have no data for). Connect each skilled intervention to a specific functional deficit using payer-aligned skilled vocabulary (skilled clinical analysis, clinical reasoning, task grading, neuromuscular re-education, cueing hierarchy, compensatory strategies, safety/judgment, measurable functional impact). Cover, as supported by the input: engagement/participation; postural/core control; motor planning & coordination; fine motor (only if fine-motor activities were done); sensory processing & regulation (frame in functional/neuromuscular terms — e.g. 'vestibular-proprioceptive input to support postural control and motor planning' — NOT as 'sensory play'); progress toward goals ONLY if goal data was provided (no invented 'improved from last session'). End with a medical-necessity statement ONLY when the documented observations support one — it must tie the OBSERVED deficits to functional participation, customized to this session. If the input is thin (sparse observations, no documented deficits), OMIT the medical-necessity statement entirely: per clinical review, a generic necessity sentence weakens documentation more than leaving it out. Do not name primitive reflexes (TLR/STNR/ATNR/Moro) or specific test patterns unless the input observed them.",
 
-  "plan": "Target 75-150 words. Example structure:\\n\\nContinue occupational therapy services [frequency, e.g., 2x/week for 45-minute sessions] to address the following goals:\\n\\nNext Session Plan:\\n- [Specific activity 1 with clinical rationale, e.g., 'Prone extension on therapy ball to target core strengthening and postural endurance']\\n- [Specific activity 2, e.g., 'Reflex integration exercises targeting retained STNR and TLR patterns']\\n- [Specific activity 3, e.g., 'Graded fine motor tasks progressing from large pegs to small beads']\\n- [Specific activity 4, e.g., 'Bilateral coordination tasks at midline for UE integration']\\n\\nHome Program Modifications:\\n- [Specific exercise with frequency, e.g., 'Superman holds 3x10 seconds, 2x daily']\\n- [Activity modification, e.g., 'Increase theraputty resistance from soft to medium']\\n- [Functional activity, e.g., 'Practice button/zipper board 5 minutes daily before school']\\n\\nGoals to prioritize: [List 2-3 specific treatment goals to address]\\n\\nCoordination: [Any referrals, teacher communication, or provider coordination needed].",
+  "plan": "Scaled to the input (80-200 words). Use the planNextSteps, nextSessionFocus, and homeProgram fields.\\n\\nNext session focus: use what the therapist wrote; you may add 2-3 activities that clinically align with that focus.\\n\\nTreatment frequency: state a cadence only if the treatment-plan data implies one; otherwise 'Continue current treatment frequency'.\\n\\nHome program: use the home program field if provided. If no new home program was given, write exactly: 'Reviewed continuation of current home strategies; no changes to home program at this time.' Do NOT invent exercises, rep counts, or imply parent education that didn't occur.\\n\\nGoals: reference ONLY the treatment goals provided. Coordination/referrals: only if clearly indicated.",
 
   "cptCodes": [
     {
@@ -642,17 +663,13 @@ RESPOND WITH THIS JSON STRUCTURE:
   "auditNotes": ["Documentation points supporting the billing codes"]
 }
 
-CRITICAL REQUIREMENTS:
-1. The SUBJECTIVE section should be 75-150 words (caregiver report, patient presentation, progress context) — using only what was reported.
-2. The OBJECTIVE section should be 150-250 words using the therapist's documented activities and assistance levels. Include specific measurements / trial data / timed performance / standardized scores ONLY where the therapist actually recorded them; never fabricate numbers to hit a length.
-3. The ASSESSMENT section should be 200-300 words (clinical reasoning and progress toward goals). Compare to a previous session ONLY if prior-session data was supplied.
-4. The PLAN section should be 75-150 words with next-session activities, home program modifications, and treatment frequency.
-5. Use professional OT clinical terminology (prone extension, anti-gravity, vestibular input, etc.) where clinically accurate for the activities documented.
-6. Name specific primitive reflexes (TLR, STNR, ATNR, Moro) ONLY if the therapist's inputs indicate them — do not assert reflex findings that weren't observed.
-7. End assessment with a medical necessity statement connecting the documented deficits to functional participation.
-8. Distribute all ${billingUnits} units across the CPT codes.
-9. Be thorough, but NEVER invent clinical findings, measurements, equipment specifics, scores, or prior-session comparisons to pad length. Accurate and shorter beats detailed and fabricated — fabricated documentation is insurance fraud and the treating provider must be able to attest every statement is true.
-10. Include quantified data (trial counts, timings, % assistance, standardized scores) ONLY where the therapist supplied it. If it wasn't supplied, omit it.`;
+REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
+1. Each section is proportional to the input. The word ranges in the JSON are CEILINGS for rich input, not quotas — a truthful short note is correct and expected when the input is sparse. NEVER pad.
+2. Use professional OT/ST clinical terminology AND payer-aligned skilled vocabulary (skilled clinical analysis, clinical reasoning, task grading, neuromuscular re-education, cueing hierarchy, compensatory strategies, measurable functional impact). Avoid generic phrases ("provided skilled support", "therapeutic engagement", "facilitated participation").
+3. Include quantified data (trial counts, timings, scores, assistance percentages) ONLY when the input actually provides it. Do NOT manufacture numbers, standardized scores, primitive-reflex patterns, or prior-session comparisons to look thorough — fabricated specifics are the #1 audit/denial risk.
+4. The medical-necessity statement must be CUSTOMIZED to this session's documented skilled interventions and observed deficits — not a generic boilerplate sentence repeated across notes. If the documentation doesn't support a skilled-necessity claim (thin note, no documented deficits), OMIT the statement entirely and simply describe what was done in functional terms — a generic necessity sentence weakens the note more than leaving it out (clinical reviewer guidance).
+5. Frame sensory-based work by its functional/neuromuscular objective (postural control, motor planning, bilateral coordination, regulation supporting participation), NOT as "sensory play" or "sensory diet".
+6. Distribute units only across codes the documentation supports (see BILLING CODE ASSIGNMENT). It is correct to use fewer codes/units than available if the documentation doesn't support more.`;
 
   return prompt;
 }
@@ -681,16 +698,13 @@ function validateAndEnhanceResponse(
     };
   });
 
-  // Ensure all units are distributed
+  // Note any unit shortfall WITHOUT redistributing to the highest-paying code.
+  // Padding leftover units onto a code purely because it reimburses more is
+  // exactly the optimization behavior we're removing — and it can attach units
+  // to a code the documentation doesn't support. We leave the AI's
+  // documentation-driven distribution as-is; under-using available units is a
+  // safe, defensible outcome (the provider can adjust on review).
   const totalUnits = cptCodes.reduce((sum, c) => sum + c.units, 0);
-  if (totalUnits < billingUnits && cptCodes.length > 0) {
-    // Accuracy framing: assign any remaining units to the PRIMARY (first
-    // documented) code, not the highest-paying one.
-    const primary = cptCodes[0];
-    const rate = request.ratePerUnit || CPT_CODE_INFO[primary.code as keyof typeof CPT_CODE_INFO]?.rate || DEFAULT_UNIT_RATE;
-    primary.units += (billingUnits - totalUnits);
-    primary.reimbursement = rate * primary.units;
-  }
 
   const totalReimbursement = cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
 
@@ -739,40 +753,37 @@ function fallbackGeneration(
   // Use manual rate override if provided, otherwise use default $289/unit
   const unitRate = request.ratePerUnit || DEFAULT_UNIT_RATE;
 
-  // Simple rule-based assignment by documented clinical activity type (all
-  // codes share the same default unit rate — assignment is never by rate).
-  const sensoryKeywords = ["swing", "crash", "weighted", "body sock", "trampoline", "rice bin", "tactile", "brushing", "compression", "vestibular", "proprioceptive"];
-  const functionalKeywords = ["obstacle", "pegboard", "puzzle", "cutting", "writing", "ADL", "lacing", "buttoning", "feeding"];
-  const balanceKeywords = ["balance", "foam beam", "one-leg", "ladder", "scooter", "yoga"];
+  // Rule-based assignment by SKILLED OBJECTIVE, not by reimbursement rate.
+  // Vestibular/proprioceptive sensory-motor work maps to neuromuscular
+  // re-education (97112) by its motor objective (postural control, motor
+  // planning, coordination) rather than defaulting to a sensory-integration
+  // code (97533) — which payers deny as developmental/non-specific.
+  const neuromuscularKeywords = ["swing", "crash", "weighted", "body sock", "trampoline", "compression", "vestibular", "proprioceptive", "balance", "foam beam", "one-leg", "ladder", "scooter", "yoga"];
+  const functionalKeywords = ["obstacle", "pegboard", "puzzle", "cutting", "writing", "ADL", "lacing", "buttoning", "feeding", "rice bin", "tactile", "brushing"];
 
-  const sensoryActivities = request.activities.filter(a =>
-    sensoryKeywords.some(k => a.toLowerCase().includes(k))
-  );
   const functionalActivities = request.activities.filter(a =>
-    functionalKeywords.some(k => a.toLowerCase().includes(k)) && !sensoryActivities.includes(a)
+    functionalKeywords.some(k => a.toLowerCase().includes(k))
   );
-  const balanceActivities = request.activities.filter(a =>
-    balanceKeywords.some(k => a.toLowerCase().includes(k)) && !sensoryActivities.includes(a) && !functionalActivities.includes(a)
+  const neuromuscularActivities = request.activities.filter(a =>
+    neuromuscularKeywords.some(k => a.toLowerCase().includes(k)) && !functionalActivities.includes(a)
   );
   const exerciseActivities = request.activities.filter(a =>
-    !sensoryActivities.includes(a) && !functionalActivities.includes(a) && !balanceActivities.includes(a)
+    !functionalActivities.includes(a) && !neuromuscularActivities.includes(a)
   );
 
   const cptCodes: GeneratedCptCode[] = [];
   let remainingUnits = billingUnits;
 
-  // Assign codes by the activities actually documented (sensory/functional/
-  // balance/exercise), distributing units proportionally by category — not by
-  // reimbursement rate. (Codes default to the same $/unit anyway.)
-  if (sensoryActivities.length > 0 && remainingUnits > 0) {
+  // Assign by documented skilled objective (order is clinical, not rate-based).
+  if (neuromuscularActivities.length > 0 && remainingUnits > 0) {
     const units = Math.min(Math.ceil(billingUnits * 0.4), remainingUnits);
     cptCodes.push({
-      code: "97533",
-      name: "Sensory Integration",
+      code: "97112",
+      name: "Neuromuscular Re-education",
       units,
-      rationale: `Sensory integrative techniques: ${sensoryActivities.slice(0, 3).join(", ")}`,
+      rationale: `Neuromuscular re-education targeting postural control, balance, and motor planning via: ${neuromuscularActivities.slice(0, 3).join(", ")}`,
       reimbursement: unitRate * units,
-      activitiesAssigned: sensoryActivities
+      activitiesAssigned: neuromuscularActivities
     });
     remainingUnits -= units;
   }
@@ -783,22 +794,9 @@ function fallbackGeneration(
       code: "97530",
       name: "Therapeutic Activities",
       units,
-      rationale: `Functional activities: ${functionalActivities.slice(0, 3).join(", ")}`,
+      rationale: `Therapeutic activities for functional participation: ${functionalActivities.slice(0, 3).join(", ")}`,
       reimbursement: unitRate * units,
       activitiesAssigned: functionalActivities
-    });
-    remainingUnits -= units;
-  }
-
-  if (balanceActivities.length > 0 && remainingUnits > 0) {
-    const units = Math.min(Math.ceil(billingUnits * 0.2), remainingUnits);
-    cptCodes.push({
-      code: "97112",
-      name: "Neuromuscular Re-education",
-      units,
-      rationale: `Balance and coordination: ${balanceActivities.slice(0, 3).join(", ")}`,
-      reimbursement: unitRate * units,
-      activitiesAssigned: balanceActivities
     });
     remainingUnits -= units;
   }
@@ -849,19 +847,42 @@ function fallbackGeneration(
     }
   }
 
-  // Build detailed subjective section
-  const caregiverInfo = request.caregiverReport || "Caregiver reports consistent participation in home program with no new concerns at this time";
-  const subjective = `${caregiverInfo}. Caregiver was asked about progress with functional tasks at home and any changes in daily routine, medication, or sleep patterns since the previous session.\n\n${patientName} presented as ${request.mood.toLowerCase()} upon arrival to today's session. Patient demonstrated ${request.mood.toLowerCase().includes('happy') || request.mood.toLowerCase().includes('excited') || request.mood.toLowerCase().includes('engaged') ? 'willingness to engage in therapist-directed activities and positive social interactions with the treating therapist' : 'variable engagement with therapist-directed activities throughout the session, requiring encouragement and structured choices to maintain participation'}.\n\nPresentation today is ${request.mood.toLowerCase().includes('happy') || request.mood.toLowerCase().includes('cooperative') ? 'consistent with recent sessions, suggesting stable baseline performance' : 'noted for clinical monitoring and comparison to previous session presentation'}.`;
+  // Build subjective section — input-proportional, no fabrication. Reflect
+  // ONLY the caregiver report and mood that were actually provided; do not
+  // invent home-program compliance, medication/sleep inquiries, or
+  // prior-session comparisons.
+  const caregiverLine = request.caregiverReport
+    ? `Caregiver reported: ${request.caregiverReport}.`
+    : "Caregiver report was not obtained this session.";
+  const subjective = `${caregiverLine}\n\n${patientName} presented as ${request.mood.toLowerCase()} during today's session.`;
 
-  // Build detailed objective section
-  const activitiesList = request.activities.map(a => `• ${a}`).join('\n');
-  const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities Performed with Performance Data:\n${request.activities.map((a, i) => `• ${a}: Patient participated with ${request.assessment.assistance.toLowerCase()} level of assistance. ${i === 0 ? 'Performance data collected across trials.' : 'Cueing provided as needed (verbal and visual).'}`).join('\n')}\n\nAssistance Level: ${request.assessment.assistance}. Cueing types utilized included verbal cues for task initiation and sequencing, visual cues for motor planning, and tactile cues as needed for postural correction.\n\nEquipment/Materials: Therapeutic equipment selected to address treatment goals including items appropriate for sensory-motor and fine motor intervention.\n\nSkilled Interventions Provided:\n• Neuromuscular re-education for postural control and core stabilization during dynamic activities\n• Graded sensory input (vestibular and proprioceptive) to support regulation and motor organization\n• Therapeutic exercise targeting strength, endurance, and range of motion\n• Motor planning activities with graded complexity to challenge bilateral coordination and sequencing\n\nAssistance level was monitored throughout the session. ${request.assessment.assistance.toLowerCase().includes('max') ? 'Patient required sustained physical and verbal support throughout most activities.' : request.assessment.assistance.toLowerCase().includes('mod') ? 'Patient demonstrated ability to progress from moderate to minimum assistance on familiar tasks by end of session.' : 'Patient demonstrated emerging independence on previously challenging tasks with verbal cueing only.'}`;
+  // Build objective section — grounded ONLY in the provided activities and
+  // assessment fields. No invented trials, cue counts, equipment specifics, or
+  // assistance-level progression.
+  const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${request.activities.map(a => `• ${a}`).join('\n')}\n\nAssistance level: ${request.assessment.assistance}.\n\nClinical observations as documented by the treating therapist:\n• Overall performance: ${request.assessment.performance}\n• Strength/endurance: ${request.assessment.strength}\n• Motor planning: ${request.assessment.motorPlanning}\n• Sensory regulation: ${request.assessment.sensoryRegulation}${request.assessment.posturalControl ? `\n• Postural control: ${request.assessment.posturalControl}` : ''}${request.assessment.fineMotor ? `\n• Fine motor: ${request.assessment.fineMotor}` : ''}${request.assessment.bilateralCoordination ? `\n• Bilateral coordination: ${request.assessment.bilateralCoordination}` : ''}`;
 
-  // Build detailed assessment section
-  const assessment = `During today's occupational therapy session, ${patientName} demonstrated ${request.assessment.performance.toLowerCase()} engagement throughout therapist-directed activities. Patient ${request.assessment.performance.toLowerCase().includes('good') || request.assessment.performance.toLowerCase().includes('improved') ? 'tolerated movement demands and challenging activities with increasing confidence' : 'demonstrated variable tolerance for movement demands and challenging activities, requiring structured breaks and sensory strategies to maintain participation'}. ${patientName} benefited from structured activities and graded sensory input to support regulation and sustained participation.\n\n${patientName} continues to present with ${request.assessment.strength.toLowerCase().includes('good') || request.assessment.strength.toLowerCase().includes('improved') ? 'improving but still developing' : 'decreased'} core and postural strength, which impacted ability to sustain prone extension and maintain upright postural control during dynamic activities. Patient required ${request.assessment.assistance.toLowerCase()} to facilitate appropriate weight-bearing through upper extremities and to maintain alignment during anti-gravity positions. Core endurance observations: ${request.assessment.strength}.\n\nMotor planning and coordination: ${request.assessment.motorPlanning}. ${patientName} ${request.assessment.motorPlanning.toLowerCase().includes('good') || request.assessment.motorPlanning.toLowerCase().includes('improved') ? 'demonstrated improved sequencing and timing during multi-step gross-motor tasks with modeling and repetition' : 'continues to demonstrate difficulty with multi-step gross-motor sequences, requiring modeling, verbal cueing, and repetition to complete tasks'}. Bilateral coordination was assessed through functional activities, with ${patientName} showing ${request.assessment.motorPlanning.toLowerCase().includes('good') ? 'emerging efficiency in bilateral movement patterns' : 'continued asymmetry and inefficiency in bilateral movement patterns'}.\n\nSensory processing and regulation: ${request.assessment.sensoryRegulation}. ${patientName} ${request.assessment.sensoryRegulation.toLowerCase().includes('good') || request.assessment.sensoryRegulation.toLowerCase().includes('improved') ? 'demonstrated improved ability to modulate responses to vestibular and proprioceptive input, which supported improved motor organization and task engagement' : 'continues to demonstrate difficulty modulating responses to sensory input, which impacts motor organization, task engagement, and adaptive responses to environmental demands'}. Graded vestibular and proprioceptive input was provided throughout the session to support regulation.\n\nProgress toward treatment goals: ${patientName} is demonstrating ${request.assessment.performance.toLowerCase()} progress in targeted goal areas. Clinical reasoning supports continued treatment at the current frequency to address ongoing functional limitations and build upon emerging skills.\n\nOverall, ${patientName} continues to demonstrate deficits in core strength, postural control, motor planning, and sensory-motor regulation, which impact ability to efficiently participate in age-appropriate gross-motor, fine-motor, and functional activities including self-care tasks, handwriting, and playground participation. Skilled occupational therapy services remain medically necessary to address these deficits through targeted intervention and to support functional independence across home, school, and community environments.`;
+  // Build assessment section — clinical interpretation anchored to the
+  // observations actually provided; no fabricated reflexes, prior-session
+  // comparisons, or boilerplate deficits. The medical-necessity statement is
+  // built from the documented observations, not a fixed template.
+  // Per clinical review (Blanche, 2026-07): only assert medical necessity when
+  // the documented observations actually show deficits. On a thin note, skip
+  // the sentence entirely — a generic necessity claim weakens documentation
+  // more than leaving it out.
+  const hasDocumentedDeficits = [
+    request.assessment.strength,
+    request.assessment.motorPlanning,
+    request.assessment.sensoryRegulation,
+  ].some((f) => /poor|decreas|difficult|limit|delay|reduc/i.test(f));
+  const necessityParagraph = hasDocumentedDeficits
+    ? `\n\nSkilled OT was required to grade and adapt the above activities to the patient's documented deficits in the areas noted above, supporting safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
+    : '';
+  const assessment = `${patientName} presented as ${request.mood.toLowerCase()} and participated in skilled occupational therapy with ${request.assessment.assistance.toLowerCase()} assistance. Skilled clinical analysis and therapist-directed adaptation were provided to support performance across the documented activities.\n\nFunctional performance this session: ${request.assessment.performance}. Strength/endurance: ${request.assessment.strength}. Motor planning: ${request.assessment.motorPlanning}. Sensory regulation: ${request.assessment.sensoryRegulation}.${necessityParagraph}`;
 
-  // Build detailed plan section
-  const plan = `Continue occupational therapy services ${request.duration >= 45 ? '2x/week for 45-minute sessions' : '1-2x/week for 30-minute sessions'} to address ongoing treatment goals.\n\nNext Session Plan:\n• ${request.planNextSteps}\n• Core and postural strengthening through graded anti-gravity activities\n• Motor planning and bilateral coordination tasks with progressive complexity\n• Sensory regulation strategies integrated throughout session activities\n${request.nextSessionFocus ? `• Focus area: ${request.nextSessionFocus}` : '• Continue progression of current treatment goals'}\n\nHome Program:\n${request.homeProgram ? `• ${request.homeProgram}` : '• Home program recommendations reviewed with caregiver, including daily strengthening exercises and sensory regulation strategies'}\n• Caregiver educated on importance of consistent home program completion between sessions\n\nGoals to prioritize next session: Core strengthening, motor planning, and functional skill development.\n\nCoordination: Continue to monitor progress and communicate with caregiver regarding carryover of skills to home and school environments.`;
+  // Build plan section. Home-program wording follows the reviewer's guidance:
+  // when no new home program was provided, do not invent one or imply parent
+  // education occurred — note continuation of current strategies.
+  const plan = `Continue occupational therapy to address current treatment goals.\n\nNext session focus:\n• ${request.planNextSteps}${request.nextSessionFocus ? `\n• ${request.nextSessionFocus}` : ''}\n\nHome program:\n${request.homeProgram ? `• ${request.homeProgram}` : '• Reviewed continuation of current home strategies; no changes to home program at this time.'}`;
 
   return {
     subjective,

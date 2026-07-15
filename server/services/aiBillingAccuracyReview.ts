@@ -66,7 +66,11 @@ interface BillingRecommendation {
   }>;
   totalUnits: number;
   estimatedAmount: number;
-  optimizationNotes: string;
+  accuracyNotes: string;
+  /** Codes the reviewer considered but did NOT recommend because the
+   *  documentation didn't support them (Blanche Rule 5: suppress rather than
+   *  bill-with-warning). Surfaced for QA and provider visibility. */
+  suppressedCodes: Array<{ cptCode: string; reason: string }>;
   complianceScore: number; // 0-100
   reimbursementOptimized: boolean; // indicates if reimbursement data was used
 }
@@ -86,16 +90,20 @@ export async function reviewBillingCodeAccuracy(
   // Build context about insurance rules
   const rulesContext = buildRulesContext(insuranceRules, insurancePreferences, insuranceName);
 
-  // Get reimbursement data for this payer to guide code selection
+  // Whether payer rate data exists for this insurer. NOTE: we deliberately do
+  // NOT feed payer rates into the code-SELECTION prompt — surfacing "here are
+  // the higher-paying codes" while asking the model to pick a code is exactly
+  // the reimbursement-steering behavior CLAUDE.md forbids and the accuracy
+  // reframing removes. Rates are still used AFTER selection to compute the
+  // dollar estimate (see the rate lookup below). This flag only records that
+  // rate data was available for that estimate.
   let reimbursementContext = '';
   let reimbursementOptimized = false;
   try {
     const payerRates = await getPayerRatesSummary(insuranceName);
     if (payerRates.rates.length > 0) {
       reimbursementOptimized = true;
-      reimbursementContext = `\nREIMBURSEMENT DATA FOR ${insuranceName.toUpperCase()} (reference only — do NOT choose codes based on these amounts):
-${payerRates.rates.slice(0, 10).map(r => `- ${r.cptCode}: $${r.inNetworkRate?.toFixed(2)}`).join('\n')}
-Average rate: $${payerRates.averageRate.toFixed(2)} per unit`;
+      // Intentionally left blank — no rate steering in the selection prompt.
     }
   } catch (error) {
     console.log("No reimbursement data available for", insuranceName);
@@ -116,10 +124,20 @@ Average rate: $${payerRates.averageRate.toFixed(2)} per unit`;
     ).join('\n');
 
   // Build the prompt
-  const prompt = `You are a medical billing expert specializing in occupational/physical therapy billing. Your job is to recommend the optimal CPT code combination for a therapy session that:
-1. Accurately reflects the services provided (medical necessity is PRIMARY)
-2. Ensures accurate reimbursement within compliance rules
-3. Follows insurance-specific billing guidelines
+  const prompt = `You are a medical billing accuracy reviewer specializing in occupational and speech therapy. Your job is to recommend the CPT code(s) that most ACCURATELY reflect the skilled services the documentation actually supports. You are NOT optimizing or maximizing reimbursement — you are ensuring each code is defensible against audit and denial. The treating provider makes the final coding decision.
+
+CORE PRINCIPLES (in priority order):
+1. MEDICAL NECESSITY & DOCUMENTATION SUPPORT IS PRIMARY. Only recommend a code the documentation clearly supports with skilled, functional, measurable clinical content.
+2. If the documentation does NOT support a code, DO NOT recommend it. Suppressing an unsupported code is safer than billing it — unsupported CPT carry-through is where denials and audits happen. Note the suppression in suppressedCodes (see output format) rather than forcing the code through.
+3. NEVER choose a code because it reimburses more. When two codes are each clinically valid for the documented service, pick the one whose description best matches the PRIMARY SKILLED OBJECTIVE — not the higher-paying one.
+4. Map by skilled outcome, not by activity label (see SENSORY-INTEGRATION GUIDANCE below).
+
+SENSORY-INTEGRATION & FUNCTIONAL MAPPING (critical for OT/ST reimbursement):
+Payers reimburse poorly for documentation framed primarily as "sensory integration", "sensory play", "sensory diet", or "regulation activities" — those read as developmental/non-specific and weakly tied to medical necessity. The treatment is appropriate; the DOCUMENTATION must connect it to a skilled, functional, neuromuscular/motor or ADL objective. Map to CPT by the PRIMARY SKILLED OUTCOME being addressed:
+- Vestibular-proprioceptive activities targeting postural control, balance, bilateral coordination, motor planning, praxis, or body awareness → 97112 (neuromuscular re-education).
+- Sensory-based obstacle courses / activities targeting functional participation, transitions, fine motor tasks, or play/ADL skills → 97530 (therapeutic activities).
+- Do NOT default to a "sensory integration" code (e.g. 97533) unless the documentation pairs the sensory work with clear functional deficits, measurable assistance levels, and skilled therapeutic analysis. If it doesn't, prefer the functional/neuromuscular code that the skilled objective supports, or suppress.
+Use payer-aligned skilled vocabulary in your reasoning: skilled clinical analysis, clinical reasoning, task grading/modification, dynamic assessment, neuromuscular re-education, cueing hierarchy, compensatory strategies, safety/judgment, therapist-directed adaptation, measurable functional impact. Avoid generic phrases like "provided skilled support", "therapeutic engagement", "facilitated participation".
 
 SESSION DETAILS:
 - Duration: ${sessionDetails.duration} minutes (${totalAvailableUnits} billable 15-minute units available)
@@ -142,28 +160,34 @@ AVAILABLE CPT CODES:
 ${availableCptCodes.map(c => `- ${c.code}: ${c.description} (Rate: $${c.baseRate || '289'})`).join('\n')}
 
 BILLING RULES TO FOLLOW:
-1. CLINICAL ACCURACY IS PRIMARY - only use codes that accurately describe documented services
-2. When multiple codes could accurately describe an intervention, choose the one that most precisely matches the documented service — NOT the one that reimburses more. The treating provider makes the final coding decision.
-3. Total units across all codes should not exceed ${insurancePreferences?.maxTotalUnitsPerVisit || totalAvailableUnits} units
-4. Document must support medical necessity for each code billed
-5. ${requiresDifferentCodes ? 'Use DIFFERENT codes for each 15-minute unit (payer requirement)' : 'May bill multiple units of same code if clinically appropriate'}
-6. Stay within insurance-specific limits
+1. DOCUMENTATION SUPPORT IS PRIMARY - only recommend codes the documentation clearly supports with skilled, functional clinical content.
+2. When multiple codes could each accurately describe an intervention, choose the one whose description best matches the PRIMARY SKILLED OBJECTIVE. Do NOT choose based on reimbursement.
+3. If a code is NOT supported by the documentation, leave it OUT of lineItems and record it in suppressedCodes with the reason. Do not force a code through with a warning.
+4. Total units across all codes should not exceed ${insurancePreferences?.maxTotalUnitsPerVisit || totalAvailableUnits} units.
+5. ${requiresDifferentCodes ? 'Use DIFFERENT codes for each 15-minute unit (payer requirement)' : 'May bill multiple units of same code if clinically appropriate'}.
+6. Stay within insurance-specific limits.
 
-Based on the session documentation, recommend the optimal billing codes. Return your response as JSON:
+Based on the session documentation, recommend ONLY the codes the documentation supports. Return your response as JSON:
 {
   "lineItems": [
     {
       "cptCode": "97110",
       "units": 1,
       "modifier": null,
-      "reasoning": "Brief explanation of why this code applies"
+      "reasoning": "Skilled-objective explanation tying this code to the documented intervention (functional/neuromuscular outcome), not to reimbursement"
     }
   ],
-  "optimizationNotes": "Overall explanation of the clinical coding rationale (based on documented services, not reimbursement)",
+  "suppressedCodes": [
+    {
+      "cptCode": "97533",
+      "reason": "Considered but documentation lacked functional deficits / measurable assistance / skilled analysis to support a sensory-integration code"
+    }
+  ],
+  "accuracyNotes": "Overall explanation of how each recommended code maps to the documented skilled objective, and why any considered codes were suppressed",
   "complianceScore": 95
 }
 
-Focus on accuracy and compliance. When multiple codes are clinically valid for the documented service, choose the one that most accurately describes it; the treating provider makes the final coding decision.`;
+Recommend the most ACCURATE, defensible coding. If the documentation is thin, recommend fewer codes (or none) and explain in suppressedCodes — never manufacture support for a code. The treating provider reviews and approves all suggestions.`;
 
   try {
     const client = getAnthropic();
@@ -180,7 +204,7 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
       system: [
         {
           type: "text",
-          text: "You are a medical billing compliance expert. Always recommend billing that is accurate, defensible, and follows payer guidelines. Return ONLY a valid JSON object with no markdown fencing or commentary.",
+          text: "You are a medical billing accuracy reviewer. Recommend only coding that the documentation defensibly supports; suppress unsupported codes rather than forcing them through. Never select a code because it pays more. The treating provider makes the final coding decision. Return ONLY a valid JSON object with no markdown fencing or commentary.",
           cache_control: { type: "ephemeral" },
         },
       ],
@@ -228,6 +252,21 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
 
     const lineItems = (await Promise.all(lineItemsPromises)).filter((item: any) => item.cptCodeId > 0);
 
+    // Rule 5 (Blanche): suppress unsupported codes rather than billing with a
+    // warning. Capture what the reviewer dropped, and log it internally for QA
+    // so we keep visibility into removed candidates without risking submission.
+    const suppressedCodes: Array<{ cptCode: string; reason: string }> = Array.isArray(aiResult.suppressedCodes)
+      ? aiResult.suppressedCodes
+          .filter((s: any) => s && typeof s.cptCode === 'string')
+          .map((s: any) => ({ cptCode: s.cptCode, reason: typeof s.reason === 'string' ? s.reason : 'insufficient documentation support' }))
+      : [];
+    if (suppressedCodes.length > 0) {
+      console.log(
+        `[billing-accuracy] suppressed ${suppressedCodes.length} unsupported code(s): ` +
+          suppressedCodes.map((s) => `${s.cptCode} (${s.reason})`).join('; '),
+      );
+    }
+
     // Calculate totals using actual reimbursement rates when available
     const totalUnits = lineItems.reduce((sum: number, item: any) => sum + item.units, 0);
     const estimatedAmount = lineItems.reduce((sum: number, item: any) => {
@@ -240,7 +279,8 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
       lineItems,
       totalUnits,
       estimatedAmount,
-      optimizationNotes: aiResult.optimizationNotes || '',
+      accuracyNotes: aiResult.accuracyNotes || '',
+      suppressedCodes,
       complianceScore: aiResult.complianceScore || 85,
       reimbursementOptimized
     };
@@ -261,7 +301,8 @@ Focus on accuracy and compliance. When multiple codes are clinically valid for t
       }],
       totalUnits: Math.min(totalAvailableUnits, 2),
       estimatedAmount: parseFloat(defaultCode.baseRate || '289') * Math.min(totalAvailableUnits, 2),
-      optimizationNotes: "Fallback billing applied - please review manually",
+      accuracyNotes: "Fallback billing applied - please review manually",
+      suppressedCodes: [],
       complianceScore: 70,
       reimbursementOptimized: false
     };
