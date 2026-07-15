@@ -464,6 +464,11 @@ async function seedSoapInterventionTemplates(db: any) {
  * by the UI when a template is applied to a plan.
  */
 async function seedGoalTemplates(db: any) {
+  // Threshold defaults per clinical review (Blanche, 2026-07): "4 of 5
+  // opportunities/trials" and "3 consecutive sessions" are the standing
+  // defaults. Time-based goals must NOT use one universal duration — use
+  // age bands instead: toddlers 2-5 min, preschool 5-10 min, school age
+  // 10-15+ min. Therapists individualize from these starting points.
   type Goal = { category: string; goalText: string; objectives: string[]; measure: string };
   const goals: Record<'OT' | 'ST', Goal[]> = {
     OT: [
@@ -505,7 +510,7 @@ async function seedGoalTemplates(db: any) {
       },
       {
         category: 'visual_motor_integration',
-        goalText: '{patient} will improve visual-motor integration to complete age-appropriate classroom and self-care tasks.',
+        goalText: '{patient} will improve visual-motor integration to support participation in age-appropriate school, play, and self-care activities.',
         objectives: [
           '{patient} will copy age-appropriate shapes/letters from a model with accurate formation in 4 of 5 trials.',
           '{patient} will complete a visual-motor task (cutting/tracing within boundaries) with no more than minimal cues across 3 consecutive sessions.',
@@ -514,7 +519,7 @@ async function seedGoalTemplates(db: any) {
       },
       {
         category: 'handwriting_prewriting',
-        goalText: '{patient} will improve handwriting/pre-writing skills to participate in classroom written work.',
+        goalText: '{patient} will improve handwriting/pre-writing skills to participate in written classroom activities.',
         objectives: [
           '{patient} will form age-appropriate pre-writing strokes/letters with correct size and line placement in 4 of 5 trials.',
           '{patient} will write target letters/name legibly within given boundaries with no more than minimal verbal cues across 3 consecutive sessions.',
@@ -543,14 +548,14 @@ async function seedGoalTemplates(db: any) {
         category: 'attention_participation',
         goalText: '{patient} will improve sustained attention to participate in structured classroom and therapy activities.',
         objectives: [
-          '{patient} will sustain attention to a non-preferred tabletop task for 10 minutes with no more than 2 redirection cues.',
+          '{patient} will sustain attention to a non-preferred tabletop task for an age-appropriate duration (toddlers 2–5 min; preschool 5–10 min; school age 10–15+ min) with no more than 2 redirection cues.',
           '{patient} will remain engaged in a structured group activity through completion in 4 of 5 opportunities.',
         ],
-        measure: 'Sustained attention 10 min with ≤2 cues; task completion 4/5 opportunities.',
+        measure: 'Sustained attention for age-appropriate duration with ≤2 cues; task completion 4/5 opportunities.',
       },
       {
         category: 'executive_functioning',
-        goalText: '{patient} will improve executive-functioning skills (planning, organization, self-monitoring) to complete multi-step routines.',
+        goalText: '{patient} will improve executive-functioning skills (planning, organization, initiation, and self-monitoring) to complete multi-step routines.',
         objectives: [
           '{patient} will independently initiate and sequence a 3-step task/routine using a visual support in 4 of 5 trials.',
           '{patient} will self-monitor and correct errors in completed work with no more than 1 cue across 3 consecutive sessions.',
@@ -568,7 +573,7 @@ async function seedGoalTemplates(db: any) {
       },
       {
         category: 'toileting',
-        goalText: '{patient} will increase independence with toileting routines for participation at home and school.',
+        goalText: '{patient} will increase independence with toileting routines, as appropriate for developmental age, for participation at home and school.',
         objectives: [
           '{patient} will complete the toileting sequence (clothing management, hygiene, hand-washing) with modified independence in 4 of 5 opportunities.',
           '{patient} will indicate toileting needs and initiate the routine with no more than minimal cues across 3 consecutive sessions.',
@@ -579,10 +584,10 @@ async function seedGoalTemplates(db: any) {
         category: 'social_participation_play',
         goalText: '{patient} will improve social participation and play skills to engage with peers across school and community settings.',
         objectives: [
-          '{patient} will engage in cooperative/turn-taking play with a peer for 10 minutes with no more than 2 facilitation cues.',
+          '{patient} will engage in cooperative/turn-taking play with a peer for an age-appropriate duration (toddlers 2–5 min; preschool 5–10 min; school age 10–15+ min) with no more than 2 facilitation cues.',
           '{patient} will initiate and maintain a peer interaction across at least 3 exchanges in 4 of 5 opportunities.',
         ],
-        measure: 'Cooperative play 10 min with ≤2 cues; 3-exchange peer interaction 4/5.',
+        measure: 'Cooperative play for age-appropriate duration with ≤2 cues; 3-exchange peer interaction 4/5.',
       },
     ],
     ST: [
