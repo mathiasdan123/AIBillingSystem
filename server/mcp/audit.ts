@@ -20,8 +20,9 @@ import type { McpPracticeContext } from './types';
 
 export const MCP_PHI_DISABLED_MESSAGE =
   'PHI access over MCP is not enabled for this practice. This tool returns protected health ' +
-  'information, which is gated until the practice enables it (Settings -> MCP Integration -> ' +
-  'Enable PHI access). Non-PHI tools (dashboard, analytics, payer search) remain available.';
+  'information, which is gated until a practice admin enables it (Settings -> MCP Integration -> ' +
+  'Connector Security -> Enable PHI access). Non-PHI tools (dashboard, analytics, payer search) ' +
+  'remain available.';
 
 /**
  * Whether this practice may receive PHI over the MCP surface.

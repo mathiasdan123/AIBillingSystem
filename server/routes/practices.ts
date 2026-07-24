@@ -96,10 +96,31 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
   }
 });
 
+// Columns that must NEVER be set through this general-purpose PATCH. They gate
+// PHI exposure / tenant identity, so they only change via dedicated guarded
+// routes (mcpPhiEnabled + mcpRequiresConfirmation → PATCH /:id/mcp-settings)
+// or server-side provisioning (isDemo). Without this, any authenticated user
+// could flip the MCP PHI kill-switch — or mark their practice isDemo, which
+// also bypasses the kill-switch — through this unprivileged endpoint.
+const PROTECTED_PRACTICE_FIELDS = new Set([
+  'mcpPhiEnabled',
+  'mcpRequiresConfirmation',
+  'isDemo',
+]);
+
 // Update practice settings
 router.patch('/:id', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = parseInt(req.params.id);
+    if (isNaN(practiceId)) {
+      return res.status(400).json({ message: 'Invalid practice ID' });
+    }
+    // Tenant isolation: a user may only edit their OWN practice. Fail closed
+    // when practice context is missing.
+    if (!req.userPracticeId || req.userPracticeId !== practiceId) {
+      return res.status(403).json({ message: 'Cannot modify another practice' });
+    }
+
     const updates = req.body;
 
     // Date columns (e.g. practices.license_expiration) that Postgres will
@@ -110,6 +131,8 @@ router.patch('/:id', isAuthenticated, async (req: any, res) => {
     const cleanUpdates: Record<string, any> = {};
     for (const [key, value] of Object.entries(updates)) {
       if (value === undefined) continue;
+      // Privileged flags never travel through this endpoint (see above).
+      if (PROTECTED_PRACTICE_FIELDS.has(key)) continue;
       // Date-typed field with empty string → clear to NULL.
       if (DATE_FIELDS.has(key) && value === '') {
         cleanUpdates[key] = null;
@@ -133,6 +156,63 @@ router.patch('/:id', isAuthenticated, async (req: any, res) => {
   } catch (error) {
     logger.error("Error updating practice", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to update practice" });
+  }
+});
+
+/**
+ * PATCH /api/practices/:id/mcp-settings — toggle the MCP connector switches.
+ *
+ * Dedicated, admin-guarded endpoint (the generic PATCH /:id above is only
+ * isAuthenticated). These two flags gate PHI exposure and mutation consent
+ * over the MCP/Claude Desktop surface, so flipping them is admin-only and
+ * scoped to the caller's own practice — never another practice's.
+ *
+ *   mcpPhiEnabled          — allow containsPhi tools to return data
+ *   mcpRequiresConfirmation — require a server-side confirm on MCP mutations
+ */
+router.patch('/:id/mcp-settings', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = parseInt(req.params.id);
+    if (isNaN(practiceId)) {
+      return res.status(400).json({ message: 'Invalid practice ID' });
+    }
+    if (req.userRole !== 'admin') {
+      return res.status(403).json({ message: 'Access denied. Admin role required.' });
+    }
+    // Fail closed: only an admin acting on their OWN practice may flip these.
+    if (!req.userPracticeId || req.userPracticeId !== practiceId) {
+      return res.status(403).json({ message: 'Cannot modify another practice' });
+    }
+
+    const updates: Record<string, boolean> = {};
+    if (typeof req.body?.mcpPhiEnabled === 'boolean') {
+      updates.mcpPhiEnabled = req.body.mcpPhiEnabled;
+    }
+    if (typeof req.body?.mcpRequiresConfirmation === 'boolean') {
+      updates.mcpRequiresConfirmation = req.body.mcpRequiresConfirmation;
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: 'No MCP settings provided' });
+    }
+
+    const practice = await storage.updatePractice(practiceId, updates as any);
+    if (!practice) {
+      return res.status(404).json({ message: 'Practice not found' });
+    }
+
+    logger.info('MCP settings updated', {
+      practiceId,
+      userId: req.user?.claims?.sub,
+      ...updates,
+    });
+
+    res.json({
+      mcpPhiEnabled: practice.mcpPhiEnabled,
+      mcpRequiresConfirmation: practice.mcpRequiresConfirmation,
+    });
+  } catch (error) {
+    logger.error('Error updating MCP settings', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to update MCP settings' });
   }
 });
 

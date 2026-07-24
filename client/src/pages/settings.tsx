@@ -265,12 +265,37 @@ interface McpApiKeyData {
 function McpIntegrationTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [keyName, setKeyName] = useState("");
   const [newKey, setNewKey] = useState<{ key: string; name: string } | null>(null);
+  const [confirmPhiOpen, setConfirmPhiOpen] = useState(false);
+
+  const practiceId = (user as any)?.practiceId || 1;
 
   const { data: mcpKeys, isLoading } = useQuery<McpApiKeyData[]>({
     queryKey: ["/api/mcp-api-keys"],
+  });
+
+  const { data: practice } = useQuery<any>({
+    queryKey: ["/api/practices", practiceId],
+  });
+
+  const phiEnabled = !!practice?.mcpPhiEnabled;
+  const requiresConfirmation = !!practice?.mcpRequiresConfirmation;
+
+  const mcpSettingsMutation = useMutation({
+    mutationFn: async (settings: { mcpPhiEnabled?: boolean; mcpRequiresConfirmation?: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/practices/${practiceId}/mcp-settings`, settings);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/practices", practiceId] });
+      toast({ title: "MCP settings updated" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update MCP settings", variant: "destructive" });
+    },
   });
 
   const createKeyMutation = useMutation({
@@ -365,6 +390,94 @@ function McpIntegrationTab() {
           </CardContent>
         </Card>
       )}
+
+      {/* Connector Security Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Shield className="w-5 h-5 mr-2" />
+            Connector Security
+          </CardTitle>
+          <CardDescription>
+            Control what the MCP connector can access and do across all API keys for this practice.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* PHI access toggle */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <Label className="text-base font-medium">Enable PHI access</Label>
+              <p className="text-sm text-slate-500 mt-1">
+                Allow tools that return protected health information (patient records, appointments,
+                clinical notes) over the connector. While off, those tools are refused and only
+                non-PHI tools (dashboard, analytics, payer search) work.
+              </p>
+              <div className="flex items-start gap-2 mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>
+                  Only enable this once a Business Associate Agreement is in place covering PHI sent
+                  to Claude (Anthropic). Routing PHI through the connector before then is not
+                  HIPAA-covered.
+                </span>
+              </div>
+            </div>
+            <Switch
+              checked={phiEnabled}
+              disabled={mcpSettingsMutation.isPending}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  setConfirmPhiOpen(true);
+                } else {
+                  mcpSettingsMutation.mutate({ mcpPhiEnabled: false });
+                }
+              }}
+            />
+          </div>
+
+          <Separator />
+
+          {/* Confirmation gate toggle */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <Label className="text-base font-medium">Require confirmation on changes</Label>
+              <p className="text-sm text-slate-500 mt-1">
+                Add a server-side confirmation step before the connector can create or change data
+                (appointments, claims, notes), on top of Claude's own "Allow tool call?" prompt.
+              </p>
+            </div>
+            <Switch
+              checked={requiresConfirmation}
+              disabled={mcpSettingsMutation.isPending}
+              onCheckedChange={(checked) => mcpSettingsMutation.mutate({ mcpRequiresConfirmation: checked })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* PHI enable confirmation */}
+      <AlertDialog open={confirmPhiOpen} onOpenChange={setConfirmPhiOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Enable PHI access over the connector?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This lets the MCP connector return protected health information to Claude. Only proceed
+              if a Business Associate Agreement covering Anthropic is in place. You can turn this off
+              at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                mcpSettingsMutation.mutate({ mcpPhiEnabled: true });
+                setConfirmPhiOpen(false);
+              }}
+            >
+              Enable PHI access
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Create New Key */}
       <Card>
