@@ -20,7 +20,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk';
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk';
 
 export function useBedrock(): boolean {
   return (process.env.AI_PROVIDER || '').toLowerCase() === 'bedrock';
@@ -36,19 +36,24 @@ export function isAiConfigured(): boolean {
 }
 
 /**
- * First-party model ID → Bedrock (Mantle) model ID. The Mantle endpoint
- * serves the Messages API and takes `anthropic.` + the bare first-party ID
- * (verified live: the legacy `-vN:0` catalog forms 404 on Mantle). Dated
- * first-party snapshots map to their bare alias.
+ * First-party model ID → Bedrock cross-region inference-profile ID
+ * (us.anthropic.*), which is what bedrock-runtime requires for
+ * current-generation Claude models. Verified live against this account.
+ * (The newer Mantle endpoint 403s for this account as of 2026-07-27 —
+ * the classic bedrock-runtime path below works and is HIPAA-eligible.)
  */
 const BEDROCK_MODEL_MAP: Record<string, string> = {
-  'claude-haiku-4-5-20251001': 'anthropic.claude-haiku-4-5',
-  'claude-sonnet-4-5-20250929': 'anthropic.claude-sonnet-4-5',
+  'claude-haiku-4-5': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+  'claude-haiku-4-5-20251001': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+  'claude-sonnet-4-5': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  'claude-sonnet-4-5-20250929': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  'claude-opus-4-7': 'us.anthropic.claude-opus-4-7',
+  'claude-sonnet-5': 'us.anthropic.claude-sonnet-5',
 };
 
 export function toBedrockModel(model: string): string {
-  if (model.startsWith('anthropic.')) return model;
-  return BEDROCK_MODEL_MAP[model] ?? `anthropic.${model}`;
+  if (model.startsWith('anthropic.') || model.startsWith('us.anthropic.')) return model;
+  return BEDROCK_MODEL_MAP[model] ?? `us.anthropic.${model}`;
 }
 
 function wrapWithModelMapping<T extends { messages: any }>(client: T): T {
@@ -76,7 +81,7 @@ function wrapWithModelMapping<T extends { messages: any }>(client: T): T {
  */
 export function createAiClient(opts: { apiKey?: string } = {}): Anthropic {
   if (useBedrock()) {
-    const bedrock = new AnthropicBedrockMantle({
+    const bedrock = new AnthropicBedrock({
       awsRegion: process.env.AWS_REGION || 'us-east-1',
     });
     return wrapWithModelMapping(bedrock) as unknown as Anthropic;

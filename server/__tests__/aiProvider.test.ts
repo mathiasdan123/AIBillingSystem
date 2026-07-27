@@ -4,9 +4,9 @@ import { toBedrockModel, useBedrock, isAiConfigured } from '../services/aiProvid
 /**
  * The AI provider factory routes server-side Claude calls to AWS Bedrock
  * (HIPAA-eligible under the existing AWS BAA) when AI_PROVIDER=bedrock.
- * These tests lock in the model-ID mapping (verified against the live Mantle
- * endpoint: bare `anthropic.<first-party-id>` works; `-vN:0` catalog forms
- * 404) and the configuration gating.
+ * These tests lock in the model-ID mapping (verified live against bedrock-runtime:
+ * current-gen Claude requires us.anthropic.* inference-profile IDs) and the
+ * configuration gating.
  */
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -24,17 +24,15 @@ afterEach(() => {
 });
 
 describe('toBedrockModel', () => {
-  it('prefixes bare first-party IDs', () => {
-    expect(toBedrockModel('claude-sonnet-4-5')).toBe('anthropic.claude-sonnet-4-5');
-    expect(toBedrockModel('claude-opus-4-7')).toBe('anthropic.claude-opus-4-7');
-  });
-
-  it('maps dated snapshots to their bare alias', () => {
-    expect(toBedrockModel('claude-haiku-4-5-20251001')).toBe('anthropic.claude-haiku-4-5');
+  it('maps first-party IDs to us. inference profiles', () => {
+    expect(toBedrockModel('claude-sonnet-4-5')).toBe('us.anthropic.claude-sonnet-4-5-20250929-v1:0');
+    expect(toBedrockModel('claude-opus-4-7')).toBe('us.anthropic.claude-opus-4-7');
+    expect(toBedrockModel('claude-haiku-4-5-20251001')).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0');
   });
 
   it('passes through already-prefixed IDs', () => {
-    expect(toBedrockModel('anthropic.claude-sonnet-4-5')).toBe('anthropic.claude-sonnet-4-5');
+    expect(toBedrockModel('us.anthropic.claude-sonnet-5')).toBe('us.anthropic.claude-sonnet-5');
+    expect(toBedrockModel('anthropic.claude-opus-4-7')).toBe('anthropic.claude-opus-4-7');
   });
 });
 
