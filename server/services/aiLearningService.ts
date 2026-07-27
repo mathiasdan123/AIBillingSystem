@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createAiClient, isAiConfigured } from './aiProvider';
 import { db } from "../db";
 import { aiLearningData, aiModelInsights, claims, claimLineItems, cptCodes, icd10Codes, insurances } from "@shared/schema";
 import { eq, and, sql, desc, count, avg, isNull } from "drizzle-orm";
@@ -8,11 +9,11 @@ let anthropicClient: Anthropic | null = null;
 
 function getAnthropic(): Anthropic | null {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     return null;
   }
   if (!anthropicClient) {
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = createAiClient({ apiKey });
   }
   return anthropicClient;
 }

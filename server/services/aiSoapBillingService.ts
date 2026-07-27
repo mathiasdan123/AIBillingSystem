@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createAiClient, isAiConfigured } from './aiProvider';
 import { storage } from "../storage";
 import { assertPhiAiAllowed } from "../utils/phiAiGuard";
 import logger from "./logger";
@@ -8,12 +9,12 @@ let anthropicClient: Anthropic | null = null;
 
 function getAnthropicClient(): Anthropic | null {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     console.warn("ANTHROPIC_API_KEY not set - AI features will use fallback rule-based generation");
     return null;
   }
   if (!anthropicClient) {
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = createAiClient({ apiKey });
   }
   return anthropicClient;
 }

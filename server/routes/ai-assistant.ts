@@ -8,6 +8,7 @@
 
 import { Router, type Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
+import { createAiClient, isAiConfigured } from '../services/aiProvider';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { getUserPracticeContext } from '../services/practiceContext';
@@ -648,11 +649,11 @@ let anthropic: Anthropic | null = null;
 
 function getAnthropicClient(): Anthropic | null {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     return null;
   }
   if (!anthropic) {
-    anthropic = new Anthropic({ apiKey });
+    anthropic = createAiClient({ apiKey });
   }
   return anthropic;
 }
@@ -5554,12 +5555,12 @@ router.delete('/conversation', isAuthenticated, async (req: any, res: Response) 
 
 // GET /api/ai/assistant/status - Check if AI assistant is available
 router.get('/assistant/status', (req, res) => {
-  const hasApiKey = !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
+  const available = isAiConfigured();
   res.json({
-    available: hasApiKey,
-    message: hasApiKey
+    available,
+    message: available
       ? 'AI assistant is ready (powered by Claude).'
-      : 'AI assistant requires ANTHROPIC_API_KEY to be configured.',
+      : 'AI assistant requires ANTHROPIC_API_KEY (or AI_PROVIDER=bedrock) to be configured.',
   });
 });
 

@@ -14,6 +14,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createAiClient, isAiConfigured } from './aiProvider';
 import logger from './logger';
 
 export interface CredentialingDraftInput {
@@ -66,10 +67,10 @@ export interface CredentialingApplicationResult {
 let anthropicClient: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     throw new Error('ANTHROPIC_API_KEY is not configured. AI credentialing drafts unavailable.');
   }
-  if (!anthropicClient) anthropicClient = new Anthropic({ apiKey });
+  if (!anthropicClient) anthropicClient = createAiClient({ apiKey });
   return anthropicClient;
 }
 

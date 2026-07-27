@@ -7,6 +7,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createAiClient, isAiConfigured } from './aiProvider';
 import { logger } from './logger';
 import { assertPhiAiAllowed } from '../utils/phiAiGuard';
 import type { ClaimPrecedent } from './claimPrecedentService';
@@ -99,14 +100,14 @@ let anthropicClient: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
 
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     throw new Error(
       'ANTHROPIC_API_KEY environment variable is not set. Cannot generate AI-powered appeal letters.'
     );
   }
 
   if (!anthropicClient) {
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = createAiClient({ apiKey });
   }
 
   return anthropicClient;

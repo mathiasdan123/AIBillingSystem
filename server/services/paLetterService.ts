@@ -13,6 +13,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createAiClient, isAiConfigured } from './aiProvider';
 import logger from './logger';
 
 export interface DraftPaLetterInput {
@@ -63,13 +64,13 @@ export interface DraftPaLetterResult {
 let anthropicClient: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     throw new Error(
       'ANTHROPIC_API_KEY is not configured. PA letter drafting is unavailable.'
     );
   }
   if (!anthropicClient) {
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = createAiClient({ apiKey });
   }
   return anthropicClient;
 }

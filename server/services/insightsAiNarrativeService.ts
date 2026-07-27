@@ -15,18 +15,19 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createAiClient, isAiConfigured } from './aiProvider';
 import logger from './logger';
 
 let anthropicClient: Anthropic | null = null;
 
 function getAnthropic(): Anthropic | null {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     logger.warn('ANTHROPIC_API_KEY not set — AI insight narratives disabled');
     return null;
   }
   if (!anthropicClient) {
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = createAiClient({ apiKey });
   }
   return anthropicClient;
 }

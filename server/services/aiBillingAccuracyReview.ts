@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createAiClient, isAiConfigured } from './aiProvider';
 import { storage } from "../storage";
 import {
   OT_INTERVENTION_CATEGORIES,
@@ -11,12 +12,12 @@ let anthropicClient: Anthropic | null = null;
 
 function getAnthropic(): Anthropic | null {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     console.warn('ANTHROPIC_API_KEY not set - AI billing accuracy review disabled');
     return null;
   }
   if (!anthropicClient) {
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = createAiClient({ apiKey });
   }
   return anthropicClient;
 }

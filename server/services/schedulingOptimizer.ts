@@ -6,6 +6,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createAiClient, isAiConfigured } from './aiProvider';
 import { storage } from '../storage';
 import logger from './logger';
 
@@ -721,11 +722,11 @@ async function generateAIInsights(
   allAppointments: any[]
 ): Promise<ScheduleInsight[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
+  if (!isAiConfigured()) {
     return [];
   }
 
-  const anthropic = new Anthropic({ apiKey });
+  const anthropic = createAiClient({ apiKey });
 
   // Build a summary for the AI
   const summaryData = analyses.map((a) => ({

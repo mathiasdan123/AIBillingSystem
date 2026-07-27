@@ -22,7 +22,8 @@
     "docs:api": "node --import=tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@anthropic-ai/bedrock-sdk": "^0.32.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@aws-sdk/client-secrets-manager": "^3.1053.0",
     "@hookform/resolvers": "^3.10.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
