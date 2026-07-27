@@ -81,64 +81,6 @@ const getAuthorizedPracticeId = (req: any): number => {
   return requestedPracticeId || userPracticeId;
 };
 
-// Generate mock eligibility data for testing
-function generateMockEligibility(patient: any, insurance: any) {
-  const patientSeed = patient?.id || 1;
-  const consistentRandom = (patientSeed * 9301 + 49297) % 233280 / 233280;
-
-  let status: 'active' | 'inactive' | 'unknown';
-  if (consistentRandom < 0.95) {
-    status = 'active';
-  } else if (consistentRandom < 0.98) {
-    status = 'inactive';
-  } else {
-    status = 'unknown';
-  }
-
-  if (status !== 'active') {
-    return {
-      status,
-      coverageType: null,
-      effectiveDate: null,
-      terminationDate: status === 'inactive' ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null,
-      copay: null, deductible: null, deductibleMet: null,
-      outOfPocketMax: null, outOfPocketMet: null, coinsurance: null,
-      visitsAllowed: null, visitsUsed: null, authRequired: null,
-      message: status === 'inactive' ? 'Coverage terminated' : 'Unable to verify eligibility',
-    };
-  }
-
-  const coverageTypes = ['PPO', 'HMO', 'POS', 'EPO'];
-  const copayOptions = [20, 25, 30, 35, 40, 50];
-  const deductibleOptions = [500, 1000, 1500, 2000, 2500, 3000];
-  const outOfPocketOptions = [3000, 4000, 5000, 6000, 7500, 8000];
-  const visitLimits = [30, 40, 50, 60];
-
-  const coverageType = coverageTypes[Math.floor(Math.random() * coverageTypes.length)];
-  const copay = copayOptions[Math.floor(Math.random() * copayOptions.length)];
-  const deductible = deductibleOptions[Math.floor(Math.random() * deductibleOptions.length)];
-  const deductibleMet = Math.round(deductible * Math.random() * 100) / 100;
-  const outOfPocketMax = outOfPocketOptions[Math.floor(Math.random() * outOfPocketOptions.length)];
-  const outOfPocketMet = Math.round(outOfPocketMax * Math.random() * 0.5 * 100) / 100;
-  const coinsurance = [10, 20, 30][Math.floor(Math.random() * 3)];
-  const visitsAllowed = visitLimits[Math.floor(Math.random() * visitLimits.length)];
-  const visitsUsed = Math.floor(Math.random() * visitsAllowed * 0.6);
-  const authRequired = Math.random() < 0.3;
-
-  const effectiveDate = new Date(Date.now() - (365 + Math.random() * 365) * 24 * 60 * 60 * 1000);
-  const currentYear = new Date().getFullYear();
-  const terminationDate = new Date(currentYear + (Math.random() < 0.5 ? 0 : 1), 11, 31);
-
-  return {
-    status, coverageType,
-    effectiveDate: effectiveDate.toISOString().split('T')[0],
-    terminationDate: terminationDate.toISOString().split('T')[0],
-    copay, deductible, deductibleMet, outOfPocketMax, outOfPocketMet,
-    coinsurance, visitsAllowed, visitsUsed, authRequired,
-    message: 'Coverage verified successfully',
-  };
-}
-
 // Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -426,83 +368,44 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
       insurance = insurances.find((i: any) => i.id === insuranceId);
     }
 
-    const { getStediApiKeyForPractice } = await import('../services/stediService');
-    const stediKeyInfo = await getStediApiKeyForPractice(getAuthorizedPracticeId(req)).catch(() => null);
-    const stediApiKey = stediKeyInfo?.apiKey || process.env.STEDI_API_KEY;
-    const hasRealApi = !!stediApiKey || (insurance?.eligibilityApiConfig &&
-                       Object.keys(insurance.eligibilityApiConfig as object).length > 0);
+    const {
+      resolveStediApiKey,
+      performStediEligibilityCheck,
+      generateDemoEligibility,
+      ELIGIBILITY_NOT_CONFIGURED_MESSAGE,
+      ELIGIBILITY_CHECK_FAILED_MESSAGE,
+    } = await import('../services/eligibilityVerificationService');
+
+    const practiceId = patient.practiceId ?? getAuthorizedPracticeId(req);
+    const practice = practiceId ? await storage.getPractice(practiceId) : null;
 
     let eligibilityResult;
 
-    if (hasRealApi && stediApiKey) {
-      try {
-        if (!patient.practiceId) {
-          throw new Error('Patient has no assigned practice');
-        }
-        const practice = await storage.getPractice(patient.practiceId);
-        const adapter = new StediAdapter(stediApiKey);
-
-        const { stcsForSpecialty } = await import('../services/stediService');
-        const sentStcs = stcsForSpecialty(practice?.specialty ?? null);
-
-        const result = await adapter.checkEligibility({
-          providerNpi: practice?.npi || '1234567890',
-          providerName: practice?.name || 'Practice',
-          memberFirstName: patient.firstName,
-          memberLastName: patient.lastName,
-          memberDob: patient.dateOfBirth || '',
-          memberId: patient.insuranceId || '',
-          groupNumber: patient.groupNumber || undefined,
-          payerName: insurance?.name || 'Unknown',
-          practiceSpecialty: practice?.specialty ?? null,
-        });
-
-        // Infer returned STCs from the normalized benefits shape (the adapter
-        // already filters to in-network benefits keyed by service type).
-        const returnedStcs: string[] = Array.from(
-          new Set(
-            Object.keys(result.benefits || {}).filter(
-              (k) => ['ot', 'pt', 'st', 'mh', 'ae', 'ad', 'af'].includes(k.toLowerCase())
-            )
-          )
-        );
-        const therapySpecificRequested = sentStcs.some((c) => c !== '30');
-        const onlyGenericReturned =
-          therapySpecificRequested &&
-          (returnedStcs.length === 0 ||
-            returnedStcs.every((c) => c === '30'));
-
-        eligibilityResult = {
-          status: result.eligibility.isEligible ? 'active' : 'inactive',
-          coverageType: result.eligibility.planType || 'Commercial',
-          effectiveDate: result.eligibility.effectiveDate,
-          terminationDate: result.eligibility.terminationDate,
-          copay: result.benefits.copay,
-          deductible: result.benefits.deductible?.individual,
-          deductibleMet: result.benefits.deductible?.individualMet,
-          outOfPocketMax: result.benefits.outOfPocketMax?.individual,
-          outOfPocketMet: result.benefits.outOfPocketMax?.individualMet,
-          coinsurance: result.benefits.coinsurance,
-          visitsAllowed: result.benefits.visitsAllowed,
-          visitsUsed: result.benefits.visitsUsed,
-          authRequired: result.benefits.priorAuthRequired,
-          planName: result.eligibility.planName,
-          groupNumber: result.eligibility.groupNumber,
-          source: 'stedi',
-          sentServiceTypeCodes: sentStcs,
-          returnedServiceTypeCodes: returnedStcs,
-          stcDowngraded: onlyGenericReturned,
-          raw: result.raw,
-        };
-      } catch (stediError: any) {
-        logger.error('Stedi eligibility check failed, falling back to mock', { error: stediError.message });
-        eligibilityResult = generateMockEligibility(patient, insurance);
-        (eligibilityResult as any).source = 'mock_fallback';
-        (eligibilityResult as any).stediError = stediError.message;
-      }
+    if (practice?.isDemo) {
+      // Demo practices keep generated data so the seeded demo stays lively.
+      eligibilityResult = generateDemoEligibility(patient, insurance);
     } else {
-      eligibilityResult = generateMockEligibility(patient, insurance);
-      (eligibilityResult as any).source = 'mock';
+      const stediApiKey = await resolveStediApiKey(practiceId);
+      if (!stediApiKey) {
+        // Real practice, no clearinghouse key: fail loudly. Never invent data.
+        return res.status(503).json({ message: ELIGIBILITY_NOT_CONFIGURED_MESSAGE });
+      }
+      try {
+        eligibilityResult = await performStediEligibilityCheck({
+          patient,
+          insurance,
+          practice,
+          stediApiKey,
+        });
+      } catch (stediError: any) {
+        logger.error('Stedi eligibility check failed', { error: stediError.message, patientId });
+        // No mock fallback: a fabricated copay/deductible would be saved and
+        // shown to the front desk as payer truth. Fail honestly instead.
+        return res.status(502).json({
+          message: ELIGIBILITY_CHECK_FAILED_MESSAGE,
+          detail: stediError.message,
+        });
+      }
     }
 
     const savedCheck = await storage.createEligibilityCheck({
@@ -716,6 +619,22 @@ router.post('/eligibility/batch-verify', isAuthenticated, async (req: any, res) 
     const practiceId = getAuthorizedPracticeId(req);
     const hoursAhead = parseInt(req.body.hoursAhead) || 24;
 
+    const {
+      resolveStediApiKey,
+      performStediEligibilityCheck,
+      generateDemoEligibility,
+      ELIGIBILITY_NOT_CONFIGURED_MESSAGE,
+    } = await import('../services/eligibilityVerificationService');
+
+    const practice = await storage.getPractice(practiceId);
+    const isDemo = !!practice?.isDemo;
+    const stediApiKey = isDemo ? null : await resolveStediApiKey(practiceId);
+    if (!isDemo && !stediApiKey) {
+      // Real practice, no clearinghouse key: refuse the whole batch rather
+      // than fabricating checks and alerts for every upcoming appointment.
+      return res.status(503).json({ message: ELIGIBILITY_NOT_CONFIGURED_MESSAGE });
+    }
+
     const appointmentsToCheck = await storage.getAppointmentsNeedingEligibilityCheck(practiceId, hoursAhead);
     const results = [];
     const alertsToCreate = [];
@@ -731,7 +650,32 @@ router.post('/eligibility/batch-verify', isAuthenticated, async (req: any, res) 
         ? allInsurances.find((i: any) => i.name.toLowerCase() === patient.insuranceProvider?.toLowerCase())
         : null;
 
-      const eligibilityResult = generateMockEligibility(patient, insurance);
+      let eligibilityResult;
+      if (isDemo) {
+        eligibilityResult = generateDemoEligibility(patient, insurance);
+      } else {
+        try {
+          eligibilityResult = await performStediEligibilityCheck({
+            patient,
+            insurance,
+            practice,
+            stediApiKey: stediApiKey!,
+          });
+        } catch (err: any) {
+          // Per-patient failure: report it, persist nothing, create no alerts.
+          logger.error('Batch eligibility check failed for patient', {
+            patientId: patient.id, error: err?.message,
+          });
+          results.push({
+            appointmentId: appointment.id,
+            patientId: patient.id,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            status: 'error',
+            error: err?.message ?? 'Eligibility check failed',
+          });
+          continue;
+        }
+      }
 
       const savedCheck = await storage.createEligibilityCheck({
         patientId: patient.id,
@@ -779,7 +723,7 @@ router.post('/eligibility/batch-verify', isAuthenticated, async (req: any, res) 
           message: `${patient.firstName} ${patient.lastName} has not met their deductible ($${eligibilityResult.deductible}). Patient responsibility may be higher.`,
           currentStatus: eligibilityResult,
         });
-      } else if (eligibilityResult.copay && eligibilityResult.copay >= 50) {
+      } else if (eligibilityResult.copay && Number(eligibilityResult.copay) >= 50) {
         alertsToCreate.push({
           patientId: patient.id, practiceId,
           appointmentId: appointment.id,

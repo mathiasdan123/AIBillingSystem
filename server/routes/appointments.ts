@@ -49,33 +49,6 @@ const getAuthorizedPracticeId = (req: any): number => {
   return requestedPracticeId || userPracticeId;
 };
 
-// Helper to generate mock eligibility for demo purposes
-const generateMockEligibility = (patient: any, insurance: any) => {
-  const isActive = Math.random() > 0.1;
-  const copay = [20, 25, 30, 35, 40, 50][Math.floor(Math.random() * 6)];
-  const deductible = [500, 1000, 1500, 2000, 2500][Math.floor(Math.random() * 5)];
-  const deductibleMet = Math.floor(Math.random() * deductible);
-  const oopMax = [3000, 5000, 6000, 7500, 10000][Math.floor(Math.random() * 5)];
-  const oopMet = Math.floor(Math.random() * oopMax * 0.5);
-
-  return {
-    status: isActive ? 'active' : 'inactive',
-    coverageType: 'Commercial',
-    effectiveDate: '2024-01-01',
-    terminationDate: null,
-    copay,
-    deductible,
-    deductibleMet,
-    outOfPocketMax: oopMax,
-    outOfPocketMet: oopMet,
-    coinsurance: 20,
-    visitsAllowed: 30,
-    visitsUsed: Math.floor(Math.random() * 15),
-    authRequired: Math.random() > 0.7,
-    planName: insurance?.name || patient?.insuranceProvider || 'Standard Plan',
-  };
-};
-
 // ==================== APPOINTMENT CRUD ====================
 
 /**
@@ -964,6 +937,12 @@ router.post('/:id/check-eligibility', isAuthenticated, async (req: any, res) => 
       return res.status(404).json({ message: 'Appointment not found' });
     }
 
+    // Tenant isolation: only this practice's staff may run its checks.
+    const authorizedPracticeId = getAuthorizedPracticeId(req);
+    if (appointment.practiceId && appointment.practiceId !== authorizedPracticeId) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
     if (!appointment.patientId) {
       return res.status(400).json({ message: 'Appointment has no patient assigned' });
     }
@@ -979,8 +958,46 @@ router.post('/:id/check-eligibility', isAuthenticated, async (req: any, res) => 
       ? allInsurances.find((i: any) => i.name.toLowerCase() === patient.insuranceProvider?.toLowerCase())
       : null;
 
-    // Generate eligibility check
-    const eligibilityResult = generateMockEligibility(patient, insurance);
+    const {
+      resolveStediApiKey,
+      performStediEligibilityCheck,
+      generateDemoEligibility,
+      ELIGIBILITY_NOT_CONFIGURED_MESSAGE,
+      ELIGIBILITY_CHECK_FAILED_MESSAGE,
+    } = await import('../services/eligibilityVerificationService');
+
+    const practiceId = appointment.practiceId ?? authorizedPracticeId;
+    const practice = practiceId ? await storage.getPractice(practiceId) : null;
+
+    let eligibilityResult;
+    if (practice?.isDemo) {
+      // Demo practices keep generated data so the seeded demo stays lively.
+      eligibilityResult = generateDemoEligibility(patient, insurance);
+    } else {
+      const stediApiKey = practiceId ? await resolveStediApiKey(practiceId) : null;
+      if (!stediApiKey) {
+        // Real practice, no clearinghouse key: fail loudly. Never invent data —
+        // a fabricated result would be saved and drive the front-desk copay
+        // display and coverage alerts.
+        return res.status(503).json({ message: ELIGIBILITY_NOT_CONFIGURED_MESSAGE });
+      }
+      try {
+        eligibilityResult = await performStediEligibilityCheck({
+          patient,
+          insurance,
+          practice,
+          stediApiKey,
+        });
+      } catch (stediError: any) {
+        logger.error('Pre-appointment eligibility check failed', {
+          appointmentId, patientId: patient.id, error: stediError?.message,
+        });
+        return res.status(502).json({
+          message: ELIGIBILITY_CHECK_FAILED_MESSAGE,
+          detail: stediError?.message,
+        });
+      }
+    }
 
     // Save eligibility check
     const savedCheck = await storage.createEligibilityCheck({
