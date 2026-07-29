@@ -54,10 +54,16 @@ export const mfaSetupRequired = async (req: Request, res: Response, next: NextFu
     const userId = user?.claims?.sub;
 
     if (!userId) {
-      return res.status(401).json({
-        message: 'Authentication required',
-        code: 'AUTH_REQUIRED',
-      });
+      // No session: this gate's job is forcing LOGGED-IN users to enable MFA
+      // before touching PHI — it is not an authentication wall. Anonymous
+      // requests fall through to each route's own auth: PHI/admin/export
+      // paths are still rejected for anonymous callers by
+      // conditionalMfaRequired (pattern-matched, runs next in the chain),
+      // and every session route carries route-level isAuthenticated.
+      // Blanket-401ing here silently killed all intentionally-public
+      // endpoints (invite landing, public booking, portal token access,
+      // practice public-info).
+      return next();
     }
 
     const dbUser = await storage.getUser(userId);

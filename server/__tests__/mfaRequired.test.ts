@@ -257,3 +257,36 @@ describe('invite route MFA scoping (anonymous invite landing must work)', () => 
     expect(requiresMfaEnforcement('/api/invites/f608904abc123/accept')).toBe(false);
   });
 });
+
+describe('mfaSetupRequired — anonymous requests fall through to route auth', () => {
+  it('calls next() for sessionless requests (public endpoints must work)', async () => {
+    const { mfaSetupRequired } = await import('../middleware/mfa-setup-required');
+    const req: any = { path: '/public/book/some-practice', user: undefined };
+    const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    const next = vi.fn();
+    await mfaSetupRequired(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('still blocks a logged-in user without MFA from non-exempt paths', async () => {
+    const { mfaSetupRequired } = await import('../middleware/mfa-setup-required');
+    mockStorage.getUser.mockResolvedValueOnce({ id: 'u1', role: 'billing', mfaEnabled: false });
+    const req: any = { path: '/claims', user: { claims: { sub: 'u1' } } };
+    const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    const next = vi.fn();
+    await mfaSetupRequired(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('lets a logged-in user with MFA proceed', async () => {
+    const { mfaSetupRequired } = await import('../middleware/mfa-setup-required');
+    mockStorage.getUser.mockResolvedValueOnce({ id: 'u1', role: 'billing', mfaEnabled: true });
+    const req: any = { path: '/claims', user: { claims: { sub: 'u1' } } };
+    const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    const next = vi.fn();
+    await mfaSetupRequired(req, res, next);
+    expect(next).toHaveBeenCalled();
+  });
+});
