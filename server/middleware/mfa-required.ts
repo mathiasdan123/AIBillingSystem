@@ -62,7 +62,12 @@ const EXPORT_ROUTE_PATTERNS = [
 const ADMIN_ROUTE_PATTERNS = [
   /^\/api\/admin/,
   /^\/api\/users/,
-  /^\/api\/invites/,
+  // Only the exact /api/invites endpoint (admin list/create) — NOT the
+  // token-based subroutes: GET /api/invites/:token is the anonymous invite
+  // landing lookup (the invitee has no session yet) and /:token/accept
+  // carries its own isAuthenticated. Matching the whole prefix broke the
+  // invite flow for every anonymous invitee in production.
+  /^\/api\/invites\/?(\?|$)/,
   /^\/api\/setup/,
   /^\/api\/baa/,
   /^\/api\/breach/,

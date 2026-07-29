@@ -243,3 +243,17 @@ describe('MFA Required Middleware', () => {
     expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(15);
   });
 });
+
+describe('invite route MFA scoping (anonymous invite landing must work)', () => {
+
+  it('still gates the admin list/create endpoint', () => {
+    expect(requiresMfaEnforcement('/api/invites')).toBe(true);
+    expect(requiresMfaEnforcement('/api/invites/')).toBe(true);
+    expect(requiresMfaEnforcement('/api/invites?status=pending')).toBe(true);
+  });
+
+  it('does NOT gate token-based invite subroutes (anonymous landing + accept)', () => {
+    expect(requiresMfaEnforcement('/api/invites/f608904abc123')).toBe(false);
+    expect(requiresMfaEnforcement('/api/invites/f608904abc123/accept')).toBe(false);
+  });
+});
