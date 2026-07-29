@@ -39,10 +39,23 @@ export default function Landing() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
-      if (!res.ok) throw new Error('Demo login failed');
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body?.message) detail = body.message;
+        } catch { /* non-JSON body */ }
+        throw new Error(detail);
+      }
       window.location.href = '/';
-    } catch {
-      // Fallback: open login modal
+    } catch (err) {
+      // Never fail silently on the flagship button — say what happened, then
+      // offer the login modal as the fallback.
+      toast({
+        title: 'Demo is taking a moment',
+        description: `${err instanceof Error ? err.message : 'Connection problem'} — please try again in ~30 seconds. If it keeps happening, refresh the page first.`,
+        variant: 'destructive',
+      });
       setAuthModalOpen(true);
     } finally {
       setDemoLoading(false);
