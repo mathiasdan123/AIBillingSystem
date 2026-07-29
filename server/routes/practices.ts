@@ -71,9 +71,22 @@ router.get('/:id/patients-missing-plan-documents', isAuthenticated, async (req: 
     `);
 
     const list = (rows as any).rows ?? rows ?? [];
+
+    // PHI decryption: this endpoint reads patients via raw SQL, bypassing the
+    // storage layer that normally decrypts — without this, the widget renders
+    // raw {"ciphertext":...} blobs for names/emails/phones.
+    const { decryptField } = await import('../services/phiEncryptionService');
+    const decrypted = list.map((p: any) => ({
+      ...p,
+      firstName: decryptField(p.firstName) ?? p.firstName,
+      lastName: decryptField(p.lastName) ?? p.lastName,
+      email: decryptField(p.email) ?? p.email,
+      phone: decryptField(p.phone) ?? p.phone,
+    }));
+
     res.json({
-      count: list.length,
-      patients: list,
+      count: decrypted.length,
+      patients: decrypted,
     });
   } catch (err: any) {
     logger.error('Failed to list patients missing plan documents', { error: err?.message });
