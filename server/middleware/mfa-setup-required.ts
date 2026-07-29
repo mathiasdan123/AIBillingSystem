@@ -30,6 +30,12 @@ const MFA_SETUP_EXEMPT_PATHS = [
   '/auth/verify-email',
   '/demo-login',
   '/contact',
+  // Invite links are opened by people who don't have an account yet — the
+  // anonymous GET /invites/:token landing lookup must pass. Admin invite
+  // list/create remain protected by route-level isAuthenticated+isAdmin and
+  // by conditionalMfaRequired (ADMIN_ROUTE_PATTERNS), so exempting the
+  // prefix from the SETUP gate loses nothing.
+  '/invites',
 ];
 
 export const mfaSetupRequired = async (req: Request, res: Response, next: NextFunction) => {
