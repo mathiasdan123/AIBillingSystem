@@ -252,7 +252,7 @@ export async function recordAppealOutcome(appealId: number): Promise<void> {
       !!appeal.keyArguments ||
       (appeal.notes ?? '').startsWith('Auto-drafted by denial pipeline');
 
-    await db.insert(appealOutcomes).values({
+    const [outcomeRow] = await db.insert(appealOutcomes).values({
       appealId: appeal.id,
       claimId: appeal.claimId,
       practiceId: appeal.practiceId,
@@ -265,7 +265,20 @@ export async function recordAppealOutcome(appealId: number): Promise<void> {
       daysToResolution,
       wasAiGenerated,
       aiModelUsed: wasAiGenerated ? 'template-generator' : null,
-    });
+    }).returning({ id: appealOutcomes.id });
+
+    // Recovery Ledger v2: won/partial appeals with real cash mirror into the
+    // append-only recovery ledger. Non-fatal by contract.
+    if (['won', 'partial'].includes(appeal.status!) && Number(appeal.recoveredAmount) > 0) {
+      const { recordAppealRecovery } = await import('./recoveryEventsService');
+      await recordAppealRecovery({
+        practiceId: appeal.practiceId,
+        claimId: appeal.claimId,
+        recoveredCents: Math.round(Number(appeal.recoveredAmount) * 100),
+        appealOutcomeId: outcomeRow?.id ?? null,
+        appealId: appeal.id,
+      });
+    }
 
     logger.info('Appeal outcome recorded', {
       appealId,

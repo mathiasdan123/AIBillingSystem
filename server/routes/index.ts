@@ -83,6 +83,7 @@ export { default as billingTasksRouter } from './billing-tasks';
 export { default as billingDocumentsRouter } from './billing-documents';
 export { default as claimCorrectionsRouter } from './claim-corrections';
 export { default as mcpApiKeysRouter } from './mcp-api-keys';
+export { default as investorMetricsRouter } from './investor-metrics';
 export { default as mcpTransportRouter, getMcpAuthRouter, oauthProvider as mcpOAuthProvider } from './mcp-transport';
 export { default as contactRouter } from './contact';
 export { default as credentialingRouter } from './credentialing';

@@ -2485,6 +2485,16 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
       denialPrediction: prediction as any,
     });
 
+    // Recovery Ledger v2: high-risk flags become count-only evidence events
+    // (writer no-ops for non-high risk; idempotent per claim; non-fatal).
+    const { recordDenialRiskFlagged } = await import('../services/recoveryEventsService');
+    await recordDenialRiskFlagged({
+      practiceId: claim.practiceId!,
+      claimId,
+      riskLevel: (prediction as any)?.riskLevel ?? 'unknown',
+      riskScore: (prediction as any)?.riskScore ?? null,
+    });
+
     res.json(prediction);
   } catch (error) {
     logger.error('Error predicting denial', {

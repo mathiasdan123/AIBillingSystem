@@ -1,27 +1,25 @@
 /**
- * Recovery Ledger — storage aggregation.
+ * Recovery Ledger — storage aggregation (v2, event-sourced).
  *
  * "Sheer for practices," the payer-advocate wedge, quantified. One surface
  * that answers "how much money did the system save / recover for me?"
  *
  * HONESTY CONTRACT (this is a money-claims surface — numbers must be defensible):
- *   - appealsRecovered    → HARD DOLLARS. Persisted in appeal_outcomes.
- *   - underpaymentsCaught → HARD DOLLARS. Contract-vs-paid gap on claims
- *     flagged with an 'underpayment' follow-up; we sum the measured gap.
- *   - denialsFlagged      → COUNT ONLY, never monetized. A high-risk
- *     prediction is not proof a denial was prevented (the claim might have
- *     paid anyway), so v1 deliberately does not assign it a dollar value.
+ *   - appealsRecovered      → HARD DOLLARS. Persisted in appeal_outcomes.
+ *   - underpaymentsRecovered→ HARD DOLLARS. Cash actually received against a
+ *     detected gap (recovery_events, capped at the detected gap).
+ *   - underpaymentsCaught   → MEASURED DOLLARS (identified, not yet cash).
+ *     v2 reads immutable detection-time snapshots from recovery_events;
+ *     falls back to the v1 live computation only when no events exist yet
+ *     (pre-v2 history, demo practice).
+ *   - denialsFlagged / denialsRemediated → COUNT ONLY, never monetized.
  *
- * Headline `valueDelivered` = appealsRecovered + underpaymentsCaught ONLY.
- * It is never inflated with prevented-denial estimates.
- *
- * v1 is read-only over already-persisted data — NO schema change. v2 (after
- * real claims flow) will add a persisted underpaymentAmount column and a
- * denial-remediation audit trail so the denials pillar can become honest
- * hard dollars instead of a flagged count.
+ * Headline `valueDelivered` (v2, TIGHTENED) = appeals recovered +
+ * underpayments RECOVERED — realized cash only. The measured-but-uncollected
+ * gap is reported separately as `valueIdentified`, never blended in.
  */
 
-import { claims, appealOutcomes, claimFollowUps } from "@shared/schema";
+import { claims, appealOutcomes, claimFollowUps, recoveryEvents } from "@shared/schema";
 import { db } from "../db";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 
@@ -32,11 +30,89 @@ export interface RecoveryLedgerStats {
     totalRecovered: number;
     successRate: number;
   };
-  underpaymentsCaught: { count: number; amount: number };
+  underpaymentsCaught: { count: number; amount: number; source: "ledger" | "legacy" };
+  underpaymentsRecovered: { count: number; amount: number };
   denialsFlagged: { count: number; note: string };
+  denialsRemediated: { count: number; note: string };
+  /** Realized cash only: appeals recovered + underpayments recovered. */
   valueDelivered: number;
+  /** Measured-but-not-yet-collected underpayment gap. Reported separately. */
+  valueIdentified: number;
   windowStart: string | null;
   windowEnd: string | null;
+}
+
+/**
+ * Pure composition of the ledger stats from pre-aggregated pillar rows.
+ * Exported for unit tests — all money semantics live here.
+ */
+export function composeRecoveryLedgerStats(input: {
+  appeals: { resolved: number; won: number; totalAppealed: number; totalRecovered: number };
+  caughtLedger: { count: number; amountCents: number };
+  caughtLegacy: { count: number; amount: number };
+  recovered: { count: number; amountCents: number };
+  denialsFlaggedLedger: number;
+  denialsFlaggedLegacy: number;
+  denialsRemediated: number;
+  windowStart?: Date;
+  windowEnd?: Date;
+}): RecoveryLedgerStats {
+  const { appeals } = input;
+
+  // Event snapshots are authoritative once any exist; legacy live computation
+  // covers pre-v2 history (and the seeded demo practice).
+  const useLedgerCaught = input.caughtLedger.count > 0;
+  const caught = useLedgerCaught
+    ? { count: input.caughtLedger.count, amount: input.caughtLedger.amountCents / 100, source: "ledger" as const }
+    : { count: input.caughtLegacy.count, amount: input.caughtLegacy.amount, source: "legacy" as const };
+
+  const recoveredAmount = input.recovered.amountCents / 100;
+  const denialsFlaggedCount = Math.max(input.denialsFlaggedLedger, input.denialsFlaggedLegacy);
+
+  return {
+    appealsRecovered: {
+      count: appeals.won,
+      totalAppealed: appeals.totalAppealed,
+      totalRecovered: appeals.totalRecovered,
+      successRate: appeals.resolved > 0 ? (appeals.won / appeals.resolved) * 100 : 0,
+    },
+    underpaymentsCaught: caught,
+    underpaymentsRecovered: { count: input.recovered.count, amount: recoveredAmount },
+    denialsFlagged: {
+      count: denialsFlaggedCount,
+      note: "At-risk claims caught before submission. Not monetized — a flagged claim is not proof a denial was prevented.",
+    },
+    denialsRemediated: {
+      count: input.denialsRemediated,
+      note: "Flagged claims that were subsequently paid. Evidence trail only — never monetized.",
+    },
+    valueDelivered: appeals.totalRecovered + recoveredAmount,
+    valueIdentified: caught.amount,
+    windowStart: input.windowStart ? input.windowStart.toISOString() : null,
+    windowEnd: input.windowEnd ? input.windowEnd.toISOString() : null,
+  };
+}
+
+async function eventPillar(
+  practiceId: number,
+  eventType: string,
+  startDate?: Date,
+  endDate?: Date,
+): Promise<{ count: number; amountCents: number }> {
+  const where = [
+    eq(recoveryEvents.practiceId, practiceId),
+    eq(recoveryEvents.eventType, eventType),
+  ];
+  if (startDate) where.push(gte(recoveryEvents.occurredAt, startDate));
+  if (endDate) where.push(lte(recoveryEvents.occurredAt, endDate));
+  const [row] = await db
+    .select({
+      count: sql<number>`COUNT(*)::int`,
+      amountCents: sql<string>`COALESCE(SUM(${recoveryEvents.amountCents}), 0)`,
+    })
+    .from(recoveryEvents)
+    .where(and(...where));
+  return { count: Number(row?.count) || 0, amountCents: Number(row?.amountCents) || 0 };
 }
 
 export async function getRecoveryLedgerStats(
@@ -44,9 +120,7 @@ export async function getRecoveryLedgerStats(
   startDate?: Date,
   endDate?: Date,
 ): Promise<RecoveryLedgerStats> {
-  // ── Pillar 1: Appeals recovered (HARD DOLLARS) ──────────────────────
-  // appeal_outcomes is the immutable analytics record; outcome ∈ won|partial
-  // carries recoveredAmount → realized recovery.
+  // ── Pillar 1: Appeals recovered (HARD DOLLARS, appeal_outcomes) ──────
   const appealWhere = [eq(appealOutcomes.practiceId, practiceId)];
   if (startDate) appealWhere.push(gte(appealOutcomes.createdAt, startDate));
   if (endDate) appealWhere.push(lte(appealOutcomes.createdAt, endDate));
@@ -61,18 +135,15 @@ export async function getRecoveryLedgerStats(
     .from(appealOutcomes)
     .where(and(...appealWhere));
 
-  const resolved = Number(appealRow?.resolved) || 0;
-  const wonCount = Number(appealRow?.won) || 0;
-  const totalRecovered = Number(appealRow?.totalRecovered) || 0;
-  const totalAppealed = Number(appealRow?.totalAppealed) || 0;
+  // ── Pillars 2–5: event-sourced (recovery_events) ─────────────────────
+  const [caughtLedger, recovered, flaggedLedger, remediated] = await Promise.all([
+    eventPillar(practiceId, "underpayment_detected", startDate, endDate),
+    eventPillar(practiceId, "underpayment_recovered", startDate, endDate),
+    eventPillar(practiceId, "denial_risk_flagged", startDate, endDate),
+    eventPillar(practiceId, "denial_risk_remediated", startDate, endDate),
+  ]);
 
-  // ── Pillar 2: Underpayments caught (HARD DOLLARS) ───────────────────
-  // claim_follow_ups rows of type 'underpayment' flag a measured gap. The
-  // contract-vs-paid gap is a property of the CLAIM, but a single claim can
-  // have multiple 'underpayment' follow-ups (e.g. an earlier one was
-  // completed/dismissed and a later sweep re-flagged it). We must therefore
-  // dedupe to DISTINCT claims before summing — otherwise the same gap is
-  // counted once per follow-up row, inflating this money-claims surface.
+  // ── Legacy fallbacks (pre-v2 history / demo practice) ────────────────
   const underWhere = [
     eq(claimFollowUps.practiceId, practiceId),
     eq(claimFollowUps.followUpType, "underpayment"),
@@ -81,8 +152,6 @@ export async function getRecoveryLedgerStats(
   if (startDate) underWhere.push(gte(claimFollowUps.createdAt, startDate));
   if (endDate) underWhere.push(lte(claimFollowUps.createdAt, endDate));
 
-  // One row per distinct claim that has at least one matching underpayment
-  // follow-up, carrying that claim's measured gap exactly once.
   const distinctUnderpaidClaims = db
     .selectDistinct({
       claimId: claims.id,
@@ -100,11 +169,6 @@ export async function getRecoveryLedgerStats(
     })
     .from(distinctUnderpaidClaims);
 
-  const underpaymentCount = Number(underRow?.count) || 0;
-  const underpaymentAmount = Number(underRow?.amount) || 0;
-
-  // ── Pillar 3: Denials flagged pre-submission (COUNT ONLY) ───────────
-  // High-risk predictions caught before submission. NOT monetized.
   const flagWhere = [
     eq(claims.practiceId, practiceId),
     eq(claims.isDemo, false),
@@ -119,25 +183,23 @@ export async function getRecoveryLedgerStats(
     .from(claims)
     .where(and(...flagWhere));
 
-  const denialsFlaggedCount = Number(flagRow?.count) || 0;
-
-  // Headline: hard dollars only.
-  const valueDelivered = totalRecovered + underpaymentAmount;
-
-  return {
-    appealsRecovered: {
-      count: wonCount,
-      totalAppealed,
-      totalRecovered,
-      successRate: resolved > 0 ? (wonCount / resolved) * 100 : 0,
+  return composeRecoveryLedgerStats({
+    appeals: {
+      resolved: Number(appealRow?.resolved) || 0,
+      won: Number(appealRow?.won) || 0,
+      totalAppealed: Number(appealRow?.totalAppealed) || 0,
+      totalRecovered: Number(appealRow?.totalRecovered) || 0,
     },
-    underpaymentsCaught: { count: underpaymentCount, amount: underpaymentAmount },
-    denialsFlagged: {
-      count: denialsFlaggedCount,
-      note: "At-risk claims caught before submission. Not monetized — a flagged claim is not proof a denial was prevented.",
+    caughtLedger,
+    caughtLegacy: {
+      count: Number(underRow?.count) || 0,
+      amount: Number(underRow?.amount) || 0,
     },
-    valueDelivered,
-    windowStart: startDate ? startDate.toISOString() : null,
-    windowEnd: endDate ? endDate.toISOString() : null,
-  };
+    recovered,
+    denialsFlaggedLedger: flaggedLedger.count,
+    denialsFlaggedLegacy: Number(flagRow?.count) || 0,
+    denialsRemediated: remediated.count,
+    windowStart: startDate,
+    windowEnd: endDate,
+  });
 }

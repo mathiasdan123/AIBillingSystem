@@ -95,6 +95,7 @@ const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 const Credentialing = lazy(() => import("@/pages/credentialing"));
 const MaintenanceWindows = lazy(() => import("@/pages/maintenance-windows"));
 const CostDashboard = lazy(() => import("@/pages/cost-dashboard"));
+const InvestorMetrics = lazy(() => import("@/pages/investor-metrics"));
 
 // Auth pages
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
@@ -341,6 +342,7 @@ function Router() {
               {isAdmin && <Route path="/credentialing" component={Credentialing} />}
               {isAdmin && <Route path="/maintenance-windows" component={MaintenanceWindows} />}
               {isAdmin && <Route path="/cost-dashboard" component={CostDashboard} />}
+              {isAdmin && <Route path="/investor-metrics" component={InvestorMetrics} />}
               <Route path="/notification-settings" component={NotificationSettings} />
               <Route path="/notification-templates" component={NotificationTemplates} />
               <Route path="/stedi-readiness" component={StediReadiness} />

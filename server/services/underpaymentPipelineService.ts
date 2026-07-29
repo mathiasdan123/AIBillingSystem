@@ -72,7 +72,7 @@ export async function ensureUnderpaymentFollowUp(
     .filter(Boolean)
     .join(', ');
 
-  await db.insert(claimFollowUps).values({
+  const [followUp] = await db.insert(claimFollowUps).values({
     claimId,
     practiceId,
     followUpType: 'underpayment',
@@ -80,6 +80,18 @@ export async function ensureUnderpaymentFollowUp(
     priority: priorityForGap(gap),
     notes: `Claim ${claimNumber || claimId} underpaid by $${gap.toFixed(2)} (expected $${expectedAmount.toFixed(2)}, paid $${paidAmount.toFixed(2)})${detail ? ` — ${detail}` : ''}. Review for dispute.`,
     dueDate,
+  }).returning({ id: claimFollowUps.id });
+
+  // Recovery Ledger v2: snapshot the measured gap at detection time (immutable
+  // evidence, survives later claim mutation). Non-fatal by contract.
+  const { recordUnderpaymentDetected } = await import('./recoveryEventsService');
+  await recordUnderpaymentDetected({
+    practiceId,
+    claimId,
+    expectedCents: Math.round(expectedAmount * 100),
+    paidCents: Math.round(paidAmount * 100),
+    sourceType: 'underpayment_pipeline',
+    sourceId: followUp?.id ?? null,
   });
 
   logger.info('Underpayment follow-up created', { claimId, practiceId, gap });

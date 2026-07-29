@@ -122,11 +122,15 @@ export function registerBillingTools(
       return {
         ...stats,
         // A ready-to-speak line so the assistant doesn't have to assemble it.
+        // v2 semantics: valueDelivered = realized cash only (appeals recovered
+        // + underpayments recovered); identified-but-uncollected gap is stated
+        // separately and never blended into the recovered figure.
         headline:
-          `Recovered ${usd(stats.valueDelivered)} in hard dollars` +
+          `Recovered ${usd(stats.valueDelivered)} in realized dollars` +
           ` (${usd(stats.appealsRecovered.totalRecovered)} via ${stats.appealsRecovered.count} won/partial appeal(s)` +
-          ` + ${usd(stats.underpaymentsCaught.amount)} in underpayments caught across ${stats.underpaymentsCaught.count} claim(s)).` +
-          ` Separately, ${stats.denialsFlagged.count} at-risk claim(s) were flagged before submission (not counted as recovered dollars).`,
+          ` + ${usd(stats.underpaymentsRecovered.amount)} collected on ${stats.underpaymentsRecovered.count} underpaid claim(s)).` +
+          ` Separately: ${usd(stats.valueIdentified)} in underpayment gaps identified across ${stats.underpaymentsCaught.count} claim(s) (not yet collected),` +
+          ` and ${stats.denialsFlagged.count} at-risk claim(s) flagged before submission (never monetized).`,
       };
     },
   );

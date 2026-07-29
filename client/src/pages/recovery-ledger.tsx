@@ -10,10 +10,11 @@ import PageLayout from '@/components/PageLayout';
  * Answers one question: how much money has the system saved / recovered?
  *
  * Honesty contract (mirrored from the backend):
- *   - Appeals recovered + Underpayments caught = HARD DOLLARS → headline.
- *   - Denials flagged pre-submission = COUNT ONLY, never dollarized (a flagged
- *     claim is not proof a denial was prevented). Shown as a separate,
- *     clearly-labeled stat so we never overstate recovered money.
+ *   - Appeals recovered + Underpayments RECOVERED = REALIZED CASH → headline.
+ *   - Underpayments caught (identified gap) = measured but not yet collected —
+ *     shown separately, never blended into the recovered figure.
+ *   - Denials flagged/remediated = COUNT ONLY, never dollarized (a flagged
+ *     claim is not proof a denial was prevented).
  */
 
 interface RecoveryLedger {
@@ -24,8 +25,11 @@ interface RecoveryLedger {
     successRate: number;
   };
   underpaymentsCaught: { count: number; amount: number };
+  underpaymentsRecovered: { count: number; amount: number };
   denialsFlagged: { count: number; note: string };
+  denialsRemediated: { count: number; note: string };
   valueDelivered: number;
+  valueIdentified: number;
   windowStart: string | null;
   windowEnd: string | null;
 }
@@ -49,7 +53,7 @@ export default function RecoveryLedgerPage() {
       <Card className="mb-6 border-green-200 bg-green-50/50 dark:bg-green-900/10 dark:border-green-800">
         <CardHeader>
           <CardDescription className="flex items-center gap-2 text-green-800 dark:text-green-200">
-            <DollarSign className="w-4 h-4" /> Total value delivered
+            <DollarSign className="w-4 h-4" /> Total recovered (realized cash)
           </CardDescription>
           <CardTitle className="text-4xl text-green-700 dark:text-green-300">
             {fmtUsd(data?.valueDelivered ?? 0)}
@@ -57,9 +61,9 @@ export default function RecoveryLedgerPage() {
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground">
-            Realized hard dollars: appeals recovered + underpayments caught. Does not include
-            estimated value of denials flagged before submission (counted separately below, never
-            dollarized).
+            Cash actually received: appeals recovered + underpayments collected. Identified-but-
+            uncollected gaps ({fmtUsd(data?.valueIdentified ?? 0)}) and denials flagged before
+            submission are shown separately below and never blended into this number.
           </p>
         </CardContent>
       </Card>
@@ -99,10 +103,12 @@ export default function RecoveryLedgerPage() {
           </CardHeader>
           <CardContent className="space-y-1">
             <div className="text-3xl font-bold text-emerald-700 dark:text-emerald-300">
-              {fmtUsd(data?.underpaymentsCaught.amount ?? 0)}
+              {fmtUsd(data?.underpaymentsRecovered?.amount ?? 0)}
+              <span className="text-sm font-normal text-muted-foreground"> collected</span>
             </div>
             <div className="text-sm text-muted-foreground">
-              {data?.underpaymentsCaught.count ?? 0} claim(s) flagged below contract
+              {fmtUsd(data?.underpaymentsCaught.amount ?? 0)} identified across{' '}
+              {data?.underpaymentsCaught.count ?? 0} claim(s) below contract
             </div>
           </CardContent>
         </Card>
@@ -118,6 +124,9 @@ export default function RecoveryLedgerPage() {
           <CardContent className="space-y-1">
             <div className="text-3xl font-bold text-amber-700 dark:text-amber-300">
               {data?.denialsFlagged.count ?? 0}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {data?.denialsRemediated?.count ?? 0} of them subsequently paid after review
             </div>
             <div className="text-xs text-muted-foreground flex items-start gap-1">
               <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />

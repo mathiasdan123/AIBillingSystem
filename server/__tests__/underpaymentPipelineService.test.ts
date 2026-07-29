@@ -24,12 +24,20 @@ vi.mock('../db', () => {
       insert: (table: any) => ({
         values: (vals: any) => {
           mockDbState.inserts.push({ table, vals });
-          return { then: (resolve: any) => resolve([]) };
+          const result = [{ id: 1 }];
+          return {
+            then: (resolve: any) => resolve(result),
+            returning: () => ({ then: (resolve: any) => resolve(result) }),
+          };
         },
       }),
     },
   };
 });
+
+vi.mock('../services/recoveryEventsService', () => ({
+  recordUnderpaymentDetected: vi.fn(async () => {}),
+}));
 
 vi.mock('../services/logger', () => ({
   default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },

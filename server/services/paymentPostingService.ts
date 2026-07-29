@@ -124,6 +124,31 @@ export async function postPayment(
     });
 
     return posting;
+  }).then(async (posting: PaymentPosting) => {
+    // Recovery Ledger v2 hooks — OUTSIDE the money transaction on purpose:
+    // ledger bookkeeping must never roll back a posted payment, and the
+    // writers are idempotent + non-fatal by contract.
+    try {
+      const { recordUnderpaymentRecovery, recordDenialRiskRemediated } = await import('./recoveryEventsService');
+      const paymentCents = Math.round(Number(data.paymentAmount) * 100);
+      if (!posting.reversed && paymentCents > 0) {
+        // Cash landing on a claim with a detected underpayment gap counts as
+        // recovered — capped at the remaining gap inside the writer.
+        await recordUnderpaymentRecovery({
+          practiceId,
+          claimId: data.claimId,
+          paymentCents,
+          sourceType: 'payment_posting',
+          sourceId: posting.id,
+        });
+        // A previously flagged high-denial-risk claim receiving payment closes
+        // the flagged→fixed→paid evidence trail (count-only, never monetized).
+        await recordDenialRiskRemediated({ practiceId, claimId: data.claimId });
+      }
+    } catch (err: any) {
+      logger.error('recovery ledger hooks failed after payment post', { error: err?.message, claimId: data.claimId });
+    }
+    return posting;
   });
 }
 

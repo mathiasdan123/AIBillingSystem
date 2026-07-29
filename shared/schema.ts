@@ -1,4 +1,5 @@
 import {
+  bigint,
   pgTable,
   text,
   varchar,
@@ -4363,3 +4364,64 @@ export const insertBlancheConversationSchema = createInsertSchema(blancheConvers
 });
 export type BlancheConversation = typeof blancheConversations.$inferSelect;
 export type InsertBlancheConversation = z.infer<typeof insertBlancheConversationSchema>;
+
+// ==================== Recovery Events (Recovery Ledger v2) ====================
+// Append-only ledger of money-recovery evidence. Each row is an immutable
+// event snapshot taken at the moment something happened, so the Recovery
+// Ledger's dollars stay defensible even as the underlying claim mutates.
+// HONESTY CONTRACT: amountCents is set ONLY for realized/measured dollars
+// (underpayment_detected snapshots the measured gap; underpayment_recovered
+// and appeal_recovered record actual cash). denial_risk_* events are
+// count-only evidence trails and always carry amountCents = null.
+
+export const recoveryEvents = pgTable("recovery_events", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  claimId: integer("claim_id").references(() => claims.id),
+  // underpayment_detected | underpayment_recovered | appeal_recovered |
+  // denial_risk_flagged | denial_risk_remediated
+  eventType: varchar("event_type").notNull(),
+  amountCents: bigint("amount_cents", { mode: "number" }),
+  // Immutable snapshot/provenance: expectedCents, paidCents, sourceType,
+  // sourceId (followUpId / appealOutcomeId / paymentPostingId), riskLevel…
+  evidence: jsonb("evidence"),
+  occurredAt: timestamp("occurred_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_recovery_events_practice_type").on(table.practiceId, table.eventType),
+  index("idx_recovery_events_claim").on(table.claimId),
+]);
+
+export const insertRecoveryEventSchema = createInsertSchema(recoveryEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type RecoveryEvent = typeof recoveryEvents.$inferSelect;
+export type InsertRecoveryEvent = z.infer<typeof insertRecoveryEventSchema>;
+
+// ==================== Metric Snapshots (investor metrics) ====================
+// Daily time series of the numbers a diligence process asks for. practiceId
+// 0 = global rollup across all real (non-demo) practices (deliberately no FK
+// so the sentinel works and the unique upsert key has no NULL semantics).
+// Written by the nightly investor-metrics job; idempotent per
+// (practiceId, metricDate, metric).
+
+export const metricSnapshots = pgTable("metric_snapshots", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").notNull().default(0),
+  metricDate: date("metric_date").notNull(),
+  metric: varchar("metric").notNull(),
+  value: decimal("value", { precision: 16, scale: 4 }).notNull(),
+  meta: jsonb("meta"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_metric_snapshots").on(table.practiceId, table.metricDate, table.metric),
+  index("idx_metric_snapshots_metric_date").on(table.metric, table.metricDate),
+]);
+
+export const insertMetricSnapshotSchema = createInsertSchema(metricSnapshots).omit({
+  id: true,
+  createdAt: true,
+});
+export type MetricSnapshot = typeof metricSnapshots.$inferSelect;
+export type InsertMetricSnapshot = z.infer<typeof insertMetricSnapshotSchema>;

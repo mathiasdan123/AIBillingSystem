@@ -1592,6 +1592,21 @@ function registerJobs() {
   });
   scheduledTasks.set('stediEnrollmentSync', stediEnrollmentSyncTask);
 
+  // Investor metrics snapshot — daily at 11:55 PM, after the day's payer
+  // syncs, so the persisted KPI time series (claims, first-pass %, recovered
+  // dollars) reflects the full day. Global rollup over real practices only.
+  const investorMetricsTask = cron.schedule('55 23 * * *', async () => {
+    try {
+      const { storeDailySnapshot } = await import('./services/investorMetricsService');
+      await storeDailySnapshot(new Date());
+    } catch (error: any) {
+      logger.error('Investor metrics snapshot task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('investorMetrics', investorMetricsTask);
+
   logger.info('Scheduler started', {
     tasks: ['dailyDeniedClaimsReport', 'dailyBillingSummary', 'baaExpirationCheck', 'eligibilityRefresh', 'weeklyCancellationReport', 'hardDeletion', 'breachDeadlineCheck', 'amendmentDeadlineCheck', 'appointmentReminders', 'preAppointmentEligibility', 'automatedReviewRequests', 'automatedClaimStatusCheck', 'appealInsightsRefresh', 'autoFixAnalysis', 'claimFollowUpGeneration', 'stediEnrollmentSync'],
   });
