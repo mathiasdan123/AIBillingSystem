@@ -19,6 +19,7 @@ vi.mock('@/hooks/useAuth', () => ({
     currentRole: 'therapist' as const,
     actualRole: 'therapist' as const,
     needsMfaSetup: false,
+    needsMfaChallenge: false,
   })),
 }));
 
@@ -50,6 +51,7 @@ describe('App component', () => {
       currentRole: 'therapist' as const,
       actualRole: 'therapist' as const,
       needsMfaSetup: false,
+    needsMfaChallenge: false,
     });
 
     render(<App />);
@@ -69,6 +71,7 @@ describe('App component', () => {
       currentRole: 'therapist' as const,
       actualRole: 'therapist' as const,
       needsMfaSetup: false,
+    needsMfaChallenge: false,
     });
 
     render(<App />);
@@ -76,5 +79,27 @@ describe('App component', () => {
     // App should render without error when not authenticated
     // The Landing component would be rendered at the root path
     expect(document.body).toBeTruthy();
+  });
+
+  it('gates to the MFA challenge page when enrolled but this session has not verified', async () => {
+    const { useAuth } = await import('@/hooks/useAuth');
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      isAdmin: false,
+      user: { id: '1', email: 'a@b.com', mfaRequired: false, mfaChallengeRequired: true } as any,
+      currentRole: 'therapist' as const,
+      actualRole: 'therapist' as const,
+      needsMfaSetup: false,
+      needsMfaChallenge: true,
+    });
+
+    render(<App />);
+
+    // The MFA challenge page prompts for a 6-digit authenticator code —
+    // presence of that heading proves the gate rendered it instead of
+    // silently falling through to the main app (which would 403-loop on
+    // every PHI query, the bug this test guards against).
+    expect(await screen.findByText(/Two-Factor Authentication/i)).toBeTruthy();
   });
 });

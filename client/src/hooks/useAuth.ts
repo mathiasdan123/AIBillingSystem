@@ -14,6 +14,12 @@ interface User {
   // enforces this, but the client gate prevents a 13-rejection storm
   // every time a no-MFA user lands on the dashboard.
   mfaRequired?: boolean;
+  // True when MFA IS enabled on the account, but this particular session
+  // hasn't passed a challenge yet (fresh login, or the 15-min re-verify
+  // window lapsed). Distinct from mfaRequired above. Without this, every
+  // PHI query 403s with MFA_VERIFICATION_REQUIRED and nothing routes the
+  // user to /mfa-challenge to clear it.
+  mfaChallengeRequired?: boolean;
 }
 
 export function useAuth() {
@@ -47,6 +53,10 @@ export function useAuth() {
     actualRole: user?.role || 'therapist',
     // True when authenticated but no MFA yet — gate PHI routes on this
     needsMfaSetup: isAuthenticated && user?.mfaRequired === true,
+    // True when MFA is enabled but this session hasn't cleared a challenge —
+    // gate PHI routes on this too, routing to /mfa-challenge instead of
+    // silently 403ing on every query.
+    needsMfaChallenge: isAuthenticated && user?.mfaChallengeRequired === true,
   };
 }
 

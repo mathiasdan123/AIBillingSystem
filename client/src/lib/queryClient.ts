@@ -181,11 +181,16 @@ export const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error, query) => {
       const msg = error instanceof Error ? error.message : String(error);
-      // MFA_SETUP_REQUIRED is a 403, but it's NOT "session expired" — the
-      // session is fine, the user just hasn't enabled MFA yet. The App-level
-      // gate (App.tsx → needsMfaSetup) handles routing them to the setup
-      // page, so we don't need to surface anything here.
-      if (msg.includes('MFA_SETUP_REQUIRED')) return;
+      // MFA_SETUP_REQUIRED / MFA_NOT_ENABLED / MFA_VERIFICATION_REQUIRED are
+      // all 403s, but none of them are "session expired" — the session is
+      // fine, the user either hasn't enabled MFA yet or hasn't cleared this
+      // session's MFA challenge. The App-level gates (App.tsx → needsMfaSetup
+      // / needsMfaChallenge) handle routing them to the right page, so we
+      // don't need to surface anything here. Without this exemption, every
+      // PHI query for such a user 403s and this handler fires the
+      // "session expired" event on each one — a continuously-flashing toast
+      // even though the user is fully logged in.
+      if (msg.includes('MFA_SETUP_REQUIRED') || msg.includes('MFA_NOT_ENABLED') || msg.includes('MFA_VERIFICATION_REQUIRED')) return;
       if (msg.includes('401') || msg.includes('403')) {
         // Dispatch a custom event that the Toaster/App can listen for
         window.dispatchEvent(new CustomEvent('auth-error', {

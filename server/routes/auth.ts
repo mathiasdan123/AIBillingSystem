@@ -16,7 +16,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import * as crypto from 'crypto';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
-import { setMfaVerified, clearMfaVerification, MFA_PROTECTED_ROUTES, MFA_CONFIG } from '../middleware/mfa-required';
+import { setMfaVerified, clearMfaVerification, isMfaSessionValid, MFA_PROTECTED_ROUTES, MFA_CONFIG } from '../middleware/mfa-required';
 import { authLimiter } from '../middleware/rate-limiter';
 import logger from '../services/logger';
 
@@ -81,7 +81,14 @@ router.get('/auth/user', isAuthenticated, async (req: any, res) => {
     }
     // Include mfaRequired flag: true if MFA is not yet set up (all roles must set up MFA)
     const mfaRequired = !user.mfaEnabled;
-    res.json({ ...user, mfaRequired });
+    // Distinct from mfaRequired: MFA is enabled on the account, but THIS session
+    // hasn't passed a challenge (fresh login, or the 15-min window lapsed).
+    // The server-side mfaRequired middleware already enforces this on every PHI
+    // route (403 MFA_VERIFICATION_REQUIRED) — without this flag the client had
+    // no way to know to route the user to /mfa-challenge, so every PHI query
+    // just 403'd repeatedly and got misreported as "session expired" in a loop.
+    const mfaChallengeRequired = user.mfaEnabled && !isMfaSessionValid(req.session, userId);
+    res.json({ ...user, mfaRequired, mfaChallengeRequired });
   } catch (error) {
     logger.error("Error fetching user", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch user" });

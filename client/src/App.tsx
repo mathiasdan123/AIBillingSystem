@@ -211,7 +211,7 @@ function PageLoader() {
 }
 
 function Router() {
-  const { isAuthenticated, isLoading, isAdmin, needsMfaSetup } = useAuth();
+  const { isAuthenticated, isLoading, isAdmin, needsMfaSetup, needsMfaChallenge } = useAuth();
 
   if (isLoading) {
     return (
@@ -233,6 +233,25 @@ function Router() {
         <ErrorBoundary>
           <Suspense fallback={<PageLoader />}>
             <MfaSetupRequired />
+          </Suspense>
+        </ErrorBoundary>
+      </main>
+    );
+  }
+
+  // Enrolled in MFA, but this session hasn't passed a challenge (fresh
+  // login, or the 15-min re-verify window lapsed). Same failure mode as
+  // above but one step further: without this gate, every PHI query 403s
+  // with MFA_VERIFICATION_REQUIRED, which queryClient's global handler
+  // can't distinguish from a real expired session — the user sees a
+  // continuously-flashing "session expired" toast with no way out short of
+  // manually typing /mfa-challenge into the URL bar.
+  if (isAuthenticated && needsMfaChallenge) {
+    return (
+      <main id="main-content">
+        <ErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            <MfaChallenge />
           </Suspense>
         </ErrorBoundary>
       </main>
