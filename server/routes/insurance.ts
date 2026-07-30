@@ -413,8 +413,14 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
       insuranceId: insuranceId || null,
       status: eligibilityResult.status,
       coverageType: eligibilityResult.coverageType,
-      effectiveDate: eligibilityResult.effectiveDate,
-      terminationDate: eligibilityResult.terminationDate,
+      // Stedi/EDI payers frequently omit plan dates, returning "" rather than
+      // omitting the field — Postgres rejects "" for a date column outright
+      // (invalid input syntax for type date), which threw here, was caught
+      // as a generic failure, and surfaced to the front desk as "coverage is
+      // not active" even when Stedi's actual answer was active. Empty string
+      // must become null, same as the `|| null` guard already used below.
+      effectiveDate: eligibilityResult.effectiveDate || null,
+      terminationDate: eligibilityResult.terminationDate || null,
       copay: eligibilityResult.copay?.toString(),
       deductible: eligibilityResult.deductible?.toString(),
       deductibleMet: eligibilityResult.deductibleMet?.toString(),
@@ -682,8 +688,8 @@ router.post('/eligibility/batch-verify', isAuthenticated, async (req: any, res) 
         insuranceId: insurance?.id || null,
         status: eligibilityResult.status,
         coverageType: eligibilityResult.coverageType,
-        effectiveDate: eligibilityResult.effectiveDate,
-        terminationDate: eligibilityResult.terminationDate,
+        effectiveDate: eligibilityResult.effectiveDate || null,
+        terminationDate: eligibilityResult.terminationDate || null,
         copay: eligibilityResult.copay?.toString(),
         deductible: eligibilityResult.deductible?.toString(),
         deductibleMet: eligibilityResult.deductibleMet?.toString(),
