@@ -39,6 +39,7 @@ import {
   decryptField,
 } from "../services/phiEncryptionService";
 import { cache, CacheKeys } from "../services/cacheService";
+import { REQUIRED_CONSENT_TYPES } from "../services/consentTypes";
 
 // ==================== PATIENT OPERATIONS ====================
 
@@ -365,7 +366,7 @@ export async function getActiveConsent(patientId: number, consentType: string): 
     .orderBy(desc(patientConsents.createdAt));
 
   for (const consent of consents) {
-    if (!consent.expiresAt || new Date(consent.expiresAt) > new Date()) {
+    if (!consent.expirationDate || new Date(consent.expirationDate) > new Date()) {
       return consent;
     }
   }
@@ -416,7 +417,7 @@ export async function hasRequiredTreatmentConsents(patientId: number): Promise<{
   missingConsents: string[];
   consentStatus: Record<string, boolean>;
 }> {
-  const requiredConsents = ['treatment', 'privacy', 'telehealth'];
+  const requiredConsents = REQUIRED_CONSENT_TYPES;
   const consentStatus: Record<string, boolean> = {};
   const missingConsents: string[] = [];
 
@@ -441,7 +442,7 @@ export async function batchGetConsentStatus(patientIds: number[]): Promise<Map<n
   const result = new Map<number, { hasConsent: boolean; missingConsents: string[] }>();
   if (patientIds.length === 0) return result;
 
-  const requiredTypes = ['treatment', 'privacy', 'telehealth'];
+  const requiredTypes = REQUIRED_CONSENT_TYPES;
 
   const allConsents = await db
     .select()
@@ -454,7 +455,7 @@ export async function batchGetConsentStatus(patientIds: number[]): Promise<Map<n
 
   const activeConsentsByPatient = new Map<number, Set<string>>();
   for (const consent of allConsents) {
-    if (consent.expiresAt && new Date(consent.expiresAt) <= new Date()) continue;
+    if (consent.expirationDate && new Date(consent.expirationDate) <= new Date()) continue;
     if (!activeConsentsByPatient.has(consent.patientId)) {
       activeConsentsByPatient.set(consent.patientId, new Set());
     }

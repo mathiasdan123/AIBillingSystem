@@ -18,6 +18,7 @@ import logger from '../services/logger';
 import * as stripeService from '../services/stripeService';
 import { sendEmail } from '../services/emailService';
 import { intakeSubmissionNotification } from '../services/emailTemplates';
+import { CONSENT_MAPPINGS, GATED_CONSENT_TYPES } from '../services/consentTypes';
 
 const router = Router();
 
@@ -225,51 +226,7 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
       return res.status(400).json({ message: 'consentType and signatureName are required' });
     }
 
-    // Map consent type to HIPAA-required fields
-    const consentMappings: Record<string, { purpose: string; info: string; recipient: string }> = {
-      hipaa_privacy_practices: {
-        purpose: 'To inform patient/guardian of privacy practices and obtain acknowledgment',
-        info: 'Notice of Privacy Practices document',
-        recipient: 'Practice records',
-      },
-      waiver_release: {
-        purpose: 'Waiver of liability and release for occupational therapy services',
-        info: 'Emergency contact information, liability waiver acknowledgment',
-        recipient: 'Practice records and emergency contacts as needed',
-      },
-      card_authorization: {
-        purpose: 'Authorization to charge payment card for services',
-        info: 'Payment method authorization for copays, deductibles, and balances',
-        recipient: 'Payment processor (Stripe) and practice billing',
-      },
-      financial_responsibility: {
-        purpose: 'Acknowledgment of financial responsibility for services',
-        info: 'Financial responsibility agreement',
-        recipient: 'Practice billing department',
-      },
-      // Payer-advocacy consent types (2026-05-31). DRAFT language — must be
-      // reviewed/replaced by health-law counsel before going live to real
-      // patients (see ~/Desktop/payer-advocacy-attorney-questions.md). These
-      // are the legal keys that let the practice (and its billing agent)
-      // retrieve benefit data and act as the patient's authorized
-      // representative in appeals — the "Sheer for practices" wedge.
-      assignment_of_benefits: {
-        purpose:
-          'Assignment of insurance benefits to the practice for services rendered (DRAFT — pending counsel review)',
-        info:
-          'Authorization for the health plan to pay benefits directly to the practice, and for the practice and its billing agent to obtain eligibility, coverage, claims, and explanation-of-benefit data for billing-accuracy purposes',
-        recipient: 'Patient health plan(s), practice billing, and authorized billing agent',
-      },
-      authorized_representative: {
-        purpose:
-          "Designation of the practice and its billing agent as the patient's authorized representative with the health plan, including appeals (DRAFT — pending counsel review)",
-        info:
-          'Authorization to communicate with the health plan and file appeals on the patient’s behalf regarding claims for services rendered by the practice',
-        recipient: 'Patient health plan(s), practice billing, and authorized billing agent',
-      },
-    };
-
-    const mapping = consentMappings[consentType];
+    const mapping = CONSENT_MAPPINGS[consentType];
     if (!mapping) {
       return res.status(400).json({ message: 'Invalid consent type' });
     }
@@ -280,7 +237,6 @@ router.post('/patient-portal/intake/consent', async (req, res) => {
     // The intake wizard already hides the step when the flag is off, but that
     // is client-side only — enforce the gate server-side too so a direct POST
     // can't record these legally-significant consents out of band.
-    const GATED_CONSENT_TYPES = ['assignment_of_benefits', 'authorized_representative'];
     if (GATED_CONSENT_TYPES.includes(consentType) && practice?.benefitsAuthEnabled !== true) {
       logger.warn('Blocked gated consent attempt while benefitsAuthEnabled is off', {
         patientId: patient.id,

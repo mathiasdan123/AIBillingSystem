@@ -16,8 +16,6 @@ import type { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
 import logger from '../services/logger';
 
-const REQUIRED_CONSENT_TYPES = ['treatment', 'hipaa_release'];
-
 /**
  * Extract patient ID from various request locations.
  * Returns undefined if no patient context is found.
