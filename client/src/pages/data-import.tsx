@@ -1,9 +1,13 @@
 import { useState, useCallback, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   Select,
@@ -75,6 +79,7 @@ interface ImportResult {
   skipped: number;
   failed: number;
   errors: Array<{ row: number; field: string; message: string }>;
+  importedPatientIds?: number[];
 }
 
 interface ImportHistoryEntry {
@@ -660,6 +665,10 @@ function StepImport({
         </Card>
       </div>
 
+      {importResult.imported > 0 && importResult.importedPatientIds && importResult.importedPatientIds.length > 0 && (
+        <BulkMigrateConsentPanel patientIds={importResult.importedPatientIds} />
+      )}
+
       {importResult.errors.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-2">
@@ -686,6 +695,182 @@ function StepImport({
         </div>
       )}
     </div>
+  );
+}
+
+// ==================== Bulk Migrate Consent ====================
+
+const BULK_CONSENT_TYPE_OPTIONS = [
+  { value: 'hipaa_privacy_practices', label: 'HIPAA Notice of Privacy Practices' },
+  { value: 'waiver_release', label: 'Waiver & Release' },
+  { value: 'financial_responsibility', label: 'Financial Responsibility' },
+];
+
+/**
+ * Optional step after a bulk import: attest that the just-imported patients
+ * already consented some other way before this system existed (paper
+ * intake at the old practice, a prior EHR export, etc). Deliberately not a
+ * live e-signature — same idea as RecordExistingConsentDialog, but applied
+ * to a staff-selected subset of a batch instead of one patient at a time.
+ */
+function BulkMigrateConsentPanel({ patientIds }: { patientIds: number[] }) {
+  const { toast } = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set(patientIds));
+  const [consentTypes, setConsentTypes] = useState<string[]>([]);
+  const [signatureName, setSignatureName] = useState('');
+  const [originalDate, setOriginalDate] = useState('');
+  const [attestationSource, setAttestationSource] = useState('');
+  const [done, setDone] = useState<{ consentsCreated: number; skipped: number } | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/data-import/consents/migrate', {
+        patientIds: Array.from(selected),
+        consentTypes,
+        signatureName,
+        originalDate,
+        attestationSource,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setDone({ consentsCreated: data.consentsCreated, skipped: data.skippedPatientIds?.length || 0 });
+      toast({ title: 'Consent recorded', description: `${data.consentsCreated} consent record(s) saved.` });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Could not record consent',
+        description: err?.message || 'Unknown error',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const toggleType = (value: string) =>
+    setConsentTypes((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
+
+  const togglePatient = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const canSubmit =
+    selected.size > 0 && consentTypes.length > 0 && signatureName.trim() && originalDate && attestationSource.trim();
+
+  if (done) {
+    return (
+      <Card className="border-green-200 dark:border-green-800">
+        <CardContent className="pt-4 pb-4 text-sm">
+          Recorded {done.consentsCreated} consent record(s) across {selected.size - done.skipped} patient(s).
+          {done.skipped > 0 && ` (${done.skipped} patient id(s) skipped — not found in this practice.)`}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-base">Record existing consent for these patients</CardTitle>
+            <CardDescription>
+              Optional. Use this if the {patientIds.length} imported patient(s) already consented some
+              other way before this system existed — not a live signature, just an attestation of
+              existing documentation.
+            </CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setExpanded((e) => !e)}>
+            {expanded ? 'Hide' : 'Set up'}
+          </Button>
+        </div>
+      </CardHeader>
+      {expanded && (
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Which consents does this cover?</Label>
+            {BULK_CONSENT_TYPE_OPTIONS.map((opt) => (
+              <div key={opt.value} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`bulk-consent-${opt.value}`}
+                  checked={consentTypes.includes(opt.value)}
+                  onCheckedChange={() => toggleType(opt.value)}
+                />
+                <Label htmlFor={`bulk-consent-${opt.value}`} className="font-normal cursor-pointer">
+                  {opt.label}
+                </Label>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="bulk-signature-name">Name on the original document(s)</Label>
+              <Input
+                id="bulk-signature-name"
+                value={signatureName}
+                onChange={(e) => setSignatureName(e.target.value)}
+                placeholder="e.g. Various — per patient file"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="bulk-original-date">Original consent date</Label>
+              <Input
+                id="bulk-original-date"
+                type="date"
+                value={originalDate}
+                onChange={(e) => setOriginalDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="bulk-source">Source of this consent</Label>
+            <Textarea
+              id="bulk-source"
+              value={attestationSource}
+              onChange={(e) => setAttestationSource(e.target.value)}
+              placeholder="e.g. Paper intake forms retained by the practice, migrated from SimplePractice 2026-08"
+              rows={2}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Apply to which patients?</Label>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(patientIds))}>
+                  Select all
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                  Select none
+                </Button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {selected.size} of {patientIds.length} selected. Uncheck any patient without documented
+              consent for the type(s) above.
+            </p>
+            <div className="border rounded-lg max-h-40 overflow-y-auto p-2 grid grid-cols-3 gap-1">
+              {patientIds.map((id) => (
+                <div key={id} className="flex items-center space-x-2">
+                  <Checkbox checked={selected.has(id)} onCheckedChange={() => togglePatient(id)} />
+                  <span className="text-xs text-muted-foreground">Patient #{id}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Button onClick={() => mutation.mutate()} disabled={!canSubmit || mutation.isPending}>
+            {mutation.isPending ? 'Saving…' : `Record Consent for ${selected.size} Patient(s)`}
+          </Button>
+        </CardContent>
+      )}
+    </Card>
   );
 }
 

@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
+import RecordExistingConsentDialog from "@/components/RecordExistingConsentDialog";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
 import BenefitsSummary from "@/components/BenefitsSummary";
 import BenefitsVerificationCard from "@/components/BenefitsVerificationCard";
@@ -514,6 +515,7 @@ export default function Patients() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [insuranceEditOpen, setInsuranceEditOpen] = useState(false);
+  const [recordConsentOpen, setRecordConsentOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [eligibilityResults, setEligibilityResults] = useState<Record<number, EligibilityCheck>>({});
   const [checkingEligibility, setCheckingEligibility] = useState<number | null>(null);
@@ -1392,15 +1394,26 @@ export default function Patients() {
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-medium text-foreground">Insurance Information</h4>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setInsuranceEditOpen(true)}
-                    data-testid="button-edit-insurance"
-                  >
-                    Edit insurance
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRecordConsentOpen(true)}
+                      data-testid="button-record-existing-consent"
+                    >
+                      Record existing consent
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setInsuranceEditOpen(true)}
+                      data-testid="button-edit-insurance"
+                    >
+                      Edit insurance
+                    </Button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -1748,6 +1761,14 @@ export default function Patients() {
         </Dialog>
       )}
 
+      {selectedPatient && (
+        <RecordExistingConsentDialog
+          open={recordConsentOpen}
+          onOpenChange={setRecordConsentOpen}
+          patientId={selectedPatient.id}
+          patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
+        />
+      )}
       {selectedPatient && (
         <InsuranceEditDialog
           open={insuranceEditOpen}

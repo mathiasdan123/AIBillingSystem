@@ -1066,10 +1066,19 @@ export const patientConsents = pgTable("patient_consents", {
   expirationDate: date("expiration_date"), // null = until revoked
 
   // Signature information
-  signatureType: varchar("signature_type").default("electronic"), // electronic, wet_ink, verbal
+  signatureType: varchar("signature_type").default("electronic"), // electronic, wet_ink, verbal, migrated
   signatureName: varchar("signature_name").notNull(), // Full legal name
   signatureDate: timestamp("signature_date").notNull(),
   signatureIpAddress: varchar("signature_ip_address"), // For audit trail
+
+  // Set only when signatureType is 'migrated': this consent was not signed
+  // live in this app, but attested by staff based on documentation from
+  // before the practice onboarded (paper intake, a prior EHR export, etc).
+  // Never populate these for a live 'electronic' signature — the whole
+  // point is keeping "the patient really signed this here" distinguishable
+  // from "staff attests this was already obtained elsewhere."
+  attestationSource: text("attestation_source"), // e.g. "Paper intake on file, SimplePractice migration 2026-08"
+  attestedByUserId: varchar("attested_by_user_id").references(() => users.id),
 
   // For minors/guardians
   signerRelationship: varchar("signer_relationship"), // 'self', 'parent', 'guardian', 'legal_representative'

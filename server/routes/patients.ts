@@ -470,6 +470,73 @@ router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
   }
 });
 
+/**
+ * POST /api/patients/:id/consents/migrate
+ *
+ * Records that a patient's consent was already obtained by some other means
+ * before this system existed — a paper intake form, a prior EHR, etc. —
+ * without staff typing a name into a field that would otherwise look like a
+ * live e-signature. Distinct from a real signature: signatureType is
+ * 'migrated', signatureIpAddress stays null (there was no browser session),
+ * and signatureDate is the ORIGINAL date on the source document, not today.
+ * Used for the one-off "this existing patient already consented" case (the
+ * bulk practice-onboarding case is POST /api/data-import/consents/migrate).
+ */
+router.post('/:id/consents/migrate', isAuthenticated, async (req: any, res) => {
+  try {
+    const patient = req.patient; // populated + tenant-checked by the router.use('/:id', ...) guard above
+    const { consentTypes, signatureName, originalDate, attestationSource, signerRelationship } = req.body ?? {};
+
+    if (!Array.isArray(consentTypes) || consentTypes.length === 0) {
+      return res.status(400).json({ error: 'consentTypes must be a non-empty array' });
+    }
+    if (!signatureName || !originalDate || !attestationSource) {
+      return res.status(400).json({ error: 'signatureName, originalDate, and attestationSource are required' });
+    }
+    const unknownTypes = consentTypes.filter((t: string) => !CONSENT_MAPPINGS[t]);
+    if (unknownTypes.length > 0) {
+      return res.status(400).json({ error: `Unknown consent type(s): ${unknownTypes.join(', ')}` });
+    }
+
+    const signatureDate = new Date(originalDate);
+    if (isNaN(signatureDate.getTime())) {
+      return res.status(400).json({ error: 'originalDate is not a valid date' });
+    }
+
+    const created = [];
+    for (const consentType of consentTypes) {
+      const mapping = CONSENT_MAPPINGS[consentType];
+      created.push(
+        await storage.createPatientConsent({
+          practiceId: patient.practiceId,
+          patientId: patient.id,
+          consentType,
+          purposeOfDisclosure: mapping.purpose,
+          informationToBeDisclosed: mapping.info,
+          recipientOfInformation: mapping.recipient,
+          effectiveDate: signatureDate.toISOString().split('T')[0],
+          expirationDate: null,
+          signatureType: 'migrated',
+          signatureName,
+          signatureDate,
+          signatureIpAddress: null,
+          signerRelationship: signerRelationship || null,
+          attestationSource,
+          attestedByUserId: req.user?.claims?.sub || null,
+        } as any),
+      );
+    }
+
+    res.json({ success: true, consents: created });
+  } catch (error) {
+    logger.error('Error recording migrated consent', {
+      patientId: req.patient?.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to record consent' });
+  }
+});
+
 // ==================== INTAKE INVITE (Slice β) ====================
 // POST /api/patients/:id/send-intake-invite
 // Generates a 15-minute magic link that lands the patient directly in the

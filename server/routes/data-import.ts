@@ -19,6 +19,7 @@ import { isAuthenticated } from '../replitAuth';
 import { createPatientSchema } from '../validation/schemas';
 import logger from '../services/logger';
 import { z } from 'zod';
+import { CONSENT_MAPPINGS } from '../services/consentTypes';
 
 const router = Router();
 
@@ -1306,6 +1307,7 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
       skipped: 0,
       failed: 0,
       errors: [] as Array<{ row: number; field: string; message: string }>,
+      importedPatientIds: [] as number[],
     };
 
     // Process rows in batches
@@ -1434,8 +1436,9 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
         // encrypted column — exactly like every other patient-create path. (This
         // previously used a raw INSERT that stored all PHI in plaintext.)
         try {
-          await storage.createPatient(validation.data as any);
+          const created = await storage.createPatient(validation.data as any);
           results.imported++;
+          results.importedPatientIds.push(created.id);
           // Add to existing set to prevent duplicates within the import
           existingSet.add(dupeKey);
         } catch (err) {
@@ -1475,10 +1478,85 @@ router.post('/execute', isAuthenticated, async (req: Request, res: Response) => 
       skipped: results.skipped,
       failed: results.failed,
       errors: results.errors,
+      importedPatientIds: results.importedPatientIds,
     });
   } catch (error) {
     logger.error('Data import execution failed', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to execute import' });
+  }
+});
+
+/**
+ * POST /consents/migrate — bulk "these imported patients already consented
+ * elsewhere" attestation, for onboarding a practice's existing roster.
+ *
+ * Deliberately NOT a live e-signature: it records that staff attest consent
+ * was already obtained (paper intake, a prior EHR, etc.) for a specific,
+ * staff-selected list of patient IDs — not all-or-nothing across the whole
+ * import, since not every imported patient may have documented consent for
+ * every type. See POST /api/patients/:id/consents/migrate for the single-
+ * patient version of the same idea.
+ */
+router.post('/consents/migrate', isAuthenticated, async (req: Request, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { patientIds, consentTypes, signatureName, originalDate, attestationSource } = req.body ?? {};
+
+    if (!Array.isArray(patientIds) || patientIds.length === 0) {
+      return res.status(400).json({ message: 'patientIds must be a non-empty array' });
+    }
+    if (!Array.isArray(consentTypes) || consentTypes.length === 0) {
+      return res.status(400).json({ message: 'consentTypes must be a non-empty array' });
+    }
+    if (!signatureName || !originalDate || !attestationSource) {
+      return res.status(400).json({ message: 'signatureName, originalDate, and attestationSource are required' });
+    }
+    const unknownTypes = consentTypes.filter((t: string) => !CONSENT_MAPPINGS[t]);
+    if (unknownTypes.length > 0) {
+      return res.status(400).json({ message: `Unknown consent type(s): ${unknownTypes.join(', ')}` });
+    }
+    const signatureDate = new Date(originalDate);
+    if (isNaN(signatureDate.getTime())) {
+      return res.status(400).json({ message: 'originalDate is not a valid date' });
+    }
+
+    let created = 0;
+    const skippedPatientIds: number[] = [];
+    for (const rawId of patientIds) {
+      const patientId = Number(rawId);
+      const patient = await storage.getPatient(patientId);
+      // Tenant safety: silently skip (not error) a patient id outside this
+      // practice rather than leaking existence via a 403/404 distinction.
+      if (!patient || patient.practiceId !== practiceId) {
+        skippedPatientIds.push(patientId);
+        continue;
+      }
+      for (const consentType of consentTypes) {
+        const mapping = CONSENT_MAPPINGS[consentType];
+        await storage.createPatientConsent({
+          practiceId,
+          patientId,
+          consentType,
+          purposeOfDisclosure: mapping.purpose,
+          informationToBeDisclosed: mapping.info,
+          recipientOfInformation: mapping.recipient,
+          effectiveDate: signatureDate.toISOString().split('T')[0],
+          expirationDate: null,
+          signatureType: 'migrated',
+          signatureName,
+          signatureDate,
+          signatureIpAddress: null,
+          attestationSource,
+          attestedByUserId: (req as any).user?.claims?.sub || null,
+        } as any);
+        created++;
+      }
+    }
+
+    res.json({ success: true, consentsCreated: created, skippedPatientIds });
+  } catch (error) {
+    logger.error('Bulk migrated-consent recording failed', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to record consents' });
   }
 });
 
