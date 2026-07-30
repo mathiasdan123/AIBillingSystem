@@ -29,6 +29,7 @@ import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import { sendEmail } from '../services/emailService';
 import { portalWelcome, intakeSubmissionNotification } from '../services/emailTemplates';
+import { CONSENT_MAPPINGS } from '../services/consentTypes';
 
 const router = Router();
 
@@ -285,6 +286,53 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
     }
 
     const patient = await storage.createPatient(payload as any);
+
+    // Create real, auditable consent records for the signatures captured on
+    // the staff intake wizard (Steps 1/13/14). Previously these only lived
+    // as a typed name inside intakeData's jsonb blob — never written to
+    // patientConsents, so they weren't real e-signature records and (until
+    // Step 1 was un-skipped for this flow) a staff-added patient could end
+    // up with waiver/financial consents but no hipaa_privacy_practices row,
+    // which the PHI-access gate requires. Best-effort: a consent-save issue
+    // must not fail patient creation, same as the email notification below.
+    try {
+      const consents = payload.intakeData?.consents;
+      if (consents) {
+        const staffIp = (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || 'unknown';
+        const staffLabel = req.user?.claims?.email || req.user?.claims?.sub || 'Staff';
+        const consentTypeByKey: Record<string, string> = {
+          hipaa: 'hipaa_privacy_practices',
+          waiver: 'waiver_release',
+          financial: 'financial_responsibility',
+        };
+        for (const [key, consentType] of Object.entries(consentTypeByKey)) {
+          const entry = consents[key];
+          if (!entry?.signed || !entry?.signature) continue;
+          const mapping = CONSENT_MAPPINGS[consentType];
+          const signatureDate = entry.date ? new Date(entry.date) : new Date();
+          await storage.createPatientConsent({
+            practiceId: patient.practiceId,
+            patientId: patient.id,
+            consentType,
+            purposeOfDisclosure: mapping.purpose,
+            informationToBeDisclosed: mapping.info,
+            recipientOfInformation: mapping.recipient,
+            effectiveDate: signatureDate.toISOString().split('T')[0],
+            expirationDate: null,
+            signatureType: 'electronic',
+            signatureName: entry.signature,
+            signatureDate,
+            signatureIpAddress: Array.isArray(staffIp) ? staffIp[0] : staffIp,
+            notes: `Recorded by practice staff (${staffLabel}) via in-office intake form, not patient self-serve portal.`,
+          } as any);
+        }
+      }
+    } catch (consentError) {
+      logger.warn('Failed to record intake-wizard consent signatures', {
+        patientId: patient.id,
+        error: consentError instanceof Error ? consentError.message : String(consentError),
+      });
+    }
 
     // Send front desk notification if this is an intake form submission
     if (payload.intakeCompletedAt || payload.intakeData) {

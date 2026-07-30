@@ -955,7 +955,6 @@ export default function Patients() {
             <PatientIntakeForm
               practiceId={practiceId}
               onSuccess={handlePatientCreated}
-              startStep={2}
             />
           </DialogContent>
         </Dialog>
