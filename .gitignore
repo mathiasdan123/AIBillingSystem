@@ -152,3 +152,6 @@ openapi.json
 
 # MS Office lock files
 ~$*
+
+# scratch dir for scripts/lint-schema-diff.sh
+.schema-lint-tmp/

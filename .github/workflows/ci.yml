@@ -13,6 +13,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full history: scripts/lint-schema-diff.sh diffs shared/schema.ts
+          # against the merge base. With the default shallow clone the base
+          # ref is unresolvable and that check fails closed.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -25,6 +30,13 @@ jobs:
 
       - name: Lint migrations for zero-downtime safety
         run: bash scripts/lint-migrations.sh
+
+      # The check above scans migrations/*.sql, which is NOT what production
+      # applies — `drizzle-kit push --force` applies the shared/schema.ts diff
+      # directly (see docs/migration-safety-gap.md). This step lints that diff,
+      # so destructive schema changes are actually caught before merge.
+      - name: Lint schema.ts diff for destructive changes
+        run: bash scripts/lint-schema-diff.sh
 
       - name: TypeScript type checking
         run: npm run check
