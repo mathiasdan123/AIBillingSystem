@@ -12,6 +12,7 @@ const { mockStorage } = vi.hoisted(() => ({
   mockStorage: {
     createPatient: vi.fn(),
     createPatientConsent: vi.fn(),
+    updatePatient: vi.fn(),
     getPractice: vi.fn(),
   },
 }));
@@ -45,6 +46,13 @@ beforeEach(() => {
   app.use('/api/patients', patientsRouter);
   mockStorage.createPatient.mockImplementation(async (p: any) => ({ id: 70, practiceId: 1, ...p }));
   mockStorage.getPractice.mockResolvedValue({ id: 1, name: 'Wonder Kids', email: null });
+  mockStorage.updatePatient.mockResolvedValue({ id: 70 });
+  // vi.clearAllMocks() resets call history but NOT a configured
+  // mockRejectedValue/mockImplementation — without re-setting this default
+  // here, the "still returns the created patient even if consent recording
+  // throws" test's mockRejectedValue would leak into every later test in
+  // this file (they run in file order within the describe block).
+  mockStorage.createPatientConsent.mockImplementation(async (c: any) => ({ id: 1, ...c }));
 });
 
 const baseIntake = {
@@ -111,5 +119,49 @@ describe('POST /api/patients — consent wiring', () => {
     const res = await request(app).post('/api/patients').send(baseIntake);
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(70);
+  });
+
+  it('creates an sms_reminders consent row and flips smsConsentGiven when the checkbox was checked', async () => {
+    const res = await request(app)
+      .post('/api/patients')
+      .send({
+        ...baseIntake,
+        intakeData: {
+          consents: {
+            ...baseIntake.intakeData.consents,
+            smsReminders: { signed: true, signature: 'Michael Friedman' },
+          },
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(mockStorage.createPatientConsent).toHaveBeenCalledTimes(4);
+    const smsCall = mockStorage.createPatientConsent.mock.calls.find(
+      (c: any[]) => c[0].consentType === 'sms_reminders',
+    )![0];
+    expect(smsCall.signatureType).toBe('electronic');
+    expect(mockStorage.updatePatient).toHaveBeenCalledWith(
+      70,
+      expect.objectContaining({ smsConsentGiven: true }),
+    );
+  });
+
+  it('does not create an sms_reminders consent or touch smsConsentGiven when the checkbox was left unchecked', async () => {
+    const res = await request(app)
+      .post('/api/patients')
+      .send({
+        ...baseIntake,
+        intakeData: {
+          consents: {
+            ...baseIntake.intakeData.consents,
+            smsReminders: { signed: false, signature: 'Michael Friedman' },
+          },
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(mockStorage.createPatientConsent).toHaveBeenCalledTimes(3);
+    expect(
+      mockStorage.createPatientConsent.mock.calls.some((c: any[]) => c[0].consentType === 'sms_reminders'),
+    ).toBe(false);
+    expect(mockStorage.updatePatient).not.toHaveBeenCalled();
   });
 });

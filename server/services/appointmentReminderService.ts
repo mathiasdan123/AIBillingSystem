@@ -180,8 +180,12 @@ export async function processAppointmentReminders(
           }
         }
 
-        // Send SMS reminder if patient has phone
-        if (patient.phone) {
+        // Send SMS reminder only if the patient has both a phone number AND
+        // has actually given SMS consent (smsConsentGiven) — a phone number
+        // on file is not consent. Previously this only checked patient.phone,
+        // which meant reminders went out to anyone with a phone regardless
+        // of whether they'd agreed to receive texts.
+        if (patient.phone && (patient as any).smsConsentGiven) {
           const smsResult = await sendAppointmentReminderSMS(
             patient.phone,
             patient.firstName,
@@ -193,6 +197,11 @@ export async function processAppointmentReminders(
           if (!smsResult.success) {
             console.error(`SMS reminder failed for appointment ${appointment.id}:`, smsResult.error);
           }
+        } else if (patient.phone && !(patient as any).smsConsentGiven) {
+          logger.info('Appointment reminder SMS skipped — no SMS consent on file', {
+            appointmentId: appointment.id,
+            patientId: patient.id,
+          });
         }
 
         // Mark appointment as reminded if at least one notification was sent
@@ -265,8 +274,9 @@ export async function sendAppointmentReminders(): Promise<ReminderResult[]> {
           hour12: true,
         });
 
-        // Send SMS reminder if Twilio is configured and patient has phone
-        if (isSMSConfigured() && patient.phone) {
+        // Send SMS reminder if Twilio is configured, patient has phone, AND
+        // has actually given SMS consent — a phone number is not consent.
+        if (isSMSConfigured() && patient.phone && (patient as any).smsConsentGiven) {
           try {
             const smsMessage = `Reminder: You have an appointment with ${practiceName} tomorrow at ${appointmentTime}. Please contact us if you need to reschedule.`;
             const { sendSMS } = await import('./smsService');
@@ -280,6 +290,11 @@ export async function sendAppointmentReminders(): Promise<ReminderResult[]> {
               error: smsError instanceof Error ? smsError.message : 'Unknown SMS error',
             });
           }
+        } else if (isSMSConfigured() && patient.phone && !(patient as any).smsConsentGiven) {
+          logger.info('Appointment reminder SMS skipped — no SMS consent on file', {
+            appointmentId: appointment.id,
+            patientId: patient.id,
+          });
         }
 
         // Send email reminder if SMTP is configured and patient has email

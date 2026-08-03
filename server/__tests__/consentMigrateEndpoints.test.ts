@@ -13,6 +13,7 @@ const { mockStorage } = vi.hoisted(() => ({
   mockStorage: {
     getPatient: vi.fn(),
     createPatientConsent: vi.fn(),
+    updatePatient: vi.fn(),
   },
 }));
 
@@ -41,6 +42,38 @@ describe('POST /api/patients/:id/consents/migrate', () => {
     app.use(express.json());
     app.use('/api/patients', patientsRouter);
     mockStorage.createPatientConsent.mockImplementation(async (c: any) => ({ id: 1, ...c }));
+    mockStorage.updatePatient.mockResolvedValue({ id: 70 });
+  });
+
+  it('flips smsConsentGiven on the patient when sms_reminders is one of the migrated types', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 70, practiceId: 1 });
+    const res = await request(app)
+      .post('/api/patients/70/consents/migrate')
+      .send({
+        consentTypes: ['hipaa_privacy_practices', 'sms_reminders'],
+        signatureName: 'Michael Friedman',
+        originalDate: '2025-03-12',
+        attestationSource: 'Paper intake on file at first visit',
+      });
+    expect(res.status).toBe(200);
+    expect(mockStorage.updatePatient).toHaveBeenCalledWith(
+      70,
+      expect.objectContaining({ smsConsentGiven: true }),
+    );
+  });
+
+  it('does not touch smsConsentGiven when sms_reminders is not among the migrated types', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 70, practiceId: 1 });
+    const res = await request(app)
+      .post('/api/patients/70/consents/migrate')
+      .send({
+        consentTypes: ['hipaa_privacy_practices'],
+        signatureName: 'Michael Friedman',
+        originalDate: '2025-03-12',
+        attestationSource: 'Paper intake on file at first visit',
+      });
+    expect(res.status).toBe(200);
+    expect(mockStorage.updatePatient).not.toHaveBeenCalled();
   });
 
   it('creates one consent row per requested type, tagged as migrated', async () => {
@@ -117,6 +150,24 @@ describe('POST /api/data-import/consents/migrate', () => {
     });
     app.use('/api/data-import', dataImportRouter);
     mockStorage.createPatientConsent.mockImplementation(async (c: any) => ({ id: 1, ...c }));
+    mockStorage.updatePatient.mockResolvedValue({ id: 1 });
+  });
+
+  it('flips smsConsentGiven on every selected patient when sms_reminders is among the migrated types', async () => {
+    mockStorage.getPatient.mockImplementation(async (id: number) => ({ id, practiceId: 1 }));
+    const res = await request(app)
+      .post('/api/data-import/consents/migrate')
+      .send({
+        patientIds: [10, 11],
+        consentTypes: ['hipaa_privacy_practices', 'sms_reminders'],
+        signatureName: 'Various',
+        originalDate: '2026-01-01',
+        attestationSource: 'Migrated from SimplePractice',
+      });
+    expect(res.status).toBe(200);
+    expect(mockStorage.updatePatient).toHaveBeenCalledTimes(2);
+    expect(mockStorage.updatePatient).toHaveBeenCalledWith(10, expect.objectContaining({ smsConsentGiven: true }));
+    expect(mockStorage.updatePatient).toHaveBeenCalledWith(11, expect.objectContaining({ smsConsentGiven: true }));
   });
 
   it('creates consents for every selected patient and consent type', async () => {

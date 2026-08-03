@@ -114,7 +114,7 @@ describe('processAppointmentReminders', () => {
     expect(results[0].patientName).toBe('Jane Doe');
   });
 
-  it('sends SMS reminder when patient has phone', async () => {
+  it('sends SMS reminder when patient has phone AND has given SMS consent', async () => {
     mockGetPractice.mockResolvedValue({ id: 1, name: 'Test Practice' });
     mockGetAppointmentsForReminder.mockResolvedValue([
       { id: 11, patientId: 2, startTime: new Date().toISOString() },
@@ -125,6 +125,7 @@ describe('processAppointmentReminders', () => {
       lastName: 'Smith',
       email: null,
       phone: '5551234567',
+      smsConsentGiven: true,
     });
     mockSendAppointmentReminderSMS.mockResolvedValue({ success: true });
 
@@ -132,6 +133,26 @@ describe('processAppointmentReminders', () => {
     expect(results).toHaveLength(1);
     expect(results[0].smsSent).toBe(true);
     expect(mockSendAppointmentReminderSMS).toHaveBeenCalled();
+  });
+
+  it('does NOT send SMS when patient has a phone but no SMS consent on file', async () => {
+    mockGetPractice.mockResolvedValue({ id: 1, name: 'Test Practice' });
+    mockGetAppointmentsForReminder.mockResolvedValue([
+      { id: 15, patientId: 6, startTime: new Date().toISOString() },
+    ]);
+    mockGetPatient.mockResolvedValue({
+      id: 6,
+      firstName: 'No',
+      lastName: 'Consent',
+      email: null,
+      phone: '5559998888',
+      smsConsentGiven: false,
+    });
+
+    const results = await processAppointmentReminders(1);
+    expect(results).toHaveLength(1);
+    expect(results[0].smsSent).toBe(false);
+    expect(mockSendAppointmentReminderSMS).not.toHaveBeenCalled();
   });
 
   it('marks appointment as reminded when at least one notification succeeds', async () => {
@@ -220,5 +241,50 @@ describe('sendAppointmentReminders', () => {
 
     const results = await sendAppointmentReminders();
     expect(results).toEqual([]);
+  });
+
+  it('sends SMS when Twilio is configured, patient has phone, AND has given SMS consent', async () => {
+    mockIsEmailConfigured.mockReturnValue(false);
+    mockIsSMSConfigured.mockReturnValue(true);
+    mockGetUpcomingAppointmentsForReminders.mockResolvedValue([
+      { id: 21, patientId: 7, practiceId: 1, startTime: new Date().toISOString() },
+    ]);
+    mockGetPatient.mockResolvedValue({
+      id: 7,
+      firstName: 'Sophie',
+      lastName: 'Consented',
+      email: null,
+      phone: '5551112222',
+      smsConsentGiven: true,
+    });
+    mockGetPractice.mockResolvedValue({ id: 1, name: 'Wonder Kids' });
+    mockSendSMS.mockResolvedValue({ success: true });
+
+    const results = await sendAppointmentReminders();
+    expect(results).toHaveLength(1);
+    expect(results[0].smsSent).toBe(true);
+    expect(mockSendSMS).toHaveBeenCalled();
+  });
+
+  it('does NOT send SMS when Twilio is configured and patient has a phone but no SMS consent', async () => {
+    mockIsEmailConfigured.mockReturnValue(false);
+    mockIsSMSConfigured.mockReturnValue(true);
+    mockGetUpcomingAppointmentsForReminders.mockResolvedValue([
+      { id: 22, patientId: 8, practiceId: 1, startTime: new Date().toISOString() },
+    ]);
+    mockGetPatient.mockResolvedValue({
+      id: 8,
+      firstName: 'No',
+      lastName: 'Consent',
+      email: null,
+      phone: '5553334444',
+      smsConsentGiven: false,
+    });
+    mockGetPractice.mockResolvedValue({ id: 1, name: 'Wonder Kids' });
+
+    const results = await sendAppointmentReminders();
+    expect(results).toHaveLength(1);
+    expect(results[0].smsSent).toBe(false);
+    expect(mockSendSMS).not.toHaveBeenCalled();
   });
 });

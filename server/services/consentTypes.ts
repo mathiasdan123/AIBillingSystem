@@ -31,6 +31,15 @@ export const CONSENT_MAPPINGS: Record<string, { purpose: string; info: string; r
     info: 'Financial responsibility agreement',
     recipient: 'Practice billing department',
   },
+  // A2P 10DLC-registered SMS opt-in (2026-08). Distinct from the notification
+  // "reminder preference" fields — this is the actual TCPA/carrier-required
+  // consent record, and the only thing appointmentReminderService.ts's send
+  // gate checks (via patients.smsConsentGiven, set alongside this row).
+  sms_reminders: {
+    purpose: 'Consent to receive automated text message appointment reminders and confirmations',
+    info: 'Mobile phone number provided at intake',
+    recipient: 'Practice records and the SMS delivery vendor (Twilio) acting as the practice\'s messaging agent',
+  },
   // Payer-advocacy consent types (2026-05-31). DRAFT language — must be
   // reviewed/replaced by health-law counsel before going live to real
   // patients (see ~/Desktop/payer-advocacy-attorney-questions.md). These

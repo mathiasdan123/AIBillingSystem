@@ -704,6 +704,7 @@ const BULK_CONSENT_TYPE_OPTIONS = [
   { value: 'hipaa_privacy_practices', label: 'HIPAA Notice of Privacy Practices' },
   { value: 'waiver_release', label: 'Waiver & Release' },
   { value: 'financial_responsibility', label: 'Financial Responsibility' },
+  { value: 'sms_reminders', label: 'SMS Appointment Reminders' },
 ];
 
 /**

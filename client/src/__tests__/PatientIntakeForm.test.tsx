@@ -92,6 +92,17 @@ async function goToStep2(onSuccess: () => void) {
   });
 }
 
+/** Helper: navigate from step 1 all the way to step 3 (Parent/Guardian 1) */
+async function goToStep3(onSuccess: () => void) {
+  await goToStep2(onSuccess);
+  // Step 2 → 3 has no validation gate (nextStep() never calls form.trigger()),
+  // so clicking Next again is enough — no need to fill patient-info fields.
+  fireEvent.click(screen.getByRole('button', { name: /next/i }));
+  await waitFor(() => {
+    expect(screen.getByText(/Step 3 of 15/)).toBeInTheDocument();
+  });
+}
+
 describe('PatientIntakeForm', () => {
   const onSuccess = vi.fn();
 
@@ -183,5 +194,17 @@ describe('PatientIntakeForm', () => {
     );
     const form = container.querySelector('form');
     expect(form).toBeTruthy();
+  });
+
+  it('defaults the SMS consent checkbox to unchecked, with disclosure text visible', async () => {
+    await goToStep3(onSuccess);
+
+    const smsCheckbox = screen.getByTestId('checkbox-sms-consent');
+    // Regression guard: this box used to default to checked with no
+    // disclosure text at all — a direct match to Twilio's A2P 10DLC
+    // rejection code 30925 ("opt-in must be unchecked by default").
+    expect(smsCheckbox).not.toBeChecked();
+    expect(screen.getByText(/I agree to receive text messages/i)).toBeInTheDocument();
+    expect(screen.getByText(/Reply STOP to opt out/i)).toBeInTheDocument();
   });
 });

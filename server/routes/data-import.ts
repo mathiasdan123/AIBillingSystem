@@ -1551,6 +1551,14 @@ router.post('/consents/migrate', isAuthenticated, async (req: Request, res: Resp
         } as any);
         created++;
       }
+      // appointmentReminderService.ts's send gate checks patients.smsConsentGiven
+      // directly, so a migrated sms_reminders consent must flip it too.
+      if (consentTypes.includes('sms_reminders')) {
+        await storage.updatePatient(patientId, {
+          smsConsentGiven: true,
+          smsConsentDate: signatureDate,
+        } as any);
+      }
     }
 
     res.json({ success: true, consentsCreated: created, skippedPatientIds });

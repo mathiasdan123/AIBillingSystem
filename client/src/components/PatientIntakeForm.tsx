@@ -333,7 +333,11 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
       waiverConsent: false,
       financialConsent: false,
       parent1EmailReminders: true,
-      parent1TextReminders: true,
+      // Real SMS consent (A2P 10DLC / TCPA) must be opt-in, not opt-out —
+      // Twilio's own rejection code 30925 flags a pre-checked box as
+      // non-compliant. Email reminders above are a plain preference, not a
+      // regulated consent channel, so it stays defaulted true.
+      parent1TextReminders: false,
     },
   });
 
@@ -522,6 +526,11 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
           hipaa: { signed: data.hipaaConsent, signature: data.hipaaSignature, date: data.hipaaDate },
           waiver: { signed: data.waiverConsent, signature: data.waiverSignature, date: data.waiverDate },
           financial: { signed: data.financialConsent, signature: data.financialSignature, date: data.financialDate },
+          // No separate typed signature for SMS consent — the checkbox next to
+          // the disclosure text (Step 3) is the affirmative opt-in action
+          // itself; reuse the guardian's name already captured earlier in the
+          // same step rather than asking them to retype it.
+          smsReminders: { signed: data.parent1TextReminders, signature: data.parent1Name || null },
         },
         // Insurance card images (base64)
         insuranceCardFront: insuranceCardFront || null,
@@ -1269,19 +1278,35 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="parent1TextReminders"
-                render={({ field }) => (
-                  <FormItem className="flex items-center space-x-2">
-                    <FormControl>
-                      <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                    </FormControl>
-                    <FormLabel className="text-sm font-normal">Text Message Reminders</FormLabel>
-                  </FormItem>
-                )}
-              />
             </div>
+
+            {/* Real SMS consent — not a bare preference toggle. Unchecked by
+                default with full disclosure text, since this is the actual
+                A2P 10DLC / TCPA consent record (server/services/consentTypes.ts
+                'sms_reminders'), not just a notification setting. */}
+            <FormField
+              control={form.control}
+              name="parent1TextReminders"
+              render={({ field }) => (
+                <FormItem className="flex items-start space-x-3 rounded-lg border p-3 bg-slate-50">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      data-testid="checkbox-sms-consent"
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel className="text-sm font-normal">
+                      I agree to receive text messages from Wonder Kids Therapy Center, including
+                      appointment reminders and confirmations, at the phone number provided. Message
+                      frequency varies. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for
+                      help.
+                    </FormLabel>
+                  </div>
+                </FormItem>
+              )}
+            />
 
             <div className="flex justify-between">
               <Button type="button" variant="outline" onClick={prevStep}>Previous</Button>

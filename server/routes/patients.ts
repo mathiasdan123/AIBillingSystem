@@ -304,10 +304,16 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
           hipaa: 'hipaa_privacy_practices',
           waiver: 'waiver_release',
           financial: 'financial_responsibility',
+          smsReminders: 'sms_reminders',
         };
         for (const [key, consentType] of Object.entries(consentTypeByKey)) {
           const entry = consents[key];
-          if (!entry?.signed || !entry?.signature) continue;
+          if (!entry?.signed) continue;
+          // SMS consent has no separate typed signature — the checkbox next
+          // to the disclosure text is the affirmative action itself, so the
+          // guardian's name (already captured elsewhere in the form) stands
+          // in for it rather than gating on a redundant re-type.
+          if (consentType !== 'sms_reminders' && !entry?.signature) continue;
           const mapping = CONSENT_MAPPINGS[consentType];
           const signatureDate = entry.date ? new Date(entry.date) : new Date();
           await storage.createPatientConsent({
@@ -320,11 +326,20 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
             effectiveDate: signatureDate.toISOString().split('T')[0],
             expirationDate: null,
             signatureType: 'electronic',
-            signatureName: entry.signature,
+            signatureName: entry.signature || 'Not separately signed (checkbox opt-in)',
             signatureDate,
             signatureIpAddress: Array.isArray(staffIp) ? staffIp[0] : staffIp,
             notes: `Recorded by practice staff (${staffLabel}) via in-office intake form, not patient self-serve portal.`,
           } as any);
+          // appointmentReminderService.ts's send gate checks the patient row
+          // directly (not a join against patientConsents), so this must be
+          // set here too, not just recorded as a consent row.
+          if (consentType === 'sms_reminders') {
+            await storage.updatePatient(patient.id, {
+              smsConsentGiven: true,
+              smsConsentDate: signatureDate,
+            } as any);
+          }
         }
       }
     } catch (consentError) {
@@ -525,6 +540,16 @@ router.post('/:id/consents/migrate', isAuthenticated, async (req: any, res) => {
           attestedByUserId: req.user?.claims?.sub || null,
         } as any),
       );
+    }
+
+    // Same as the live-intake path: appointmentReminderService.ts's send
+    // gate checks patients.smsConsentGiven directly, so a migrated
+    // sms_reminders consent must flip it too, not just the audit row.
+    if (consentTypes.includes('sms_reminders')) {
+      await storage.updatePatient(patient.id, {
+        smsConsentGiven: true,
+        smsConsentDate: signatureDate,
+      } as any);
     }
 
     res.json({ success: true, consents: created });
