@@ -1,7 +1,12 @@
 # Migration safety gap — findings and remediation plan
 
-**Status:** open. Documentation fixed 2026-08-03; the underlying gap is unremediated.
-**Owner:** unassigned. Needs a maintenance window.
+**Status:** partially remediated 2026-08-03.
+- ✅ Destructive schema changes are now blocked before merge —
+  `scripts/lint-schema-diff.sh`, wired into CI (`76c14c7`).
+- ❌ Production still applies schema via `drizzle-kit push --force`. The
+  baseline reconciliation below is **not** done and needs a maintenance window.
+
+**Owner:** unassigned.
 
 ## Summary
 
@@ -84,15 +89,37 @@ migration trying to re-create objects that already exist.
    against the restored copy first.
 6. **Switch the deploy step** from `db:push -- --force` to `drizzle-kit
    migrate`, and add `generate` to the dev workflow in CLAUDE.md.
-7. **Add a CI staleness check** so a schema.ts change with no corresponding
-   `migrations/` entry fails the PR — otherwise the directory silently goes
-   dead again and we are back here.
+7. ~~Add a CI staleness check~~ — **superseded, see below.**
 
-Steps 1–5 need a maintenance window and should not run unattended. Step 7 is
-independently useful and could ship first.
+Steps 1–5 need a maintenance window and should not run unattended.
 
-## Interim mitigation
+### Why step 7 changed shape
 
-Until the above lands, destructive schema changes are caught only by human
-review. When reviewing any PR touching `shared/schema.ts`, check for removed
-or renamed columns/tables by hand — CI will not do it for you.
+The original step 7 was "fail the PR when schema.ts changes without a
+corresponding `migrations/` entry". That is unshippable today: it would fail
+*every* schema PR until reconciliation lands, blocking all work to enforce a
+convention that does not yet exist.
+
+What shipped instead (`scripts/lint-schema-diff.sh`, `76c14c7`) attacks the
+problem from the other end — it lints the DDL the change actually implies,
+using drizzle-kit's own differ, with no database and no dependency on the
+stale baseline. Additive changes pass untouched; destructive ones are blocked.
+It is useful now and stays useful after reconciliation.
+
+## Current mitigation
+
+`scripts/lint-schema-diff.sh` runs in CI on every PR and blocks DROP COLUMN,
+DROP TABLE, SET NOT NULL, and renames in `shared/schema.ts`.
+
+It closes the data-loss hole but **not** the whole gap. Still outstanding:
+
+- Production DDL is still applied by schema-diffing (`push --force`) rather
+  than by reviewed, versioned SQL. What CI approves and what prod applies are
+  derived from the same source but computed at different times against
+  different database states.
+- `migrations/` remains dead and its meta snapshots remain frozen at
+  2026-03-10.
+- The escape hatch (`SCHEMA_LINT_SKIP=1`) is deliberately unguarded. It is
+  logged, not blocked.
+
+Steps 1–6 remain the real fix.
