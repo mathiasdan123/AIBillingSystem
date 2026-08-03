@@ -122,9 +122,39 @@ jobs:
       # Mechanism: launch a one-off ECS task using the SAME task
       # definition + image the app uses, but override its command to run
       # `npm run db:push` (Drizzle Kit pushes pending schema changes).
-      # The override is non-interactive (drizzle-kit auto-applies safe
-      # changes in CI; destructive changes are blocked at PR-merge time
-      # by scripts/lint-migrations.sh, so we know the diff is safe here).
+      #
+      # ⚠️  KNOWN GAP — destructive changes are NOT blocked before this
+      # runs. An earlier version of this comment claimed they were
+      # "blocked at PR-merge time by scripts/lint-migrations.sh". That is
+      # false, and the reasoning is worth spelling out so nobody restores
+      # it:
+      #
+      #   * `drizzle-kit push` diffs shared/schema.ts against the live DB
+      #     and applies the DDL directly. It never reads migrations/*.sql.
+      #   * Nothing in this repo runs `drizzle-kit generate` or `migrate`,
+      #     so migrations/*.sql has had no new entries since 2026-05-28
+      #     and its meta/ snapshots are frozen at 2026-03-10.
+      #   * lint-migrations.sh (ci.yml) scans migrations/*.sql — a
+      #     directory nothing writes to. It therefore passes vacuously and
+      #     never sees a schema change of any kind, destructive included.
+      #   * `--force` is documented by drizzle-kit as "Auto-approve all
+      #     data loss statements... may truncate your tables and data".
+      #
+      # Net effect: deleting a column from shared/schema.ts will DROP it
+      # from production RDS here, with CI green.
+      #
+      # Do NOT "fix" this by removing --force. Measured behaviour of
+      # drizzle-kit 0.31.9 with stdin closed (as in this task):
+      #   * column with no data  -> dropped silently anyway, exit 0.
+      #   * column with data     -> prompts, defaults to abort, and STILL
+      #     EXITS 0 — so this step reports success while applying nothing,
+      #     including any additive changes bundled in the same diff. The
+      #     app then rolls forward against an un-migrated schema, which is
+      #     the exact 2026-05-27 outage described above.
+      #
+      # The real fix is baseline reconciliation + generate/migrate, so the
+      # linter guards the SQL that actually runs. See
+      # docs/migration-safety-gap.md.
       #
       # We pull the network configuration from the existing app service
       # so the migration task lands in the same VPC/subnets/SG and can
