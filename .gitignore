@@ -155,3 +155,7 @@ openapi.json
 
 # scratch dir for scripts/lint-schema-diff.sh
 .schema-lint-tmp/
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
