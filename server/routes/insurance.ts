@@ -448,7 +448,19 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
       insurance: insurance ? { id: insurance.id, name: insurance.name } : null,
     });
   } catch (error: any) {
-    logger.error('Error checking eligibility', { error: error instanceof Error ? error.message : String(error) });
+    // Drizzle's thrown Error carries only "Failed query: <sql> params: <...>";
+    // the actual Postgres complaint (e.g. `invalid input syntax for type
+    // integer: "0.5"`) sits on error.cause and is lost unless pulled out
+    // explicitly. On 2026-08-06 that gap turned a one-line diagnosis into a
+    // hunt through information_schema for a schema drift that didn't exist.
+    const cause = (error as any)?.cause;
+    logger.error('Error checking eligibility', {
+      error: error instanceof Error ? error.message : String(error),
+      causeMessage: cause?.message,
+      causeCode: cause?.code,
+      causeDetail: cause?.detail,
+      causeColumn: cause?.column,
+    });
     res.status(500).json({ message: 'Failed to check eligibility' });
   }
 });
