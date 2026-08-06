@@ -1,4 +1,4 @@
-import { QueryClient, QueryCache, QueryFunction } from "@tanstack/react-query";
+import { QueryClient, QueryCache, MutationCache, QueryFunction } from "@tanstack/react-query";
 
 // API version header — signals to the server which API version the client expects
 const API_VERSION_ACCEPT = "application/vnd.therapybill.v1+json";
@@ -177,7 +177,49 @@ function shouldRetry(failureCount: number, error: unknown): boolean {
   return true;
 }
 
+/**
+ * True for the three 403s that mean "re-verify MFA", not "you are logged out".
+ */
+function isMfaGateError(msg: string): boolean {
+  return (
+    msg.includes('MFA_SETUP_REQUIRED') ||
+    msg.includes('MFA_NOT_ENABLED') ||
+    msg.includes('MFA_VERIFICATION_REQUIRED')
+  );
+}
+
+/**
+ * Re-read auth state so App.tsx's needsMfaSetup / needsMfaChallenge gates
+ * re-evaluate and route the user to the right page.
+ *
+ * Exempting these 403s is necessary but not sufficient. The App-level gates
+ * only re-render when /api/auth/user is refetched, and nothing was triggering
+ * that refetch — so when the 15-minute window lapsed mid-session the user was
+ * left staring at whatever they were on, silently broken:
+ *
+ *   - a PHI page whose queries all 403'd rendered simply blank, with no prompt
+ *   - a mutation (which had no global handler at all) dumped the raw JSON body
+ *     into a toast: `403: {"message":"MFA verification required...`
+ *
+ * Both were reported by real users on 2026-08-06. Invalidating auth here turns
+ * either into the MFA challenge screen, which is the one thing that actually
+ * unblocks them.
+ */
+function refreshAuthForMfaGate(): void {
+  // Runs long after construction, so referencing queryClient here is safe.
+  // /api/auth/user is not itself MFA-gated, so this cannot loop.
+  void queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+}
+
 export const queryClient = new QueryClient({
+  mutationCache: new MutationCache({
+    onError: (error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (isMfaGateError(msg)) refreshAuthForMfaGate();
+      // Everything else stays with each mutation's own onError — this handler
+      // exists only to catch the MFA gate, which no local handler can route.
+    },
+  }),
   queryCache: new QueryCache({
     onError: (error, query) => {
       const msg = error instanceof Error ? error.message : String(error);
@@ -190,7 +232,10 @@ export const queryClient = new QueryClient({
       // PHI query for such a user 403s and this handler fires the
       // "session expired" event on each one — a continuously-flashing toast
       // even though the user is fully logged in.
-      if (msg.includes('MFA_SETUP_REQUIRED') || msg.includes('MFA_NOT_ENABLED') || msg.includes('MFA_VERIFICATION_REQUIRED')) return;
+      if (isMfaGateError(msg)) {
+        refreshAuthForMfaGate();
+        return;
+      }
       if (msg.includes('401') || msg.includes('403')) {
         // Dispatch a custom event that the Toaster/App can listen for
         window.dispatchEvent(new CustomEvent('auth-error', {
