@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useLocation } from 'wouter';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -8,7 +7,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getAuthHeaders } from '@/hooks/useAuth';
 
 export default function MfaChallenge() {
-  const [, setLocation] = useLocation();
   const [token, setToken] = useState('');
   const [backupCode, setBackupCode] = useState('');
   const [useBackup, setUseBackup] = useState(false);
@@ -36,7 +34,15 @@ export default function MfaChallenge() {
         throw new Error(data.message || 'Verification failed');
       }
 
-      setLocation('/');
+      // Hard navigation, NOT setLocation('/'). A wouter soft nav leaves the
+      // component holding useAuth mounted, so refetchOnMount never fires and
+      // the cached /api/auth/user — still carrying mfaChallengeRequired: true
+      // from before this challenge — survives. App.tsx then re-renders this
+      // very page, so a *successful* verification looks identical to a failed
+      // one, and users respond by re-submitting the login form until the auth
+      // rate limiter locks them out. A full reload also discards the PHI
+      // queries that 403'd while unverified, which a soft nav would keep.
+      window.location.href = '/';
     } catch (err: any) {
       setError(err.message);
     } finally {
