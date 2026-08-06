@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Consolidated WAFv2 WebACL (REGIONAL) for TherapyBill AI, associated with the
+  ALB fronting the ECS Fargate service. Merges the custom rules from the
+  hand-built "therapybill-waf-production" ACL with a stronger enforcement
+  posture, plus CloudWatch logging with sensitive-header redaction. Managed as
+  code so it lives in the repo as the single source of truth.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+
+  AlbArn:
+    Type: String
+    Default: arn:aws:elasticloadbalancing:us-east-1:773320320189:loadbalancer/app/therapybill-alb/53b5f34f93fbefbd
+    Description: ARN of the ALB to protect (therapybill-alb, us-east-1).
+
+  ScannerBlocklistIpSetArn:
+    Type: String
+    Default: arn:aws:wafv2:us-east-1:773320320189:regional/ipset/therapybill-scanner-blocklist/e1eefff7-61fc-4019-9b98-0a20b3427e78
+    Description: >
+      ARN of the existing scanner blocklist IP set. NOTE: this IP set is a
+      standalone resource NOT managed by this stack. Do not delete it, and do
+      not delete it when cleaning up the orphan ACLs.
+
+  RateLimitPer5Min:
+    Type: Number
+    Default: 2000
+
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+
+  CanonicalHost:
+    Type: String
+    Default: app.therapybillai.com
+    Description: The only Host header allowed through (BlockNonCanonicalHost rule).
+
+Resources:
+
+  WafLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "aws-waf-logs-therapybill-${EnvironmentName}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "therapybill-${EnvironmentName}-acl"
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      Description: Consolidated WAF for TherapyBill AI ALB - managed by CloudFormation
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "therapybill-${EnvironmentName}-acl"
+      Rules:
+
+        # -- Custom rules -----------------------------------------------------
+
+        # Curated scanner IP blocklist (references external IP set).
+        - Name: BlockScannerIPs
+          Priority: 0
+          Action:
+            Block: {}
+          Statement:
+            IPSetReferenceStatement:
+              Arn: !Ref ScannerBlocklistIpSetArn
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BlockScannerIPs
+
+        # Block traffic from high-risk countries. Edit CountryCodes as needed.
+        - Name: GeoBlockHighRiskCountries
+          Priority: 1
+          Action:
+            Block: {}
+          Statement:
+            GeoMatchStatement:
+              CountryCodes: [CN, RU, KP, IR]
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: GeoBlockHighRiskCountries
+
+        # Reject any request whose Host header isn't the canonical app host.
+        # NOTE: set to COUNT initially — this rule was never live before, so
+        # confirm nothing legit hits the ALB on a different host, then flip to
+        # Block by swapping Count: {} for Block: {}.
+        - Name: BlockNonCanonicalHost
+          Priority: 2
+          Action:
+            Count: {}
+          Statement:
+            NotStatement:
+              Statement:
+                ByteMatchStatement:
+                  SearchString: !Ref CanonicalHost
+                  FieldToMatch:
+                    SingleHeader:
+                      Name: host
+                  PositionalConstraint: EXACTLY
+                  TextTransformations:
+                    - Priority: 0
+                      Type: LOWERCASE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BlockNonCanonicalHost
+
+        # -- Managed rule groups ---------------------------------------------
+
+        - Name: AWSManagedRulesAmazonIpReputationList
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AmazonIpReputationList
+
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 4
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: KnownBadInputs
+
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 5
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: SQLiRuleSet
+
+        # CRS in COUNT for the monitoring window. SizeRestrictions_BODY is
+        # overridden to Count so that when you flip the group to enforce
+        # (OverrideAction -> None), that known-noisy rule stays non-blocking.
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 6
+          OverrideAction:
+            Count: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:
+                - Name: SizeRestrictions_BODY
+                  ActionToUse:
+                    Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRuleSet
+
+        # BotControl. COST: ~$10/mo per web ACL + ~$1 per million requests
+        # analyzed, billed whether in Count or Block. To remove, delete this
+        # entire rule block.
+        - Name: AWSManagedRulesBotControlRuleSet
+          Priority: 7
+          OverrideAction:
+            Count: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesBotControlRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BotControl
+
+        # -- Rate limit -------------------------------------------------------
+
+        - Name: RateLimitPerIP
+          Priority: 8
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref RateLimitPer5Min
+              AggregateKeyType: IP
+              EvaluationWindowSec: 300
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: RateLimitPerIP
+
+      Tags:
+        - Key: Project
+          Value: TherapyBillAI
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  WebACLLogging:
+    Type: AWS::WAFv2::LoggingConfiguration
+    Properties:
+      ResourceArn: !GetAtt WebACL.Arn
+      LogDestinationConfigs:
+        - !GetAtt WafLogGroup.Arn
+      RedactedFields:
+        - SingleHeader:
+            Name: authorization
+        - SingleHeader:
+            Name: cookie
+
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref AlbArn
+      WebACLArn: !GetAtt WebACL.Arn
+
+Outputs:
+  WebACLArn:
+    Value: !GetAtt WebACL.Arn
+  WebACLId:
+    Value: !GetAtt WebACL.Id
+  LogGroupName:
+    Value: !Ref WafLogGroup
