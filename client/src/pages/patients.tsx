@@ -507,6 +507,31 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
   );
 }
 
+/**
+ * Pull the server's own explanation out of an apiRequest error.
+ *
+ * apiRequest throws `${status}: ${body}`, where body is the JSON error payload.
+ * The eligibility route puts the actionable reason in `detail` — an
+ * unrecognized payer name, for instance — but the UI used to discard it and
+ * show a fixed "Failed to check eligibility" for everything. On 2026-08-06 that
+ * hid `No trading partner ID found for payer: BLUE CROSS BLUE SHELD` (the payer
+ * name was misspelled on the record), so the front desk had no way to tell a
+ * typo they could fix from an outage they couldn't, and simply retried —
+ * spending a billable payer transaction each time.
+ */
+function eligibilityErrorMessage(error: unknown): string {
+  const FALLBACK = 'Failed to check eligibility';
+  const raw = error instanceof Error ? error.message : String(error);
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart === -1) return FALLBACK;
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart));
+    return parsed?.detail || parsed?.message || FALLBACK;
+  } catch {
+    return FALLBACK;
+  }
+}
+
 export default function Patients() {
   const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
   const { toast } = useToast();
@@ -631,7 +656,7 @@ export default function Patients() {
       }
       toast({
         title: "Error",
-        description: "Failed to check eligibility",
+        description: eligibilityErrorMessage(error),
         variant: "destructive",
       });
     },
