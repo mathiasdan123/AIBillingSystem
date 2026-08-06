@@ -1247,6 +1247,35 @@ export default function Settings() {
     },
   });
 
+  // Reset another user's MFA (admin account recovery). The server also requires
+  // the acting admin to have passed MFA recently, so a stale session gets a
+  // clear MFA_REVERIFICATION_REQUIRED rather than a silent failure.
+  const [resettingMfaUserId, setResettingMfaUserId] = useState<string | null>(null);
+  const resetMfaMutation = useMutation({
+    mutationFn: async ({ userId }: { userId: string; email?: string }) => {
+      const response = await apiRequest("POST", `/api/users/${userId}/mfa/reset`, {});
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
+      toast({
+        title: "MFA reset",
+        description: `${variables.email || 'The user'} must set up MFA again at next sign-in before they can open patient data.`,
+      });
+    },
+    onError: (error: any) => {
+      const message = error?.message || "";
+      toast({
+        title: "Could not reset MFA",
+        description: /MFA_REVERIFICATION_REQUIRED|Re-verify/i.test(message)
+          ? "Verify your own MFA first, then try again."
+          : message || "Failed to reset MFA",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => setResettingMfaUserId(null),
+  });
+
   // Invites query (only for admins)
   const { data: invites, isLoading: invitesLoading } = useQuery<InviteData[]>({
     queryKey: ['/api/invites'],
@@ -3063,22 +3092,75 @@ export default function Settings() {
                                   </Badge>
                                 </td>
                                 <td className="px-4 py-3">
-                                  <Select
-                                    value={u.role || 'therapist'}
-                                    onValueChange={(newRole) => {
-                                      updateRoleMutation.mutate({ userId: u.id, role: newRole });
-                                    }}
-                                    disabled={updateRoleMutation.isPending}
-                                  >
-                                    <SelectTrigger className="w-32">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="therapist">Therapist</SelectItem>
-                                      <SelectItem value="billing">Billing</SelectItem>
-                                      <SelectItem value="admin">Admin</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                                  <div className="flex items-center gap-2">
+                                    <Select
+                                      value={u.role || 'therapist'}
+                                      onValueChange={(newRole) => {
+                                        updateRoleMutation.mutate({ userId: u.id, role: newRole });
+                                      }}
+                                      disabled={updateRoleMutation.isPending}
+                                    >
+                                      <SelectTrigger className="w-32">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="therapist">Therapist</SelectItem>
+                                        <SelectItem value="billing">Billing</SelectItem>
+                                        <SelectItem value="admin">Admin</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+
+                                    {/* Account recovery for a user locked out of their
+                                        authenticator. Not offered for your own row —
+                                        the server rejects self-service resets. */}
+                                    {u.id !== (user as any)?.id && (
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={resetMfaMutation.isPending}
+                                            title="Reset this user's two-factor authentication"
+                                          >
+                                            {resettingMfaUserId === u.id ? (
+                                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                              <Key className="w-3.5 h-3.5" />
+                                            )}
+                                            <span className="ml-1.5">Reset MFA</span>
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>
+                                              Reset MFA for {u.firstName} {u.lastName}?
+                                            </AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              Use this when {u.email} can't get past the
+                                              authenticator step — for example after losing
+                                              their phone. Their existing authenticator entry
+                                              and all remaining backup codes stop working
+                                              immediately, and they'll be prompted to set up
+                                              MFA again the next time they sign in. They can't
+                                              open patient data until they do. This is recorded
+                                              in the audit log.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              onClick={() => {
+                                                setResettingMfaUserId(u.id);
+                                                resetMfaMutation.mutate({ userId: u.id, email: u.email });
+                                              }}
+                                            >
+                                              Reset MFA
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             ))}
