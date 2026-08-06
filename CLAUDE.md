@@ -126,6 +126,38 @@ History: this step was added 2026-05-28 after a partial outage. Earlier docs cla
 - **Domain:** app.therapybillai.com (SSL via ACM, DNS via Squarespace)
 - **Deploy process:** zip source → upload to S3 → CodeBuild → ECR → ECS force-new-deployment
 
+### How changes reach main (default path)
+
+Pushing straight to main is a break-glass action, not the normal route. Work goes:
+
+```bash
+git switch -c <type>/<short-name>   # feat/, fix/, chore/, infra/, docs/
+# commit as usual
+gh pr create --fill
+gh pr merge --auto --squash          # merges itself the moment checks pass
+```
+
+`main` requires a PR with **0 approvals** (solo repo — you cannot approve your
+own PR, so requiring one would deadlock) and these checks green before merge:
+
+| Check | Workflow | Typical |
+|---|---|---|
+| `build` | CI — tsc, tests, schema-diff lint | ~1.6 min |
+| `npm-audit` | Security — blocks on critical runtime vulns | ~3.4 min |
+| `codeql` | Security — static analysis | ~3.4 min |
+
+Merging main fires **Deploy to Production**. Auto-merge means green checks →
+merge → deploy with no further clicks, so the PR is the last point at which
+something can be stopped cheaply.
+
+`enforce_admins` is deliberately **off**, so a direct push to main still
+succeeds and prints a "Bypassed rule violations" warning. That escape hatch
+exists for one case: GitHub Actions is degraded and required checks cannot run
+while production is broken. (This is not hypothetical — Actions failed at the
+`Set up job` step for ~45 min on 2026-08-06.) Using it for ordinary work is
+what made the rule decorative in the first place. If you bypass, say so and say
+why, and run `npx tsc --noEmit && npm test` locally first — nothing else will.
+
 ## Environment Variables (Required)
 ```
 DATABASE_URL=        # PostgreSQL connection string (RDS in production)
