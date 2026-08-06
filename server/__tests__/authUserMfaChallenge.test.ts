@@ -63,9 +63,9 @@ describe('GET /api/auth/user — mfaChallengeRequired', () => {
     expect(res.body.mfaChallengeRequired).toBe(false);
   });
 
-  it('is true again once the 15-minute MFA session window has lapsed', async () => {
+  it('is true again once the MFA session window has lapsed', async () => {
     mockStorage.getUser.mockResolvedValue({ id: 'user-1', mfaEnabled: true });
-    sessionState.mfaVerifiedAt = Date.now() - 16 * 60 * 1000;
+    sessionState.mfaVerifiedAt = Date.now() - 61 * 60 * 1000;
     sessionState.mfaUserId = 'user-1';
     const res = await request(app).get('/api/auth/user');
     expect(res.body.mfaChallengeRequired).toBe(true);

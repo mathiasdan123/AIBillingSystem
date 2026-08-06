@@ -132,7 +132,7 @@ describe('MFA Required Middleware', () => {
     const remaining = getMfaSessionTimeRemaining(session);
     // Should be roughly 10 min (15-min timeout - 5 min elapsed)
     expect(remaining).toBeGreaterThan(8 * 60 * 1000);
-    expect(remaining).toBeLessThanOrEqual(15 * 60 * 1000);
+    expect(remaining).toBeLessThanOrEqual(60 * 60 * 1000);
   });
 
   // ---- requireMfaSetup middleware ----
@@ -238,9 +238,11 @@ describe('MFA Required Middleware', () => {
   // ---- MFA_CONFIG ----
 
   it('should export correct MFA session timeout config', () => {
-    // 15-minute re-verification window for PHI/admin per HIPAA 164.312(d) spec.
-    expect(MFA_CONFIG.sessionTimeout).toBe(15 * 60 * 1000);
-    expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(15);
+    // 60-minute SLIDING window, refreshed by PHI activity (touchMfaSession).
+    // No regulation sets this interval — 164.312(a)(2)(iii) is addressable and
+    // speaks of inactivity, which is what a sliding window measures.
+    expect(MFA_CONFIG.sessionTimeout).toBe(60 * 60 * 1000);
+    expect(MFA_CONFIG.sessionTimeoutMinutes).toBe(60);
   });
 });
 

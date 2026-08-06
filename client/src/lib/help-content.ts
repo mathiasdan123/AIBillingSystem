@@ -381,7 +381,7 @@ export const helpSections: HelpSection[] = [
       {
         question: 'Session timeout?',
         answer:
-          '30 minutes of inactivity in production. MFA re-verification required every 15 minutes for PHI routes.',
+          '30 minutes of inactivity in production. MFA re-verification required after 60 minutes without PHI activity.',
       },
       {
         question: 'Can I see who accessed a patient chart?',

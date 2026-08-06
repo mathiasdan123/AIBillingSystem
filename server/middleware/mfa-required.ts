@@ -14,16 +14,33 @@
  * MFA VERIFICATION REQUIREMENTS:
  * - MFA must be enabled on the user's account (mfaEnabled: true)
  * - MFA must be verified within the current session (mfaVerifiedAt timestamp)
- * - Verification expires after MFA_SESSION_TIMEOUT (default: 15 minutes)
+ * - Verification expires after MFA_SESSION_TIMEOUT of PHI inactivity (default: 60 minutes, sliding)
  */
 
 import type { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
 import logger from '../services/logger';
 
-// MFA re-verification window for PHI/admin routes (HIPAA 164.312(d)).
-// 15 minutes per the documented security spec; override via MFA_SESSION_TIMEOUT_MS.
-const MFA_SESSION_TIMEOUT = Number(process.env.MFA_SESSION_TIMEOUT_MS) || 15 * 60 * 1000;
+// MFA re-verification window for PHI/admin routes. Sliding: refreshed by PHI
+// activity (see touchMfaSession), so it measures idleness, not wall-clock time
+// since login. Override via MFA_SESSION_TIMEOUT_MS.
+//
+// Was a fixed 15 minutes, and *absolute* — mfaVerifiedAt was set at login and
+// never refreshed, so a user working continuously was re-challenged four times
+// an hour. On 2026-08-06 that repeatedly interrupted a biller mid-edit and was
+// a large part of why an MFA problem took a full afternoon to unpick.
+//
+// No regulation prescribes an interval. 45 CFR 164.312(d) requires
+// authentication without specifying frequency; 164.312(a)(2)(iii) (automatic
+// logoff) is *addressable* and is written in terms of "inactivity" — which a
+// sliding window models and a fixed one does not. The old 15-minute figure
+// matches PCI DSS 8.2.8, which governs cardholder data, not PHI.
+const MFA_SESSION_TIMEOUT = Number(process.env.MFA_SESSION_TIMEOUT_MS) || 60 * 60 * 1000;
+
+// Don't write the session store on every single PHI request. Refreshing at most
+// once a minute keeps the sliding window accurate to within a minute out of
+// sixty while avoiding a store write per request.
+const MFA_TOUCH_INTERVAL_MS = 60 * 1000;
 
 // Extend Express session type to include MFA verification
 declare module 'express-session' {
@@ -137,6 +154,24 @@ export function setMfaVerified(session: any, userId: string): void {
 }
 
 /**
+ * Slide the MFA window forward on PHI activity.
+ *
+ * Only call this once the session has already been found valid — it must
+ * extend an active session, never resurrect an expired one. Throttled to one
+ * write per MFA_TOUCH_INTERVAL_MS so a busy page doesn't write the session
+ * store on every request.
+ *
+ * Returns true if the timestamp was moved (useful in tests).
+ */
+export function touchMfaSession(session: any): boolean {
+  if (!session?.mfaVerifiedAt) return false;
+  const now = Date.now();
+  if (now - session.mfaVerifiedAt < MFA_TOUCH_INTERVAL_MS) return false;
+  session.mfaVerifiedAt = now;
+  return true;
+}
+
+/**
  * Clear MFA verification from session
  * Call this on logout or session invalidation
  */
@@ -224,7 +259,11 @@ export const mfaRequired = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    // MFA is valid, proceed
+    // MFA is valid. Slide the window forward so the timeout measures idleness
+    // rather than time since login — checked first, extended second, so this
+    // can only ever prolong an already-valid session.
+    touchMfaSession(session);
+
     logger.debug('MFA verification passed', {
       userId,
       path: req.path,
