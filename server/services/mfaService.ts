@@ -32,7 +32,13 @@ export function verifyToken(secret: string, token: string): boolean {
     secret: OTPAuth.Secret.fromBase32(secret),
   });
 
-  const delta = totp.validate({ token, window: 1 });
+  // window: 2 => accept the current 30s step plus 2 steps either side (±60s).
+  // window: 1 (±30s) was too tight in practice: ordinary phone clock drift put
+  // real users' codes outside the window and locked them out of their own
+  // accounts. ±60s is the common tolerance (RFC 6238 §5.2 explicitly allows a
+  // small look-back/look-ahead for clock skew) and costs ~5 candidate codes per
+  // attempt, which the per-account attempt limit still bounds tightly.
+  const delta = totp.validate({ token, window: 2 });
   return delta !== null;
 }
 

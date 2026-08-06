@@ -16,7 +16,10 @@ const { mockStorage } = vi.hoisted(() => ({
 vi.mock('../storage', () => ({ storage: mockStorage }));
 vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../replitAuth', () => ({ isAuthenticated: (_req: any, _res: any, next: any) => next() }));
-vi.mock('../middleware/rate-limiter', () => ({ authLimiter: (_req: any, _res: any, next: any) => next() }));
+vi.mock('../middleware/rate-limiter', () => ({
+  authLimiter: (_req: any, _res: any, next: any) => next(),
+  mfaChallengeLimiter: (_req: any, _res: any, next: any) => next(),
+}));
 
 import authRouter from '../routes/auth';
 

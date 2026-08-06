@@ -345,6 +345,30 @@ export const authLimiter = createRateLimiter('auth', {
 });
 
 /**
+ * Rate limiter for the second factor (/api/mfa/challenge)
+ *
+ * Deliberately separate from authLimiter, for two reasons:
+ *
+ * 1. Separate budget. Sharing authLimiter's 5/15min with /login meant a user
+ *    who mistyped two TOTP codes and retried the login page was locked out for
+ *    15 minutes — a password-stage limit was being spent by the MFA stage.
+ * 2. Keyed per-user, not per-IP. Reaching this endpoint already requires a
+ *    valid session (isAuthenticated), so the account is known and there is no
+ *    need to punish everyone behind the same office NAT for one person's typo.
+ *    Brute force is still bounded to 10 codes / 15 min *per account*, which is
+ *    far tighter than an IP key an attacker can trivially rotate.
+ *
+ * Apply to: /api/mfa/challenge
+ */
+export const mfaChallengeLimiter = createRateLimiter('mfa-challenge', {
+  maxRequests: 10,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  description: 'MFA challenge rate limiter',
+  keyGenerator: apiKeyGenerator,
+  message: 'Too many MFA attempts. Please wait 15 minutes, then try again with a fresh code.',
+});
+
+/**
  * Rate limiter for general API requests
  *
  * Moderate limits for normal API usage:

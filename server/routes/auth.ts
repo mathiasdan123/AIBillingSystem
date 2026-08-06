@@ -17,7 +17,7 @@ import * as crypto from 'crypto';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { setMfaVerified, clearMfaVerification, isMfaSessionValid, MFA_PROTECTED_ROUTES, MFA_CONFIG } from '../middleware/mfa-required';
-import { authLimiter } from '../middleware/rate-limiter';
+import { authLimiter, mfaChallengeLimiter } from '../middleware/rate-limiter';
 import logger from '../services/logger';
 
 const router = Router();
@@ -149,6 +149,104 @@ router.patch('/users/:id/role', isAuthenticated, isAdmin, async (req: any, res) 
   }
 });
 
+/**
+ * Admin account recovery: clear another user's second factor.
+ *
+ * This is the path the MFA_DISABLE_FORBIDDEN message ("Contact an
+ * administrator for account recovery") tells locked-out users to ask for.
+ * Until this existed there was nothing behind that message: /mfa/disable only
+ * ever operates on req.user.claims.sub, so an admin invoking it would drop
+ * their OWN factor and leave the stuck user exactly as stuck.
+ *
+ * This does not leave the target unprotected — it clears mfaEnabled, so
+ * mfaSetupRequired blocks them from every PHI route with MFA_SETUP_REQUIRED
+ * until they re-enroll. It hands back an enrollment prompt, not access.
+ *
+ * Guards, in order: admin role, a *fresh* MFA session for the acting admin
+ * (so a hijacked-but-unverified admin session can't strip factors), same
+ * practice only, and no self-service.
+ */
+router.post('/users/:id/mfa/reset', isAuthenticated, isAdmin, async (req: any, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.claims?.sub;
+
+    // Resetting a second factor is itself a privileged act — require the admin
+    // to have passed MFA recently, not merely to hold a session cookie.
+    if (!isMfaSessionValid(req.session, adminId)) {
+      return res.status(403).json({
+        message: 'Re-verify your own MFA before resetting another user\'s.',
+        code: 'MFA_REVERIFICATION_REQUIRED',
+      });
+    }
+
+    if (id === adminId) {
+      return res.status(400).json({
+        message: 'Use /api/mfa/disable to reset your own MFA.',
+        code: 'MFA_RESET_SELF',
+      });
+    }
+
+    const [admin, targetUser] = await Promise.all([
+      storage.getUser(adminId),
+      storage.getUser(id),
+    ]);
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Practice-scoped: an admin recovers accounts in their own practice only.
+    // Both sides must be a real practice — two null practiceIds are not a match.
+    if (!admin?.practiceId || !targetUser.practiceId || admin.practiceId !== targetUser.practiceId) {
+      logger.warn('Cross-practice MFA reset blocked', {
+        adminId,
+        targetUserId: id,
+        adminPracticeId: admin?.practiceId,
+        targetPracticeId: targetUser.practiceId,
+      });
+      return res.status(403).json({ message: 'User not found' });
+    }
+
+    await storage.updateUserMfa(id, {
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaBackupCodes: null,
+    });
+
+    logger.warn('MFA reset by admin for account recovery', {
+      adminId,
+      targetUserId: id,
+      practiceId: targetUser.practiceId,
+    });
+
+    await storage.createAuditLog({
+      eventCategory: 'admin',
+      eventType: 'mfa_reset',
+      resourceType: 'user',
+      resourceId: id,
+      userId: adminId,
+      practiceId: targetUser.practiceId,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      details: {
+        targetEmail: targetUser.email,
+        reason: req.body?.reason ?? null,
+      },
+      success: true,
+    });
+
+    res.json({
+      message: 'MFA reset. The user must re-enroll at next sign-in before accessing patient data.',
+      userId: id,
+      email: targetUser.email,
+    });
+  } catch (error) {
+    logger.error('Error resetting user MFA', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to reset MFA' });
+  }
+});
+
 // ==================== INITIAL SETUP ====================
 
 // Make current user admin (for initial setup only)
@@ -251,8 +349,9 @@ router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
   }
 });
 
-// Rate limited to prevent brute force attacks on MFA codes
-router.post('/mfa/challenge', authLimiter, isAuthenticated, async (req: any, res) => {
+// Rate limited to prevent brute force attacks on MFA codes. Uses its own
+// per-account limiter rather than authLimiter — see mfaChallengeLimiter.
+router.post('/mfa/challenge', mfaChallengeLimiter, isAuthenticated, async (req: any, res) => {
   try {
     const { verifyToken, verifyBackupCode, hashBackupCode } = await import('../services/mfaService');
     const userId = req.user?.claims?.sub;

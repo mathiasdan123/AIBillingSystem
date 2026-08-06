@@ -32,6 +32,7 @@ const mockStorage = vi.hoisted(() => ({
   updateUser: vi.fn(),
   upsertUser: vi.fn(),
   updateUserMfa: vi.fn(),
+  createAuditLog: vi.fn(),
   // Demo-login now resolves the isolated demo practice via ensureDemoPractice().
   getDemoPractice: vi.fn(),
   createPractice: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock('../middleware/mfa-required', () => ({
 
 vi.mock('../middleware/rate-limiter', () => ({
   authLimiter: (_req: any, _res: any, next: any) => next(),
+  mfaChallengeLimiter: (_req: any, _res: any, next: any) => next(),
   passwordResetLimiter: (_req: any, _res: any, next: any) => next(),
   registrationLimiter: (_req: any, _res: any, next: any) => next(),
 }));
@@ -114,6 +116,7 @@ vi.mock('../services/passwordService', async () => ({
 // ---------------------------------------------------------------------------
 import authRouter from '../routes/auth';
 import { hashBackupCode } from '../services/mfaService';
+import { isMfaSessionValid } from '../middleware/mfa-required';
 
 function buildApp(): Express {
   const app = express();
@@ -551,6 +554,118 @@ describe('auth routes (server/routes/auth.ts)', () => {
         .expect(400);
 
       expect(res.body.message).toMatch(/invalid backup code/i);
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- POST /api/users/:id/mfa/reset (admin account recovery) ----
+
+  describe('POST /api/users/:id/mfa/reset', () => {
+    const ADMIN = { id: 'admin-user-1', role: 'admin', practiceId: 1, email: 'admin@example.com' };
+    const TARGET = { id: 'locked-user-9', role: 'billing', practiceId: 1, email: 'locked@example.com' };
+
+    /** getUser resolves per-id: isAdmin looks up the admin, the route looks up both. */
+    function stubUsers(target: any = TARGET, admin: any = ADMIN) {
+      mockStorage.getUser.mockImplementation(async (id: string) => {
+        if (id === admin.id) return admin;
+        if (target && id === target.id) return target;
+        return undefined;
+      });
+    }
+
+    it('clears the target user\'s second factor and audits the reset', async () => {
+      stubUsers();
+
+      const res = await request(app)
+        .post('/api/users/locked-user-9/mfa/reset')
+        .send({ reason: 'phone clock drift' })
+        .expect(200);
+
+      expect(mockStorage.updateUserMfa).toHaveBeenCalledWith('locked-user-9', {
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaBackupCodes: null,
+      });
+      expect(res.body.message).toMatch(/re-enroll/i);
+
+      // The reset must land in the tamper-evident audit trail (HIPAA admin event).
+      const audit = mockStorage.createAuditLog.mock.calls[0][0];
+      expect(audit).toMatchObject({
+        eventCategory: 'admin',
+        eventType: 'mfa_reset',
+        resourceId: 'locked-user-9',
+        userId: 'admin-user-1',
+        practiceId: 1,
+      });
+      expect(audit.details.reason).toBe('phone clock drift');
+    });
+
+    it('refuses when the acting admin has not passed MFA recently', async () => {
+      vi.mocked(isMfaSessionValid).mockReturnValueOnce(false);
+      stubUsers();
+
+      const res = await request(app)
+        .post('/api/users/locked-user-9/mfa/reset')
+        .expect(403);
+
+      expect(res.body.code).toBe('MFA_REVERIFICATION_REQUIRED');
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    });
+
+    it('refuses to reset the caller\'s own MFA', async () => {
+      stubUsers();
+
+      const res = await request(app)
+        .post('/api/users/admin-user-1/mfa/reset')
+        .expect(400);
+
+      expect(res.body.code).toBe('MFA_RESET_SELF');
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    });
+
+    it('refuses to reset a user in another practice, without confirming they exist', async () => {
+      stubUsers({ ...TARGET, practiceId: 2 });
+
+      const res = await request(app)
+        .post('/api/users/locked-user-9/mfa/reset')
+        .expect(403);
+
+      // Same wording as the 404 so the endpoint can't be used to probe for
+      // account existence across tenants.
+      expect(res.body.message).toBe('User not found');
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    });
+
+    it('does not treat two null practiceIds as the same practice', async () => {
+      stubUsers({ ...TARGET, practiceId: null }, { ...ADMIN, practiceId: null });
+
+      await request(app)
+        .post('/api/users/locked-user-9/mfa/reset')
+        .expect(403);
+
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 for an unknown user', async () => {
+      stubUsers(null);
+
+      await request(app)
+        .post('/api/users/nobody/mfa/reset')
+        .expect(404);
+
+      expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 for non-admin callers', async () => {
+      authenticatedUserRole = 'billing';
+      app = buildApp();
+      stubUsers(TARGET, { ...ADMIN, role: 'billing' });
+
+      const res = await request(app)
+        .post('/api/users/locked-user-9/mfa/reset')
+        .expect(403);
+
+      expect(res.body.message).toMatch(/Admin role required/i);
       expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
     });
   });
