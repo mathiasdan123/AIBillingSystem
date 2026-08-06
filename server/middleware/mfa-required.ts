@@ -42,10 +42,23 @@ const MFA_SESSION_TIMEOUT = Number(process.env.MFA_SESSION_TIMEOUT_MS) || 60 * 6
 // sixty while avoiding a store write per request.
 const MFA_TOUCH_INTERVAL_MS = 60 * 1000;
 
+// Absolute ceiling on how long one MFA challenge can authorize PHI access,
+// regardless of activity. Anchored to mfaChallengedAt, which only a real
+// challenge sets — touchMfaSession deliberately cannot move it.
+//
+// Without this, a sliding window plus continuous use means a single morning
+// challenge authorizes an entire day, and 164.312(d) re-verification becomes
+// login-only in practice. The cap keeps a bounded, defensible answer to "how
+// often does a user actually re-prove identity?" while staying far away from
+// the every-15-minutes behaviour that made the app unusable.
+const MFA_ABSOLUTE_MAX = Number(process.env.MFA_ABSOLUTE_MAX_MS) || 8 * 60 * 60 * 1000;
+
 // Extend Express session type to include MFA verification
 declare module 'express-session' {
   interface SessionData {
     mfaVerifiedAt?: number;
+    /** Last real MFA challenge. Anchors MFA_ABSOLUTE_MAX; activity never moves it. */
+    mfaChallengedAt?: number;
     mfaUserId?: string;
   }
 }
@@ -139,9 +152,21 @@ export function isMfaSessionValid(session: any, userId: string): boolean {
   }
 
   const now = Date.now();
-  const elapsed = now - session.mfaVerifiedAt;
 
-  return elapsed < MFA_SESSION_TIMEOUT;
+  // Sliding window: time since the last PHI activity (or challenge).
+  if (now - session.mfaVerifiedAt >= MFA_SESSION_TIMEOUT) {
+    return false;
+  }
+
+  // Absolute cap: time since the last real challenge, which activity cannot
+  // extend. Sessions predating mfaChallengedAt fall back to mfaVerifiedAt
+  // rather than being force-expired on deploy.
+  const challengedAt = session.mfaChallengedAt ?? session.mfaVerifiedAt;
+  if (now - challengedAt >= MFA_ABSOLUTE_MAX) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -149,7 +174,11 @@ export function isMfaSessionValid(session: any, userId: string): boolean {
  * Call this after successful MFA verification
  */
 export function setMfaVerified(session: any, userId: string): void {
-  session.mfaVerifiedAt = Date.now();
+  const now = Date.now();
+  session.mfaVerifiedAt = now;
+  // Anchor for the absolute cap. Only a real challenge moves this;
+  // touchMfaSession must never write it.
+  session.mfaChallengedAt = now;
   session.mfaUserId = userId;
 }
 
@@ -177,6 +206,7 @@ export function touchMfaSession(session: any): boolean {
  */
 export function clearMfaVerification(session: any): void {
   delete session.mfaVerifiedAt;
+  delete session.mfaChallengedAt;
   delete session.mfaUserId;
 }
 
@@ -187,8 +217,11 @@ export function getMfaSessionTimeRemaining(session: any): number {
   if (!session?.mfaVerifiedAt) {
     return 0;
   }
-  const elapsed = Date.now() - session.mfaVerifiedAt;
-  return Math.max(0, MFA_SESSION_TIMEOUT - elapsed);
+  const now = Date.now();
+  const slidingLeft = MFA_SESSION_TIMEOUT - (now - session.mfaVerifiedAt);
+  const challengedAt = session.mfaChallengedAt ?? session.mfaVerifiedAt;
+  const absoluteLeft = MFA_ABSOLUTE_MAX - (now - challengedAt);
+  return Math.max(0, Math.min(slidingLeft, absoluteLeft));
 }
 
 /**
@@ -457,4 +490,6 @@ export const MFA_PROTECTED_ROUTES = {
 export const MFA_CONFIG = {
   sessionTimeout: MFA_SESSION_TIMEOUT,
   sessionTimeoutMinutes: MFA_SESSION_TIMEOUT / 60000,
+  absoluteMax: MFA_ABSOLUTE_MAX,
+  absoluteMaxHours: MFA_ABSOLUTE_MAX / 3600000,
 };

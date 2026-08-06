@@ -115,3 +115,78 @@ describe('sliding behaviour end to end', () => {
     expect(isMfaSessionValid(session, 'someone-else')).toBe(false);
   });
 });
+
+describe('absolute cap', () => {
+  it('defaults to 8 hours', () => {
+    expect(MFA_CONFIG.absoluteMaxHours).toBe(8);
+  });
+
+  it('expires a continuously active session once the cap is reached', () => {
+    const session: any = {};
+    setMfaVerified(session, USER);
+    const start = session.mfaChallengedAt;
+
+    vi.useFakeTimers();
+    // Work steadily all day. The sliding window alone would keep this alive
+    // indefinitely; the cap is what eventually forces a real re-challenge.
+    let lastValid = 0;
+    for (let elapsed = 10 * MIN; elapsed <= 9 * 60 * MIN; elapsed += 10 * MIN) {
+      vi.setSystemTime(new Date(start + elapsed));
+      if (isMfaSessionValid(session, USER)) {
+        lastValid = elapsed;
+        touchMfaSession(session);
+      }
+    }
+    // Stayed valid deep into the day, but not past 8 hours.
+    expect(lastValid).toBeGreaterThanOrEqual(7 * 60 * MIN);
+    expect(lastValid).toBeLessThan(8 * 60 * MIN + 10 * MIN);
+
+    vi.setSystemTime(new Date(start + 8 * 60 * MIN + 1));
+    expect(isMfaSessionValid(session, USER)).toBe(false);
+  });
+
+  it('activity cannot push the cap forward', () => {
+    const session: any = {};
+    setMfaVerified(session, USER);
+    const anchor = session.mfaChallengedAt;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(anchor + 30 * MIN));
+    touchMfaSession(session);
+
+    expect(session.mfaVerifiedAt).toBe(anchor + 30 * MIN); // slid
+    expect(session.mfaChallengedAt).toBe(anchor); // did not
+  });
+
+  it('a fresh challenge resets the cap', () => {
+    const session: any = {};
+    setMfaVerified(session, USER);
+    const start = session.mfaChallengedAt;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(start + 9 * 60 * MIN));
+    expect(isMfaSessionValid(session, USER)).toBe(false);
+
+    setMfaVerified(session, USER); // user re-challenges
+    expect(isMfaSessionValid(session, USER)).toBe(true);
+    expect(session.mfaChallengedAt).toBe(start + 9 * 60 * MIN);
+  });
+
+  it('does not force-expire sessions created before mfaChallengedAt existed', () => {
+    // Deploy-safety: sessions already in the store have mfaVerifiedAt only.
+    const session: any = { mfaVerifiedAt: Date.now(), mfaUserId: USER };
+    expect(isMfaSessionValid(session, USER)).toBe(true);
+  });
+
+  it('reports the nearer of the two deadlines as time remaining', () => {
+    const session: any = {};
+    setMfaVerified(session, USER);
+    const start = session.mfaChallengedAt;
+
+    vi.useFakeTimers();
+    // 7h50m in, freshly active: sliding says 60m left, cap says 10m. Cap wins.
+    vi.setSystemTime(new Date(start + 7 * 60 * MIN + 50 * MIN));
+    touchMfaSession(session);
+    expect(getMfaSessionTimeRemaining(session)).toBe(10 * MIN);
+  });
+});
