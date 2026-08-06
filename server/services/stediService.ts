@@ -235,6 +235,33 @@ export function isStcDowngrade(sent: string[], returned: string[]): boolean {
   return returned.every((c) => c === '30');
 }
 
+/**
+ * Normalize a 271 EB07 coinsurance value to a whole-number percentage.
+ *
+ * X12 271 EB07 carries a decimal fraction — 0.5 means 50% — but
+ * `eligibility_checks.coinsurance` is an integer column meaning "50 for 50%".
+ * Passing the raw fraction straight through made Postgres reject the whole
+ * insert with `invalid input syntax for type integer: "0.5"`, so a *successful*
+ * eligibility check (real deductible and out-of-pocket figures from the payer)
+ * was discarded at the final step and surfaced to the front desk as "Failed to
+ * check eligibility". Observed in production 2026-08-06.
+ *
+ * Values > 1 are passed through rather than multiplied: not every payer honours
+ * the spec, and some send 20 meaning 20%. Treating that as 2000% would be worse
+ * than the bug being fixed.
+ *
+ * Ambiguity worth knowing about: a payer sending exactly 1 could mean 1% or
+ * 100%. This reads it as 100%, which is the far likelier intent for a
+ * coinsurance field — 100% coinsurance (patient pays all) is a real benefit
+ * configuration, 1% is not.
+ */
+export function normalizeCoinsurancePercent(percent: number | null | undefined): number | undefined {
+  if (percent === null || percent === undefined) return undefined;
+  if (!Number.isFinite(percent) || percent <= 0) return undefined;
+  const asPercent = percent <= 1 ? percent * 100 : percent;
+  return Math.round(asPercent);
+}
+
 export interface EligibilityResponse {
   status: 'active' | 'inactive' | 'unknown';
   raw: any;
@@ -259,7 +286,7 @@ export interface EligibilityResponse {
     family?: number;
     remaining?: number;
   };
-  coinsurance?: number;
+  coinsurance?: number; // percentage — see normalizeCoinsurancePercent
   coverageDetails?: Array<{
     serviceType: string;
     coverage: string;
@@ -725,7 +752,7 @@ function parseEligibilityResponse(data: any): EligibilityResponse {
     // Extract coinsurance
     const coinsuranceBenefit = benefitsInfo.find((b: any) => b.code === 'A' && b.percent);
     if (coinsuranceBenefit) {
-      response.coinsurance = coinsuranceBenefit.percent;
+      response.coinsurance = normalizeCoinsurancePercent(coinsuranceBenefit.percent);
     }
 
   } catch (error) {
@@ -1313,7 +1340,7 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
 
       // Co-Insurance
       if (code === 'A' && percent > 0) {
-        result.coinsurance = percent;
+        result.coinsurance = normalizeCoinsurancePercent(percent);
       }
 
       // Deductible
