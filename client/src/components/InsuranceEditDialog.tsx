@@ -23,15 +23,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Shield } from 'lucide-react';
+import { PayerCombobox } from '@/components/PayerCombobox';
 
 export interface InsuranceFields {
   insuranceProvider?: string | null;
+  insurancePayerId?: string | null;
   insuranceId?: string | null;
   policyNumber?: string | null;
   groupNumber?: string | null;
   effectiveDate?: string | null;
   terminationDate?: string | null;
   secondaryInsuranceProvider?: string | null;
+  secondaryInsurancePayerId?: string | null;
   secondaryInsuranceMemberId?: string | null;
   secondaryInsurancePolicyNumber?: string | null;
   secondaryInsuranceGroupNumber?: string | null;
@@ -52,12 +55,14 @@ interface Props {
 
 const EMPTY: InsuranceFields = {
   insuranceProvider: '',
+  insurancePayerId: '',
   insuranceId: '',
   policyNumber: '',
   groupNumber: '',
   effectiveDate: '',
   terminationDate: '',
   secondaryInsuranceProvider: '',
+  secondaryInsurancePayerId: '',
   secondaryInsuranceMemberId: '',
   secondaryInsurancePolicyNumber: '',
   secondaryInsuranceGroupNumber: '',
@@ -129,7 +134,15 @@ export default function InsuranceEditDialog({
             <h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Primary Insurance</h4>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Provider" id="ip">
-                <Input id="ip" value={form.insuranceProvider ?? ''} onChange={set('insuranceProvider')} data-testid="input-insurance-provider" />
+                <PayerCombobox
+                  id="ip"
+                  data-testid="combobox-insurance-provider"
+                  value={form.insuranceProvider ?? ''}
+                  payerId={form.insurancePayerId || null}
+                  onSelect={({ name, payerId }) =>
+                    setForm((f) => ({ ...f, insuranceProvider: name, insurancePayerId: payerId ?? '' }))
+                  }
+                />
               </Field>
               <Field label="Member ID" id="im">
                 <Input id="im" value={form.insuranceId ?? ''} onChange={set('insuranceId')} data-testid="input-insurance-id" />
@@ -166,7 +179,15 @@ export default function InsuranceEditDialog({
               <h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Secondary Insurance</h4>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Provider" id="sip">
-                  <Input id="sip" value={form.secondaryInsuranceProvider ?? ''} onChange={set('secondaryInsuranceProvider')} />
+                  <PayerCombobox
+                    id="sip"
+                    data-testid="combobox-secondary-insurance-provider"
+                    value={form.secondaryInsuranceProvider ?? ''}
+                    payerId={form.secondaryInsurancePayerId || null}
+                    onSelect={({ name, payerId }) =>
+                      setForm((f) => ({ ...f, secondaryInsuranceProvider: name, secondaryInsurancePayerId: payerId ?? '' }))
+                    }
+                  />
                 </Field>
                 <Field label="Member ID" id="sim">
                   <Input id="sim" value={form.secondaryInsuranceMemberId ?? ''} onChange={set('secondaryInsuranceMemberId')} />

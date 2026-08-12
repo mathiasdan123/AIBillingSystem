@@ -952,7 +952,9 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
           const batchPayerRouting = await stediService.resolvePayerId(
             insurance.name || '',
             patient.insuranceProvider || null,
-            insurance.payerCode || null,
+            // Catalog payerCode first, then the patient-level payer ID set by
+            // the payer-search dropdown at intake/edit.
+            insurance.payerCode || patient.insurancePayerId || null,
           );
 
           logger.info('Batch claim payer routing resolved', {
@@ -1404,7 +1406,9 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
         const payerRouting = await stediService.resolvePayerId(
           insurance.name || '',
           patient.insuranceProvider || null,
-          insurance.payerCode || null,
+          // Catalog payerCode first, then the patient-level payer ID set by
+          // the payer-search dropdown at intake/edit.
+          insurance.payerCode || patient.insurancePayerId || null,
         );
 
         logger.info('Claim payer routing resolved', {
@@ -1730,7 +1734,9 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
       const statusPayerRouting = await stediService.resolvePayerId(
         insurance.name || '',
         patient.insuranceProvider || null,
-        insurance.payerCode || null,
+        // Catalog payerCode first, then the patient-level payer ID set by
+        // the payer-search dropdown at intake/edit.
+        insurance.payerCode || patient.insurancePayerId || null,
       );
 
       const statusResult = await stediService.checkClaimStatus({
