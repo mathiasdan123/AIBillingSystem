@@ -19,12 +19,29 @@ function stcsForSpecialtyLocal(specialty: string | null | undefined): string[] {
   return map[key] ?? map.MIXED;
 }
 
-// Trading partner service IDs for major payers
+// Trading partner service IDs for major payers.
+//
+// LAST-RESORT fallback only — the insurance record's payerCode (passed through
+// as tradingPartnerServiceId) always wins. Name-based routing is inherently
+// unreliable for regional payers: "Blue Cross Blue Shield" names ~35 different
+// companies, and whichever ID a generic key maps to is wrong for most of them.
+// Set the real payer (and payerCode) on the insurance record instead.
+//
+// KEYS MUST BE LETTERS ONLY: resolveTradingPartnerIdByName strips every
+// non-letter from the input before substring-matching, so a key containing
+// '_', '-', or a space can never match anything. That exact bug shipped as
+// 'blue_cross' and silently failed every spelled-out Blue Cross plan until
+// 2026-08-12.
 const TRADING_PARTNER_MAP: Record<string, string> = {
   'aetna': '60054',
   'anthem': '00025',
+  // Horizon BCBS of New Jersey — verified against Stedi's payer registry
+  // 2026-08-12 (stediId NRHDN, primaryPayerId 22099; eligibility + 837P
+  // supported without enrollment). Listed before the generic BCBS entries so
+  // "Horizon Blue Cross Blue Shield NJ" routes to Horizon, not generic BCBS.
+  'horizon': '22099',
   'bcbs': '00050',
-  'blue_cross': '00050',
+  'bluecross': '00050',
   'cigna': '62308',
   'humana': '61101',
   'kaiser': '94135',
@@ -35,6 +52,19 @@ const TRADING_PARTNER_MAP: Record<string, string> = {
   'medicaid': 'SKMD0',
   'tricare': '99726',
 };
+
+/**
+ * Name-based trading partner lookup (exported for tests). Strips all
+ * non-letters from the payer name, then substring-matches map keys in
+ * insertion order — more specific keys must therefore appear first.
+ */
+export function resolveTradingPartnerIdByName(payerName: string): string | null {
+  const normalized = payerName.toLowerCase().replace(/[^a-z]/g, '');
+  for (const [key, id] of Object.entries(TRADING_PARTNER_MAP)) {
+    if (normalized.includes(key)) return id;
+  }
+  return null;
+}
 
 export interface StediEligibilityRequest {
   controlNumber: string;
@@ -404,11 +434,7 @@ export class StediAdapter {
   }
 
   private resolveTradingPartnerId(payerName: string): string | null {
-    const normalized = payerName.toLowerCase().replace(/[^a-z]/g, '');
-    for (const [key, id] of Object.entries(TRADING_PARTNER_MAP)) {
-      if (normalized.includes(key)) return id;
-    }
-    return null;
+    return resolveTradingPartnerIdByName(payerName);
   }
 
   private generateControlNumber(): string {
