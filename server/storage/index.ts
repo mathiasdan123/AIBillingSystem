@@ -458,6 +458,7 @@ export const storage = {
   // ==================== INSURANCE ====================
   createEligibilityCheck: insuranceFns.createEligibilityCheck,
   getPatientEligibility: insuranceFns.getPatientEligibility,
+  getRecentEligibilityChecks: insuranceFns.getRecentEligibilityChecks,
   getPatientEligibilityForPatients: insuranceFns.getPatientEligibilityForPatients,
   getEligibilityHistory: insuranceFns.getEligibilityHistory,
   createPatientInsuranceAuth: insuranceFns.createPatientInsuranceAuth,

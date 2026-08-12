@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import { openBlanche } from "@/lib/blancheControl";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
 import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink, CreditCard } from "lucide-react";
@@ -519,6 +521,27 @@ function PatientIntakeDataView({ patient }: { patient: any }) {
  * typo they could fix from an outage they couldn't, and simply retried —
  * spending a billable payer transaction each time.
  */
+/**
+ * "Ask Blanche" toast action for a failed / inconclusive eligibility check.
+ * Opens the assistant pre-filled with the patient and the actual message so
+ * her triage tool has everything it needs — turning a dead-end red toast into
+ * a guided fix instead of a screenshot-to-the-admin.
+ */
+function askBlancheAction(patientId: number, patientName: string, message: string) {
+  return (
+    <ToastAction
+      altText="Ask Blanche to triage this eligibility problem"
+      onClick={() =>
+        openBlanche({
+          prefillMessage: `An eligibility check for ${patientName} (patient #${patientId}) just failed with: "${message}". Can you triage what went wrong and how to fix it?`,
+        })
+      }
+    >
+      Ask Blanche
+    </ToastAction>
+  );
+}
+
 function eligibilityErrorMessage(error: unknown): string {
   const FALLBACK = 'Failed to check eligibility';
   const raw = error instanceof Error ? error.message : String(error);
@@ -631,17 +654,23 @@ export default function Patients() {
 
       const status = data.eligibility?.status;
       const source = data.eligibility?.source;
+      const checkedPatient = (patients || []).find((p: any) => p.id === variables.patientId);
+      const checkedName = checkedPatient ? `${checkedPatient.firstName} ${checkedPatient.lastName}` : `patient #${variables.patientId}`;
+      const inconclusiveMsg = status === 'inactive'
+        ? "The payer reports this coverage as inactive"
+        : "Unable to verify coverage";
       toast({
         title: status === 'active' ? "Coverage Verified" : status === 'inactive' ? "Coverage Inactive" : "Eligibility Check Complete",
         description: status === 'active'
           ? `${source === 'stedi' ? '✓ Live data: ' : ''}${data.eligibility.coverageType || 'Plan'} - Copay: $${data.eligibility.copay || 0}`
-          : status === 'inactive'
-          ? "Patient coverage has been terminated"
-          : "Unable to verify coverage",
+          : inconclusiveMsg,
         variant: status === 'active' ? "default" : "destructive",
+        // Non-active outcomes get a one-click path into triage instead of
+        // leaving the user staring at a red toast.
+        action: status === 'active' ? undefined : askBlancheAction(variables.patientId, checkedName, inconclusiveMsg),
       });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
       setCheckingEligibility(null);
       if (isUnauthorizedError(error)) {
         toast({
@@ -654,11 +683,17 @@ export default function Patients() {
         }, 500);
         return;
       }
-      toast({
-        title: "Error",
-        description: eligibilityErrorMessage(error),
-        variant: "destructive",
-      });
+      {
+        const msg = eligibilityErrorMessage(error);
+        const failedPatient = (patients || []).find((p: any) => p.id === variables?.patientId);
+        const failedName = failedPatient ? `${failedPatient.firstName} ${failedPatient.lastName}` : `patient #${variables?.patientId ?? '?'}`;
+        toast({
+          title: "Error",
+          description: msg,
+          variant: "destructive",
+          action: variables?.patientId ? askBlancheAction(variables.patientId, failedName, msg) : undefined,
+        });
+      }
     },
   });
 

@@ -738,6 +738,22 @@ Units are based on total timed treatment minutes:
 - **Cigna**: Usually requires pre-authorization after evaluation. Typical authorization periods of 60-90 days.
 - **Tricare**: Requires referral from PCM. No visit limits for active duty. Family members may have limits.
 
+## Eligibility & Claim Failure Triage
+
+When a user reports a failed, stuck, or confusing eligibility check, call triage_eligibility_failure FIRST, then diagnose from the evidence. Common signatures and what they actually mean:
+
+- **"No trading partner ID found for payer: <name>"** — the payer name on the patient's record can't be routed. Almost always the record has no Stedi payer ID and a name too generic to match (e.g. "Blue Cross Blue Shield" names ~35 regional companies). Fix: search_payer for the exact plan on the patient's insurance card, then propose update_patient_insurance setting insuranceProvider + insurancePayerId. The user can also do this themselves via the Provider dropdown on the patient's insurance (records missing an ID show a "no payer ID" tag).
+- **AAA 43 / "Invalid/Missing Provider Identification"** — the payer did not recognize the PRACTICE, not the patient. Usually means the request routed to the wrong payer (generic payer ID instead of the patient's actual regional plan); occasionally the payer requires provider enrollment before eligibility. Fix the payer identity on the record first; only suspect enrollment after the payer ID is verifiably correct.
+- **AAA 72 / 73 / 75 / "Subscriber/Insured Not Found"** — the payer is right but the member details aren't: member ID, name spelling, or DOB doesn't match the card. Ask the user to re-check those against the physical card, then propose the correction.
+- **"Eligibility service is not configured"** — the practice has no clearinghouse key. This is an admin setup issue, not a data issue.
+- **status "unknown" / "Unable to verify coverage"** — the payer answered but asserted neither active nor inactive coverage, or the request was rejected. NEVER tell a user this means coverage was terminated or lapsed. Coverage state is simply unknown until a clean check succeeds.
+
+Triage rules:
+1. A payer REJECTION is not a coverage VERDICT. Only a check whose status is "active" or "inactive" (with no processing error) says anything about the patient's actual coverage.
+2. Discourage rapid retries — every eligibility request is a real, billable transaction to the payer. Diagnose first, fix the cause, then retry once.
+3. Propose fixes via the Confirm-card tools (update_patient_insurance etc.); the user always makes the final call on record changes.
+4. If the evidence doesn't match any signature above, say what IS known from the error text, and suggest the user share the exact message with their administrator rather than guessing.
+
 ## HIPAA Compliance Reminders
 - Never include full patient identifiers (SSN, full DOB, insurance member ID) in chat responses.
 - Always refer to patients by first name only or use initials in AI responses.
@@ -1196,6 +1212,17 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'triage_eligibility_failure',
+    description: 'Gather everything needed to diagnose why an eligibility check failed (or returned no verdict) for a patient: the recent check history including the payer\'s error messages, the payer identity on the patient\'s record (name, whether a routable Stedi payer ID is set), which member fields are present, and practice billing readiness. Call this FIRST whenever a user reports a failed, stuck, or confusing eligibility check, before explaining or proposing fixes. Read-only.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'The patient whose eligibility failure to triage (call search_patients if you only have a name).' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
     name: 'update_patient_insurance',
     description: 'Update a patient\'s insurance information on file: primary and secondary insurance provider, member ID, policy number, group number, effective date, termination date. Use whenever the user reports new insurance, an effective/termination date, an updated member ID, or any insurance detail change for an existing patient. Only the fields explicitly supplied are changed; omitted fields are left as-is. Empty strings clear a field. Looks up the patient by ID first (call search_patients if you only have a name).',
     input_schema: {
@@ -1203,12 +1230,14 @@ const assistantTools: Anthropic.Tool[] = [
       properties: {
         patientId: { type: 'number' as const, description: 'The ID of the patient whose insurance is being updated' },
         insuranceProvider: { type: 'string' as const, description: 'Primary insurance company name (e.g. "Aetna", "Cigna"). Empty string to clear.' },
+        insurancePayerId: { type: 'string' as const, description: 'Stedi payer ID for the primary payer (e.g. "22099" for Horizon BCBS NJ, "60054" for Aetna). This is what eligibility checks and claims actually route on — set it whenever the payer is known precisely. Use search_payer to find the right ID. Empty string to clear.' },
         insuranceId: { type: 'string' as const, description: 'Primary insurance member ID. Empty string to clear.' },
         policyNumber: { type: 'string' as const, description: 'Primary insurance policy number. Empty string to clear.' },
         groupNumber: { type: 'string' as const, description: 'Primary insurance group number. Empty string to clear.' },
         effectiveDate: { type: 'string' as const, description: 'Primary insurance effective date, YYYY-MM-DD. Empty string to clear.' },
         terminationDate: { type: 'string' as const, description: 'Primary insurance termination date, YYYY-MM-DD. Empty string to clear (open-ended coverage).' },
         secondaryInsuranceProvider: { type: 'string' as const, description: 'Secondary insurance company name. Empty string to clear.' },
+        secondaryInsurancePayerId: { type: 'string' as const, description: 'Stedi payer ID for the secondary payer. Empty string to clear.' },
         secondaryInsuranceMemberId: { type: 'string' as const, description: 'Secondary insurance member ID. Empty string to clear.' },
         secondaryInsurancePolicyNumber: { type: 'string' as const, description: 'Secondary insurance policy number. Empty string to clear.' },
         secondaryInsuranceGroupNumber: { type: 'string' as const, description: 'Secondary insurance group number. Empty string to clear.' },
@@ -2106,6 +2135,65 @@ export async function executeTool(
         });
       }
 
+      case 'triage_eligibility_failure': {
+        const patientId = args.patientId as number;
+        if (!Number.isFinite(patientId)) {
+          return JSON.stringify({ error: 'patientId is required and must be a number.' });
+        }
+        const patient = await storage.getPatient(patientId);
+        if (!patient) return JSON.stringify({ error: `Patient ${patientId} not found.` });
+        if (patient.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient is not in this practice.' });
+        }
+
+        const [practice, recentChecks] = await Promise.all([
+          storage.getPractice(practiceId),
+          storage.getRecentEligibilityChecks(patientId, 5),
+        ]);
+
+        return JSON.stringify({
+          patient: {
+            id: patient.id,
+            name: `${patient.firstName} ${patient.lastName}`,
+          },
+          payerOnFile: {
+            primary: {
+              providerName: patient.insuranceProvider || null,
+              // The routing-critical fact: without a payer ID the check
+              // falls back to name matching, which cannot distinguish
+              // regional payers ("Blue Cross Blue Shield" names ~35).
+              hasPayerId: !!(patient as any).insurancePayerId,
+              payerId: (patient as any).insurancePayerId || null,
+              hasMemberId: !!patient.insuranceId,
+              hasGroupNumber: !!patient.groupNumber,
+              hasDateOfBirth: !!patient.dateOfBirth,
+            },
+            secondary: patient.secondaryInsuranceProvider
+              ? {
+                  providerName: patient.secondaryInsuranceProvider,
+                  hasPayerId: !!(patient as any).secondaryInsurancePayerId,
+                  payerId: (patient as any).secondaryInsurancePayerId || null,
+                  hasMemberId: !!(patient as any).secondaryInsuranceMemberId,
+                }
+              : null,
+          },
+          practiceReadiness: {
+            hasNpi: !!practice?.npi,
+            // A practice with no NPI on file fails every payer's provider
+            // identification regardless of patient data.
+          },
+          recentChecks: recentChecks.map((c: any) => ({
+            checkedAt: c.checkDate,
+            status: c.status,
+            processingStatus: c.processingStatus,
+            // The payer's/transport's own words for failed checks — the
+            // primary triage evidence.
+            errorMessage: c.errorMessage || null,
+            coverageType: c.coverageType || null,
+          })),
+        });
+      }
+
       case 'update_patient_insurance': {
         // Mirror of PATCH /api/patients/:id/insurance (server/routes/patients.ts).
         // Same field allowlist, same tenant guard, same empty-string → null
@@ -2113,9 +2201,9 @@ export async function executeTool(
         // what a user would see in the Edit Insurance dialog on the patient
         // detail page or the Fix Insurance shortcut on the claim screen.
         const INSURANCE_FIELDS = new Set([
-          'insuranceProvider', 'insuranceId', 'policyNumber', 'groupNumber',
+          'insuranceProvider', 'insurancePayerId', 'insuranceId', 'policyNumber', 'groupNumber',
           'effectiveDate', 'terminationDate',
-          'secondaryInsuranceProvider', 'secondaryInsuranceMemberId',
+          'secondaryInsuranceProvider', 'secondaryInsurancePayerId', 'secondaryInsuranceMemberId',
           'secondaryInsurancePolicyNumber', 'secondaryInsuranceGroupNumber',
           'secondaryInsuranceRelationship', 'secondaryInsuranceSubscriberName',
           'secondaryInsuranceSubscriberDob',

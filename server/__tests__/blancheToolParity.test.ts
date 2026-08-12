@@ -139,6 +139,8 @@ const PARITY_TOOLS: ReadonlySet<string> = new Set([
  */
 const SURFACE_ONLY_REASONS: Record<string, string> = {
   // ── in-app only: web-chat UX / admin / onboarding ──
+  triage_eligibility_failure:
+    'in-app only: entry point is the failure-toast "Ask Blanche" affordance; MCP already exposes the underlying primitives (get_patient, check_eligibility, search_payer) for Desktop-side triage',
   navigate_user: 'in-app only: drives client-side React router; no MCP analog',
   enable_demo_mode: 'in-app only: onboarding affordance',
   clear_demo_data: 'in-app only: onboarding affordance',

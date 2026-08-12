@@ -25,6 +25,20 @@ export async function createEligibilityCheck(check: InsertEligibilityCheck): Pro
   return created;
 }
 
+/**
+ * Recent eligibility history for one patient, newest first — including error
+ * rows (processingStatus 'error' + errorMessage), which is the point: failure
+ * triage needs the payer's actual words, not just the last good verdict.
+ */
+export async function getRecentEligibilityChecks(patientId: number, limit = 5): Promise<EligibilityCheck[]> {
+  return db
+    .select()
+    .from(eligibilityChecks)
+    .where(eq(eligibilityChecks.patientId, patientId))
+    .orderBy(desc(eligibilityChecks.checkDate))
+    .limit(limit);
+}
+
 export async function getPatientEligibility(patientId: number): Promise<EligibilityCheck | undefined> {
   const [check] = await db
     .select()
