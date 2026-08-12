@@ -116,7 +116,13 @@ export function PayerCombobox({
   };
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    // modal is required because this combobox renders inside Radix modal
+    // Dialogs (InsuranceEditDialog). A non-modal Popover portals its content
+    // outside the dialog, where the dialog's pointer-event blocking makes the
+    // options unclickable — and on close it can leave `pointer-events: none`
+    // stuck on <body>, freezing the entire page until a reload. Reported by a
+    // real user within hours of shipping (2026-08-12).
+    <Popover modal open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           ref={triggerRef}
