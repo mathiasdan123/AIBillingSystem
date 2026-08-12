@@ -19,7 +19,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { PayerCombobox } from "@/components/PayerCombobox";
+import { PayerCombobox, PayerMatchSuggestion } from "@/components/PayerCombobox";
 
 // Sensory processing question options
 const FREQUENCY_OPTIONS = ["Never", "Rarely", "Sometimes", "Often", "Always"];
@@ -294,6 +294,8 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
   const [showSecondaryInsurance, setShowSecondaryInsurance] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
+  // Raw payer text from the last card scan, pending human confirmation.
+  const [scanPayerQuery, setScanPayerQuery] = useState<string | null>(null);
   const [documentUploaded, setDocumentUploaded] = useState(false);
   const [insuranceCardFront, setInsuranceCardFront] = useState<string | null>(null);
   const [insuranceCardBack, setInsuranceCardBack] = useState<string | null>(null);
@@ -383,9 +385,11 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
   const applyScanToForm = () => {
     if (scanEdits.payerName) {
       // Scanned name is raw text — clear any previously picked payer ID so a
-      // stale ID can't silently route to the wrong payer.
+      // stale ID can't silently route to the wrong payer, then offer registry
+      // matches for the scanned text so confirming the payer is one click.
       form.setValue('insuranceProvider', scanEdits.payerName);
       form.setValue('insurancePayerId', '');
+      setScanPayerQuery(scanEdits.payerName);
     }
     if (scanEdits.memberId) {
       form.setValue('insuranceId', scanEdits.memberId);
@@ -2512,9 +2516,22 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
                         onSelect={({ name, payerId }) => {
                           field.onChange(name);
                           form.setValue('insurancePayerId', payerId ?? '');
+                          // Manual pick supersedes any pending scan suggestion.
+                          setScanPayerQuery(null);
                         }}
                       />
                     </FormControl>
+                    {scanPayerQuery && !form.watch('insurancePayerId') && (
+                      <PayerMatchSuggestion
+                        query={scanPayerQuery}
+                        onAccept={({ name, payerId }) => {
+                          field.onChange(name);
+                          form.setValue('insurancePayerId', payerId ?? '');
+                          setScanPayerQuery(null);
+                        }}
+                        onDismiss={() => setScanPayerQuery(null)}
+                      />
+                    )}
                   </FormItem>
                 )}
               />
