@@ -1900,6 +1900,13 @@ export type InsertAuthorizationAuditLog = z.infer<typeof insertAuthorizationAudi
 // Normalized insurance data types for frontend consumption
 export type NormalizedEligibility = {
   isEligible: boolean;
+  // Three-state coverage verdict from the 271 benefits information.
+  // 'unknown' means the payer answered but asserted neither active nor
+  // inactive coverage — callers must NOT collapse it into 'inactive':
+  // doing so rendered a payer processing error (AAA 43, provider not
+  // recognized) as "patient coverage has been terminated" in production
+  // on 2026-08-12.
+  status: 'active' | 'inactive' | 'unknown';
   effectiveDate: string;
   terminationDate?: string;
   planName: string;

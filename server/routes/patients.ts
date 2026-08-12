@@ -1408,7 +1408,9 @@ router.post('/bulk-eligibility', isAuthenticated, async (req: any, res) => {
             });
 
             eligibilityResult = {
-              status: result.eligibility.isEligible ? 'active' : 'inactive',
+              // Three-state; never collapse 'unknown' into 'inactive' (a payer
+              // rejection is not a termination — 2026-08-12).
+              status: result.eligibility.status ?? (result.eligibility.isEligible ? 'active' : 'unknown'),
               coverageType: result.eligibility.planType || 'Commercial',
               effectiveDate: result.eligibility.effectiveDate,
               terminationDate: result.eligibility.terminationDate,
@@ -1424,13 +1426,48 @@ router.post('/bulk-eligibility', isAuthenticated, async (req: any, res) => {
               source: 'stedi',
             };
           } catch (stediError: any) {
-            logger.warn('Stedi eligibility failed for bulk check, using mock', { patientId: id, error: stediError.message });
-            eligibilityResult = generateBulkMockEligibility(patient);
-            eligibilityResult.source = 'mock_fallback';
+            // No mock fallback: fabricated copays/deductibles stored in
+            // eligibility_checks read as payer truth to the front desk and to
+            // the claim scrubber. Record the failure honestly instead —
+            // status 'unknown' + the payer's/transport's actual words.
+            logger.warn('Stedi eligibility failed for bulk check', { patientId: id, error: stediError.message });
+            await storage.createEligibilityCheck({
+              patientId: id,
+              insuranceId: null,
+              status: 'unknown',
+              processingStatus: 'error',
+              errorMessage: String(stediError.message ?? stediError).slice(0, 1000),
+            } as any);
+            results.push({
+              patientId: id,
+              patientName: `${patient.firstName} ${patient.lastName}`,
+              status: 'error',
+              eligibility: null,
+              error: stediError.message,
+            });
+            summary.errors++;
+            summary.checked++;
+            continue;
           }
         } else {
+          // Mock data is a demo-practice affordance only. A real practice
+          // with no working Stedi key gets an honest error, not invented
+          // benefits.
+          const practice = patient.practiceId ? await storage.getPractice(patient.practiceId) : null;
+          if (!(practice as any)?.isDemo) {
+            results.push({
+              patientId: id,
+              patientName: `${patient.firstName} ${patient.lastName}`,
+              status: 'error',
+              eligibility: null,
+              error: 'Eligibility service is not configured for this practice',
+            });
+            summary.errors++;
+            summary.checked++;
+            continue;
+          }
           eligibilityResult = generateBulkMockEligibility(patient);
-          eligibilityResult.source = 'mock';
+          eligibilityResult.source = 'demo_mock';
         }
 
         // Store the result

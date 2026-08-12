@@ -92,7 +92,10 @@ export async function performStediEligibilityCheck(opts: {
     (returnedStcs.length === 0 || returnedStcs.every((c) => c === '30'));
 
   return {
-    status: result.eligibility.isEligible ? 'active' : 'inactive',
+    // Three-state, straight from the 271. 'unknown' must stay 'unknown' —
+    // collapsing it into 'inactive' told a front desk that coverage "has been
+    // terminated" when the payer had actually rejected the request outright.
+    status: result.eligibility.status ?? (result.eligibility.isEligible ? 'active' : 'unknown'),
     coverageType: result.eligibility.planType || 'Commercial',
     effectiveDate: result.eligibility.effectiveDate ?? null,
     terminationDate: result.eligibility.terminationDate ?? null,

@@ -357,8 +357,13 @@ export class MedicareAdapter extends BasePayerAdapter {
       else if (coding.code === 'PART-D') planType = 'Medicare Part D';
     }
 
+    const isEligible = !endDate || new Date(endDate) > now;
     return {
-      isEligible: !endDate || new Date(endDate) > now,
+      isEligible,
+      // Medicare's FHIR coverage resource gives a definite answer either way:
+      // an end date in the past is a genuine termination, not a processing
+      // failure, so the two-state mapping is correct here.
+      status: isEligible ? ('active' as const) : ('inactive' as const),
       effectiveDate: startDate,
       terminationDate: endDate,
       planName: planType,

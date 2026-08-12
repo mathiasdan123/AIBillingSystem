@@ -725,7 +725,9 @@ function registerJobs() {
           // Compare with cached data for coverage change detection
           const previousCache = await storage.getCachedInsuranceData(patient.id);
           const previousStatus = (previousCache?.rawResponse as any)?.status;
-          const newStatus = result.eligibility.isEligible ? 'active' : 'inactive';
+          // Three-state; 'unknown' stays 'unknown' so a payer rejection can't
+          // fire a false coverage-terminated alert (2026-08-12).
+          const newStatus = result.eligibility.status ?? (result.eligibility.isEligible ? 'active' : 'unknown');
 
           if (previousStatus && previousStatus !== newStatus) {
             logger.warn('Coverage change detected', {
@@ -1203,7 +1205,7 @@ function registerJobs() {
                   await storage.createEligibilityCheck({
                     patientId: patient.id,
                     insuranceId: insurance?.id || null,
-                    status: result.eligibility.isEligible ? 'active' : 'inactive',
+                    status: result.eligibility.status ?? (result.eligibility.isEligible ? 'active' : 'unknown'),
                     coverageType: result.eligibility.planName || 'Unknown',
                     effectiveDate: result.eligibility.effectiveDate,
                     terminationDate: result.eligibility.terminationDate,
