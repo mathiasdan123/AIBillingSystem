@@ -402,12 +402,14 @@ router.post('/', isAuthenticated, validate(createPatientSchema), async (req: any
  */
 const INSURANCE_FIELDS = new Set([
   'insuranceProvider',
+  'insurancePayerId',
   'insuranceId',
   'policyNumber',
   'groupNumber',
   'effectiveDate',
   'terminationDate',
   'secondaryInsuranceProvider',
+  'secondaryInsurancePayerId',
   'secondaryInsuranceMemberId',
   'secondaryInsurancePolicyNumber',
   'secondaryInsuranceGroupNumber',
@@ -1399,6 +1401,9 @@ router.post('/bulk-eligibility', isAuthenticated, async (req: any, res) => {
               memberDob: patient.dateOfBirth || '',
               memberId: patient.insuranceId || '',
               groupNumber: patient.groupNumber || undefined,
+              // Explicit payer ID from the payer-search dropdown wins over
+              // name matching — see eligibilityVerificationService.
+              tradingPartnerServiceId: patient.insurancePayerId || undefined,
               payerName: patient.insuranceProvider || 'Unknown',
             });
 

@@ -19,6 +19,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { PayerCombobox } from "@/components/PayerCombobox";
 
 // Sensory processing question options
 const FREQUENCY_OPTIONS = ["Never", "Rarely", "Sometimes", "Often", "Always"];
@@ -49,12 +50,14 @@ const patientSchema = z.object({
 
   // Insurance
   insuranceProvider: z.string().optional(),
+  insurancePayerId: z.string().optional(),
   insuranceId: z.string().optional(),
   policyNumber: z.string().optional(),
   groupNumber: z.string().optional(),
 
   // Secondary Insurance
   secondaryInsuranceProvider: z.string().optional(),
+  secondaryInsurancePayerId: z.string().optional(),
   secondaryInsurancePolicyNumber: z.string().optional(),
   secondaryInsuranceMemberId: z.string().optional(),
   secondaryInsuranceGroupNumber: z.string().optional(),
@@ -319,10 +322,12 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
       phone: "",
       address: "",
       insuranceProvider: "",
+      insurancePayerId: "",
       insuranceId: "",
       policyNumber: "",
       groupNumber: "",
       secondaryInsuranceProvider: "",
+      secondaryInsurancePayerId: "",
       secondaryInsurancePolicyNumber: "",
       secondaryInsuranceMemberId: "",
       secondaryInsuranceGroupNumber: "",
@@ -376,7 +381,12 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
 
   // Apply scanned fields to the react-hook-form state, then close.
   const applyScanToForm = () => {
-    if (scanEdits.payerName) form.setValue('insuranceProvider', scanEdits.payerName);
+    if (scanEdits.payerName) {
+      // Scanned name is raw text — clear any previously picked payer ID so a
+      // stale ID can't silently route to the wrong payer.
+      form.setValue('insuranceProvider', scanEdits.payerName);
+      form.setValue('insurancePayerId', '');
+    }
     if (scanEdits.memberId) {
       form.setValue('insuranceId', scanEdits.memberId);
       // Many plans use member ID as the policy number too; only set if blank
@@ -551,10 +561,12 @@ export default function PatientIntakeForm({ practiceId, onSuccess, startStep }: 
         phone: data.phone,
         address: data.address,
         insuranceProvider: data.insuranceProvider,
+        insurancePayerId: data.insurancePayerId || null,
         insuranceId: data.insuranceId,
         policyNumber: data.policyNumber,
         groupNumber: data.groupNumber,
         secondaryInsuranceProvider: data.secondaryInsuranceProvider || null,
+        secondaryInsurancePayerId: data.secondaryInsurancePayerId || null,
         secondaryInsurancePolicyNumber: data.secondaryInsurancePolicyNumber || null,
         secondaryInsuranceMemberId: data.secondaryInsuranceMemberId || null,
         secondaryInsuranceGroupNumber: data.secondaryInsuranceGroupNumber || null,
@@ -2491,7 +2503,17 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
                   <FormItem>
                     <FormLabel>Insurance Provider</FormLabel>
                     <FormControl>
-                      <Input placeholder="Blue Cross Blue Shield" {...field} />
+                      <PayerCombobox
+                        id="intake-insurance-provider"
+                        data-testid="combobox-insurance-provider"
+                        value={field.value ?? ''}
+                        payerId={form.watch('insurancePayerId') || null}
+                        placeholder="Search payers (e.g. Horizon BCBS NJ)…"
+                        onSelect={({ name, payerId }) => {
+                          field.onChange(name);
+                          form.setValue('insurancePayerId', payerId ?? '');
+                        }}
+                      />
                     </FormControl>
                   </FormItem>
                 )}
@@ -2567,7 +2589,17 @@ Occupational Therapy at XYZ Center - 2022, reason: fine motor skills"
                         <FormItem>
                           <FormLabel>Insurance Provider</FormLabel>
                           <FormControl>
-                            <Input placeholder="Aetna" {...field} />
+                            <PayerCombobox
+                              id="intake-secondary-insurance-provider"
+                              data-testid="combobox-secondary-insurance-provider"
+                              value={field.value ?? ''}
+                              payerId={form.watch('secondaryInsurancePayerId') || null}
+                              placeholder="Search payers…"
+                              onSelect={({ name, payerId }) => {
+                                field.onChange(name);
+                                form.setValue('secondaryInsurancePayerId', payerId ?? '');
+                              }}
+                            />
                           </FormControl>
                         </FormItem>
                       )}

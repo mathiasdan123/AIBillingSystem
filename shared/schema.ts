@@ -230,6 +230,13 @@ export const patients = pgTable("patients", {
   phone: varchar("phone"),
   address: text("address"),
   insuranceProvider: varchar("insurance_provider"),
+  // Stedi primary payer ID for the payer named above (e.g. "22099" for
+  // Horizon BCBS NJ). Written by the payer-search dropdown at intake/edit,
+  // read by eligibility + claim routing as the authoritative destination.
+  // Free-text payer names alone cannot be routed reliably: "Blue Cross Blue
+  // Shield" names ~35 regional companies (the 2026-08-12 eligibility
+  // failure). Nullable, expand-only — legacy rows fall back to name matching.
+  insurancePayerId: varchar("insurance_payer_id"),
   insuranceId: varchar("insurance_id"),
   policyNumber: varchar("policy_number"),
   groupNumber: varchar("group_number"),
@@ -246,6 +253,8 @@ export const patients = pgTable("patients", {
   insuranceEmployerName: varchar("insurance_employer_name"),
   // Secondary insurance fields
   secondaryInsuranceProvider: varchar("secondary_insurance_provider"),
+  // See insurancePayerId — same contract, for the secondary payer.
+  secondaryInsurancePayerId: varchar("secondary_insurance_payer_id"),
   secondaryInsurancePolicyNumber: varchar("secondary_insurance_policy_number"),
   secondaryInsuranceMemberId: varchar("secondary_insurance_member_id"),
   secondaryInsuranceGroupNumber: varchar("secondary_insurance_group_number"),

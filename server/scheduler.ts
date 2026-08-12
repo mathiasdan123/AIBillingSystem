@@ -717,6 +717,8 @@ function registerJobs() {
             memberDob: patient.dateOfBirth || '',
             memberId: patient.insuranceId || '',
             groupNumber: patient.groupNumber || undefined,
+            // Explicit payer ID (payer-search dropdown) wins over name matching.
+            tradingPartnerServiceId: patient.insurancePayerId || undefined,
             payerName: patient.insuranceProvider || '',
           });
 
@@ -1184,6 +1186,9 @@ function registerJobs() {
                     memberDob: patient.dateOfBirth || '',
                     memberId: patient.insuranceId || '',
                     groupNumber: patient.groupNumber || undefined,
+                    // Catalog payerCode first, then the patient-level payer ID
+                    // (payer-search dropdown); name matching is last resort.
+                    tradingPartnerServiceId: insurance?.payerCode || patient.insurancePayerId || undefined,
                     payerName: insurance?.name || patient.insuranceProvider || '',
                     practiceSpecialty: practice.specialty,
                   });
