@@ -54,6 +54,26 @@ const TRADING_PARTNER_MAP: Record<string, string> = {
 };
 
 /**
+ * The payer received the 270 but refused to process it (AAA segments in the
+ * 271) and returned no benefits. This is NOT an eligibility verdict — the
+ * member's coverage state is unknown. Thrown so callers surface the payer's
+ * own words ("Invalid/Missing Provider Identification — Please Correct and
+ * Resubmit") instead of parsing an empty response into status 'unknown',
+ * which downstream code then collapsed into "coverage has been terminated"
+ * (production, 2026-08-12).
+ */
+export class StediPayerRejectionError extends Error {
+  constructor(public readonly rejections: Array<{ code?: string; description?: string; followupAction?: string }>) {
+    const parts = rejections.map((e) => {
+      const desc = e.description || `payer error ${e.code ?? ''}`.trim();
+      return e.followupAction ? `${desc} — ${e.followupAction}` : desc;
+    });
+    super(`Payer could not process this eligibility request: ${parts.join('; ')}`);
+    this.name = 'StediPayerRejectionError';
+  }
+}
+
+/**
  * Name-based trading partner lookup (exported for tests). Strips all
  * non-letters from the payer name, then substring-matches map keys in
  * insertion order — more specific keys must therefore appear first.
@@ -193,6 +213,13 @@ export class StediAdapter {
           errors: rawResponse.errors,
           controlNumber,
         });
+        // Errors WITH benefits = payer warnings alongside a real answer; parse
+        // on. Errors WITHOUT benefits = the payer rejected the request and
+        // there is no coverage verdict here at all — throw rather than let an
+        // empty response masquerade as one.
+        if (!rawResponse.benefitsInformation?.length) {
+          throw new StediPayerRejectionError(rawResponse.errors);
+        }
       }
 
       const eligibility = this.parseEligibility(rawResponse, params);
@@ -326,6 +353,7 @@ export class StediAdapter {
 
     return {
       isEligible: status === 'active',
+      status,
       effectiveDate: this.parseDateField(planInfo.planDate || planInfo.effectiveDate) || '',
       terminationDate: this.parseDateField(planInfo.terminationDate) || undefined,
       planName: planInfo.planDescription || planInfo.insuranceType || '',
