@@ -65,6 +65,12 @@ export async function performStediEligibilityCheck(opts: {
     memberDob: patient.dateOfBirth || '',
     memberId: patient.insuranceId || '',
     groupNumber: patient.groupNumber || undefined,
+    // The record's payerCode is authoritative when set; the payerName is then
+    // only a last-resort fallback. Without this line the adapter fell back to
+    // name matching even when the payer was correctly configured — and the
+    // name map can't distinguish the ~35 regional Blue Cross companies, so
+    // spelled-out BCBS plans failed with "No trading partner ID found".
+    tradingPartnerServiceId: insurance?.payerCode || undefined,
     payerName: insurance?.name || patient.insuranceProvider || 'Unknown',
     practiceSpecialty: practice?.specialty ?? null,
   });
