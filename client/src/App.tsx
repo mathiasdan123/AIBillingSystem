@@ -13,6 +13,7 @@ import SimpleNavigation from "@/components/SimpleNavigation";
 import { CommandPalette } from "@/components/CommandPalette";
 import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import MaintenanceWindowBanner from "@/components/MaintenanceWindowBanner";
+import NewVersionBanner from "@/components/NewVersionBanner";
 import NotFound from "@/pages/not-found";
 import AiBillingAssistant from "@/components/AiBillingAssistant";
 import VersionUpdateBanner from "@/components/VersionUpdateBanner";
@@ -296,6 +297,7 @@ function Router() {
       <SimpleNavigation />
       <CommandPalette />
       <IdleTimeoutWarning />
+      <NewVersionBanner />
       <MaintenanceWindowBanner />
       <main id="main-content">
         <ErrorBoundary>

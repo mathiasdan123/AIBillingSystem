@@ -65,6 +65,14 @@ import { registerBreachManagementRoutes } from "./routes/breach-management";
  */
 export async function registerRoutes(app: Express): Promise<Server> {
   // Health check endpoint (no auth required for monitoring)
+  // Ultra-light release probe for the client's new-version nudge. Unlike
+  // /api/health it touches nothing (no DB/redis pings), so every open tab can
+  // poll it cheaply. The SHA is already public via /api/health.
+  app.get('/api/release', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.json({ release: process.env.RELEASE_SHA || 'unknown' });
+  });
+
   app.get('/api/health', async (req, res) => {
     const startTime = Date.now();
     const checks: Record<string, { status: string; latency?: number }> = {};
