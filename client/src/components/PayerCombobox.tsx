@@ -27,7 +27,6 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 export interface PayerSelection {
@@ -115,113 +114,149 @@ export function PayerCombobox({
     triggerRef.current?.focus();
   };
 
+  // Close when clicking anywhere outside the component. Document-level
+  // listener is safe here because nothing is portalled — the entire widget
+  // lives in one DOM subtree.
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch('');
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
   return (
-    // modal is required because this combobox renders inside Radix modal
-    // Dialogs (InsuranceEditDialog). A non-modal Popover portals its content
-    // outside the dialog, where the dialog's pointer-event blocking makes the
-    // options unclickable — and on close it can leave `pointer-events: none`
-    // stuck on <body>, freezing the entire page until a reload. Reported by a
-    // real user within hours of shipping (2026-08-12).
-    <Popover modal open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          ref={triggerRef}
-          id={id}
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled}
-          data-testid={testId}
-          className="w-full justify-between font-normal"
-        >
-          <span className={cn('truncate text-left', !value && 'text-muted-foreground')}>
-            {value || placeholder}
-          </span>
-          <span className="ml-2 flex shrink-0 items-center gap-1.5">
-            {value && (payerId ? (
-              <Badge variant="secondary" className="font-mono text-[10px]">
-                {payerId}
-              </Badge>
-            ) : (
-              // Legacy/free-text value with no routable ID — flag it gently so
-              // staff know this record still routes by name matching.
-              <Badge variant="outline" className="gap-1 text-[10px] text-amber-600">
-                <ShieldQuestion className="h-3 w-3" /> no payer ID
-              </Badge>
-            ))}
-            <ChevronsUpDown className="h-4 w-4 opacity-50" />
-          </span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-        {/* Results come pre-ranked by the registry; client-side re-filtering
-            would fight that ranking, so filtering is disabled. */}
-        <Command shouldFilter={false}>
-          <CommandInput
-            value={search}
-            onValueChange={setSearch}
-            placeholder="Type at least 2 characters…"
-          />
-          <CommandList>
-            {isFetching && (
-              <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Searching registry…
-              </div>
-            )}
-            {isError && (
-              <div className="px-3 py-3 text-sm text-destructive">
-                Payer search is unavailable right now. You can still type the
-                name and use it as-is below.
-              </div>
-            )}
-            {!isFetching && !isError && debounced.length >= 2 && results.length === 0 && (
-              <CommandEmpty>No payers match “{debounced}”.</CommandEmpty>
-            )}
-            {results.length > 0 && (
-              <CommandGroup heading="Payer registry">
-                {results.map((p) => (
-                  <CommandItem
-                    key={`${p.payerId}-${p.displayName}`}
-                    value={`${p.payerId}-${p.displayName}`}
-                    onSelect={() => pick({ name: p.displayName, payerId: p.payerId })}
-                  >
-                    <Check
-                      className={cn(
-                        'mr-2 h-4 w-4 shrink-0',
-                        payerId === p.payerId ? 'opacity-100' : 'opacity-0',
-                      )}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate">{p.displayName}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {(p.operatingStates ?? []).slice(0, 6).join(', ')}
+    // Deliberately NOT a Popover. This widget renders inside nested Radix
+    // modal Dialogs (patient details -> Edit Insurance; the intake dialog),
+    // and a portalled floating layer there lost two rounds in production:
+    // non-modal froze the page via the dialog's pointer-event lock
+    // (2026-08-12), modal made opening the list dismiss the dialog itself
+    // (2026-08-13, reproduced live in the demo practice). Rendering the list
+    // in-flow inside the dialog's own DOM removes the layer contest entirely —
+    // there is no outside to misroute clicks to. Cost: the form content
+    // shifts down while the list is open.
+    <div
+      ref={containerRef}
+      className="w-full"
+      onKeyDown={(e) => {
+        // Escape closes the LIST, not the surrounding dialog — without the
+        // stopPropagation, Radix Dialog handles Escape first and discards the
+        // user's other unsaved edits along with it.
+        if (e.key === 'Escape' && open) {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          setSearch('');
+          triggerRef.current?.focus();
+        }
+      }}
+    >
+      <Button
+        ref={triggerRef}
+        id={id}
+        type="button"
+        variant="outline"
+        role="combobox"
+        aria-expanded={open}
+        disabled={disabled}
+        data-testid={testId}
+        onClick={() => handleOpenChange(!open)}
+        className="w-full justify-between font-normal"
+      >
+        <span className={cn('truncate text-left', !value && 'text-muted-foreground')}>
+          {value || placeholder}
+        </span>
+        <span className="ml-2 flex shrink-0 items-center gap-1.5">
+          {value && (payerId ? (
+            <Badge variant="secondary" className="font-mono text-[10px]">
+              {payerId}
+            </Badge>
+          ) : (
+            // Legacy/free-text value with no routable ID — flag it gently so
+            // staff know this record still routes by name matching.
+            <Badge variant="outline" className="gap-1 text-[10px] text-amber-600">
+              <ShieldQuestion className="h-3 w-3" /> no payer ID
+            </Badge>
+          ))}
+          <ChevronsUpDown className="h-4 w-4 opacity-50" />
+        </span>
+      </Button>
+      {open && (
+        <div className="mt-1 rounded-md border bg-popover text-popover-foreground shadow-md">
+          {/* Results come pre-ranked by the registry; client-side re-filtering
+              would fight that ranking, so filtering is disabled. */}
+          <Command shouldFilter={false}>
+            <CommandInput
+              autoFocus
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Type at least 2 characters…"
+            />
+            <CommandList className="max-h-52">
+              {isFetching && (
+                <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Searching registry…
+                </div>
+              )}
+              {isError && (
+                <div className="px-3 py-3 text-sm text-destructive">
+                  Payer search is unavailable right now. You can still type the
+                  name and use it as-is below.
+                </div>
+              )}
+              {!isFetching && !isError && debounced.length >= 2 && results.length === 0 && (
+                <CommandEmpty>No payers match “{debounced}”.</CommandEmpty>
+              )}
+              {results.length > 0 && (
+                <CommandGroup heading="Payer registry">
+                  {results.map((p) => (
+                    <CommandItem
+                      key={`${p.payerId}-${p.displayName}`}
+                      value={`${p.payerId}-${p.displayName}`}
+                      onSelect={() => pick({ name: p.displayName, payerId: p.payerId })}
+                    >
+                      <Check
+                        className={cn(
+                          'mr-2 h-4 w-4 shrink-0',
+                          payerId === p.payerId ? 'opacity-100' : 'opacity-0',
+                        )}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate">{p.displayName}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {(p.operatingStates ?? []).slice(0, 6).join(', ')}
+                        </div>
                       </div>
-                    </div>
-                    <Badge variant="secondary" className="ml-2 shrink-0 font-mono text-[10px]">
-                      {p.payerId}
-                    </Badge>
+                      <Badge variant="secondary" className="ml-2 shrink-0 font-mono text-[10px]">
+                        {p.payerId}
+                      </Badge>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              {search.trim().length > 0 && (
+                <CommandGroup heading="Not in the registry?">
+                  <CommandItem
+                    value={`__freetext__${search}`}
+                    onSelect={() => pick({ name: search.trim(), payerId: null })}
+                    className="text-muted-foreground"
+                  >
+                    <PenLine className="mr-2 h-4 w-4 shrink-0" />
+                    Use “{search.trim()}” as typed (no payer ID — may not route
+                    automatically)
                   </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
-            {search.trim().length > 0 && (
-              <CommandGroup heading="Not in the registry?">
-                <CommandItem
-                  value={`__freetext__${search}`}
-                  onSelect={() => pick({ name: search.trim(), payerId: null })}
-                  className="text-muted-foreground"
-                >
-                  <PenLine className="mr-2 h-4 w-4 shrink-0" />
-                  Use “{search.trim()}” as typed (no payer ID — may not route
-                  automatically)
-                </CommandItem>
-              </CommandGroup>
-            )}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </div>
+      )}
+    </div>
   );
 }
 
