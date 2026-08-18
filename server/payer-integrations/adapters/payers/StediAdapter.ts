@@ -1,7 +1,7 @@
 import logger from '../../../services/logger';
 // Safe to import: stediService has no top-level imports back into the
 // payer-integrations tree (it resolves storage/encryption dynamically).
-import { normalizeCoinsurancePercent } from '../../../services/stediService';
+import { networkIndicatorOf, parseNetworkTiers } from '../../../services/stediService';
 import type { NormalizedEligibility, NormalizedBenefits } from '@shared/schema';
 
 const STEDI_API_URL = 'https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/eligibility/v3';
@@ -370,61 +370,31 @@ export class StediAdapter {
 
   private parseBenefits(response: StediEligibilityResponse): NormalizedBenefits {
     const benefits = response.benefitsInformation || [];
-    let copay = 0;
-    let coinsurance = 0;
-    let deductibleIndividual = 0;
-    let deductibleFamily = 0;
-    let deductibleIndividualMet = 0;
-    let deductibleFamilyMet = 0;
-    let oopIndividual = 0;
-    let oopFamily = 0;
-    let oopIndividualMet = 0;
-    let oopFamilyMet = 0;
     let visitsAllowed: number | undefined;
     let visitsUsed: number | undefined;
     let priorAuthRequired = false;
     let referralRequired = false;
     const authDetails: NonNullable<NormalizedBenefits['authDetails']> = [];
 
+    // Financial cost-sharing (copay/coinsurance/deductible/OOP) is parsed
+    // tier-aware by the shared parseNetworkTiers — one parser for both this
+    // adapter and stediService, so a fix in one can no longer miss the other
+    // (that divergence is how the 2026-08-06 coinsurance fix recurred here).
+    // This loop only handles visits, auth flags, and per-benefit auth notes.
+    const networkTiers = parseNetworkTiers(benefits);
+
     for (const benefit of benefits) {
       const code = benefit.code;
-      const amount = parseFloat(benefit.benefitAmount || '0');
-      const percent = parseFloat(benefit.benefitPercent || '0');
-      const inNetwork = benefit.inPlanNetworkIndicator !== 'N';
-
-      // Only process in-network benefits for primary financial summary.
-      if (!inNetwork) continue;
+      const inNetwork = networkIndicatorOf(benefit) !== 'N';
 
       switch (code) {
-        case 'B': // Co-Payment
-          if (amount > 0) copay = amount;
-          break;
-        case 'A': // Co-Insurance
-          // benefitPercent is a decimal fraction per the X12 spec (0.2 = 20%),
-          // but everything downstream — including the integer
-          // eligibility_checks.coinsurance column — expects a whole-number
-          // percentage. Passing the fraction through made Postgres reject the
-          // insert (`invalid input syntax for type integer: "0.2"`), so a
-          // clean ACTIVE 271 from the payer surfaced to the front desk as
-          // "Failed to check eligibility". stediService's own parser was given
-          // normalizeCoinsurancePercent after the same crash on 2026-08-06;
-          // this adapter (the path the interactive endpoints actually use)
-          // was missed, and the crash recurred in production 2026-08-18.
-          if (percent > 0) coinsurance = normalizeCoinsurancePercent(percent) ?? 0;
-          break;
-        case 'C': // Deductible
-          if (amount > 0) deductibleIndividual = amount;
-          break;
-        case 'G': // Out of Pocket Maximum
-          if (amount > 0) oopIndividual = amount;
-          break;
         case 'F': // Limitations
-          if (benefit.quantityQualifier === 'VS') {
+          if (inNetwork && benefit.quantityQualifier === 'VS') {
             visitsAllowed = parseInt(benefit.quantity || '0');
           }
           break;
         case 'CB': // Authorization Required
-          priorAuthRequired = true;
+          if (inNetwork) priorAuthRequired = true;
           break;
       }
 
@@ -451,21 +421,24 @@ export class StediAdapter {
       }
     }
 
+    const inNetTier = networkTiers.inNetwork;
+
     return {
       deductible: {
-        individual: deductibleIndividual,
-        family: deductibleFamily,
-        individualMet: deductibleIndividualMet,
-        familyMet: deductibleFamilyMet,
+        individual: inNetTier.deductible.individual ?? 0,
+        family: inNetTier.deductible.family ?? 0,
+        individualMet: inNetTier.deductible.individualMet ?? 0,
+        familyMet: inNetTier.deductible.familyMet ?? 0,
       },
       outOfPocketMax: {
-        individual: oopIndividual,
-        family: oopFamily,
-        individualMet: oopIndividualMet,
-        familyMet: oopFamilyMet,
+        individual: inNetTier.outOfPocketMax.individual ?? 0,
+        family: inNetTier.outOfPocketMax.family ?? 0,
+        individualMet: inNetTier.outOfPocketMax.individualMet ?? 0,
+        familyMet: inNetTier.outOfPocketMax.familyMet ?? 0,
       },
-      copay,
-      coinsurance,
+      copay: inNetTier.copay ?? 0,
+      coinsurance: inNetTier.coinsurance ?? 0,
+      networkTiers,
       visitsAllowed,
       visitsUsed,
       priorAuthRequired,

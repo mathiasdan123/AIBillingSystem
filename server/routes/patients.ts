@@ -1488,6 +1488,9 @@ router.post('/bulk-eligibility', isAuthenticated, async (req: any, res) => {
           visitsUsed: eligibilityResult.visitsUsed,
           authRequired: eligibilityResult.authRequired,
           rawResponse: eligibilityResult,
+          benefitsDetail: (eligibilityResult as any).networkTiers
+            ? { networkTiers: (eligibilityResult as any).networkTiers }
+            : null,
         });
 
         summary.checked++;

@@ -161,6 +161,12 @@ export const practices = pgTable("practices", {
   // Null is treated as 'MIXED' (sends all therapy STCs) to keep legacy
   // behavior safe during rollout.
   specialty: varchar("specialty"),
+  // Whether this practice participates in payer networks. Drives which
+  // benefit tier (in-network vs out-of-network) eligibility results lead
+  // with in the UI. 'in_network' | 'out_of_network'. Null = not set: show
+  // both tiers without emphasis. Out-of-network covers cash-pay practices
+  // whose patients rely on OON benefits / superbills.
+  networkStatus: varchar("network_status"),
   // Phase 3 — when true: claim scrubber BLOCKS submission on STC/CPT
   // category mismatch, AND the 837P envelope includes the resolved STC.
   // When false (default): scrubber emits warnings only and the 837P
@@ -1917,6 +1923,36 @@ export type NormalizedEligibility = {
   networkStatus: string; // in_network, out_of_network
 };
 
+// One network tier's cost-sharing, parsed from a 271. Amounts are dollars;
+// coinsurance is a whole-number percent. *Met values are computed as
+// (plan-year amount − remaining) when the payer returns a time-qualifier-29
+// (remaining) row alongside the base row.
+export type BenefitTier = {
+  copay?: number;
+  coinsurance?: number;
+  deductible: {
+    individual?: number;
+    individualMet?: number;
+    family?: number;
+    familyMet?: number;
+  };
+  outOfPocketMax: {
+    individual?: number;
+    individualMet?: number;
+    family?: number;
+    familyMet?: number;
+  };
+};
+
+// Both benefit tiers from a single 271. `hasOutOfNetworkBenefits` is true
+// only when the payer returned actual OON cost-sharing rows — HMO/EPO plans
+// typically return none, which means the patient has no OON coverage.
+export type NetworkTiers = {
+  inNetwork: BenefitTier;
+  outOfNetwork: BenefitTier;
+  hasOutOfNetworkBenefits: boolean;
+};
+
 export type NormalizedBenefits = {
   deductible: {
     individual: number;
@@ -1932,6 +1968,10 @@ export type NormalizedBenefits = {
   };
   copay: number;
   coinsurance: number;
+  // Tier-separated benefits. Top-level copay/coinsurance/deductible/
+  // outOfPocketMax remain the IN-NETWORK numbers for backward compatibility;
+  // consumers that care about network tier should read networkTiers.
+  networkTiers?: NetworkTiers;
   visitsAllowed?: number;
   visitsUsed?: number;
   priorAuthRequired: boolean;

@@ -8,6 +8,8 @@
  * - Electronic remittance advice (835)
  */
 
+import type { BenefitTier, NetworkTiers } from '@shared/schema';
+
 // Stedi API base URL (same for test and production — the API key determines the environment)
 const STEDI_API_BASE = 'https://healthcare.us.stedi.com/2024-04-01';
 
@@ -274,6 +276,109 @@ export function normalizeCoinsurancePercent(percent: number | null | undefined):
   if (!Number.isFinite(percent) || percent <= 0) return undefined;
   const asPercent = percent <= 1 ? percent * 100 : percent;
   return Math.round(asPercent);
+}
+
+/**
+ * X12 EB12 (in-plan-network) for a 271 benefit row. Stedi puts the code in
+ * `inPlanNetworkIndicatorCode` ('Y'/'N'/'U'/'W') and a human-readable word in
+ * `inPlanNetworkIndicator` ("Yes"/"No"/"Not Applicable"). Both parsers used to
+ * compare the word against 'N', which never matched — out-of-network rows
+ * leaked into the "in-network" summary in production (Horizon, 2026-08-18:
+ * the OON family deductible displayed as THE deductible).
+ * Returns 'N' only for definitively out-of-network rows; unknown ('U'),
+ * not-applicable ('W'), and unlabeled rows are treated as in-network by
+ * callers, preserving the long-standing default.
+ */
+export function networkIndicatorOf(benefit: any): 'Y' | 'N' | 'U' | 'W' | '' {
+  const code = String(benefit?.inPlanNetworkIndicatorCode ?? '').toUpperCase();
+  if (code === 'Y' || code === 'N' || code === 'U' || code === 'W') return code;
+  const text = String(benefit?.inPlanNetworkIndicator ?? '').trim().toLowerCase();
+  if (text === 'y' || text === 'yes') return 'Y';
+  if (text === 'n' || text === 'no') return 'N';
+  if (text === 'u' || text === 'unknown') return 'U';
+  if (text === 'w' || text === 'not applicable') return 'W';
+  return '';
+}
+
+/**
+ * Split a 271's benefitsInformation into in-network vs out-of-network
+ * cost-sharing tiers. Single source of truth used by BOTH the StediAdapter
+ * (live interactive path) and parseDetailedBenefitsResponse — the two
+ * parsers diverging is what let the 2026-08-06 coinsurance fix miss the
+ * adapter and recur in production on 2026-08-18.
+ *
+ * Rows labeled 'N' (EB12) go to the outOfNetwork tier; 'Y', unknown ('U'),
+ * not-applicable ('W'), and unlabeled rows go to inNetwork, preserving the
+ * long-standing default. First value wins per field: payers order rows from
+ * general (STC 30) to service-specific, and the generic row is the safer
+ * headline number.
+ */
+export function parseNetworkTiers(benefits: any[]): NetworkTiers {
+  type Acc = {
+    copay?: number;
+    coinsurance?: number;
+    ded: { ind?: number; fam?: number; indRem?: number; famRem?: number };
+    oop: { ind?: number; fam?: number; indRem?: number; famRem?: number };
+    sawCostShare: boolean;
+  };
+  const makeAcc = (): Acc => ({ ded: {}, oop: {}, sawCostShare: false });
+  const inNet = makeAcc();
+  const oon = makeAcc();
+
+  for (const benefit of benefits || []) {
+    const code = benefit?.code;
+    const amount = parseFloat(benefit?.benefitAmount || benefit?.amount || '0');
+    const percent = parseFloat(benefit?.benefitPercent || benefit?.percent || '0');
+    const tier = networkIndicatorOf(benefit) === 'N' ? oon : inNet;
+    const isFamily = (benefit?.coverageLevelCode || benefit?.coverageLevel) === 'FAM';
+    // Time qualifier 29 = "Remaining"; anything else is the plan-period total.
+    const isRemaining = (benefit?.timeQualifierCode || benefit?.timePeriodQualifier) === '29';
+
+    if (code === 'B' && !isRemaining && amount > 0) {
+      tier.copay = tier.copay ?? amount;
+      tier.sawCostShare = true;
+    } else if (code === 'A' && percent > 0) {
+      tier.coinsurance = tier.coinsurance ?? normalizeCoinsurancePercent(percent);
+      tier.sawCostShare = true;
+    } else if (code === 'C' || code === 'G') {
+      const bucket = code === 'C' ? tier.ded : tier.oop;
+      if (isRemaining) {
+        if (isFamily) bucket.famRem = bucket.famRem ?? amount;
+        else bucket.indRem = bucket.indRem ?? amount;
+      } else if (amount > 0) {
+        if (isFamily) bucket.fam = bucket.fam ?? amount;
+        else bucket.ind = bucket.ind ?? amount;
+        tier.sawCostShare = true;
+      }
+    }
+  }
+
+  // "Met" derives from the payer's remaining rows: met = total − remaining.
+  // When only a remaining row exists (no total), met stays undefined.
+  const met = (total?: number, remaining?: number) =>
+    total !== undefined && remaining !== undefined ? Math.max(0, total - remaining) : undefined;
+  const finalize = (acc: Acc): BenefitTier => ({
+    copay: acc.copay,
+    coinsurance: acc.coinsurance,
+    deductible: {
+      individual: acc.ded.ind,
+      individualMet: met(acc.ded.ind, acc.ded.indRem),
+      family: acc.ded.fam,
+      familyMet: met(acc.ded.fam, acc.ded.famRem),
+    },
+    outOfPocketMax: {
+      individual: acc.oop.ind,
+      individualMet: met(acc.oop.ind, acc.oop.indRem),
+      family: acc.oop.fam,
+      familyMet: met(acc.oop.fam, acc.oop.famRem),
+    },
+  });
+
+  return {
+    inNetwork: finalize(inNet),
+    outOfNetwork: finalize(oon),
+    hasOutOfNetworkBenefits: oon.sawCostShare,
+  };
 }
 
 export interface EligibilityResponse {
@@ -1149,6 +1254,11 @@ export interface DetailedBenefits {
     familyMet?: number;
   };
 
+  // Tier-separated cost sharing. The flat fields above remain the IN-NETWORK
+  // numbers for backward compatibility; tier-aware consumers (OON practices)
+  // should read networkTiers.
+  networkTiers?: NetworkTiers;
+
   // Coverage details from raw response
   coverageDetails?: Array<{
     serviceType: string;
@@ -1296,6 +1406,9 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
   try {
     const benefitsInfo = data.benefitsInformation || [];
 
+    // Both cost-sharing tiers, from the shared tier parser.
+    result.networkTiers = parseNetworkTiers(benefitsInfo);
+
     // Determine plan status
     const activeBenefit = benefitsInfo.find((b: any) =>
       b.code === '1' || b.informationCode === 'A'
@@ -1355,10 +1468,11 @@ function parseDetailedBenefitsResponse(data: any): DetailedBenefits {
       const amount = parseFloat(benefit.amount || benefit.benefitAmount || '0');
       const percent = parseFloat(benefit.percent || benefit.benefitPercent || '0');
       const serviceTypeCode = benefit.serviceTypeCode || benefit.serviceType || '';
-      const inNetwork = benefit.inPlanNetworkIndicator !== 'N';
+      const inNetwork = networkIndicatorOf(benefit) !== 'N';
       const coverageLevel = benefit.coverageLevelCode || '';
 
-      // Only process in-network benefits for primary display
+      // Only process in-network benefits for primary display; both tiers are
+      // captured separately in result.networkTiers below.
       if (!inNetwork) continue;
 
       // Copay
