@@ -53,6 +53,7 @@ const practiceSchema = z.object({
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
   specialty: z.enum(["OT", "PT", "ST", "MH", "MIXED"]).optional(),
   networkStatus: z.enum(["in_network", "out_of_network"]).optional(),
+  costShareCollection: z.enum(["at_visit", "after_insurance"]).optional(),
   strictStcValidation: z.boolean().optional(),
   taxonomyCode: z.string().optional(),
   ownerName: z.string().optional(),
@@ -1474,6 +1475,7 @@ export default function Settings() {
         email: practice.email || "",
         specialty: practice.specialty || undefined,
         networkStatus: practice.networkStatus || undefined,
+        costShareCollection: practice.costShareCollection || undefined,
         strictStcValidation: Boolean(practice.strictStcValidation),
         taxonomyCode: practice.taxonomyCode || "",
         ownerName: practice.ownerName || "",
@@ -1714,9 +1716,41 @@ export default function Settings() {
                           <p className="text-xs text-muted-foreground mt-1">
                             Payers answer eligibility checks with both in-network and out-of-network
                             benefits. This setting picks which tier is shown first so the front desk
-                            sees accurate patient cost-sharing. Out-of-network fits practices that
-                            don't participate in payer networks — patients rely on their plan's
-                            out-of-network benefits (superbills, OON claims).
+                            sees accurate patient cost-sharing. Out-of-network practices still bill
+                            payers directly — the payer prices the claim at its allowed amount and,
+                            with assignment of benefits, pays the practice directly.
+                          </p>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="costShareCollection"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Patient Cost-Sharing Collection</FormLabel>
+                          <FormControl>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value ?? ""}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select when to collect the patient's share" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="at_visit">Collect at time of visit (copay / estimate at check-in)</SelectItem>
+                                <SelectItem value="after_insurance">Bill patient after insurance processes (from the ERA)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Controls when the front desk collects the patient's share, in addition to
+                            billing insurance. "After insurance" fits out-of-network billing, where the
+                            patient's coinsurance is only known once the payer prices the claim. Note:
+                            the patient's share is owed under their plan either way — this sets when to
+                            collect it, and routinely waiving cost-sharing violates most payer rules.
                           </p>
                           <FormMessage />
                         </FormItem>

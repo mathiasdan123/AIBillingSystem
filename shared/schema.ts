@@ -167,6 +167,14 @@ export const practices = pgTable("practices", {
   // both tiers without emphasis. Out-of-network covers cash-pay practices
   // whose patients rely on OON benefits / superbills.
   networkStatus: varchar("network_status"),
+  // When the practice collects the patient's share (copay / estimated
+  // cost-sharing): 'at_visit' (collect at check-in/check-out) or
+  // 'after_insurance' (bill the patient once the ERA prices the claim).
+  // Null = not set; UI treats it as 'after_insurance' for OON practices and
+  // 'at_visit' for in-network ones. This is about WHEN to collect — patient
+  // cost-sharing itself is owed per the plan; routinely waiving it violates
+  // most payer contracts.
+  costShareCollection: varchar("cost_share_collection"),
   // Phase 3 — when true: claim scrubber BLOCKS submission on STC/CPT
   // category mismatch, AND the 837P envelope includes the resolved STC.
   // When false (default): scrubber emits warnings only and the 837P

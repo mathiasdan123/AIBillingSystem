@@ -374,6 +374,14 @@ export default function BenefitsVerificationCard({
     storedEligibility?.rawResponse?.networkTiers ||
     undefined;
   const practiceIsOon = practiceNetworkStatus === 'out_of_network';
+  // When the practice collects the patient's share. Unset defaults follow
+  // the billing reality: OON coinsurance is only knowable after the payer
+  // prices the claim, so OON practices default to after-insurance billing.
+  const costShareCollection: 'at_visit' | 'after_insurance' =
+    practice?.costShareCollection || (practiceIsOon ? 'after_insurance' : 'at_visit');
+  const relevantTierCopay = practiceIsOon
+    ? undefined // copays don't apply out-of-network
+    : (networkTiers?.inNetwork?.copay ?? undefined);
   // Show the practice's own tier first; without a setting, in-network leads.
   const tierOrder: Array<{ key: 'inNetwork' | 'outOfNetwork'; title: string }> = practiceIsOon
     ? [
@@ -576,6 +584,21 @@ export default function BenefitsVerificationCard({
                     );
                   })}
                 </ul>
+              </div>
+            )}
+
+            {/* Front-desk collection guidance, from the practice's
+                cost-sharing collection policy. */}
+            {isActive && (
+              <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <DollarSign className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-blue-900">
+                  {costShareCollection === 'at_visit'
+                    ? relevantTierCopay != null && relevantTierCopay > 0
+                      ? `Collect at visit: $${relevantTierCopay} copay. Insurance is billed for the rest.`
+                      : 'Practice policy: collect the patient’s estimated share at visit. Insurance is billed directly.'
+                    : 'Practice policy: bill insurance directly; the patient’s share is billed after the payer prices the claim (ERA). Nothing to collect at check-in.'}
+                </p>
               </div>
             )}
 
