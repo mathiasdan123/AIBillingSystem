@@ -203,10 +203,15 @@ export default function BenefitsVerificationCard({
   const hasStoredData = storedEligibility && storedEligibility.status;
   const hasData = benefits || hasStoredData;
 
-  // Derive display values from benefits or stored eligibility
-  const isActive = benefits
-    ? benefits.planStatus === 'active'
-    : storedEligibility?.status === 'active';
+  // Derive display values from benefits or stored eligibility.
+  // Three-state on purpose: 'unknown' means the check itself failed or the
+  // payer refused to process it — it is NOT a coverage verdict. Collapsing it
+  // into "inactive" told the front desk coverage was terminated when the real
+  // problem was a broken verification path (same bug class as PR #226).
+  const coverageStatus: 'active' | 'inactive' | 'unknown' | undefined = benefits
+    ? benefits.planStatus
+    : storedEligibility?.status;
+  const isActive = coverageStatus === 'active';
   const planName = benefits?.planName || storedEligibility?.planName;
   const planType = benefits?.planType || storedEligibility?.coverageType;
   const authRequired = benefits?.authRequired ?? storedEligibility?.authRequired;
@@ -263,18 +268,18 @@ export default function BenefitsVerificationCard({
           <div className="flex items-center gap-2">
             {hasData && (
               <Badge className={
-                isActive
+                coverageStatus === 'active'
                   ? "bg-green-100 text-green-700"
-                  : isActive === false
+                  : coverageStatus === 'inactive'
                   ? "bg-red-100 text-red-700"
-                  : "bg-slate-100 text-slate-700"
+                  : "bg-amber-100 text-amber-700"
               }>
-                {isActive ? (
+                {coverageStatus === 'active' ? (
                   <><CheckCircle className="w-3 h-3 mr-1" /> Active</>
-                ) : isActive === false ? (
+                ) : coverageStatus === 'inactive' ? (
                   <><XCircle className="w-3 h-3 mr-1" /> Inactive</>
                 ) : (
-                  <><AlertTriangle className="w-3 h-3 mr-1" /> Unknown</>
+                  <><AlertTriangle className="w-3 h-3 mr-1" /> Unverified</>
                 )}
               </Badge>
             )}
@@ -319,11 +324,20 @@ export default function BenefitsVerificationCard({
               Click "Verify Benefits" to check coverage in real-time
             </p>
           </div>
-        ) : !isActive && isActive !== undefined ? (
+        ) : coverageStatus === 'inactive' ? (
           <div className="p-4 bg-red-50 rounded-lg border border-red-100">
             <p className="text-sm text-red-700 font-medium">Coverage is not active</p>
             <p className="text-xs text-red-600 mt-1">
               Please verify insurance information or contact the patient
+            </p>
+          </div>
+        ) : coverageStatus !== 'active' ? (
+          <div className="p-4 bg-amber-50 rounded-lg border border-amber-100">
+            <p className="text-sm text-amber-800 font-medium">Couldn't verify coverage</p>
+            <p className="text-xs text-amber-700 mt-1">
+              The check didn't complete — this is a verification problem, not a coverage
+              verdict. The patient's coverage may still be active. Fix the issue below and
+              re-verify, or ask Blanche to triage it.
             </p>
           </div>
         ) : (

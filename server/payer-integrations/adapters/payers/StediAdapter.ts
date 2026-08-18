@@ -1,4 +1,7 @@
 import logger from '../../../services/logger';
+// Safe to import: stediService has no top-level imports back into the
+// payer-integrations tree (it resolves storage/encryption dynamically).
+import { normalizeCoinsurancePercent } from '../../../services/stediService';
 import type { NormalizedEligibility, NormalizedBenefits } from '@shared/schema';
 
 const STEDI_API_URL = 'https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/eligibility/v3';
@@ -397,7 +400,17 @@ export class StediAdapter {
           if (amount > 0) copay = amount;
           break;
         case 'A': // Co-Insurance
-          if (percent > 0) coinsurance = percent;
+          // benefitPercent is a decimal fraction per the X12 spec (0.2 = 20%),
+          // but everything downstream — including the integer
+          // eligibility_checks.coinsurance column — expects a whole-number
+          // percentage. Passing the fraction through made Postgres reject the
+          // insert (`invalid input syntax for type integer: "0.2"`), so a
+          // clean ACTIVE 271 from the payer surfaced to the front desk as
+          // "Failed to check eligibility". stediService's own parser was given
+          // normalizeCoinsurancePercent after the same crash on 2026-08-06;
+          // this adapter (the path the interactive endpoints actually use)
+          // was missed, and the crash recurred in production 2026-08-18.
+          if (percent > 0) coinsurance = normalizeCoinsurancePercent(percent) ?? 0;
           break;
         case 'C': // Deductible
           if (amount > 0) deductibleIndividual = amount;

@@ -131,7 +131,10 @@ describe('stediService', () => {
       await checkEligibility(sampleRequest);
 
       const callArgs = mockFetch.mock.calls[0];
-      expect(callArgs[0]).toContain('/eligibility-checks');
+      // The Change-compatible path that actually exists on Stedi's API.
+      // The old '/eligibility-checks' short path 404'd in production
+      // (2026-08-18) — every call through this service silently failed.
+      expect(callArgs[0]).toContain('/change/medicalnetwork/eligibility/v3');
       const headers = callArgs[1].headers;
       expect(headers.Authorization).toBe('Key test-api-key-123');
       expect(headers['Content-Type']).toBe('application/json');

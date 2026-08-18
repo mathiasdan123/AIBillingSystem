@@ -11,6 +11,17 @@
 // Stedi API base URL (same for test and production — the API key determines the environment)
 const STEDI_API_BASE = 'https://healthcare.us.stedi.com/2024-04-01';
 
+// Real Stedi endpoint paths (Change-compatible JSON API). The short paths this
+// file originally used — /eligibility-checks, /claims, /claim-status — do not
+// exist on Stedi's API and returned NOT_FOUND for every call (observed in
+// production 2026-08-18; verified by probe: the paths below answer 401 without
+// auth, the short ones answer 404). StediAdapter always used the correct
+// eligibility path, which is why the interactive endpoints worked while
+// everything routed through this file silently failed.
+const STEDI_ELIGIBILITY_PATH = '/change/medicalnetwork/eligibility/v3';
+const STEDI_CLAIMS_PATH = '/change/medicalnetwork/professionalclaims/v3/submission';
+const STEDI_CLAIM_STATUS_PATH = '/change/medicalnetwork/claimstatus/v2';
+
 // Check if Stedi is configured (globally or for a practice)
 export function isStediConfigured(): boolean {
   return !!process.env.STEDI_API_KEY;
@@ -71,6 +82,9 @@ function getHeaders(apiKeyOverride?: string): HeadersInit {
 export const PAYER_IDS: Record<string, string> = {
   'aetna': '60054',
   'anthem': '00805',
+  // Horizon BCBS of New Jersey — must come before the generic 'bcbs' entry so
+  // substring matching routes "Horizon Blue Cross Blue Shield NJ" to Horizon.
+  'horizon': '22099',
   'bcbs': '00590', // Varies by state
   'cigna': '62308',
   'humana': '61101',
@@ -360,7 +374,7 @@ export async function checkEligibility(request: EligibilityRequest, practiceId?:
   };
 
   try {
-    const response = await fetch(`${STEDI_API_BASE}/eligibility-checks`, {
+    const response = await fetch(`${STEDI_API_BASE}${STEDI_ELIGIBILITY_PATH}`, {
       method: 'POST',
       headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
@@ -517,7 +531,7 @@ export async function submitClaim(claim: ClaimSubmission, practiceId?: number): 
   const payload = build837P(claim);
 
   try {
-    const response = await fetch(`${STEDI_API_BASE}/claims`, {
+    const response = await fetch(`${STEDI_API_BASE}${STEDI_CLAIMS_PATH}`, {
       method: 'POST',
       headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
@@ -635,7 +649,7 @@ export async function checkClaimStatus(request: ClaimStatusRequest, practiceId?:
   };
 
   try {
-    const response = await fetch(`${STEDI_API_BASE}/claim-status`, {
+    const response = await fetch(`${STEDI_API_BASE}${STEDI_CLAIM_STATUS_PATH}`, {
       method: 'POST',
       headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
@@ -1173,9 +1187,29 @@ export async function getDetailedBenefits(
     throw new Error('Practice not found');
   }
 
-  // Resolve payer ID
-  const insuranceName = (patient.insuranceProvider || '').toLowerCase();
-  const payerId = PAYER_IDS[insuranceName] || patient.insuranceId || '60054';
+  // Resolve payer ID. Precedence mirrors performStediEligibilityCheck: the
+  // patient's insurancePayerId (written by the payer-search dropdown) is
+  // authoritative; name matching is a last resort. The old chain —
+  // `PAYER_IDS[name] || patient.insuranceId || '60054'` — was broken three
+  // ways: exact-key lookup never matched a real carrier name ("Horizon Blue
+  // Cross Blue Shield" is not the key 'horizon'), patient.insuranceId is the
+  // MEMBER id, not a trading partner id, and the final fallback silently sent
+  // the request (PHI included) to Aetna regardless of the patient's payer.
+  const insuranceName = (patient.insuranceProvider || '').toLowerCase().replace(/[^a-z]/g, '');
+  const nameMatch = Object.entries(PAYER_IDS).find(([key]) => insuranceName.includes(key))?.[1];
+  const payerId = patient.insurancePayerId || nameMatch;
+  if (!payerId) {
+    return {
+      planStatus: 'unknown',
+      authRequired: false,
+      checkedAt: new Date().toISOString(),
+      source: 'stedi',
+      errors: [
+        `No payer ID on file for "${patient.insuranceProvider || 'unknown payer'}". ` +
+          'Edit the patient’s insurance and pick the payer from the payer search dropdown.',
+      ],
+    };
+  }
 
   // Run eligibility check with multiple service type codes for therapy-specific data.
   // Uses the X12-spec therapy STCs — prior to this fix the list used A7/A8/A9
@@ -1216,7 +1250,7 @@ export async function getDetailedBenefits(
   };
 
   try {
-    const response = await fetch(`${STEDI_API_BASE}/eligibility-checks`, {
+    const response = await fetch(`${STEDI_API_BASE}${STEDI_ELIGIBILITY_PATH}`, {
       method: 'POST',
       headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
