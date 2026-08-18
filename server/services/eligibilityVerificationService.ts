@@ -100,11 +100,15 @@ export async function performStediEligibilityCheck(opts: {
     effectiveDate: result.eligibility.effectiveDate ?? null,
     terminationDate: result.eligibility.terminationDate ?? null,
     copay: result.benefits.copay,
-    deductible: result.benefits.deductible?.individual,
-    deductibleMet: result.benefits.deductible?.individualMet,
-    outOfPocketMax: result.benefits.outOfPocketMax?.individual,
-    outOfPocketMet: result.benefits.outOfPocketMax?.individualMet,
+    // Some payers (e.g. Horizon) answer generic STC 30 with FAMILY-level
+    // deductible/OOP rows only — fall back to family so the headline number
+    // isn't a misleading 0. networkTiers below carries the labeled breakdown.
+    deductible: result.benefits.deductible?.individual || result.benefits.deductible?.family,
+    deductibleMet: result.benefits.deductible?.individualMet || result.benefits.deductible?.familyMet,
+    outOfPocketMax: result.benefits.outOfPocketMax?.individual || result.benefits.outOfPocketMax?.family,
+    outOfPocketMet: result.benefits.outOfPocketMax?.individualMet || result.benefits.outOfPocketMax?.familyMet,
     coinsurance: result.benefits.coinsurance,
+    networkTiers: result.benefits.networkTiers,
     visitsAllowed: result.benefits.visitsAllowed,
     visitsUsed: result.benefits.visitsUsed,
     authRequired: result.benefits.priorAuthRequired,

@@ -557,6 +557,14 @@ function eligibilityErrorMessage(error: unknown): string {
 
 export default function Patients() {
   const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
+
+  // Practice network participation — an out-of-network practice should hear
+  // the OON tier in eligibility summaries, not the in-network copay.
+  const { data: practiceData } = useQuery({
+    queryKey: [`/api/practices/${user?.practiceId}`],
+    enabled: !!user?.practiceId,
+  }) as any;
+  const practiceIsOon = practiceData?.networkStatus === 'out_of_network';
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [practiceId] = useState(user?.practiceId || 1);
@@ -659,10 +667,25 @@ export default function Patients() {
       const inconclusiveMsg = status === 'inactive'
         ? "The payer reports this coverage as inactive"
         : "Unable to verify coverage";
+      // Out-of-network practices get the OON tier in the summary — quoting the
+      // in-network copay to an OON front desk misstates patient cost-sharing.
+      const tiers = data.eligibility?.benefitsDetail?.networkTiers;
+      const oonTier = tiers?.outOfNetwork;
+      const activeSummary = practiceIsOon && tiers
+        ? tiers.hasOutOfNetworkBenefits
+          ? `${source === 'stedi' ? '✓ Live data: ' : ''}${data.eligibility.coverageType || 'Plan'} — OON: ${
+              oonTier?.coinsurance != null ? `${oonTier.coinsurance}% coinsurance` : 'see details'
+            }${
+              oonTier?.deductible?.individual || oonTier?.deductible?.family
+                ? ` after $${(oonTier.deductible.individual || oonTier.deductible.family).toLocaleString()} deductible`
+                : ''
+            }`
+          : `${data.eligibility.coverageType || 'Plan'} — no out-of-network benefits returned; confirm with the payer`
+        : `${source === 'stedi' ? '✓ Live data: ' : ''}${data.eligibility.coverageType || 'Plan'} - Copay: $${data.eligibility.copay || 0}`;
       toast({
         title: status === 'active' ? "Coverage Verified" : status === 'inactive' ? "Coverage Inactive" : "Eligibility Check Complete",
         description: status === 'active'
-          ? `${source === 'stedi' ? '✓ Live data: ' : ''}${data.eligibility.coverageType || 'Plan'} - Copay: $${data.eligibility.copay || 0}`
+          ? activeSummary
           : inconclusiveMsg,
         variant: status === 'active' ? "default" : "destructive",
         // Non-active outcomes get a one-click path into triage instead of

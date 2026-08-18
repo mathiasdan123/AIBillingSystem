@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Shield, DollarSign, Calendar, AlertTriangle,
@@ -16,6 +17,30 @@ interface TherapyVisitInfo {
   allowed?: number;
   used?: number;
   remaining?: number;
+}
+
+// Mirrors BenefitTier / NetworkTiers in shared/schema.ts.
+interface BenefitTierData {
+  copay?: number;
+  coinsurance?: number;
+  deductible?: {
+    individual?: number;
+    individualMet?: number;
+    family?: number;
+    familyMet?: number;
+  };
+  outOfPocketMax?: {
+    individual?: number;
+    individualMet?: number;
+    family?: number;
+    familyMet?: number;
+  };
+}
+
+interface NetworkTiersData {
+  inNetwork: BenefitTierData;
+  outOfNetwork: BenefitTierData;
+  hasOutOfNetworkBenefits: boolean;
 }
 
 interface DetailedBenefits {
@@ -58,6 +83,7 @@ interface DetailedBenefits {
     family?: number;
     familyMet?: number;
   };
+  networkTiers?: NetworkTiersData;
   checkedAt: string;
   source: string;
   errors?: string[];
@@ -146,6 +172,105 @@ function FinancialProgressBar({
   );
 }
 
+/** One network tier's cost sharing (copay / coinsurance / deductible / OOP). */
+function TierPanel({
+  title,
+  tier,
+  emphasized,
+}: {
+  title: string;
+  tier: BenefitTierData;
+  emphasized: boolean;
+}) {
+  const ded = tier.deductible || {};
+  const oop = tier.outOfPocketMax || {};
+  const hasAny =
+    tier.copay != null || tier.coinsurance != null ||
+    ded.individual != null || ded.family != null ||
+    oop.individual != null || oop.family != null;
+
+  return (
+    <div
+      className={`rounded-lg border p-3 space-y-3 ${
+        emphasized ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-slate-50/60'
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold text-slate-700">{title}</h4>
+        {emphasized && (
+          <Badge variant="outline" className="text-blue-700 border-blue-300 text-xs">
+            Your practice's tier
+          </Badge>
+        )}
+      </div>
+      {!hasAny ? (
+        <p className="text-xs text-slate-500">
+          The payer returned no cost-sharing details for this tier.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Copay</p>
+              <p className="text-base font-bold text-slate-900">
+                {tier.copay != null && tier.copay > 0 ? `$${tier.copay}` : 'N/A'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Coinsurance</p>
+              <p className="text-base font-bold text-slate-900">
+                {tier.coinsurance != null && tier.coinsurance > 0 ? `${tier.coinsurance}%` : 'N/A'}
+              </p>
+            </div>
+          </div>
+          {(ded.individual || ded.family) ? (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500 font-medium">Deductible</p>
+              {ded.individual ? (
+                <FinancialProgressBar
+                  label="Individual"
+                  current={ded.individualMet ?? 0}
+                  max={ded.individual}
+                  showRemaining={ded.individualMet != null}
+                />
+              ) : null}
+              {ded.family ? (
+                <FinancialProgressBar
+                  label="Family"
+                  current={ded.familyMet ?? 0}
+                  max={ded.family}
+                  showRemaining={ded.familyMet != null}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {(oop.individual || oop.family) ? (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500 font-medium">Out-of-Pocket Max</p>
+              {oop.individual ? (
+                <FinancialProgressBar
+                  label="Individual"
+                  current={oop.individualMet ?? 0}
+                  max={oop.individual}
+                  showRemaining={oop.individualMet != null}
+                />
+              ) : null}
+              {oop.family ? (
+                <FinancialProgressBar
+                  label="Family"
+                  current={oop.familyMet ?? 0}
+                  max={oop.family}
+                  showRemaining={oop.familyMet != null}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function BenefitsVerificationCard({
   patientId,
   patientName,
@@ -153,12 +278,20 @@ export default function BenefitsVerificationCard({
 }: BenefitsVerificationCardProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   // Fetch stored eligibility data
   const { data: storedEligibility } = useQuery({
     queryKey: [`/api/patients/${patientId}/eligibility`],
     enabled: !!patientId,
   }) as any;
+
+  // Practice network participation drives which benefit tier leads.
+  const { data: practice } = useQuery({
+    queryKey: [`/api/practices/${user?.practiceId}`],
+    enabled: !!user?.practiceId,
+  }) as any;
+  const practiceNetworkStatus: string | undefined = practice?.networkStatus || undefined;
 
   // State for the detailed benefits data
   const [detailedBenefits, setDetailedBenefits] = useState<DetailedBenefits | null>(null);
@@ -232,6 +365,25 @@ export default function BenefitsVerificationCard({
   // Effective dates
   const effectiveDate = benefits?.effectiveDate || storedEligibility?.effectiveDate;
   const terminationDate = benefits?.terminationDate || storedEligibility?.terminationDate;
+
+  // Tier-separated benefits (in-network vs out-of-network), when the parser
+  // captured them: live from a fresh verification, else from the stored check.
+  const networkTiers: NetworkTiersData | undefined =
+    benefits?.networkTiers ||
+    storedEligibility?.benefitsDetail?.networkTiers ||
+    storedEligibility?.rawResponse?.networkTiers ||
+    undefined;
+  const practiceIsOon = practiceNetworkStatus === 'out_of_network';
+  // Show the practice's own tier first; without a setting, in-network leads.
+  const tierOrder: Array<{ key: 'inNetwork' | 'outOfNetwork'; title: string }> = practiceIsOon
+    ? [
+        { key: 'outOfNetwork', title: 'Out-of-Network Benefits' },
+        { key: 'inNetwork', title: 'In-Network Benefits' },
+      ]
+    : [
+        { key: 'inNetwork', title: 'In-Network Benefits' },
+        { key: 'outOfNetwork', title: 'Out-of-Network Benefits' },
+      ];
 
   // Phase 4 — STC downgrade indicator. When the payer answered our
   // therapy-specific STCs (AE/AD/AF/MH) with only generic (30), benefits
@@ -427,26 +579,53 @@ export default function BenefitsVerificationCard({
               </div>
             )}
 
-            {/* Financial Summary Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-slate-50 rounded-lg">
-                <p className="text-xs text-slate-500 font-medium">Copay</p>
-                <p className="text-lg font-bold text-slate-900">
-                  {copay != null && copay > 0 ? `$${copay}` : 'N/A'}
-                </p>
-                {benefits?.specialistCopay != null && benefits.specialistCopay !== copay && (
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Specialist: ${benefits.specialistCopay}
-                  </p>
+            {/* Financial summary — tier-separated when the parser captured
+                both network tiers, flat (in-network) grid otherwise. */}
+            {networkTiers ? (
+              <div className="space-y-3">
+                {practiceIsOon && !networkTiers.hasOutOfNetworkBenefits && (
+                  <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                    <p className="text-xs text-amber-800">
+                      The payer returned no out-of-network cost-sharing for this plan.
+                      HMO and EPO plans often have no out-of-network coverage — confirm
+                      with the payer before relying on out-of-network reimbursement.
+                    </p>
+                  </div>
                 )}
+                {tierOrder.map(({ key, title }) => (
+                  <TierPanel
+                    key={key}
+                    title={title}
+                    tier={networkTiers[key]}
+                    emphasized={
+                      practiceNetworkStatus != null &&
+                      (practiceIsOon ? key === 'outOfNetwork' : key === 'inNetwork')
+                    }
+                  />
+                ))}
               </div>
-              <div className="p-3 bg-slate-50 rounded-lg">
-                <p className="text-xs text-slate-500 font-medium">Coinsurance</p>
-                <p className="text-lg font-bold text-slate-900">
-                  {coinsurance != null && coinsurance > 0 ? `${coinsurance}%` : 'N/A'}
-                </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <p className="text-xs text-slate-500 font-medium">Copay</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {copay != null && copay > 0 ? `$${copay}` : 'N/A'}
+                  </p>
+                  {benefits?.specialistCopay != null && benefits.specialistCopay !== copay && (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Specialist: ${benefits.specialistCopay}
+                    </p>
+                  )}
+                </div>
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <p className="text-xs text-slate-500 font-medium">Coinsurance</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {coinsurance != null && coinsurance > 0 ? `${coinsurance}%` : 'N/A'}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Therapy Visit Limits */}
             {benefits?.therapyVisits && Object.keys(benefits.therapyVisits).length > 0 && (
@@ -506,8 +685,9 @@ export default function BenefitsVerificationCard({
               />
             )}
 
-            {/* Deductible Progress */}
-            {(deductibleIndividual > 0 || deductibleFamily > 0) && (
+            {/* Deductible Progress (flat fallback — tier panels above cover this
+                when networkTiers are available) */}
+            {!networkTiers && (deductibleIndividual > 0 || deductibleFamily > 0) && (
               <div className="space-y-3">
                 <h4 className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
                   <DollarSign className="w-4 h-4 text-blue-600" />
@@ -530,8 +710,8 @@ export default function BenefitsVerificationCard({
               </div>
             )}
 
-            {/* Out-of-Pocket Maximum Progress */}
-            {(oopIndividual > 0 || oopFamily > 0) && (
+            {/* Out-of-Pocket Maximum Progress (flat fallback, same as above) */}
+            {!networkTiers && (oopIndividual > 0 || oopFamily > 0) && (
               <div className="space-y-3">
                 <h4 className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
                   <DollarSign className="w-4 h-4 text-green-600" />

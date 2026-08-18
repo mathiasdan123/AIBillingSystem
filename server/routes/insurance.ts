@@ -431,6 +431,11 @@ router.post('/insurance/eligibility', isAuthenticated, async (req: any, res) => 
       visitsUsed: eligibilityResult.visitsUsed,
       authRequired: eligibilityResult.authRequired,
       rawResponse: eligibilityResult,
+      // Tier-separated benefits (in-network vs out-of-network) so the client
+      // can lead with the tier matching the practice's network participation.
+      benefitsDetail: (eligibilityResult as any).networkTiers
+        ? { networkTiers: (eligibilityResult as any).networkTiers }
+        : null,
       serviceTypeCodes: (eligibilityResult as any).sentServiceTypeCodes ?? null,
       returnedServiceTypeCodes: (eligibilityResult as any).returnedServiceTypeCodes ?? null,
       stcDowngraded: (eligibilityResult as any).stcDowngraded ?? false,
@@ -712,6 +717,9 @@ router.post('/eligibility/batch-verify', isAuthenticated, async (req: any, res) 
         visitsUsed: eligibilityResult.visitsUsed,
         authRequired: eligibilityResult.authRequired,
         rawResponse: eligibilityResult,
+        benefitsDetail: (eligibilityResult as any).networkTiers
+          ? { networkTiers: (eligibilityResult as any).networkTiers }
+          : null,
       });
 
       if (eligibilityResult.status === 'inactive') {

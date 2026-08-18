@@ -52,6 +52,7 @@ const practiceSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
   specialty: z.enum(["OT", "PT", "ST", "MH", "MIXED"]).optional(),
+  networkStatus: z.enum(["in_network", "out_of_network"]).optional(),
   strictStcValidation: z.boolean().optional(),
   taxonomyCode: z.string().optional(),
   ownerName: z.string().optional(),
@@ -1472,6 +1473,7 @@ export default function Settings() {
         phone: practice.phone || "",
         email: practice.email || "",
         specialty: practice.specialty || undefined,
+        networkStatus: practice.networkStatus || undefined,
         strictStcValidation: Boolean(practice.strictStcValidation),
         taxonomyCode: practice.taxonomyCode || "",
         ownerName: practice.ownerName || "",
@@ -1683,6 +1685,38 @@ export default function Settings() {
                           </FormControl>
                           <p className="text-xs text-muted-foreground mt-1">
                             Determines which Service Type Codes are sent on eligibility checks (270) to payers. Leave as Mixed if unsure — payers tolerate multiple STCs.
+                          </p>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="networkStatus"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Insurance Network Participation</FormLabel>
+                          <FormControl>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value ?? ""}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select network participation" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="in_network">In-network (participating provider)</SelectItem>
+                                <SelectItem value="out_of_network">Out-of-network (non-participating / private-pay)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </FormControl>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Payers answer eligibility checks with both in-network and out-of-network
+                            benefits. This setting picks which tier is shown first so the front desk
+                            sees accurate patient cost-sharing. Out-of-network fits practices that
+                            don't participate in payer networks — patients rely on their plan's
+                            out-of-network benefits (superbills, OON claims).
                           </p>
                           <FormMessage />
                         </FormItem>
