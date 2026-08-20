@@ -87,6 +87,8 @@ const MUTATION_TOOLS = new Set<string>([
   'update_patient_insurance',
   'sign_soap_note',
   'add_claim_line_item',
+  'update_claim_line_item',
+  'delete_claim_line_item',
   'create_appointment_self_pay_invoice',
   'update_notification_template',
   'create_appointment',
@@ -152,6 +154,33 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       const unitLabel = args.units ? `, ${args.units} unit${Number(args.units) === 1 ? '' : 's'}` : '';
       const modLabel = args.modifier ? `, modifier ${args.modifier}` : '';
       return `Add ${codeLabel}${unitLabel}${modLabel} to claim ${args.claimId ?? ''}`.trim();
+    }
+    case 'update_claim_line_item': {
+      // Name every field being changed. A card reading "Update line item 12"
+      // tells a biller nothing about what is about to change on a claim.
+      const target = args.cptCode ? `the CPT ${args.cptCode} line` : `line item ${args.lineItemId ?? ''}`;
+      const changes: string[] = [];
+      if (args.units !== undefined) {
+        changes.push(`${args.units} unit${Number(args.units) === 1 ? '' : 's'}`);
+      }
+      if (args.rate !== undefined) {
+        changes.push(
+          args.rate === null
+            ? 'charge back to your fee schedule'
+            : `custom charge $${Number(args.rate).toFixed(2)}`,
+        );
+      }
+      if (args.modifier !== undefined) {
+        changes.push(args.modifier ? `modifier ${args.modifier}` : 'modifier removed');
+      }
+      if (args.icd10CodeId !== undefined) changes.push('new diagnosis code');
+      if (args.dateOfService !== undefined) changes.push(`date of service ${args.dateOfService}`);
+      const detail = changes.length > 0 ? `: ${changes.join(', ')}` : '';
+      return `Change ${target} on claim ${args.claimId ?? ''}${detail}`.trim();
+    }
+    case 'delete_claim_line_item': {
+      const target = args.cptCode ? `the CPT ${args.cptCode} line` : `line item ${args.lineItemId ?? ''}`;
+      return `Remove ${target} from claim ${args.claimId ?? ''} (the claim total will drop)`.trim();
     }
     case 'create_appointment':
       return `Create an appointment${args.startTime ? ` at ${args.startTime}` : ''}${name ? ` for ${name}` : ''}`;
@@ -1518,7 +1547,7 @@ const assistantTools: Anthropic.Tool[] = [
   },
   {
     name: 'add_claim_line_item',
-    description: 'Append a single CPT line item to an existing draft claim. Use when a therapist wants to add a missed CPT code to a claim — e.g., "add 97530 for 4 units to claim 123" or "I also did neuromuscular re-ed, add it to today\'s claim". Requires the claim id and the CPT code id — call list_cpt_codes first if you only have the CPT string, and never guess the id. The claim\'s total amount auto-recalculates from the sum of all line items after the add. Per-line-item EDIT and DELETE are not yet supported via Blanche — for those, the user must use the claim UI directly.',
+    description: 'Append a single CPT line item to an existing draft claim. Use when a therapist wants to add a missed CPT code to a claim — e.g., "add 97530 for 4 units to claim 123" or "I also did neuromuscular re-ed, add it to today\'s claim". Requires the claim id and the CPT code id — call list_cpt_codes first if you only have the CPT string, and never guess the id. The claim\'s total amount auto-recalculates from the sum of all line items after the add. To CHANGE or REMOVE an existing line, use update_claim_line_item / delete_claim_line_item instead of adding a second line.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -1532,6 +1561,49 @@ const assistantTools: Anthropic.Tool[] = [
         notes: { type: 'string' as const, description: 'Optional free-text notes on the line item' },
       },
       required: ['claimId', 'cptCodeId'],
+    },
+  },
+  {
+    name: 'get_claim_line_items',
+    description: "List the CPT lines on a claim with each line's id, code, units, rate and amount. Call this BEFORE update_claim_line_item or delete_claim_line_item — a line item id is a database key and is NOT derivable from the CPT code, and a claim can carry the same code on more than one line. Never guess a lineItemId.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: { type: 'number' as const, description: 'The claim whose line items to list' },
+      },
+      required: ['claimId'],
+    },
+  },
+  {
+    name: 'update_claim_line_item',
+    description: 'Correct an existing CPT line on a DRAFT claim — units, modifier, diagnosis, or the charge itself. Use when a therapist says "that should be 3 units not 4", "add modifier 59 to the 97530 line", or "bill that one at 325". Call get_claim_line_items first to get the lineItemId; never guess it. The claim total recalculates automatically. Only draft claims can be changed — a submitted claim needs a corrected claim, not a silent amendment.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: { type: 'number' as const, description: 'The claim the line belongs to' },
+        lineItemId: { type: 'number' as const, description: 'The line item id, from get_claim_line_items' },
+        cptCode: { type: 'string' as const, description: 'The CPT code you expect on that line, e.g. "97530". Always pass this — it is cross-checked against the line and the call is rejected on mismatch, so a wrong id cannot silently edit a different procedure.' },
+        units: { type: 'number' as const, description: 'New unit count (whole number, 1-999)' },
+        rate: { type: 'number' as const, description: "A one-off charge for this line, differing from the practice's fee schedule. Omit to leave the charge alone. Pass null to clear an override and return the line to the fee schedule." },
+        rateOverrideReason: { type: 'string' as const, description: 'Why this line bills off the fee schedule. Ask the user for it when they set a custom charge.' },
+        modifier: { type: 'string' as const, description: 'CPT modifier, e.g. "59" or "GP". Empty string clears it.' },
+        icd10CodeId: { type: 'number' as const, description: 'New ICD-10 diagnosis code id for this line' },
+        dateOfService: { type: 'string' as const, description: 'Date of service, YYYY-MM-DD' },
+      },
+      required: ['claimId', 'lineItemId'],
+    },
+  },
+  {
+    name: 'delete_claim_line_item',
+    description: 'Remove a CPT line from a DRAFT claim entirely. Use when a therapist says "take the 97110 off that claim" or "I billed that by mistake". Call get_claim_line_items first to get the lineItemId; never guess it. The claim total recalculates automatically. Only draft claims can be changed. If the user wants to CHANGE a line rather than remove it, use update_claim_line_item instead — deleting and re-adding loses the line history.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        claimId: { type: 'number' as const, description: 'The claim the line belongs to' },
+        lineItemId: { type: 'number' as const, description: 'The line item id, from get_claim_line_items' },
+        cptCode: { type: 'string' as const, description: 'The CPT code you expect on that line, e.g. "97110". Always pass this — it is cross-checked against the line and the call is rejected on mismatch, so a wrong id cannot silently delete a different procedure.' },
+      },
+      required: ['claimId', 'lineItemId'],
     },
   },
   {
@@ -3150,6 +3222,155 @@ export async function executeTool(
             lineItemCount: allLineItems.length,
           },
           message: `Added ${(cptCode as any).code} (${lineUnits} unit${lineUnits === 1 ? '' : 's'}, $${amount}) to claim ${claimId}. Claim total now $${newTotal.toFixed(2)}.`,
+        });
+      }
+
+      case 'get_claim_line_items': {
+        // Read-only. Exists so a line can be identified by id before it is
+        // changed — the same reason list_cpt_codes exists. A claim can carry
+        // the same CPT on two lines, so the code alone is not an identifier.
+        const claimId = args.claimId as number;
+        if (!Number.isFinite(claimId)) {
+          return JSON.stringify({ error: 'claimId is required and must be a number.' });
+        }
+        const claim = await storage.getClaim(claimId);
+        if (!claim) return JSON.stringify({ error: `Claim ${claimId} not found.` });
+        if (claim.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Claim is not in this practice.' });
+        }
+        const items = await storage.getClaimLineItems(claimId);
+        const cptCatalog = await storage.getCptCodes();
+        return JSON.stringify({
+          claimId,
+          claimNumber: claim.claimNumber,
+          status: claim.status,
+          editable: (claim.status || '').toLowerCase() === 'draft',
+          totalAmount: claim.totalAmount,
+          lineItems: (items || []).map((li: any) => {
+            const cpt = cptCatalog.find((c: any) => c.id === li.cptCodeId);
+            const offSchedule =
+              li.standardRate &&
+              parseFloat(li.standardRate).toFixed(2) !== parseFloat(li.rate || '0').toFixed(2);
+            return {
+              lineItemId: li.id,
+              cptCode: cpt?.code ?? null,
+              description: cpt?.description ?? null,
+              units: li.units,
+              rate: li.rate,
+              amount: li.amount,
+              modifier: li.modifier,
+              dateOfService: li.dateOfService,
+              billedOffFeeSchedule: !!offSchedule,
+              standardRate: li.standardRate ?? null,
+              rateOverrideReason: li.rateOverrideReason ?? null,
+            };
+          }),
+          note: 'Pass BOTH lineItemId and cptCode to update_claim_line_item / delete_claim_line_item.',
+        });
+      }
+
+      case 'update_claim_line_item':
+      case 'delete_claim_line_item': {
+        const claimId = args.claimId as number;
+        const lineItemId = args.lineItemId as number;
+        const isDelete = toolName === 'delete_claim_line_item';
+        if (!Number.isFinite(claimId) || !Number.isFinite(lineItemId)) {
+          return JSON.stringify({
+            error: 'claimId and lineItemId are both required numbers. Call get_claim_line_items to find the lineItemId — do not guess it.',
+          });
+        }
+        const claim = await storage.getClaim(claimId);
+        if (!claim) return JSON.stringify({ error: `Claim ${claimId} not found.` });
+        if (claim.practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Claim is not in this practice.' });
+        }
+        if (claim.status && claim.status !== 'draft') {
+          return JSON.stringify({
+            error: `Cannot change line items on a claim in status "${claim.status}". Only draft claims are editable. A submitted claim that needs correcting requires a corrected claim, not a silent amendment.`,
+          });
+        }
+        const lineItem = await storage.getClaimLineItem(lineItemId);
+        if (!lineItem || lineItem.claimId !== claimId) {
+          return JSON.stringify({ error: `Line item ${lineItemId} is not on claim ${claimId}.` });
+        }
+
+        // Cross-check: lineItemId is an opaque key, so a wrong one points at a
+        // real line and silently edits or deletes the wrong procedure.
+        const catalog = await storage.getCptCodes();
+        const lineCpt = catalog.find((c: any) => c.id === lineItem.cptCodeId);
+        const intendedCode = ((args.cptCode as string) || '').trim();
+        if (intendedCode && lineCpt && intendedCode !== String((lineCpt as any).code)) {
+          return JSON.stringify({
+            error: `Refusing: line item ${lineItemId} is CPT ${(lineCpt as any).code}, but you said ${intendedCode}. Call get_claim_line_items to find the right line — do not guess.`,
+          });
+        }
+
+        if (isDelete) {
+          await storage.deleteClaimLineItem(lineItemId);
+          const newTotal = await storage.recalculateClaimTotal(claimId);
+          return JSON.stringify({
+            success: true,
+            removed: { lineItemId, cptCode: (lineCpt as any)?.code ?? null, amount: lineItem.amount },
+            claim: { id: claimId, newTotalAmount: newTotal },
+            message: `Removed ${(lineCpt as any)?.code ?? 'the line'} from claim ${claimId}. Claim total now $${newTotal}.`,
+          });
+        }
+
+        const patch: Record<string, any> = {};
+        if (args.units !== undefined) {
+          const units = Number(args.units);
+          if (!Number.isInteger(units) || units < 1 || units > 999) {
+            return JSON.stringify({ error: 'Units must be a whole number between 1 and 999.' });
+          }
+          patch.units = units;
+        }
+        if (args.rate !== undefined) {
+          if (args.rate === null) {
+            const standard =
+              lineItem.standardRate ??
+              (await storage.resolvePracticeCptRate(practiceId, lineItem.cptCodeId));
+            if (standard === null) {
+              return JSON.stringify({
+                error: 'No charge is set for this code, so there is no fee-schedule rate to revert to.',
+              });
+            }
+            patch.rate = standard;
+            patch.rateOverrideReason = null;
+          } else {
+            const rate = Number(args.rate);
+            if (!Number.isFinite(rate) || rate < 0 || rate > 100000) {
+              return JSON.stringify({ error: 'Rate must be a number between 0 and 100000.' });
+            }
+            patch.rate = rate.toFixed(2);
+            if (args.rateOverrideReason !== undefined) {
+              patch.rateOverrideReason = (args.rateOverrideReason as string) || null;
+            }
+          }
+        } else if (args.rateOverrideReason !== undefined) {
+          patch.rateOverrideReason = (args.rateOverrideReason as string) || null;
+        }
+        if (args.modifier !== undefined) patch.modifier = (args.modifier as string) || null;
+        if (args.icd10CodeId !== undefined) patch.icd10CodeId = (args.icd10CodeId as number) || null;
+        if (args.dateOfService !== undefined) patch.dateOfService = (args.dateOfService as string) || null;
+
+        if (Object.keys(patch).length === 0) {
+          return JSON.stringify({ error: 'Nothing to change — specify units, rate, modifier, diagnosis, or date.' });
+        }
+
+        const updated = await storage.updateClaimLineItem(lineItemId, patch);
+        const newTotal = await storage.recalculateClaimTotal(claimId);
+        return JSON.stringify({
+          success: true,
+          lineItem: {
+            lineItemId,
+            cptCode: (lineCpt as any)?.code ?? null,
+            units: updated?.units,
+            rate: updated?.rate,
+            amount: updated?.amount,
+            modifier: updated?.modifier,
+          },
+          claim: { id: claimId, newTotalAmount: newTotal },
+          message: `Updated ${(lineCpt as any)?.code ?? 'line item'} on claim ${claimId}. Line is now $${updated?.amount}; claim total $${newTotal}.`,
         });
       }
 

@@ -1813,6 +1813,12 @@ export type PracticeCptCode = Omit<CptCode, 'baseRate' | 'cashRate'> & {
   suggestedRate: string | null;
   /** True once this practice has set its own charge for this code. */
   isPracticeRate: boolean;
+  /**
+   * True when the charge is still the platform default copied in by the
+   * per-practice cutover — a number nobody at the practice chose. Clears the
+   * moment a human edits the charge.
+   */
+  isPlatformDefault: boolean;
 };
 export type Icd10Code = typeof icd10Codes.$inferSelect;
 export type Insurance = typeof insurances.$inferSelect;

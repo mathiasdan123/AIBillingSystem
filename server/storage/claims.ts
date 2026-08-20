@@ -446,6 +446,12 @@ export async function getPracticeCptCodes(practiceId: number): Promise<PracticeC
       cashRate: own ? own.cashRate : null,
       suggestedRate: code.baseRate ?? null,
       isPracticeRate: !!own,
+      // The cutover copied platform defaults into every existing practice, so
+      // "has a rate" no longer means "someone chose this number". Rows still
+      // stamped by that migration are unreviewed defaults, and the fee-schedule
+      // screen needs to say so — otherwise a practice has no way to tell which
+      // charges they have actually set.
+      isPlatformDefault: own?.updatedBy === 'platform-cutover',
     };
   });
 }
