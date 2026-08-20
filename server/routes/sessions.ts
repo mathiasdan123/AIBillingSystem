@@ -157,6 +157,7 @@ router.patch('/cpt-codes/:id', isAuthenticated, isAdminOrBilling, async (req: an
         cashRate: null,
         suggestedRate: (existing as any).baseRate ?? null,
         isPracticeRate: false,
+        isPlatformDefault: false,
       });
     }
 
@@ -187,6 +188,8 @@ router.patch('/cpt-codes/:id', isAuthenticated, isAdminOrBilling, async (req: an
       cashRate: saved.cashRate,
       suggestedRate: (existing as any).baseRate ?? null,
       isPracticeRate: true,
+      // A human just set this, so it is no longer an unreviewed default.
+      isPlatformDefault: false,
     });
   } catch (error) {
     logger.error('Error updating CPT rate', { error: error instanceof Error ? error.message : String(error) });

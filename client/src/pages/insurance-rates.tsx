@@ -66,6 +66,8 @@ interface CptCatalogEntry {
   suggestedRate: string | null;
   /** True once this practice has set its own charge. */
   isPracticeRate: boolean;
+  /** Charge is still the platform default copied in at cutover — unreviewed. */
+  isPlatformDefault: boolean;
 }
 
 /**
@@ -136,6 +138,11 @@ function PracticeChargesTab() {
   };
 
   const unsetCount = (codes ?? []).filter((c) => !c.isPracticeRate).length;
+  // Charges nobody at the practice has chosen: either blank, or still the
+  // platform default the cutover copied in. Both need a human decision.
+  const needsReviewCount = (codes ?? []).filter(
+    (c) => !c.isPracticeRate || c.isPlatformDefault,
+  ).length;
 
   const term = search.trim().toLowerCase();
   const visible = (codes ?? []).filter(
@@ -158,9 +165,12 @@ function PracticeChargesTab() {
           per claim. A code left blank
           <Badge variant="outline" className="mx-1">not set</Badge>
           cannot be billed until you give it a charge.
-          {unsetCount > 0 && (
-            <span className="block mt-2 text-amber-700">
-              {unsetCount} {unsetCount === 1 ? 'code has' : 'codes have'} no charge set.
+          {needsReviewCount > 0 && (
+            <span className="block mt-2 text-amber-700" data-testid="text-review-count">
+              {needsReviewCount} of {codes?.length ?? 0}{' '}
+              {needsReviewCount === 1 ? 'charge is' : 'charges are'} still a platform
+              default or unset — these are not your fee schedule yet.
+              {unsetCount > 0 && ` ${unsetCount} cannot be billed at all.`}
             </span>
           )}
         </CardDescription>
@@ -205,11 +215,20 @@ function PracticeChargesTab() {
                       </td>
                       <td className="p-2 text-muted-foreground">
                         {entry.description}
-                        {!entry.isPracticeRate && (
+                        {!entry.isPracticeRate ? (
                           <Badge variant="outline" className="ml-2 text-xs text-amber-700">
                             not set
                           </Badge>
-                        )}
+                        ) : entry.isPlatformDefault ? (
+                          <Badge
+                            variant="outline"
+                            className="ml-2 text-xs text-amber-700"
+                            title="Copied in when per-practice fee schedules launched. Set your real charge to clear this."
+                            data-testid={`badge-platform-default-${entry.code}`}
+                          >
+                            platform default — review
+                          </Badge>
+                        ) : null}
                       </td>
                       <td className="p-2 text-muted-foreground text-xs">
                         {entry.therapyCategory || "—"}
