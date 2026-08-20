@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { CORE_CPT_CODES } from "./cptCatalog";
 import { practices, cptCodes, icd10Codes, insurances, users, payerCrosswalk } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
@@ -287,6 +288,37 @@ async function seedAiLearningData(db: any, practiceId: number) {
     } catch (e: any) { console.error(`Seed AI learning data error: ${e.message}`); }
   }
   console.log(`  Seeded ${rows.length} AI learning data entries for insights`);
+}
+
+
+/**
+ * Insert any CORE_CPT_CODES row that isn't in the catalog yet. Runs on every
+ * boot, additive only.
+ *
+ * Why this exists: the reference-data block below is guarded by "if cpt_codes
+ * has ANY rows, return". Production's catalog was populated 2026-03-25 and
+ * that guard has short-circuited every boot since, so all 9 codes added to
+ * the seed list afterward (PT evals, SLP evals, OT re-eval) never landed —
+ * prod ran with 12 of 24 codes and zero SLP coverage.
+ *
+ * Deliberately does NOT update existing rows. baseRate is a billed dollar
+ * amount and a practice may have set it intentionally; silently rewriting a
+ * charge is not something a boot-time backfill should ever do. Rate drift on
+ * already-seeded rows is surfaced for a human instead.
+ */
+async function ensureCoreCptCodes(db: any) {
+  const before = await db.execute(sql`SELECT COUNT(*)::int AS count FROM cpt_codes`);
+  const countBefore = Number(before.rows[0]?.count ?? 0);
+
+  await db.insert(cptCodes).values(CORE_CPT_CODES).onConflictDoNothing({
+    target: cptCodes.code,
+  });
+
+  const after = await db.execute(sql`SELECT COUNT(*)::int AS count FROM cpt_codes`);
+  const inserted = Number(after.rows[0]?.count ?? 0) - countBefore;
+  if (inserted > 0) {
+    console.log(`  Added ${inserted} missing CPT code(s) to the catalog`);
+  }
 }
 
 /**
@@ -878,6 +910,15 @@ export async function seedDatabase(options?: { force?: boolean }) {
     // Wait for database to be ready
     const db = await getDb();
 
+    // Always run — additive only, inserts CPT codes missing from the catalog.
+    // Must run BEFORE the therapy-category backfill so codes added here get
+    // categorized on the same boot rather than a deploy later.
+    try {
+      await ensureCoreCptCodes(db);
+    } catch (err) {
+      console.warn('  Core CPT code backfill skipped:', err instanceof Error ? err.message : err);
+    }
+
     // Always run — idempotent, just backfills therapy_category on CPT codes
     // that don't have one yet. Fast (<10 rows).
     try {
@@ -1136,160 +1177,12 @@ export async function seedDatabase(options?: { force?: boolean }) {
       return;
     }
 
-    // Seed Common OT CPT Codes - Standard rate $289 per session
-    await db.insert(cptCodes).values([
-      {
-        code: "97110",
-        description: "Therapeutic exercises - strength, ROM, flexibility (15 min)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97112",
-        description: "Neuromuscular reeducation - balance, coordination, posture (15 min)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97140",
-        description: "Manual therapy - mobilization, manipulation (15 min)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97530",
-        description: "Therapeutic activities - functional performance (15 min)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97535",
-        description: "Self-care/ADL training - daily living activities (15 min)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97542",
-        description: "Wheelchair management training (15 min)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97545",
-        description: "Work hardening/conditioning (2 hours)",
-        category: "treatment",
-        baseRate: "289.00",
-        billingUnits: 1,
-      },
-      // OT Evaluation codes
-      {
-        code: "97165",
-        description: "OT evaluation - low complexity",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97166",
-        description: "OT evaluation - moderate complexity",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97167",
-        description: "OT evaluation - high complexity",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97168",
-        description: "OT re-evaluation",
-        category: "evaluation",
-        baseRate: "400.00",
-        billingUnits: 1,
-      },
-      // PT Evaluation codes
-      {
-        code: "97161",
-        description: "PT evaluation - low complexity",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97162",
-        description: "PT evaluation - moderate complexity",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97163",
-        description: "PT evaluation - high complexity",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97164",
-        description: "PT re-evaluation",
-        category: "evaluation",
-        baseRate: "400.00",
-        billingUnits: 1,
-      },
-      // SLP Evaluation codes
-      {
-        code: "92521",
-        description: "SLP evaluation - fluency",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "92522",
-        description: "SLP evaluation - sound production",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "92523",
-        description: "SLP evaluation - sound production with language",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "92524",
-        description: "SLP evaluation - voice and resonance",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      // Legacy OT eval codes (replaced by 97165-97168)
-      {
-        code: "97003",
-        description: "Occupational therapy evaluation (legacy)",
-        category: "evaluation",
-        baseRate: "550.00",
-        billingUnits: 1,
-      },
-      {
-        code: "97004",
-        description: "Occupational therapy re-evaluation (legacy)",
-        category: "evaluation",
-        baseRate: "400.00",
-        billingUnits: 1,
-      },
-    ]);
+    // Seed the CPT catalog from the shared list. `ensureCoreCptCodes` above
+    // already inserted these on boot; this stays for a genuinely empty
+    // database so first-run seeding remains self-contained.
+    await db.insert(cptCodes).values(CORE_CPT_CODES).onConflictDoNothing({
+      target: cptCodes.code,
+    });
 
     // Seed Common ICD-10 Codes for OT
     await db.insert(icd10Codes).values([

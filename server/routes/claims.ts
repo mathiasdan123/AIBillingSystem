@@ -649,8 +649,22 @@ router.get('/:id/line-items', isAuthenticated, async (req: any, res) => {
 // Add line item to claim
 router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
   try {
-    const claimId = parseInt(req.params.id);
+    const claimId = validatePositiveInt(req.params.id);
+    if (claimId === null) {
+      return res.status(400).json({ message: 'Invalid claim ID' });
+    }
     const { cptCodeId, icd10CodeId, units, dateOfService, modifier, notes } = req.body;
+
+    // Security: verify the caller may write to this claim. The GET on this
+    // same path has always checked; this POST did not, so any authenticated
+    // user could append a billable line to another practice's claim by id.
+    const claim = await storage.getClaim(claimId);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+    if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
 
     // Get CPT code for rate
     const cptCodes = await storage.getCptCodes();

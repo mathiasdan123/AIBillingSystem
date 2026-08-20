@@ -99,6 +99,7 @@ const PARITY_TOOLS: ReadonlySet<string> = new Set([
   'get_overdue_claims',
   'get_prior_session_notes',
   'get_revenue_by_month',
+  'list_cpt_codes',
   'list_notification_templates',
   'mark_no_show',
   'reschedule_appointment',
