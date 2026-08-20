@@ -208,6 +208,55 @@ export function registerClaimTools(
     (input) => getOverdueClaims(input, context),
   );
 
+  // ── list_cpt_codes ────────────────────────────────────────────────────
+  // Read-only catalog lookup. Exists so a caller can resolve a CPT string
+  // to its database id rather than guessing an integer — a wrong guess
+  // passes every downstream check and bills the wrong procedure. The
+  // catalog is global, not practice-scoped, so no tenant guard applies.
+  const listCptCodes = withAudit(
+    'list_cpt_codes',
+    'claim',
+    false,
+    async (input: { search?: string; therapyCategory?: string }) => {
+      const search = (input.search || '').trim().toLowerCase();
+      const category = (input.therapyCategory || '').trim().toUpperCase();
+      const all = await storage.getCptCodes();
+      const codes = (all as any[])
+        .filter((c) => c.isActive !== false)
+        .filter((c) => (category ? String(c.therapyCategory || '').toUpperCase() === category : true))
+        .filter((c) =>
+          search
+            ? String(c.code).toLowerCase().includes(search) ||
+              String(c.description || '').toLowerCase().includes(search)
+            : true,
+        )
+        .map((c) => ({
+          cptCodeId: c.id,
+          code: c.code,
+          description: c.description,
+          therapyCategory: c.therapyCategory || null,
+          baseRate: c.baseRate,
+        }));
+      return { count: codes.length, codes };
+    },
+  );
+
+  server.tool(
+    'list_cpt_codes',
+    "List the CPT codes in the practice's catalog with the numeric id each maps to. Call this BEFORE add_claim_line_item whenever you have a CPT string but not its id — the id is a database key and is NOT derivable from the code. Never guess a cptCodeId. If no code matches, say so rather than substituting a similar code.",
+    {
+      search: z
+        .string()
+        .optional()
+        .describe('Optional filter matched against the code or description (e.g. "92507", "speech")'),
+      therapyCategory: z
+        .string()
+        .optional()
+        .describe('Optional discipline filter: OT, PT, ST, MH, or GENERAL'),
+    },
+    (input) => listCptCodes(input, context),
+  );
+
   // ── add_claim_line_item ───────────────────────────────────────────────
   // Mirrors the in-app dispatcher case + POST /api/claims/:id/line-items.
   // Status guard: only draft claims accept new line items. Total
@@ -222,6 +271,7 @@ export function registerClaimTools(
         input: {
           claimId: number;
           cptCodeId: number;
+          cptCode?: string;
           units?: number;
           icd10CodeId?: number;
           dateOfService?: string;
@@ -243,6 +293,17 @@ export function registerClaimTools(
         const cptCodes = await storage.getCptCodes();
         const cptCode: any = cptCodes.find((c: any) => c.id === input.cptCodeId);
         if (!cptCode) throw new Error(`CPT code id ${input.cptCodeId} not found in catalog`);
+
+        // Cross-check: a wrong cptCodeId resolves to a real code and bills a
+        // real (wrong) procedure, so nothing downstream can catch it. If the
+        // caller stated the code it means to bill, it must match.
+        const intendedCode = (input.cptCode || '').trim();
+        if (intendedCode && intendedCode !== String(cptCode.code)) {
+          throw new Error(
+            `Refusing to add: cptCodeId ${input.cptCodeId} is CPT ${cptCode.code} ("${cptCode.description}"), but you said you were billing ${intendedCode}. Call list_cpt_codes to get the correct id — do not guess.`,
+          );
+        }
+
         const rate = parseFloat(cptCode.baseRate || '289.00');
         const lineUnits = input.units || 1;
         const amount = (rate * lineUnits).toFixed(2);
@@ -280,7 +341,11 @@ export function registerClaimTools(
     'Append a single CPT line item to an existing DRAFT claim. The claim total auto-recalculates after the add. Per-line-item EDIT/DELETE not yet supported via this tool. Use when a therapist wants to add a missed CPT code to a claim before submission.',
     {
       claimId: z.number().describe('The ID of the draft claim to add a line item to'),
-      cptCodeId: z.number().describe('The CPT code id (look up by code if you only have the string)'),
+      cptCodeId: z.number().describe('The CPT code id — get it from list_cpt_codes, never guess it'),
+      cptCode: z
+        .string()
+        .optional()
+        .describe('The CPT code string you intend to bill, e.g. "97530". Always pass this — it is cross-checked against cptCodeId and the call is rejected on mismatch.'),
       units: z.number().optional().describe('Billing units (default 1)'),
       icd10CodeId: z.number().optional().describe('Optional ICD-10 code id for this line item'),
       dateOfService: z.string().optional().describe('Date of service YYYY-MM-DD (default today)'),

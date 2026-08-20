@@ -140,8 +140,19 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       const fieldList = fields.length > 0 ? fields.join(', ') : 'insurance fields';
       return `Update patient ${args.patientId} insurance: ${fieldList}`;
     }
-    case 'add_claim_line_item':
-      return `Add CPT line item to claim ${args.claimId ?? ''}${args.cptCodeId ? ` (CPT id ${args.cptCodeId}` : ''}${args.units ? `, ${args.units} units)` : args.cptCodeId ? ')' : ''}`.trim();
+    case 'add_claim_line_item': {
+      // Show the CPT code itself, never the bare database id — the whole
+      // point of this card is that a biller can catch a wrong code before
+      // it lands on a claim, and "CPT id 17" is unreviewable.
+      const codeLabel = args.cptCode
+        ? `CPT ${args.cptCode}`
+        : args.cptCodeId
+          ? `CPT code id ${args.cptCodeId} (code not stated — verify before confirming)`
+          : 'a CPT code';
+      const unitLabel = args.units ? `, ${args.units} unit${Number(args.units) === 1 ? '' : 's'}` : '';
+      const modLabel = args.modifier ? `, modifier ${args.modifier}` : '';
+      return `Add ${codeLabel}${unitLabel}${modLabel} to claim ${args.claimId ?? ''}`.trim();
+    }
     case 'create_appointment':
       return `Create an appointment${args.startTime ? ` at ${args.startTime}` : ''}${name ? ` for ${name}` : ''}`;
     case 'reschedule_appointment':
@@ -772,6 +783,17 @@ Your role:
 6. Detect new practices and guide them through setup
 
 ${BILLING_KNOWLEDGE}
+
+## You Cannot See The User's Screen
+You receive a page path and title. Nothing else. You do not know what columns a table has, what a button is labelled, whether a search box exists, or what happens when a row is clicked.
+
+So: NEVER write step-by-step click instructions that describe interface elements you were not explicitly told exist. If you are drafting a numbered list and find yourself writing "you should see", "columns like", "if available", "should open", or "look for the button that says" — you are guessing at an interface, and guessing is how a user ends up clicking through a screen that cannot do what you promised. Stop and do one of these instead:
+
+1. **Do it for them.** If a tool performs the task, CALL THE TOOL. This is almost always the right answer and it is the single most common mistake to avoid: writing a tutorial for something you could simply have done. A user asking "how do I add a CPT code to this claim" is asking you to add the CPT code.
+2. **Send them to the page** with navigate_user or an [Action: ...] link, and say what the page is for — not what is on it.
+3. **Say you can't see it.** "I can't see your screen, so I don't want to guess at the buttons — but I can do this for you directly, or point you to the right page." That is a genuinely good answer. An honest "I don't know the layout" beats a confident fabrication every time.
+
+Specifically for CPT codes on a claim: the reliable path is the add_claim_line_item tool on a draft claim (call list_cpt_codes first to resolve the code to its id — never guess the id). Do not talk users through adding codes via the New Claim dialog or the claim detail view.
 
 ## Onboarding Guidance
 NEVER answer setup questions from your own memory. The real setup state lives in the database and changes as the user takes actions. On the first user message of a conversation (or any time you're asked about setup, getting started, what's left, what to do next), CALL the get_practice_setup_status tool FIRST and base your answer on the returned checklist. Do not invent steps or hardcode a list.
@@ -1483,13 +1505,26 @@ const assistantTools: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'list_cpt_codes',
+    description: 'List the CPT codes in the practice\'s catalog, with the numeric id each one maps to. Call this BEFORE add_claim_line_item whenever you have a CPT string (e.g. "97530") but not its id — the id is a database key and is NOT derivable from the code. Never guess a cptCodeId: a wrong id silently bills a different procedure than the one performed. Optionally filter by a code fragment or therapy discipline.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        search: { type: 'string' as const, description: 'Optional filter — matches against the CPT code or its description (e.g. "92507", "speech", "evaluation")' },
+        therapyCategory: { type: 'string' as const, description: 'Optional discipline filter: OT, PT, ST, MH, or GENERAL' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'add_claim_line_item',
-    description: 'Append a single CPT line item to an existing draft claim. Use when a therapist wants to add a missed CPT code to a claim — e.g., "add 97530 for 4 units to claim 123" or "I also did neuromuscular re-ed, add it to today\'s claim". Requires the claim id and the CPT code id (call list_cpt_codes if you only have the CPT string). The claim\'s total amount auto-recalculates from the sum of all line items after the add. Per-line-item EDIT and DELETE are not yet supported via Blanche — for those, the user must use the claim UI directly.',
+    description: 'Append a single CPT line item to an existing draft claim. Use when a therapist wants to add a missed CPT code to a claim — e.g., "add 97530 for 4 units to claim 123" or "I also did neuromuscular re-ed, add it to today\'s claim". Requires the claim id and the CPT code id — call list_cpt_codes first if you only have the CPT string, and never guess the id. The claim\'s total amount auto-recalculates from the sum of all line items after the add. Per-line-item EDIT and DELETE are not yet supported via Blanche — for those, the user must use the claim UI directly.',
     input_schema: {
       type: 'object' as const,
       properties: {
         claimId: { type: 'number' as const, description: 'The ID of the claim to add a line item to' },
-        cptCodeId: { type: 'number' as const, description: 'The ID of the CPT code (not the CPT string itself — look up by code if needed)' },
+        cptCodeId: { type: 'number' as const, description: 'The ID of the CPT code (not the CPT string itself — get it from list_cpt_codes)' },
+        cptCode: { type: 'string' as const, description: 'The CPT code string you intend to bill, e.g. "97530". Always pass this. It is cross-checked against cptCodeId (the call is rejected on mismatch) and it is what the user sees on the confirmation card.' },
         units: { type: 'number' as const, description: 'Number of billing units (default 1)' },
         icd10CodeId: { type: 'number' as const, description: 'Optional ICD-10 diagnosis code ID for this line item' },
         dateOfService: { type: 'string' as const, description: 'Date of service in YYYY-MM-DD format (default today)' },
@@ -2998,6 +3033,39 @@ export async function executeTool(
         });
       }
 
+      case 'list_cpt_codes': {
+        // Read-only catalog lookup. Exists so Blanche can resolve a CPT
+        // string to its database id instead of guessing an integer — a
+        // wrong guess passes every downstream validity check and bills the
+        // wrong procedure. The catalog is global, not practice-scoped.
+        const search = ((args.search as string) || '').trim().toLowerCase();
+        const category = ((args.therapyCategory as string) || '').trim().toUpperCase();
+        const all = await storage.getCptCodes();
+        const matches = (all as any[])
+          .filter((c) => c.isActive !== false)
+          .filter((c) => (category ? (c.therapyCategory || '').toUpperCase() === category : true))
+          .filter((c) =>
+            search
+              ? String(c.code).toLowerCase().includes(search) ||
+                String(c.description || '').toLowerCase().includes(search)
+              : true,
+          )
+          .map((c) => ({
+            cptCodeId: c.id,
+            code: c.code,
+            description: c.description,
+            therapyCategory: c.therapyCategory || null,
+            baseRate: c.baseRate,
+          }));
+        return JSON.stringify({
+          count: matches.length,
+          codes: matches,
+          note: matches.length === 0
+            ? 'No CPT code in the catalog matches. Do NOT substitute a similar code — tell the user the code is missing from their catalog so an admin can add it.'
+            : 'Pass BOTH cptCodeId and cptCode to add_claim_line_item. The therapist decides which code is correct for the service performed.',
+        });
+      }
+
       case 'add_claim_line_item': {
         // Mirror of POST /api/claims/:id/line-items. Looks up the claim
         // first to tenant-guard (claims have practiceId directly), then
@@ -3025,6 +3093,18 @@ export async function executeTool(
         const cptCodes = await storage.getCptCodes();
         const cptCode = cptCodes.find((c: any) => c.id === cptCodeId);
         if (!cptCode) return JSON.stringify({ error: `CPT code id ${cptCodeId} not found in catalog.` });
+
+        // Cross-check: cptCodeId is an opaque database key, so a wrong id is
+        // indistinguishable from a right one — it resolves to a real code and
+        // bills a real (wrong) procedure. If the caller stated which code it
+        // means to bill, it must match the row that id resolves to.
+        const intendedCode = ((args.cptCode as string) || '').trim();
+        if (intendedCode && intendedCode !== String((cptCode as any).code)) {
+          return JSON.stringify({
+            error: `Refusing to add: cptCodeId ${cptCodeId} is CPT ${(cptCode as any).code} ("${(cptCode as any).description}"), but you said you were billing ${intendedCode}. Call list_cpt_codes to get the correct id for ${intendedCode} — do not guess.`,
+          });
+        }
+
         const rate = parseFloat((cptCode as any).baseRate || '289.00');
         const lineUnits = (args.units as number) || 1;
         const amount = (rate * lineUnits).toFixed(2);

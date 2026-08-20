@@ -88,6 +88,40 @@ describe('summarizeProposal', () => {
   it('falls back to a generic phrase for unknown tools', () => {
     expect(summarizeProposal('weird_unknown_tool', {})).toBe('Run weird_unknown_tool');
   });
+
+  // A biller confirming this card is the last check before a billable line
+  // lands on a claim. A bare database id ("CPT id 17") is unreviewable — the
+  // card has to name the procedure being billed.
+  describe('add_claim_line_item shows the CPT code, not the database id', () => {
+    it('names the CPT code and units', () => {
+      const summary = summarizeProposal('add_claim_line_item', {
+        claimId: 42, cptCodeId: 17, cptCode: '92507', units: 2,
+      });
+      expect(summary).toContain('92507');
+      expect(summary).toContain('claim 42');
+      expect(summary).toContain('2 units');
+      expect(summary).not.toContain('id 17');
+    });
+
+    it('singularizes a single unit', () => {
+      const summary = summarizeProposal('add_claim_line_item', {
+        claimId: 8, cptCodeId: 3, cptCode: '97530', units: 1,
+      });
+      expect(summary).toContain('1 unit');
+      expect(summary).not.toContain('1 units');
+    });
+
+    it('includes the modifier when one is set', () => {
+      expect(summarizeProposal('add_claim_line_item', {
+        claimId: 8, cptCodeId: 3, cptCode: '97530', units: 4, modifier: '59',
+      })).toContain('modifier 59');
+    });
+
+    it('flags for verification when the code string is absent', () => {
+      const summary = summarizeProposal('add_claim_line_item', { claimId: 8, cptCodeId: 3 });
+      expect(summary).toMatch(/verify before confirming/i);
+    });
+  });
 });
 
 describe('POST /api/ai/confirm-tool', () => {
