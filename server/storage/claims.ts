@@ -349,6 +349,35 @@ export async function getAllCptCodes(): Promise<CptCode[]> {
   return getCptCodes();
 }
 
+/**
+ * Update a CPT code's billed charge (and optional cash rate).
+ *
+ * The catalog ships with platform defaults; a practice's actual fee schedule
+ * is its own. Only rate fields are writable here — code, description and
+ * therapy category define what the code *is* and are not practice-editable.
+ */
+export async function updateCptCodeRates(
+  id: number,
+  rates: { baseRate?: string | null; cashRate?: string | null },
+): Promise<CptCode | undefined> {
+  const patch: Record<string, unknown> = {};
+  if (rates.baseRate !== undefined) patch.baseRate = rates.baseRate;
+  if (rates.cashRate !== undefined) patch.cashRate = rates.cashRate;
+  if (Object.keys(patch).length === 0) {
+    const [existing] = await db.select().from(cptCodes).where(eq(cptCodes.id, id));
+    return existing;
+  }
+  // Marks the row as practice-owned so no boot-time default correction
+  // can overwrite a charge a human deliberately set.
+  patch.rateEditedAt = new Date();
+  const [updated] = await db
+    .update(cptCodes)
+    .set(patch)
+    .where(eq(cptCodes.id, id))
+    .returning();
+  return updated;
+}
+
 export async function getIcd10Codes(): Promise<Icd10Code[]> {
   return await db
     .select()

@@ -39,7 +39,9 @@ const claimSchema = z.object({
   patientId: z.string().min(1, "Patient is required"),
   sessionId: z.string().optional(),
   insuranceId: z.string().min(1, "Insurance is required"),
-  totalAmount: z.string().min(1, "Amount is required"),
+  // Derived from the CPT line items, not typed. The server recomputes it
+  // from the attached codes on every line-item write.
+  totalAmount: z.string().optional(),
   submittedAmount: z.string().optional(),
 });
 
@@ -85,7 +87,7 @@ interface Claim {
 }
 
 // Comprehensive claim detail component with tabs for billing, payments, and status
-function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance }: {
+function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
   claim: any;
   lineItems: any[];
   loadingLineItems: boolean;
@@ -99,9 +101,51 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   /** Reviewer fix: opens the InsuranceEditDialog for this claim's patient
    *  so insurance can be updated without leaving the claim screen. */
   onEditInsurance?: (patientId: number) => void;
+  /** CPT catalog for the add-a-code control below. */
+  cptCodes?: any[];
+  /** Refetch the claim's line items after one is added. */
+  onLineItemAdded?: () => void;
 }) {
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const { toast } = useToast();
+
+  // Add-a-code control. This view was read-only, so a claim that reached it
+  // missing a procedure code had no route to fix it — the New Claim dialog
+  // had no CPT field either, which is how a claim ended up unbillable with
+  // nowhere to correct it. Draft claims only: the submit path rejects edits
+  // to anything already sent, and a submitted claim needs a corrected claim
+  // rather than a silent amendment.
+  const [addingCptCodeId, setAddingCptCodeId] = useState("");
+  const [addingUnits, setAddingUnits] = useState(1);
+  const [savingLineItem, setSavingLineItem] = useState(false);
+  const isDraft = (claim.status || '').toLowerCase() === 'draft';
+
+  const handleAddLineItem = async () => {
+    if (!addingCptCodeId) return;
+    setSavingLineItem(true);
+    try {
+      await apiRequest("POST", `/api/claims/${claim.id}/line-items`, {
+        cptCodeId: parseInt(addingCptCodeId),
+        units: addingUnits,
+      });
+      const added = cptCodes?.find((c: any) => c.id === parseInt(addingCptCodeId));
+      toast({
+        title: "Code added",
+        description: `${added?.code ?? 'Line item'} added to claim ${claim.claimNumber}.`,
+      });
+      setAddingCptCodeId("");
+      setAddingUnits(1);
+      onLineItemAdded?.();
+    } catch (error: any) {
+      toast({
+        title: "Couldn't add code",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingLineItem(false);
+    }
+  };
 
   // Reviewer fix #11: surface the patient's outstanding balance on the claim
   // screen so it doesn't take a separate trip into the patient detail
@@ -274,7 +318,54 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
               </table>
             </div>
           ) : (
-            <p className="text-sm text-slate-500 text-center py-4 bg-slate-50 rounded-lg">No line items</p>
+            <p className="text-sm text-slate-500 text-center py-4 bg-slate-50 rounded-lg">
+              No line items — this claim has nothing to bill yet.
+            </p>
+          )}
+
+          {isDraft && (
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <Select value={addingCptCodeId} onValueChange={setAddingCptCodeId}>
+                  <SelectTrigger data-testid="select-add-line-item-cpt">
+                    <SelectValue placeholder="Add a CPT code..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cptCodes?.map((cpt: any) => (
+                      <SelectItem key={cpt.id} value={cpt.id.toString()}>
+                        {cpt.code} - {cpt.description} (${cpt.baseRate})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-16 shrink-0">
+                <Input
+                  type="number"
+                  min="1"
+                  value={addingUnits}
+                  onChange={(e) => setAddingUnits(parseInt(e.target.value) || 1)}
+                  aria-label="Units"
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className="shrink-0"
+                onClick={handleAddLineItem}
+                disabled={!addingCptCodeId || savingLineItem}
+                data-testid="button-add-line-item"
+              >
+                {savingLineItem ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add
+                  </>
+                )}
+              </Button>
+            </div>
           )}
 
           {/* ICD-10 Diagnosis Codes */}
@@ -762,6 +853,27 @@ export default function Claims() {
     icd10CodeId?: string;
   }>>([{ cptCodeId: "", units: 1 }]);
 
+  // New Claim line items. A claim is its procedure codes — an amount with no
+  // CPT codes produces an 837P with zero service lines, which the submit path
+  // now rejects outright. Kept separate from the superbill drafts above so the
+  // two dialogs don't clobber each other.
+  const [newClaimLineItems, setNewClaimLineItems] = useState<Array<{
+    cptCodeId: string;
+    units: number;
+    icd10CodeId?: string;
+  }>>([{ cptCodeId: "", units: 1 }]);
+
+  const addClaimLineItem = () =>
+    setNewClaimLineItems((prev) => [...prev, { cptCodeId: "", units: 1 }]);
+
+  const removeClaimLineItem = (index: number) =>
+    setNewClaimLineItems((prev) => prev.filter((_, i) => i !== index));
+
+  const updateClaimLineItem = (index: number, field: string, value: any) =>
+    setNewClaimLineItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)),
+    );
+
   const isAdmin = (user as any)?.role === 'admin';
   const isBilling = (user as any)?.role === 'billing';
   const canManageClaims = isAdmin || isBilling;
@@ -982,18 +1094,44 @@ export default function Claims() {
     }, 0);
   };
 
+  const lineItemAmount = (cptCodeId: string, units: number) => {
+    if (!cptCodeId || !cptCodes) return 0;
+    const cpt = cptCodes.find((c: any) => c.id === parseInt(cptCodeId));
+    if (!cpt) return 0;
+    return parseFloat(cpt.baseRate || '0') * units;
+  };
+
+  const calculateClaimTotal = () =>
+    newClaimLineItems.reduce(
+      (total, item) => total + lineItemAmount(item.cptCodeId, item.units),
+      0,
+    );
+
   const createClaimMutation = useMutation({
     mutationFn: async (data: ClaimFormData) => {
+      const validLineItems = newClaimLineItems.filter((item) => item.cptCodeId);
       const response = await apiRequest("POST", "/api/claims", {
         ...data,
         practiceId,
-        totalAmount: parseFloat(data.totalAmount),
+        totalAmount: calculateClaimTotal(),
         submittedAmount: data.submittedAmount ? parseFloat(data.submittedAmount) : null,
         patientId: parseInt(data.patientId),
         sessionId: data.sessionId ? parseInt(data.sessionId) : null,
         insuranceId: parseInt(data.insuranceId),
       });
-      return response.json();
+      const claim = await response.json();
+
+      // Line items are a second call — the claim POST has no nested-line-item
+      // contract. The server recomputes the claim total after each add, so the
+      // stored total always matches the codes actually attached.
+      for (const item of validLineItems) {
+        await apiRequest("POST", `/api/claims/${claim.id}/line-items`, {
+          cptCodeId: parseInt(item.cptCodeId),
+          icd10CodeId: item.icd10CodeId ? parseInt(item.icd10CodeId) : undefined,
+          units: item.units,
+        });
+      }
+      return claim;
     },
     onSuccess: () => {
       invalidateClaims();
@@ -1003,6 +1141,7 @@ export default function Claims() {
       });
       setShowCreateDialog(false);
       form.reset();
+      setNewClaimLineItems([{ cptCodeId: "", units: 1 }]);
     },
     onError: (error) => {
       if (isUnauthorizedError(error)) {
@@ -1570,6 +1709,15 @@ export default function Claims() {
   };
 
   const onSubmit = (data: ClaimFormData) => {
+    if (!newClaimLineItems.some((item) => item.cptCodeId)) {
+      toast({
+        title: "Add a CPT code",
+        description:
+          "A claim needs at least one procedure code — there's nothing to bill without one.",
+        variant: "destructive",
+      });
+      return;
+    }
     createClaimMutation.mutate(data);
   };
 
@@ -1853,24 +2001,99 @@ export default function Claims() {
                   }}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="totalAmount"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Total Amount ($)</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {/* CPT line items. The claim total is derived from these
+                    rather than typed — the server recomputes it from the
+                    attached codes anyway, so a hand-entered figure could
+                    only ever disagree with what is actually billed. */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>CPT Codes</Label>
+                    <Button type="button" variant="outline" size="sm" onClick={addClaimLineItem}>
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add Code
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {newClaimLineItems.map((item, index) => (
+                      <div key={index} className="p-3 bg-slate-50 rounded-lg space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <Select
+                              value={item.cptCodeId}
+                              onValueChange={(value) => updateClaimLineItem(index, 'cptCodeId', value)}
+                            >
+                              <SelectTrigger data-testid={`select-claim-cpt-${index}`}>
+                                <SelectValue placeholder="Select CPT code" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {cptCodes?.map((cpt) => (
+                                  <SelectItem key={cpt.id} value={cpt.id.toString()}>
+                                    {cpt.code} - {cpt.description} (${cpt.baseRate})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="w-16 shrink-0">
+                            <Input
+                              type="number"
+                              min="1"
+                              value={item.units}
+                              onChange={(e) =>
+                                updateClaimLineItem(index, 'units', parseInt(e.target.value) || 1)
+                              }
+                              aria-label="Units"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0"
+                            onClick={() => removeClaimLineItem(index)}
+                            disabled={newClaimLineItems.length === 1}
+                            aria-label="Remove code"
+                          >
+                            <XCircle className="w-4 h-4 text-red-500" />
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <Select
+                              value={item.icd10CodeId || ""}
+                              onValueChange={(value) =>
+                                updateClaimLineItem(index, 'icd10CodeId', value || undefined)
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="ICD-10 diagnosis (optional)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {icd10Codes?.map((icd) => (
+                                  <SelectItem key={icd.id} value={icd.id.toString()}>
+                                    {icd.code} - {icd.description}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <span className="w-20 text-right text-sm font-medium shrink-0">
+                            ${lineItemAmount(item.cptCodeId, item.units).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2 border-t">
+                    <span className="text-sm font-medium">Total</span>
+                    <span className="text-lg font-bold" data-testid="text-claim-total">
+                      ${calculateClaimTotal().toFixed(2)}
+                    </span>
+                  </div>
+                </div>
 
                 <div className="flex justify-end space-x-2 pt-4">
                   <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)}>
@@ -2733,6 +2956,11 @@ export default function Claims() {
               submitSecondaryMutation={submitSecondaryMutation}
               regenerateAppealMutation={regenerateAppealMutation}
               onEditInsurance={(patientId) => setInsuranceFixPatientId(patientId)}
+              cptCodes={cptCodes}
+              onLineItemAdded={() => {
+                fetchLineItems(selectedClaim.id);
+                invalidateClaims();
+              }}
             />
 
           )}

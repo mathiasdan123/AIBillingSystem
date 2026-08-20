@@ -180,6 +180,7 @@ export const storage = {
   getPayments: claimFns.getPayments,
   getCptCodes: claimFns.getCptCodes,
   getAllCptCodes: claimFns.getAllCptCodes,
+  updateCptCodeRates: claimFns.updateCptCodeRates,
   getIcd10Codes: claimFns.getIcd10Codes,
   getInsurances: claimFns.getInsurances,
   getInsurance: claimFns.getInsurance,

@@ -78,6 +78,81 @@ router.get('/cpt-codes', async (req, res) => {
   }
 });
 
+/**
+ * Parse a user-supplied dollar amount into a fixed-2 decimal string.
+ *
+ * Returns undefined when the field was omitted (leave unchanged) and null
+ * when explicitly cleared. Throws on anything that isn't a sane charge —
+ * this value ends up on an 837P, so "0" and "" must not quietly become the
+ * same thing, and a fat-fingered 55000 should not sail through.
+ */
+export function parseRateInput(value: unknown, field: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const num = typeof value === 'number' ? value : Number(String(value).replace(/[$,]/g, ''));
+  if (!Number.isFinite(num)) throw new Error(`${field} must be a number`);
+  if (num < 0) throw new Error(`${field} cannot be negative`);
+  if (num > 100000) throw new Error(`${field} looks wrong — over $100,000`);
+  return num.toFixed(2);
+}
+
+/**
+ * PATCH /api/cpt-codes/:id — update a code's billed charge.
+ *
+ * The catalog ships with platform defaults ($550 evaluation / $400 re-eval /
+ * $289 treatment); a practice's real fee schedule is its own. Only the rate
+ * fields are writable — code, description and therapy category define what
+ * the code IS and changing those would silently repoint every claim line
+ * that references the row.
+ *
+ * Admin/billing only: this sets the dollar amount that goes out on an 837P.
+ */
+router.patch('/cpt-codes/:id', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: 'Invalid CPT code ID' });
+    }
+
+    let baseRate: string | null | undefined;
+    let cashRate: string | null | undefined;
+    try {
+      baseRate = parseRateInput(req.body?.baseRate, 'Billed charge');
+      cashRate = parseRateInput(req.body?.cashRate, 'Cash rate');
+    } catch (err) {
+      return res.status(400).json({ message: err instanceof Error ? err.message : 'Invalid rate' });
+    }
+
+    if (baseRate === undefined && cashRate === undefined) {
+      return res.status(400).json({ message: 'Nothing to update — provide baseRate or cashRate' });
+    }
+
+    const existing = (await storage.getCptCodes()).find((c: any) => c.id === id);
+    if (!existing) {
+      return res.status(404).json({ message: 'CPT code not found' });
+    }
+
+    const updated = await storage.updateCptCodeRates(id, { baseRate, cashRate });
+
+    // The catalog is cached globally; a stale read here means a claim gets
+    // priced at the old charge.
+    await cache.del(CacheKeys.cptCodes());
+
+    logger.info('CPT rate updated', {
+      cptCodeId: id,
+      code: (existing as any).code,
+      previousBaseRate: (existing as any).baseRate,
+      newBaseRate: baseRate ?? (existing as any).baseRate,
+      userId: req.user?.claims?.sub,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error updating CPT rate', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to update CPT rate' });
+  }
+});
+
 // ==================== EXERCISE BANK ====================
 
 router.get('/exercise-bank', isAuthenticated, async (req: any, res) => {
