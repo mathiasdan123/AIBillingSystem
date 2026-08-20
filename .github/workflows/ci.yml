@@ -43,3 +43,8 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      # `npm test` is server-only (vitest.config.ts includes server/**); the
+      # client suite has its own config and never ran in CI before this step.
+      - name: Run client tests
+        run: npm run test:client
