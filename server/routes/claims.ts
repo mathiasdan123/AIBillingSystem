@@ -673,7 +673,19 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'Invalid CPT code' });
     }
 
-    const rate = parseFloat(cptCode.baseRate || '289.00');
+    // Price from THIS practice's fee schedule. No fallback to the catalog
+    // figure — that column is a platform suggestion shared by every practice,
+    // and billing it would put an amount nobody chose on a real claim.
+    const practiceRate = await storage.resolvePracticeCptRate(claim.practiceId, cptCodeId);
+    if (practiceRate === null) {
+      return res.status(400).json({
+        message: `No charge is set for CPT ${(cptCode as any).code}. Set your charge under Insurance Rates → Your Charges before billing this code.`,
+        code: 'RATE_NOT_SET',
+        cptCode: (cptCode as any).code,
+      });
+    }
+
+    const rate = parseFloat(practiceRate);
     const lineUnits = units || 1;
     const amount = (rate * lineUnits).toFixed(2);
 

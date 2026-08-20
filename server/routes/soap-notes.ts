@@ -214,7 +214,23 @@ router.post('/', isAuthenticated, async (req: any, res) => {
             const createdLineItems = [];
             for (const item of accuracyReview.lineItems) {
               const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
-              const rate = parseFloat(cptCode?.baseRate || '289');
+              // Price from the practice's fee schedule. A code with no charge
+              // set is skipped rather than billed at a shared platform figure
+              // — the draft claim is still created so the user can set the
+              // charge and add the line themselves.
+              const practiceRate = await storage.resolvePracticeCptRate(
+                session.practiceId,
+                item.cptCodeId,
+              );
+              if (practiceRate === null) {
+                logger.warn('Skipping auto-generated claim line — no practice charge set', {
+                  practiceId: session.practiceId,
+                  cptCode: (cptCode as any)?.code,
+                  claimId: claim.id,
+                });
+                continue;
+              }
+              const rate = parseFloat(practiceRate);
               const amount = rate * item.units;
 
               const lineItem = await storage.createClaimLineItem({

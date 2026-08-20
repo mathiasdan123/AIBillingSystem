@@ -359,6 +359,44 @@ async function correctDefaultCptRates(db: any) {
 }
 
 /**
+ * Cutover backfill: give practices that predate per-practice fee schedules a
+ * copy of the platform rates they were already billing at.
+ *
+ * Before this change `cpt_codes.base_rate` was the charge for everyone. Now
+ * billing reads `practice_cpt_rates`, so without this copy every existing
+ * practice would wake up with an empty fee schedule and be unable to bill.
+ *
+ * New practices are deliberately excluded and start blank — they must set
+ * their own charges rather than silently inherit another practice's.
+ *
+ * Two guards keep this from fighting a human:
+ *   1. Only practices created before the cutover.
+ *   2. Only practices with NO rates at all, so clearing a single charge is
+ *      never undone on the next boot.
+ */
+const PER_PRACTICE_RATES_CUTOVER = '2026-08-21';
+
+async function backfillPracticeCptRates(db: any) {
+  const result: any = await db.execute(sql`
+    INSERT INTO practice_cpt_rates (practice_id, cpt_code_id, base_rate, cash_rate, updated_by)
+    SELECT p.id, c.id, c.base_rate, c.cash_rate, 'platform-cutover'
+      FROM practices p
+      CROSS JOIN cpt_codes c
+     WHERE p.created_at < ${PER_PRACTICE_RATES_CUTOVER}::date
+       AND c.base_rate IS NOT NULL
+       AND c.is_active = true
+       AND NOT EXISTS (
+             SELECT 1 FROM practice_cpt_rates r WHERE r.practice_id = p.id
+           )
+    ON CONFLICT (practice_id, cpt_code_id) DO NOTHING
+  `);
+  const inserted = Number(result?.rowCount ?? 0);
+  if (inserted > 0) {
+    console.log(`  Seeded ${inserted} practice CPT charge(s) from platform rates (cutover)`);
+  }
+}
+
+/**
  * One-shot backfill: populate cpt_codes.therapy_category based on code.
  * Idempotent — only writes when the column is NULL. Runs on every boot
  * so newly-seeded codes in older deployments pick up the mapping too.
@@ -962,6 +1000,15 @@ export async function seedDatabase(options?: { force?: boolean }) {
       await correctDefaultCptRates(db);
     } catch (err) {
       console.warn('  CPT rate correction skipped:', err instanceof Error ? err.message : err);
+    }
+
+    // Always run — gives pre-cutover practices their fee schedule. Must run
+    // AFTER the rate correction above so they inherit corrected rates, not
+    // the stale $289 evals.
+    try {
+      await backfillPracticeCptRates(db);
+    } catch (err) {
+      console.warn('  Practice CPT rate backfill skipped:', err instanceof Error ? err.message : err);
     }
 
     // Always run — idempotent, just backfills therapy_category on CPT codes

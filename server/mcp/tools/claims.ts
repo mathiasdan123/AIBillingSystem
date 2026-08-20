@@ -304,7 +304,16 @@ export function registerClaimTools(
           );
         }
 
-        const rate = parseFloat(cptCode.baseRate || '289.00');
+        // Price from this practice's fee schedule; the catalog figure is a
+        // shared platform suggestion and must never reach a claim.
+        const practiceRate = await storage.resolvePracticeCptRate(ctx.practiceId, input.cptCodeId);
+        if (practiceRate === null) {
+          throw new Error(
+            `No charge is set for CPT ${cptCode.code} in this practice's fee schedule, so it cannot be billed. Set it under Insurance Rates → Your Charges.`,
+          );
+        }
+
+        const rate = parseFloat(practiceRate);
         const lineUnits = input.units || 1;
         const amount = (rate * lineUnits).toFixed(2);
         const lineItem = await storage.createClaimLineItem({

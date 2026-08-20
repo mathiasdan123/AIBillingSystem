@@ -350,17 +350,53 @@ export const cptCodes = pgTable("cpt_codes", {
   // Seeded by the migration in the `cptCodes` seed script. Null means
   // "not categorized" — the scrubber will not flag such codes.
   therapyCategory: varchar("therapy_category"),
+  // PLATFORM SUGGESTION ONLY — never bill from this column.
+  //
+  // A practice's actual billed charge lives in practiceCptRates below. This
+  // is the reference figure shown as a placeholder when a practice has not
+  // set its own charge yet. It is deliberately not a fallback: a code with
+  // no practice rate cannot be billed at all (see resolvePracticeCptRate),
+  // because billing an amount nobody chose is how the whole fee-schedule
+  // problem started.
   baseRate: decimal("base_rate", { precision: 10, scale: 2 }),
   cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
   billingUnits: integer("billing_units").default(1), // 15-minute units
   isActive: boolean("is_active").default(true),
-  // Set when a human edits this code's rate through the fee-schedule UI.
-  // NULL means the row still carries an untouched platform default, which
-  // is what makes it safe for a boot-time job to correct a bad default.
-  // Once a practice sets its own charge, nothing automated overwrites it.
+  // Set when a human edits this code's suggested rate. NULL means the row
+  // still carries an untouched platform default, which is what makes it
+  // safe for a boot-time job to correct a bad default.
   rateEditedAt: timestamp("rate_edited_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+/**
+ * A practice's own billed charge for a CPT code — its fee schedule.
+ *
+ * The cpt_codes catalog is global (one row per code, shared by every
+ * practice), so a charge stored there is every practice's charge. This table
+ * is the per-tenant override, and it is the ONLY source billing reads.
+ *
+ * A practice with no row here for a code has not set a charge, and that code
+ * cannot be billed until they do. New practices therefore start blank by
+ * construction rather than silently inheriting whatever another practice set.
+ */
+export const practiceCptRates = pgTable("practice_cpt_rates", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  cptCodeId: integer("cpt_code_id").references(() => cptCodes.id).notNull(),
+  // The amount that goes out on the 837P: baseRate × units.
+  baseRate: decimal("base_rate", { precision: 10, scale: 2 }).notNull(),
+  // Self-pay / cash-pay charge, when the practice bills one.
+  cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  practiceCodeUnique: unique("practice_cpt_rates_practice_code_unique").on(
+    table.practiceId,
+    table.cptCodeId,
+  ),
+}));
 
 // CPT Code Equivalencies - tracks which codes can represent similar interventions
 // This allows AI to choose optimal code when multiple codes could accurately describe the service
@@ -1752,6 +1788,22 @@ export type Claim = typeof claims.$inferSelect;
 export type Expense = typeof expenses.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type CptCode = typeof cptCodes.$inferSelect;
+export type PracticeCptRate = typeof practiceCptRates.$inferSelect;
+export type InsertPracticeCptRate = typeof practiceCptRates.$inferInsert;
+/**
+ * A CPT code as a given practice sees it: the catalog row, plus that
+ * practice's own charge (null when they have not set one, which means the
+ * code cannot be billed yet).
+ */
+export type PracticeCptCode = Omit<CptCode, 'baseRate' | 'cashRate'> & {
+  /** The practice's billed charge. Null = not set = not billable. */
+  baseRate: string | null;
+  cashRate: string | null;
+  /** Platform reference figure, shown as a placeholder. Never billed. */
+  suggestedRate: string | null;
+  /** True once this practice has set its own charge for this code. */
+  isPracticeRate: boolean;
+};
 export type Icd10Code = typeof icd10Codes.$inferSelect;
 export type Insurance = typeof insurances.$inferSelect;
 

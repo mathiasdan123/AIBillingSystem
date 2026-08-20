@@ -4,6 +4,7 @@ import {
   expenses,
   payments,
   cptCodes,
+  practiceCptRates,
   icd10Codes,
   insurances,
   cptCodeMappings,
@@ -22,6 +23,8 @@ import {
   type Payment,
   type InsertPayment,
   type CptCode,
+  type PracticeCptRate,
+  type PracticeCptCode,
   type Icd10Code,
   type Insurance,
   type CptCodeMapping,
@@ -350,11 +353,110 @@ export async function getAllCptCodes(): Promise<CptCode[]> {
 }
 
 /**
- * Update a CPT code's billed charge (and optional cash rate).
+ * The CPT catalog as one practice sees it: every active code, carrying that
+ * practice's own charge. `baseRate` is null when the practice has not set a
+ * charge — that code is not billable until they do.
  *
- * The catalog ships with platform defaults; a practice's actual fee schedule
- * is its own. Only rate fields are writable here — code, description and
- * therapy category define what the code *is* and are not practice-editable.
+ * The catalog itself is global, so the platform figure is returned separately
+ * as `suggestedRate` (a placeholder for the UI) and is never billed.
+ */
+export async function getPracticeCptCodes(practiceId: number): Promise<PracticeCptCode[]> {
+  const catalog = await getCptCodes();
+  const rates: PracticeCptRate[] = await db
+    .select()
+    .from(practiceCptRates)
+    .where(eq(practiceCptRates.practiceId, practiceId));
+  const byCode = new Map(rates.map((r) => [r.cptCodeId, r]));
+  return catalog.map((code) => {
+    const own = byCode.get(code.id);
+    return {
+      ...code,
+      baseRate: own ? own.baseRate : null,
+      cashRate: own ? own.cashRate : null,
+      suggestedRate: code.baseRate ?? null,
+      isPracticeRate: !!own,
+    };
+  });
+}
+
+/**
+ * The practice's billed charge for one code, or null if unset.
+ *
+ * Deliberately does NOT fall back to the catalog figure. A missing rate must
+ * surface as "you have not set this charge", never as a silent platform
+ * number on a real claim.
+ */
+export async function resolvePracticeCptRate(
+  practiceId: number,
+  cptCodeId: number,
+): Promise<string | null> {
+  const [rate] = await db
+    .select()
+    .from(practiceCptRates)
+    .where(
+      and(
+        eq(practiceCptRates.practiceId, practiceId),
+        eq(practiceCptRates.cptCodeId, cptCodeId),
+      ),
+    );
+  return rate?.baseRate ?? null;
+}
+
+/**
+ * Set a practice's charge for a CPT code. Insert-or-update on
+ * (practiceId, cptCodeId).
+ */
+export async function upsertPracticeCptRate(
+  practiceId: number,
+  cptCodeId: number,
+  rates: { baseRate: string; cashRate?: string | null; updatedBy?: string },
+): Promise<PracticeCptRate> {
+  const [row] = await db
+    .insert(practiceCptRates)
+    .values({
+      practiceId,
+      cptCodeId,
+      baseRate: rates.baseRate,
+      cashRate: rates.cashRate ?? null,
+      updatedBy: rates.updatedBy ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [practiceCptRates.practiceId, practiceCptRates.cptCodeId],
+      set: {
+        baseRate: rates.baseRate,
+        cashRate: rates.cashRate ?? null,
+        updatedBy: rates.updatedBy ?? null,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  return row;
+}
+
+/**
+ * Clear a practice's charge for a code, returning it to "not set".
+ */
+export async function deletePracticeCptRate(
+  practiceId: number,
+  cptCodeId: number,
+): Promise<void> {
+  await db
+    .delete(practiceCptRates)
+    .where(
+      and(
+        eq(practiceCptRates.practiceId, practiceId),
+        eq(practiceCptRates.cptCodeId, cptCodeId),
+      ),
+    );
+}
+
+/**
+ * Update the platform's SUGGESTED rate on the global catalog row.
+ *
+ * Not a practice's charge — see upsertPracticeCptRate for that. Only rate
+ * fields are writable; code, description and therapy category define what
+ * the code *is* and repointing them would rewrite every claim line that
+ * references the row.
  */
 export async function updateCptCodeRates(
   id: number,
@@ -367,8 +469,8 @@ export async function updateCptCodeRates(
     const [existing] = await db.select().from(cptCodes).where(eq(cptCodes.id, id));
     return existing;
   }
-  // Marks the row as practice-owned so no boot-time default correction
-  // can overwrite a charge a human deliberately set.
+  // Marks the row as deliberately set so no boot-time default correction
+  // can overwrite it.
   patch.rateEditedAt = new Date();
   const [updated] = await db
     .update(cptCodes)
