@@ -188,6 +188,7 @@ export const storage = {
   getPracticeCptCodes: claimFns.getPracticeCptCodes,
   resolvePracticeCptRate: claimFns.resolvePracticeCptRate,
   upsertPracticeCptRate: claimFns.upsertPracticeCptRate,
+  acceptPlatformDefaultRates: claimFns.acceptPlatformDefaultRates,
   deletePracticeCptRate: claimFns.deletePracticeCptRate,
   getIcd10Codes: claimFns.getIcd10Codes,
   getInsurances: claimFns.getInsurances,

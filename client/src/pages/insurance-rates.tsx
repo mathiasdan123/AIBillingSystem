@@ -89,6 +89,29 @@ function PracticeChargesTab() {
     queryKey: ['/api/cpt-codes'],
   });
 
+  // Adopting the suggested schedule changes no amounts — it records that a
+  // human confirmed them, clearing the review flag. Separate from editing.
+  const acceptDefaults = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/cpt-codes/accept-defaults", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/cpt-codes'] });
+      toast({
+        title: "Fee schedule confirmed",
+        description: data?.message || "Your charges are set.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Couldn't confirm charges",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const saveRate = useMutation({
     mutationFn: async ({ id, baseRate }: { id: number; baseRate: string }) => {
       return await apiRequest("PATCH", `/api/cpt-codes/${id}`, { baseRate });
@@ -155,10 +178,42 @@ function PracticeChargesTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <DollarSign className="h-5 w-5" />
-          Your Charges
-        </CardTitle>
+        <div className="flex items-start justify-between gap-4">
+          <CardTitle className="flex items-center gap-2">
+            <DollarSign className="h-5 w-5" />
+            Your Charges
+          </CardTitle>
+          {needsReviewCount > 0 && unsetCount === 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" data-testid="button-accept-defaults">
+                  <CheckCircle className="h-4 w-4 mr-1" />
+                  These are my charges
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Confirm these as your fee schedule?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This changes no amounts. It records that you've reviewed the{' '}
+                    {needsReviewCount} suggested {needsReviewCount === 1 ? 'charge' : 'charges'}{' '}
+                    and they're what your practice bills. You can still edit any of them
+                    afterwards.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => acceptDefaults.mutate()}
+                    disabled={acceptDefaults.isPending}
+                  >
+                    {acceptDefaults.isPending ? "Confirming..." : "Confirm"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
         <CardDescription>
           What you bill per CPT code — this is the amount that goes out on the claim.
           Set a charge once and every future claim uses it; you never re-enter it

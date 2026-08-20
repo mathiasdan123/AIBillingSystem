@@ -105,6 +105,40 @@ export function parseRateInput(value: unknown, field: string): string | null | u
 }
 
 /**
+ * POST /api/cpt-codes/accept-defaults — adopt the platform-suggested charges.
+ *
+ * Changes no dollar amounts. It records that a human looked at the charges
+ * the cutover copied in and confirmed they are this practice's own, which
+ * clears the "platform default — review" flag.
+ *
+ * Kept separate from a bulk rate edit on purpose: "those numbers are right"
+ * and "set these new numbers" are different acts, and only the first is safe
+ * to do in one click. Charges stay individually editable afterwards.
+ */
+router.post('/cpt-codes/accept-defaults', isAuthenticated, isAdminOrBilling, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const accepted = await storage.acceptPlatformDefaultRates(practiceId, userId);
+
+    logger.info('Platform default CPT charges accepted', { practiceId, accepted, userId });
+
+    res.json({
+      accepted,
+      message:
+        accepted > 0
+          ? `${accepted} charge${accepted === 1 ? '' : 's'} confirmed as your fee schedule.`
+          : 'No unreviewed platform defaults remained.',
+    });
+  } catch (error) {
+    logger.error('Error accepting default CPT rates', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to accept default charges' });
+  }
+});
+
+/**
  * PATCH /api/cpt-codes/:id — set THIS practice's charge for a code.
  *
  * Writes to practice_cpt_rates, never to the shared catalog row. The catalog

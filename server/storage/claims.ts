@@ -511,6 +511,36 @@ export async function upsertPracticeCptRate(
 }
 
 /**
+ * Adopt the platform-default charges a practice has not reviewed, as-is.
+ *
+ * Changes no dollar amounts. It re-stamps rows the cutover wrote so they read
+ * as the practice's own choice rather than an unreviewed default, which is
+ * what clears the "platform default — review" flag.
+ *
+ * Deliberately separate from a bulk rate edit: a practice saying "those
+ * numbers are right" is a different act from a practice setting new numbers,
+ * and only the first one is safe to do in a single click.
+ *
+ * Returns how many charges were adopted.
+ */
+export async function acceptPlatformDefaultRates(
+  practiceId: number,
+  userId: string,
+): Promise<number> {
+  const result: any = await db
+    .update(practiceCptRates)
+    .set({ updatedBy: userId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(practiceCptRates.practiceId, practiceId),
+        eq(practiceCptRates.updatedBy, 'platform-cutover'),
+      ),
+    )
+    .returning({ id: practiceCptRates.id });
+  return Array.isArray(result) ? result.length : 0;
+}
+
+/**
  * Clear a practice's charge for a code, returning it to "not set".
  */
 export async function deletePracticeCptRate(
