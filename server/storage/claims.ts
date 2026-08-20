@@ -257,6 +257,77 @@ export async function getClaimLineItems(claimId: number): Promise<ClaimLineItem[
     .where(eq(claimLineItems.claimId, claimId));
 }
 
+export async function getClaimLineItem(id: number): Promise<ClaimLineItem | undefined> {
+  const [row] = await db.select().from(claimLineItems).where(eq(claimLineItems.id, id));
+  return row;
+}
+
+/**
+ * Update one line item's billable fields and return it.
+ *
+ * `amount` is always recomputed from rate × units rather than accepted from
+ * the caller — the two must never disagree, because `amount` is what goes on
+ * the 837P and `rate × units` is what anyone reading the claim will check it
+ * against.
+ */
+export async function updateClaimLineItem(
+  id: number,
+  patch: {
+    units?: number;
+    rate?: string;
+    standardRate?: string | null;
+    rateOverrideReason?: string | null;
+    modifier?: string | null;
+    icd10CodeId?: number | null;
+    dateOfService?: string | null;
+    notes?: string | null;
+  },
+): Promise<ClaimLineItem | undefined> {
+  const existing = await getClaimLineItem(id);
+  if (!existing) return undefined;
+
+  const units = patch.units ?? existing.units;
+  const rate = patch.rate ?? existing.rate;
+  const set: Record<string, unknown> = {
+    units,
+    rate,
+    amount: (parseFloat(rate) * units).toFixed(2),
+    updatedAt: new Date(),
+  };
+  if (patch.standardRate !== undefined) set.standardRate = patch.standardRate;
+  if (patch.rateOverrideReason !== undefined) set.rateOverrideReason = patch.rateOverrideReason;
+  if (patch.modifier !== undefined) set.modifier = patch.modifier;
+  if (patch.icd10CodeId !== undefined) set.icd10CodeId = patch.icd10CodeId;
+  if (patch.dateOfService !== undefined) set.dateOfService = patch.dateOfService;
+  if (patch.notes !== undefined) set.notes = patch.notes;
+
+  const [updated] = await db
+    .update(claimLineItems)
+    .set(set)
+    .where(eq(claimLineItems.id, id))
+    .returning();
+  return updated;
+}
+
+export async function deleteClaimLineItem(id: number): Promise<void> {
+  await db.delete(claimLineItems).where(eq(claimLineItems.id, id));
+}
+
+/**
+ * Recompute a claim's stored total from its line items and persist it.
+ *
+ * Every write to a line item must end here, or the claim's headline amount
+ * drifts from the lines it is supposed to be the sum of.
+ */
+export async function recalculateClaimTotal(claimId: number): Promise<string> {
+  const items = await getClaimLineItems(claimId);
+  const total = items
+    .reduce((sum, item) => sum + parseFloat(item.amount || '0'), 0)
+    .toFixed(2);
+  await updateClaim(claimId, { totalAmount: total } as any);
+  return total;
+}
+
 /**
  * Batch variant of getClaimLineItems: fetches line items for many claims in a
  * single query, grouped by claimId. Used to avoid an N+1 when enriching a

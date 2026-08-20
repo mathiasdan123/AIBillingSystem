@@ -17,7 +17,7 @@ import {
   DollarSign, FileText, TrendingUp, Ban, Eye, MoreVertical,
   Copy, RefreshCw, Loader2, Scale, Mail, ShieldAlert, ShieldCheck,
   TriangleAlert, CircleAlert, Info, Lightbulb, Download, Printer,
-  ChevronsUpDown, Check
+  ChevronsUpDown, Check, Pencil, Trash2
 } from "lucide-react";
 import { exportToCsv } from "@/lib/exportUtils";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
@@ -119,6 +119,69 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   const [addingUnits, setAddingUnits] = useState(1);
   const [savingLineItem, setSavingLineItem] = useState(false);
   const isDraft = (claim.status || '').toLowerCase() === 'draft';
+
+  // Inline editing of an existing line. Draft claims only — the routes
+  // enforce the same rule, this just keeps the controls from appearing on a
+  // claim the payer already has.
+  const [editingItemId, setEditingItemId] = useState<number | null>(null);
+  const [editUnits, setEditUnits] = useState(1);
+  const [editRate, setEditRate] = useState("");
+  const [editModifier, setEditModifier] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [busyItemId, setBusyItemId] = useState<number | null>(null);
+
+  const beginEdit = (item: any) => {
+    setEditingItemId(item.id);
+    setEditUnits(item.units || 1);
+    setEditRate(item.rate ? Number(item.rate).toFixed(2) : "");
+    setEditModifier(item.modifier || "");
+    setEditReason(item.rateOverrideReason || "");
+  };
+
+  const cancelEdit = () => setEditingItemId(null);
+
+  const saveEdit = async (item: any) => {
+    setBusyItemId(item.id);
+    try {
+      await apiRequest("PATCH", `/api/claims/${claim.id}/line-items/${item.id}`, {
+        units: editUnits,
+        rate: editRate === "" ? null : editRate,
+        modifier: editModifier || null,
+        rateOverrideReason: editReason || null,
+      });
+      toast({ title: "Line item updated" });
+      setEditingItemId(null);
+      onLineItemAdded?.();
+    } catch (error: any) {
+      toast({
+        title: "Couldn't update line item",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyItemId(null);
+    }
+  };
+
+  const removeLine = async (item: any) => {
+    setBusyItemId(item.id);
+    try {
+      await apiRequest("DELETE", `/api/claims/${claim.id}/line-items/${item.id}`);
+      toast({
+        title: "Line item removed",
+        description: `${item.cptCode?.code || 'The code'} was removed from this claim.`,
+      });
+      onLineItemAdded?.();
+    } catch (error: any) {
+      toast({
+        title: "Couldn't remove line item",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyItemId(null);
+    }
+  };
 
   const handleAddLineItem = async () => {
     if (!addingCptCodeId) return;
@@ -291,28 +354,154 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                     <th className="text-center p-2 font-medium text-muted-foreground">Units</th>
                     <th className="text-right p-2 font-medium text-muted-foreground">Rate</th>
                     <th className="text-right p-2 font-medium text-muted-foreground">Amount</th>
+                    {isDraft && <th className="w-24" />}
                   </tr>
                 </thead>
                 <tbody>
-                  {lineItems.map((item: any, index: number) => (
-                    <tr key={index} className="border-t border-slate-200">
-                      <td className="p-2">
-                        <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
-                          {item.cptCode?.code || item.cptCodeId}
-                        </span>
-                      </td>
-                      <td className="p-2 text-muted-foreground text-xs">{item.cptCode?.description || 'N/A'}</td>
-                      <td className="p-2 text-center text-xs">{item.modifier || '—'}</td>
-                      <td className="p-2 text-center">{item.units || 1}</td>
-                      <td className="p-2 text-right text-xs">{item.rate ? `$${parseFloat(item.rate).toFixed(2)}` : '—'}</td>
-                      <td className="p-2 text-right font-medium">${parseFloat(item.amount || item.chargeAmount || '0').toFixed(2)}</td>
-                    </tr>
-                  ))}
+                  {lineItems.map((item: any, index: number) => {
+                    const editing = editingItemId === item.id;
+                    const busy = busyItemId === item.id;
+                    // The line was billed off the fee schedule on purpose.
+                    const offSchedule =
+                      item.standardRate &&
+                      parseFloat(item.standardRate).toFixed(2) !== parseFloat(item.rate || '0').toFixed(2);
+                    return (
+                      <tr key={item.id ?? index} className="border-t border-slate-200">
+                        <td className="p-2">
+                          <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                            {item.cptCode?.code || item.cptCodeId}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground text-xs">
+                          {item.cptCode?.description || 'N/A'}
+                          {offSchedule && !editing && (
+                            <span
+                              className="ml-2 text-amber-700"
+                              title={
+                                item.rateOverrideReason
+                                  ? `Reason: ${item.rateOverrideReason}`
+                                  : 'No reason recorded'
+                              }
+                              data-testid={`badge-off-schedule-${item.id}`}
+                            >
+                              (custom charge — standard ${parseFloat(item.standardRate).toFixed(2)})
+                            </span>
+                          )}
+                          {editing && (
+                            <Input
+                              value={editReason}
+                              onChange={(e) => setEditReason(e.target.value)}
+                              placeholder="Reason for custom charge (optional)"
+                              className="mt-1 h-7 text-xs"
+                            />
+                          )}
+                        </td>
+                        <td className="p-2 text-center text-xs">
+                          {editing ? (
+                            <Input
+                              value={editModifier}
+                              onChange={(e) => setEditModifier(e.target.value)}
+                              placeholder="—"
+                              className="w-14 h-7 text-center text-xs mx-auto"
+                              aria-label="Modifier"
+                            />
+                          ) : (
+                            item.modifier || '—'
+                          )}
+                        </td>
+                        <td className="p-2 text-center">
+                          {editing ? (
+                            <Input
+                              type="number"
+                              min="1"
+                              value={editUnits}
+                              onChange={(e) => setEditUnits(parseInt(e.target.value) || 1)}
+                              className="w-16 h-7 text-center mx-auto"
+                              aria-label="Units"
+                            />
+                          ) : (
+                            item.units || 1
+                          )}
+                        </td>
+                        <td className="p-2 text-right text-xs">
+                          {editing ? (
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editRate}
+                              onChange={(e) => setEditRate(e.target.value)}
+                              placeholder="standard"
+                              className="w-24 h-7 text-right ml-auto"
+                              aria-label="Rate"
+                            />
+                          ) : item.rate ? (
+                            `$${parseFloat(item.rate).toFixed(2)}`
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="p-2 text-right font-medium">
+                          ${(editing
+                            ? (parseFloat(editRate || item.standardRate || item.rate || '0') || 0) * editUnits
+                            : parseFloat(item.amount || item.chargeAmount || '0')
+                          ).toFixed(2)}
+                        </td>
+                        {isDraft && (
+                          <td className="p-2">
+                            <div className="flex items-center justify-end gap-1">
+                              {busy ? (
+                                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                              ) : editing ? (
+                                <>
+                                  <Button
+                                    type="button" variant="ghost" size="sm"
+                                    onClick={() => saveEdit(item)}
+                                    aria-label="Save line item"
+                                    data-testid={`button-save-line-${item.id}`}
+                                  >
+                                    <Check className="w-4 h-4 text-green-600" />
+                                  </Button>
+                                  <Button
+                                    type="button" variant="ghost" size="sm"
+                                    onClick={cancelEdit}
+                                    aria-label="Cancel edit"
+                                  >
+                                    <XCircle className="w-4 h-4 text-slate-400" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    type="button" variant="ghost" size="sm"
+                                    onClick={() => beginEdit(item)}
+                                    aria-label="Edit line item"
+                                    data-testid={`button-edit-line-${item.id}`}
+                                  >
+                                    <Pencil className="w-4 h-4 text-slate-500" />
+                                  </Button>
+                                  <Button
+                                    type="button" variant="ghost" size="sm"
+                                    onClick={() => removeLine(item)}
+                                    aria-label="Remove line item"
+                                    data-testid={`button-delete-line-${item.id}`}
+                                  >
+                                    <Trash2 className="w-4 h-4 text-red-500" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot className="border-t-2 border-slate-300 bg-slate-100">
                   <tr>
                     <td colSpan={5} className="p-2 text-right font-semibold">Total Billed:</td>
                     <td className="p-2 text-right font-bold">${billed.toFixed(2)}</td>
+                    {isDraft && <td />}
                   </tr>
                 </tfoot>
               </table>

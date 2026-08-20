@@ -654,9 +654,19 @@ export const claimLineItems = pgTable("claim_line_items", {
   units: integer("units").default(1).notNull(),
   rate: decimal("rate", { precision: 10, scale: 2 }).notNull(), // rate at time of billing
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(), // units × rate
+  // What the practice's fee schedule said when this line was billed.
+  // Normally equals `rate`. When they differ, this line was billed off
+  // schedule on purpose — keeping both preserves the delta for audit even
+  // after the fee schedule later changes.
+  standardRate: decimal("standard_rate", { precision: 10, scale: 2 }),
+  // Why this line deviates from the fee schedule. Optional, but a payer
+  // asking "why did you bill this differently" is a question worth being
+  // able to answer from the record.
+  rateOverrideReason: varchar("rate_override_reason"),
   dateOfService: date("date_of_service"),
   modifier: varchar("modifier"), // CPT modifier (e.g., 59, GP)
   notes: text("notes"),
+  updatedAt: timestamp("updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
