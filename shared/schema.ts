@@ -354,6 +354,11 @@ export const cptCodes = pgTable("cpt_codes", {
   cashRate: decimal("cash_rate", { precision: 10, scale: 2 }),
   billingUnits: integer("billing_units").default(1), // 15-minute units
   isActive: boolean("is_active").default(true),
+  // Set when a human edits this code's rate through the fee-schedule UI.
+  // NULL means the row still carries an untouched platform default, which
+  // is what makes it safe for a boot-time job to correct a bad default.
+  // Once a practice sets its own charge, nothing automated overwrites it.
+  rateEditedAt: timestamp("rate_edited_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

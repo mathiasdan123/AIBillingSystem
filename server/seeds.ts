@@ -322,6 +322,43 @@ async function ensureCoreCptCodes(db: any) {
 }
 
 /**
+ * Correct CPT rows still carrying a wrong platform default.
+ *
+ * The original seed set every code to a flat $289.00, including evaluations,
+ * which the catalog has long intended to bill at $550.00 ($400.00 re-eval).
+ * Production has been pricing evaluations at $289 ever since — real money on
+ * every eval claim.
+ *
+ * Safety: only touches rows where rate_edited_at IS NULL, i.e. rows still
+ * holding an untouched platform default. The moment a human sets a charge
+ * through the fee-schedule UI that column is stamped and this job leaves the
+ * row alone forever. A practice's fee schedule is its own.
+ */
+async function correctDefaultCptRates(db: any) {
+  const drifted = CORE_CPT_CODES.filter((entry) => entry.baseRate !== '289.00');
+  let corrected = 0;
+
+  for (const entry of drifted) {
+    const result: any = await db.execute(sql`
+      UPDATE cpt_codes
+         SET base_rate = ${entry.baseRate}
+       WHERE code = ${entry.code}
+         AND rate_edited_at IS NULL
+         AND base_rate IS DISTINCT FROM ${entry.baseRate}
+    `);
+    const changed = Number(result?.rowCount ?? 0);
+    if (changed > 0) {
+      corrected += changed;
+      console.log(`  Corrected CPT ${entry.code} billed charge to $${entry.baseRate}`);
+    }
+  }
+
+  if (corrected > 0) {
+    console.log(`  Corrected ${corrected} CPT rate(s) still on a stale platform default`);
+  }
+}
+
+/**
  * One-shot backfill: populate cpt_codes.therapy_category based on code.
  * Idempotent — only writes when the column is NULL. Runs on every boot
  * so newly-seeded codes in older deployments pick up the mapping too.
@@ -917,6 +954,14 @@ export async function seedDatabase(options?: { force?: boolean }) {
       await ensureCoreCptCodes(db);
     } catch (err) {
       console.warn('  Core CPT code backfill skipped:', err instanceof Error ? err.message : err);
+    }
+
+    // Always run — corrects rows still holding a stale platform default.
+    // Skips anything a practice has edited itself.
+    try {
+      await correctDefaultCptRates(db);
+    } catch (err) {
+      console.warn('  CPT rate correction skipped:', err instanceof Error ? err.message : err);
     }
 
     // Always run — idempotent, just backfills therapy_category on CPT codes

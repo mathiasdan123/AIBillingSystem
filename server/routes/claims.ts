@@ -1121,6 +1121,16 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
     }
 
     const lineItems = lineItemsRaw ?? [];
+    // A claim with no line items produces an 837P with zero service lines.
+    // The batch path has always rejected this; this single-claim path mapped
+    // the empty array and sent the claim anyway. Fail loudly instead — a
+    // malformed claim reaching the payer is worse than a blocked submit.
+    if (lineItems.length === 0) {
+      return res.status(400).json({
+        message:
+          'This claim has no CPT line items, so there is nothing to bill. Add at least one procedure code to the claim before submitting.',
+      });
+    }
     const cptCodes = await storage.getCptCodes();
     const icd10Codes = await storage.getIcd10Codes();
 

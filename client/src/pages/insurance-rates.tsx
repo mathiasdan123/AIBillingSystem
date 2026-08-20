@@ -54,6 +54,199 @@ interface CostEstimate {
   notes: string;
 }
 
+interface CptCatalogEntry {
+  id: number;
+  code: string;
+  description: string;
+  category: string | null;
+  therapyCategory: string | null;
+  baseRate: string | null;
+  rateEditedAt: string | null;
+}
+
+/**
+ * The practice's own billed charges, one row per CPT code.
+ *
+ * Codes ship with platform defaults ($550 evaluation / $400 re-eval / $289
+ * treatment). Those are placeholders, not a fee schedule — a practice sets
+ * its real charges here, and once a charge is edited nothing automated
+ * overwrites it.
+ */
+function PracticeChargesTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+
+  const { data: codes, isLoading } = useQuery<CptCatalogEntry[]>({
+    queryKey: ['/api/cpt-codes'],
+  });
+
+  const saveRate = useMutation({
+    mutationFn: async ({ id, baseRate }: { id: number; baseRate: string }) => {
+      return await apiRequest("PATCH", `/api/cpt-codes/${id}`, { baseRate });
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/cpt-codes'] });
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[variables.id];
+        return next;
+      });
+      toast({ title: "Charge updated" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Couldn't update charge",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => setSavingId(null),
+  });
+
+  const commit = (entry: CptCatalogEntry) => {
+    const draft = drafts[entry.id];
+    if (draft === undefined) return;
+    const trimmed = draft.trim();
+    const parsed = Number(trimmed.replace(/[$,]/g, ""));
+    if (trimmed === "" || !Number.isFinite(parsed) || parsed < 0) {
+      toast({
+        title: "Enter a valid amount",
+        description: `"${draft}" isn't a dollar amount.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    if (parsed.toFixed(2) === Number(entry.baseRate ?? 0).toFixed(2)) {
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[entry.id];
+        return next;
+      });
+      return;
+    }
+    setSavingId(entry.id);
+    saveRate.mutate({ id: entry.id, baseRate: parsed.toFixed(2) });
+  };
+
+  const term = search.trim().toLowerCase();
+  const visible = (codes ?? []).filter(
+    (c) =>
+      !term ||
+      c.code.toLowerCase().includes(term) ||
+      (c.description || "").toLowerCase().includes(term),
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <DollarSign className="h-5 w-5" />
+          Your Charges
+        </CardTitle>
+        <CardDescription>
+          What you bill per CPT code — this is the amount that goes out on the claim.
+          Codes marked <Badge variant="outline" className="mx-1">default</Badge>
+          still carry a platform placeholder, not your fee schedule. Set your real
+          charges before submitting claims.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Input
+          placeholder="Search by code or description..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-sm"
+          data-testid="input-charge-search"
+        />
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : visible.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No CPT codes match "{search}".
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b">
+                <tr>
+                  <th className="text-left p-2 font-medium text-muted-foreground">Code</th>
+                  <th className="text-left p-2 font-medium text-muted-foreground">Description</th>
+                  <th className="text-left p-2 font-medium text-muted-foreground">Discipline</th>
+                  <th className="text-right p-2 font-medium text-muted-foreground">Billed charge</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((entry) => {
+                  const draft = drafts[entry.id];
+                  const value = draft ?? (entry.baseRate ? Number(entry.baseRate).toFixed(2) : "");
+                  const dirty = draft !== undefined;
+                  return (
+                    <tr key={entry.id} className="border-b last:border-0">
+                      <td className="p-2">
+                        <Badge variant="outline" className="font-mono">{entry.code}</Badge>
+                      </td>
+                      <td className="p-2 text-muted-foreground">
+                        {entry.description}
+                        {!entry.rateEditedAt && (
+                          <Badge variant="outline" className="ml-2 text-xs">default</Badge>
+                        )}
+                      </td>
+                      <td className="p-2 text-muted-foreground text-xs">
+                        {entry.therapyCategory || "—"}
+                      </td>
+                      <td className="p-2">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-muted-foreground">$</span>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={value}
+                            onChange={(e) =>
+                              setDrafts((prev) => ({ ...prev, [entry.id]: e.target.value }))
+                            }
+                            onBlur={() => commit(entry)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setDrafts((prev) => {
+                                  const next = { ...prev };
+                                  delete next[entry.id];
+                                  return next;
+                                });
+                              }
+                            }}
+                            className="w-28 text-right"
+                            aria-label={`Billed charge for CPT ${entry.code}`}
+                            data-testid={`input-charge-${entry.code}`}
+                          />
+                          {savingId === entry.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          ) : dirty ? (
+                            <span className="text-xs text-amber-600 w-12">unsaved</span>
+                          ) : (
+                            <span className="w-12" />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function InsuranceRates() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -492,11 +685,22 @@ export default function InsuranceRates() {
             <FileText className="h-4 w-4 mr-1" />
             Fee Schedules
           </TabsTrigger>
+          <TabsTrigger value="charges">
+            <DollarSign className="h-4 w-4 mr-1" />
+            Your Charges
+          </TabsTrigger>
           <TabsTrigger value="estimate">
             <Calculator className="h-4 w-4 mr-1" />
             Cost Estimator
           </TabsTrigger>
         </TabsList>
+
+        {/* Your Charges Tab — the practice's own billed amount per CPT code.
+            Distinct from the Fee Schedules tab, which holds what each payer
+            has agreed to pay. This is the number that goes out on the 837P. */}
+        <TabsContent value="charges" className="space-y-4 mt-4">
+          <PracticeChargesTab />
+        </TabsContent>
 
         {/* Fee Schedules Tab */}
         <TabsContent value="rates" className="space-y-4 mt-4">
