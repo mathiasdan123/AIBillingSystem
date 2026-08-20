@@ -646,6 +646,161 @@ router.get('/:id/line-items', isAuthenticated, async (req: any, res) => {
   }
 });
 
+/**
+ * Parse a per-line rate override into a fixed-2 string, or null if it isn't
+ * a sane charge. Same bounds as the fee-schedule editor — this value goes on
+ * an 837P, so a typo must not sail through.
+ */
+function parseLineRate(value: unknown): string | null {
+  const num = typeof value === 'number' ? value : Number(String(value).replace(/[$,]/g, ''));
+  if (!Number.isFinite(num) || num < 0 || num > 100000) return null;
+  return num.toFixed(2);
+}
+
+/**
+ * Load a line item and confirm the caller may write to it.
+ *
+ * Line items are only editable while the claim is a draft. Once a claim has
+ * been submitted the payer has the version we sent; silently amending it
+ * would leave our record disagreeing with theirs. A submitted claim that
+ * needs changing gets a corrected claim instead.
+ */
+async function loadEditableLineItem(req: any, claimId: number, lineItemId: number) {
+  const claim = await storage.getClaim(claimId);
+  if (!claim) return { error: { status: 404, message: 'Claim not found' } };
+  if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+    return { error: { status: 403, message: 'Access denied' } };
+  }
+  const status = (claim.status || '').toLowerCase();
+  if (status && status !== 'draft') {
+    return {
+      error: {
+        status: 400,
+        message: `This claim is ${status}, so its line items can't be changed. Draft a corrected claim instead.`,
+      },
+    };
+  }
+  const lineItem = await storage.getClaimLineItem(lineItemId);
+  if (!lineItem || lineItem.claimId !== claimId) {
+    return { error: { status: 404, message: 'Line item not found on this claim' } };
+  }
+  return { claim, lineItem };
+}
+
+/**
+ * PATCH /api/claims/:id/line-items/:lineItemId — correct a line item.
+ *
+ * Units, modifier, diagnosis, date and the charge itself. `amount` is always
+ * recomputed from rate × units in the storage layer rather than accepted from
+ * the caller, so the two can never disagree.
+ */
+router.patch('/:id/line-items/:lineItemId', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = validatePositiveInt(req.params.id);
+    const lineItemId = validatePositiveInt(req.params.lineItemId);
+    if (claimId === null || lineItemId === null) {
+      return res.status(400).json({ message: 'Invalid claim or line item ID' });
+    }
+
+    const loaded = await loadEditableLineItem(req, claimId, lineItemId);
+    if (loaded.error) return res.status(loaded.error.status).json({ message: loaded.error.message });
+    const { lineItem } = loaded;
+
+    const patch: Record<string, any> = {};
+
+    if (req.body.units !== undefined) {
+      // Deliberately not parseInt: parseInt('1.5') is 1, so a biller typing
+      // 1.5 units would silently bill 1. Reject rather than truncate.
+      const raw = req.body.units;
+      const units = typeof raw === 'number' ? raw : Number(String(raw).trim());
+      if (!Number.isInteger(units) || units < 1 || units > 999) {
+        return res.status(400).json({ message: 'Units must be a whole number between 1 and 999.' });
+      }
+      patch.units = units;
+    }
+
+    if (req.body.rate !== undefined) {
+      if (req.body.rate === null || req.body.rate === '') {
+        // Clearing the override returns this line to the fee schedule.
+        const standard = lineItem!.standardRate
+          ?? (await storage.resolvePracticeCptRate(loaded.claim!.practiceId, lineItem!.cptCodeId));
+        if (standard === null) {
+          return res.status(400).json({
+            message: 'No charge is set for this code, so there is no standard rate to revert to.',
+            code: 'RATE_NOT_SET',
+          });
+        }
+        patch.rate = standard;
+        patch.rateOverrideReason = null;
+      } else {
+        const parsed = parseLineRate(req.body.rate);
+        if (parsed === null) {
+          return res.status(400).json({ message: 'Rate must be a number between 0 and 100000.' });
+        }
+        patch.rate = parsed;
+        if (req.body.rateOverrideReason !== undefined) {
+          patch.rateOverrideReason = req.body.rateOverrideReason || null;
+        }
+      }
+    } else if (req.body.rateOverrideReason !== undefined) {
+      patch.rateOverrideReason = req.body.rateOverrideReason || null;
+    }
+
+    if (req.body.modifier !== undefined) patch.modifier = req.body.modifier || null;
+    if (req.body.icd10CodeId !== undefined) {
+      patch.icd10CodeId = req.body.icd10CodeId ? parseInt(req.body.icd10CodeId, 10) : null;
+    }
+    if (req.body.dateOfService !== undefined) patch.dateOfService = req.body.dateOfService || null;
+    if (req.body.notes !== undefined) patch.notes = req.body.notes || null;
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ message: 'Nothing to update' });
+    }
+
+    const updated = await storage.updateClaimLineItem(lineItemId, patch);
+    const newTotal = await storage.recalculateClaimTotal(claimId);
+
+    logger.info('Claim line item updated', {
+      claimId, lineItemId, fields: Object.keys(patch),
+      previousAmount: lineItem!.amount, newAmount: updated?.amount,
+      userId: req.user?.claims?.sub,
+    });
+
+    res.json({ ...updated, claimTotal: newTotal });
+  } catch (error) {
+    logger.error('Error updating line item', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to update line item' });
+  }
+});
+
+/** DELETE /api/claims/:id/line-items/:lineItemId — remove a line item. */
+router.delete('/:id/line-items/:lineItemId', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = validatePositiveInt(req.params.id);
+    const lineItemId = validatePositiveInt(req.params.lineItemId);
+    if (claimId === null || lineItemId === null) {
+      return res.status(400).json({ message: 'Invalid claim or line item ID' });
+    }
+
+    const loaded = await loadEditableLineItem(req, claimId, lineItemId);
+    if (loaded.error) return res.status(loaded.error.status).json({ message: loaded.error.message });
+
+    await storage.deleteClaimLineItem(lineItemId);
+    const newTotal = await storage.recalculateClaimTotal(claimId);
+
+    logger.info('Claim line item deleted', {
+      claimId, lineItemId,
+      removedAmount: loaded.lineItem!.amount,
+      userId: req.user?.claims?.sub,
+    });
+
+    res.json({ success: true, claimTotal: newTotal });
+  } catch (error) {
+    logger.error('Error deleting line item', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to delete line item' });
+  }
+});
+
 // Add line item to claim
 router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
   try {
@@ -664,6 +819,15 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
     }
     if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
       return res.status(403).json({ message: 'Access denied' });
+    }
+    // Draft-only, matching the PATCH/DELETE above and Blanche's tool. Adding
+    // a billable line to a claim the payer has already received would leave
+    // our record disagreeing with theirs.
+    const claimStatus = (claim.status || '').toLowerCase();
+    if (claimStatus && claimStatus !== 'draft') {
+      return res.status(400).json({
+        message: `This claim is ${claimStatus}, so line items can't be added. Draft a corrected claim instead.`,
+      });
     }
 
     // Get CPT code for rate
@@ -685,7 +849,19 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
       });
     }
 
-    const rate = parseFloat(practiceRate);
+    // A one-off charge for this line, deviating from the fee schedule. The
+    // schedule rate is still recorded as standardRate so the deviation stays
+    // visible after the schedule later changes.
+    let overrideRate: string | null = null;
+    if (req.body.rate !== undefined && req.body.rate !== null && req.body.rate !== '') {
+      const parsed = parseLineRate(req.body.rate);
+      if (parsed === null) {
+        return res.status(400).json({ message: 'Rate must be a number between 0 and 100000.' });
+      }
+      overrideRate = parsed;
+    }
+
+    const rate = parseFloat(overrideRate ?? practiceRate);
     const lineUnits = units || 1;
     const amount = (rate * lineUnits).toFixed(2);
 
@@ -696,6 +872,8 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
       units: lineUnits,
       rate: rate.toFixed(2),
       amount,
+      standardRate: practiceRate,
+      rateOverrideReason: overrideRate ? (req.body.rateOverrideReason || null) : null,
       dateOfService: dateOfService || new Date().toISOString().split('T')[0],
       modifier: modifier || null,
       notes: notes || null,
