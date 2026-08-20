@@ -20,6 +20,7 @@ const { mockStorage } = vi.hoisted(() => ({
   mockStorage: {
     getClaim: vi.fn(),
     getCptCodes: vi.fn(),
+    resolvePracticeCptRate: vi.fn(),
     createClaimLineItem: vi.fn(),
     getClaimLineItems: vi.fn(),
     updateClaim: vi.fn(),
@@ -47,6 +48,12 @@ beforeEach(() => {
     { id: CPT_ID, code: '97530', baseRate: '58.50' },
     { id: 6, code: '97110', baseRate: '48.00' },
   ]);
+  // Billing prices from the practice's own fee schedule, never the shared
+  // catalog row. The catalog rates above are platform suggestions only.
+  const practiceRates: Record<number, string> = { [CPT_ID]: '58.50', 6: '48.00' };
+  mockStorage.resolvePracticeCptRate.mockImplementation(
+    async (_practiceId: number, cptCodeId: number) => practiceRates[cptCodeId] ?? null,
+  );
   mockStorage.createClaimLineItem.mockImplementation(async (data: any) => ({
     id: 1000, ...data,
   }));
@@ -147,6 +154,44 @@ describe('add_claim_line_item tool', () => {
     expect(created.units).toBe(1);
     expect(created.amount).toBe('58.50');
     expect(created.dateOfService).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  // The catalog is global — one row per code shared by every practice — so a
+  // charge read from it would be another practice's charge. A code the
+  // practice has not priced must be refused, never billed at the platform
+  // suggestion.
+  it('refuses to bill a code the practice has no charge for', async () => {
+    mockStorage.getClaim.mockResolvedValue(draftClaim());
+    mockStorage.getCptCodes.mockResolvedValue([
+      { id: 7, code: '92507', description: 'Speech treatment', baseRate: '289.00' },
+    ]);
+    mockStorage.resolvePracticeCptRate.mockResolvedValue(null);
+    const out = JSON.parse(
+      await executeTool(
+        'add_claim_line_item',
+        { claimId: CLAIM_ID, cptCodeId: 7 },
+        PRACTICE_ID, USER_ID,
+      ),
+    );
+    expect(out.error).toMatch(/no charge is set for cpt 92507/i);
+    expect(out.error).toMatch(/do not invent an amount/i);
+    expect(mockStorage.createClaimLineItem).not.toHaveBeenCalled();
+    expect(mockStorage.updateClaim).not.toHaveBeenCalled();
+  });
+
+  it('prices from the practice fee schedule, not the catalog suggestion', async () => {
+    mockStorage.getClaim.mockResolvedValue(draftClaim());
+    // Catalog says $58.50; this practice bills $75.00.
+    mockStorage.resolvePracticeCptRate.mockResolvedValue('75.00');
+    mockStorage.getClaimLineItems.mockResolvedValue([{ amount: '150.00' }]);
+    await executeTool(
+      'add_claim_line_item',
+      { claimId: CLAIM_ID, cptCodeId: CPT_ID, units: 2 },
+      PRACTICE_ID, USER_ID,
+    );
+    const created = mockStorage.createClaimLineItem.mock.calls[0][0];
+    expect(created.rate).toBe('75.00');
+    expect(created.amount).toBe('150.00');
   });
 
   it('rejects missing or non-numeric claimId / cptCodeId', async () => {

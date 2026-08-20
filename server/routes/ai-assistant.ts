@@ -3105,7 +3105,16 @@ export async function executeTool(
           });
         }
 
-        const rate = parseFloat((cptCode as any).baseRate || '289.00');
+        // Price from this practice's fee schedule; the catalog figure is a
+        // shared platform suggestion and must never reach a claim.
+        const practiceRate = await storage.resolvePracticeCptRate(practiceId, cptCodeId);
+        if (practiceRate === null) {
+          return JSON.stringify({
+            error: `No charge is set for CPT ${(cptCode as any).code} in this practice's fee schedule, so it cannot be billed yet. Tell the user to set it under Insurance Rates → Your Charges. Do not invent an amount.`,
+          });
+        }
+
+        const rate = parseFloat(practiceRate);
         const lineUnits = (args.units as number) || 1;
         const amount = (rate * lineUnits).toFixed(2);
         const lineItem = await storage.createClaimLineItem({

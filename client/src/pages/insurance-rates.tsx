@@ -60,8 +60,12 @@ interface CptCatalogEntry {
   description: string;
   category: string | null;
   therapyCategory: string | null;
+  /** This practice's charge. Null = not set = not billable. */
   baseRate: string | null;
-  rateEditedAt: string | null;
+  /** Platform reference figure, shown as a hint. Never billed. */
+  suggestedRate: string | null;
+  /** True once this practice has set its own charge. */
+  isPracticeRate: boolean;
 }
 
 /**
@@ -131,6 +135,8 @@ function PracticeChargesTab() {
     saveRate.mutate({ id: entry.id, baseRate: parsed.toFixed(2) });
   };
 
+  const unsetCount = (codes ?? []).filter((c) => !c.isPracticeRate).length;
+
   const term = search.trim().toLowerCase();
   const visible = (codes ?? []).filter(
     (c) =>
@@ -148,9 +154,15 @@ function PracticeChargesTab() {
         </CardTitle>
         <CardDescription>
           What you bill per CPT code — this is the amount that goes out on the claim.
-          Codes marked <Badge variant="outline" className="mx-1">default</Badge>
-          still carry a platform placeholder, not your fee schedule. Set your real
-          charges before submitting claims.
+          Set a charge once and every future claim uses it; you never re-enter it
+          per claim. A code left blank
+          <Badge variant="outline" className="mx-1">not set</Badge>
+          cannot be billed until you give it a charge.
+          {unsetCount > 0 && (
+            <span className="block mt-2 text-amber-700">
+              {unsetCount} {unsetCount === 1 ? 'code has' : 'codes have'} no charge set.
+            </span>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -193,8 +205,10 @@ function PracticeChargesTab() {
                       </td>
                       <td className="p-2 text-muted-foreground">
                         {entry.description}
-                        {!entry.rateEditedAt && (
-                          <Badge variant="outline" className="ml-2 text-xs">default</Badge>
+                        {!entry.isPracticeRate && (
+                          <Badge variant="outline" className="ml-2 text-xs text-amber-700">
+                            not set
+                          </Badge>
                         )}
                       </td>
                       <td className="p-2 text-muted-foreground text-xs">
@@ -208,6 +222,11 @@ function PracticeChargesTab() {
                             step="0.01"
                             min="0"
                             value={value}
+                            placeholder={
+                              entry.suggestedRate
+                                ? Number(entry.suggestedRate).toFixed(2)
+                                : "0.00"
+                            }
                             onChange={(e) =>
                               setDrafts((prev) => ({ ...prev, [entry.id]: e.target.value }))
                             }

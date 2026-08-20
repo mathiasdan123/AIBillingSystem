@@ -333,7 +333,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                   <SelectContent>
                     {cptCodes?.map((cpt: any) => (
                       <SelectItem key={cpt.id} value={cpt.id.toString()}>
-                        {cpt.code} - {cpt.description} (${cpt.baseRate})
+                        {cpt.code} - {cpt.description}{cpt.baseRate ? ` ($${cpt.baseRate})` : " — no charge set"}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1107,6 +1107,15 @@ export default function Claims() {
       0,
     );
 
+  // Codes the user has picked that this practice has no charge for. The
+  // server refuses these, so surface it while the dialog is still open
+  // rather than after they hit Create.
+  const unpricedClaimCodes = newClaimLineItems
+    .filter((item) => item.cptCodeId)
+    .map((item) => cptCodes?.find((c: any) => c.id === parseInt(item.cptCodeId)))
+    .filter((cpt: any) => cpt && !cpt.baseRate)
+    .map((cpt: any) => cpt.code);
+
   const createClaimMutation = useMutation({
     mutationFn: async (data: ClaimFormData) => {
       const validLineItems = newClaimLineItems.filter((item) => item.cptCodeId);
@@ -1718,6 +1727,14 @@ export default function Claims() {
       });
       return;
     }
+    if (unpricedClaimCodes.length > 0) {
+      toast({
+        title: "Set a charge first",
+        description: `No charge is set for ${unpricedClaimCodes.join(', ')}. Add it under Insurance Rates → Your Charges.`,
+        variant: "destructive",
+      });
+      return;
+    }
     createClaimMutation.mutate(data);
   };
 
@@ -2029,7 +2046,7 @@ export default function Claims() {
                               <SelectContent>
                                 {cptCodes?.map((cpt) => (
                                   <SelectItem key={cpt.id} value={cpt.id.toString()}>
-                                    {cpt.code} - {cpt.description} (${cpt.baseRate})
+                                    {cpt.code} - {cpt.description}{cpt.baseRate ? ` ($${cpt.baseRate})` : " — no charge set"}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -2086,6 +2103,13 @@ export default function Claims() {
                       </div>
                     ))}
                   </div>
+
+                  {unpricedClaimCodes.length > 0 && (
+                    <p className="text-xs text-amber-700" data-testid="warning-no-charge-set">
+                      No charge is set for {unpricedClaimCodes.join(', ')}. Set it under
+                      Insurance Rates → Your Charges before billing.
+                    </p>
+                  )}
 
                   <div className="flex justify-between items-center pt-2 border-t">
                     <span className="text-sm font-medium">Total</span>
@@ -2319,7 +2343,7 @@ export default function Claims() {
                         <SelectContent>
                           {cptCodes?.map((cpt) => (
                             <SelectItem key={cpt.id} value={cpt.id.toString()}>
-                              {cpt.code} - {cpt.description} (${cpt.baseRate})
+                              {cpt.code} - {cpt.description}{cpt.baseRate ? ` ($${cpt.baseRate})` : " — no charge set"}
                             </SelectItem>
                           ))}
                         </SelectContent>

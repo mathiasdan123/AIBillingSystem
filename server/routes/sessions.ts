@@ -64,13 +64,21 @@ const safeErrorResponse = (res: Response, statusCode: number, publicMessage: str
 
 // ==================== CPT CODES ====================
 
-router.get('/cpt-codes', async (req, res) => {
+/**
+ * GET /api/cpt-codes — the catalog as THIS practice sees it.
+ *
+ * `baseRate` is the practice's own charge, or null when they have not set
+ * one (that code is not billable yet). `suggestedRate` carries the platform
+ * reference figure for display only.
+ *
+ * Now authenticated: the response is practice-specific, and an unscoped
+ * catalog is exactly how one practice's fee schedule became everyone's.
+ * Not cached globally for the same reason.
+ */
+router.get('/cpt-codes', isAuthenticated, async (req: any, res) => {
   try {
-    const cptCodes = await cache.wrap(
-      CacheKeys.cptCodes(),
-      CacheTTL.CODE_LOOKUPS,
-      () => storage.getAllCptCodes()
-    );
+    const practiceId = getAuthorizedPracticeId(req);
+    const cptCodes = await storage.getPracticeCptCodes(practiceId);
     res.json(cptCodes);
   } catch (error) {
     logger.error('Error fetching CPT codes', { error: error instanceof Error ? error.message : String(error) });
@@ -97,13 +105,14 @@ export function parseRateInput(value: unknown, field: string): string | null | u
 }
 
 /**
- * PATCH /api/cpt-codes/:id — update a code's billed charge.
+ * PATCH /api/cpt-codes/:id — set THIS practice's charge for a code.
  *
- * The catalog ships with platform defaults ($550 evaluation / $400 re-eval /
- * $289 treatment); a practice's real fee schedule is its own. Only the rate
- * fields are writable — code, description and therapy category define what
- * the code IS and changing those would silently repoint every claim line
- * that references the row.
+ * Writes to practice_cpt_rates, never to the shared catalog row. The catalog
+ * is global, so a charge written there would be every practice's charge.
+ *
+ * Sending baseRate: null clears the practice's charge, returning the code to
+ * "not set" — which means not billable, not "falls back to the platform
+ * figure". Blank has to mean blank.
  *
  * Admin/billing only: this sets the dollar amount that goes out on an 837P.
  */
@@ -127,26 +136,58 @@ router.patch('/cpt-codes/:id', isAuthenticated, isAdminOrBilling, async (req: an
       return res.status(400).json({ message: 'Nothing to update — provide baseRate or cashRate' });
     }
 
+    const practiceId = getAuthorizedPracticeId(req);
     const existing = (await storage.getCptCodes()).find((c: any) => c.id === id);
     if (!existing) {
       return res.status(404).json({ message: 'CPT code not found' });
     }
 
-    const updated = await storage.updateCptCodeRates(id, { baseRate, cashRate });
+    const previous = await storage.resolvePracticeCptRate(practiceId, id);
 
-    // The catalog is cached globally; a stale read here means a claim gets
-    // priced at the old charge.
-    await cache.del(CacheKeys.cptCodes());
+    // baseRate: null is an explicit "clear my charge for this code".
+    if (baseRate === null) {
+      await storage.deletePracticeCptRate(practiceId, id);
+      logger.info('Practice CPT charge cleared', {
+        practiceId, cptCodeId: id, code: (existing as any).code,
+        previousBaseRate: previous, userId: req.user?.claims?.sub,
+      });
+      return res.json({
+        ...existing,
+        baseRate: null,
+        cashRate: null,
+        suggestedRate: (existing as any).baseRate ?? null,
+        isPracticeRate: false,
+      });
+    }
 
-    logger.info('CPT rate updated', {
+    if (baseRate === undefined) {
+      return res.status(400).json({
+        message: 'Set a billed charge before setting a cash rate for this code.',
+      });
+    }
+
+    const saved = await storage.upsertPracticeCptRate(practiceId, id, {
+      baseRate,
+      cashRate: cashRate ?? null,
+      updatedBy: req.user?.claims?.sub,
+    });
+
+    logger.info('Practice CPT charge updated', {
+      practiceId,
       cptCodeId: id,
       code: (existing as any).code,
-      previousBaseRate: (existing as any).baseRate,
-      newBaseRate: baseRate ?? (existing as any).baseRate,
+      previousBaseRate: previous,
+      newBaseRate: saved.baseRate,
       userId: req.user?.claims?.sub,
     });
 
-    res.json(updated);
+    res.json({
+      ...existing,
+      baseRate: saved.baseRate,
+      cashRate: saved.cashRate,
+      suggestedRate: (existing as any).baseRate ?? null,
+      isPracticeRate: true,
+    });
   } catch (error) {
     logger.error('Error updating CPT rate', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to update CPT rate' });
@@ -297,11 +338,34 @@ router.post('/superbills', isAuthenticated, async (req: any, res) => {
     const cptCodes = await storage.getCptCodes();
     const icd10Codes = await storage.getIcd10Codes();
 
+    // Price every line from this practice's fee schedule up front, so a code
+    // with no charge set fails the whole superbill with a clear message
+    // rather than being billed at a shared platform figure.
+    const practiceRates = new Map<number, string | null>();
+    for (const item of lineItems) {
+      if (!practiceRates.has(item.cptCodeId)) {
+        practiceRates.set(
+          item.cptCodeId,
+          await storage.resolvePracticeCptRate(practiceId, item.cptCodeId),
+        );
+      }
+    }
+    const unpriced = lineItems
+      .filter((item: any) => practiceRates.get(item.cptCodeId) === null)
+      .map((item: any) => cptCodes.find((c: any) => c.id === item.cptCodeId)?.code)
+      .filter(Boolean);
+    if (unpriced.length > 0) {
+      return res.status(400).json({
+        message: `No charge is set for CPT ${unpriced.join(', ')}. Set your charges under Insurance Rates → Your Charges before billing.`,
+        code: 'RATE_NOT_SET',
+      });
+    }
+
     let totalAmount = 0;
     const processedLineItems = lineItems.map((item: any) => {
       const cptCode = cptCodes.find((c: any) => c.id === item.cptCodeId);
       if (!cptCode) throw new Error(`Invalid CPT code ID: ${item.cptCodeId}`);
-      const rate = parseFloat(cptCode.baseRate || '289.00');
+      const rate = parseFloat(practiceRates.get(item.cptCodeId) as string);
       const units = item.units || 1;
       const amount = rate * units;
       totalAmount += amount;
@@ -357,7 +421,15 @@ router.post('/sessions/:id/generate-claim', isAuthenticated, async (req: any, re
     const cptCode = cptCodes.find((c: any) => c.id === session.cptCodeId);
     if (!cptCode) return res.status(400).json({ message: 'Session has no valid CPT code' });
 
-    const rate = parseFloat(cptCode.baseRate || '289.00');
+    const sessionRate = await storage.resolvePracticeCptRate(practiceId, session.cptCodeId);
+    if (sessionRate === null) {
+      return res.status(400).json({
+        message: `No charge is set for CPT ${(cptCode as any).code}. Set your charge under Insurance Rates → Your Charges before billing this session.`,
+        code: 'RATE_NOT_SET',
+      });
+    }
+
+    const rate = parseFloat(sessionRate);
     const units = session.units || 1;
     const totalAmount = (rate * units).toFixed(2);
     const claimNumber = generateSecureClaimNumber("CLM");
