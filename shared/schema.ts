@@ -4571,3 +4571,48 @@ export const insertMetricSnapshotSchema = createInsertSchema(metricSnapshots).om
 });
 export type MetricSnapshot = typeof metricSnapshots.$inferSelect;
 export type InsertMetricSnapshot = z.infer<typeof insertMetricSnapshotSchema>;
+
+/**
+ * Billing engine periods — one row per practice per month recording what
+ * TherapyBill's percentage-of-collections fee was computed on, and whether a
+ * Stripe invoice was raised for it.
+ *
+ * The row is the audit trail for a charge against a customer, so it stores
+ * the basis and the rate actually applied, not just the resulting fee: a
+ * practice asking "what is this invoice for?" must be answerable months later
+ * even if their rate has since changed.
+ *
+ * Money is stored in integer cents (codebase convention) — never floats.
+ * The unique index on (practiceId, periodMonth) makes the monthly run
+ * idempotent: a re-run updates the computation but never raises a second
+ * invoice for the same month.
+ */
+export const billingEnginePeriods = pgTable("billing_engine_periods", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  /** First day of the billed month (e.g. 2026-08-01 for August 2026). */
+  periodMonth: date("period_month").notNull(),
+  /** Sum of non-reversed insurance payments posted in the period, in cents. */
+  collectionsCents: integer("collections_cents").notNull(),
+  /** The percentage actually applied, captured at computation time. */
+  percentageApplied: decimal("percentage_applied", { precision: 5, scale: 2 }).notNull(),
+  /** collectionsCents * percentage, rounded to the cent. */
+  feeCents: integer("fee_cents").notNull(),
+  /** computed → invoice_drafted → skipped_zero → error */
+  status: varchar("status").notNull().default("computed"),
+  stripeInvoiceId: varchar("stripe_invoice_id"),
+  /** Populated when status = 'error' so a failed month is visible, not silent. */
+  errorMessage: text("error_message"),
+  computedAt: timestamp("computed_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_billing_engine_periods").on(table.practiceId, table.periodMonth),
+  index("idx_billing_engine_periods_month").on(table.periodMonth),
+]);
+
+export const insertBillingEnginePeriodSchema = createInsertSchema(billingEnginePeriods).omit({
+  id: true,
+  createdAt: true,
+});
+export type BillingEnginePeriod = typeof billingEnginePeriods.$inferSelect;
+export type InsertBillingEnginePeriod = z.infer<typeof insertBillingEnginePeriodSchema>;
