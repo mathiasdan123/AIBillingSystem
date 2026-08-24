@@ -33,6 +33,7 @@ export interface InsuranceFields {
   groupNumber?: string | null;
   effectiveDate?: string | null;
   terminationDate?: string | null;
+  copayAmount?: string | null;
   secondaryInsuranceProvider?: string | null;
   secondaryInsurancePayerId?: string | null;
   secondaryInsuranceMemberId?: string | null;
@@ -61,6 +62,7 @@ const EMPTY: InsuranceFields = {
   groupNumber: '',
   effectiveDate: '',
   terminationDate: '',
+  copayAmount: '',
   secondaryInsuranceProvider: '',
   secondaryInsurancePayerId: '',
   secondaryInsuranceMemberId: '',
@@ -158,6 +160,22 @@ export default function InsuranceEditDialog({
               </Field>
               <Field label="Termination Date" id="itd" hint="Leave blank if open-ended.">
                 <Input id="itd" type="date" value={form.terminationDate ?? ''} onChange={set('terminationDate')} data-testid="input-termination-date" />
+              </Field>
+              <Field
+                label="Copay"
+                id="icp"
+                hint="Leave blank to use the amount from the eligibility check. Set it here when the payer's figure is missing or wrong — the front desk will see this at every check-in."
+              >
+                <Input
+                  id="icp"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="e.g. 30.00"
+                  value={form.copayAmount ?? ''}
+                  onChange={set('copayAmount')}
+                  data-testid="input-copay-amount"
+                />
               </Field>
             </div>
           </section>

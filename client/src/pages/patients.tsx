@@ -1877,6 +1877,7 @@ export default function Patients() {
             groupNumber: selectedPatient.groupNumber,
             effectiveDate: (selectedPatient as any).effectiveDate,
             terminationDate: (selectedPatient as any).terminationDate,
+            copayAmount: (selectedPatient as any).copayAmount,
             secondaryInsuranceProvider: selectedPatient.secondaryInsuranceProvider,
             secondaryInsuranceMemberId: selectedPatient.secondaryInsuranceMemberId,
             secondaryInsurancePolicyNumber: selectedPatient.secondaryInsurancePolicyNumber,

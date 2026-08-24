@@ -697,7 +697,7 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
     const isTelehealth = appointment.locationId == null;
 
     let expectedCents: number | null = null;
-    let source: 'eligibility' | 'cache' | 'none' | 'recorded' = 'none';
+    let source: 'eligibility' | 'cache' | 'none' | 'recorded' | 'patient' = 'none';
     let stale = false;
     let lastCheckedAt: string | null = null;
     let eligibilityId: number | null = null;
@@ -706,7 +706,20 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
       expectedCents = Math.round(parseFloat(existingExpected) * 100);
       source = 'recorded';
     } else if (appointment.patientId && !isTelehealth) {
-      const elig = await storage.getPatientEligibility(appointment.patientId).catch(() => null);
+      // The practice's own figure wins over the payer's. Someone recorded it
+      // precisely because the eligibility response was missing or wrong, so
+      // silently preferring eligibility would undo their correction at every
+      // check-in.
+      const patientRecord = await storage.getPatient(appointment.patientId).catch(() => null);
+      const patientCopay = (patientRecord as any)?.copayAmount;
+      if (patientCopay != null && parseFloat(patientCopay) > 0) {
+        expectedCents = Math.round(parseFloat(patientCopay) * 100);
+        source = 'patient';
+      }
+
+      const elig = expectedCents == null
+        ? await storage.getPatientEligibility(appointment.patientId).catch(() => null)
+        : null;
       if (elig && (elig as any).copay) {
         expectedCents = Math.round(parseFloat((elig as any).copay) * 100);
         source = 'eligibility';
