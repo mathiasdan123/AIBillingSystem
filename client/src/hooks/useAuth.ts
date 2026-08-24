@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getQueryFn } from "@/lib/queryClient";
 
 interface User {
   id: string;
@@ -30,6 +31,10 @@ export function useAuth() {
 
   const { data: user, isLoading, error, isFetched } = useQuery<User>({
     queryKey: [endpoint],
+    // Unlike every other query, a 401 here is not an error — it is the normal
+    // answer for an anonymous visitor. Throwing would fire the global
+    // "session expired" toast on public pages.
+    queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
     staleTime: 0, // Always fetch fresh auth state
     gcTime: 0, // Don't cache auth data

@@ -246,7 +246,18 @@ export const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      queryFn: getQueryFn({ on401: "returnNull" }),
+      // Throw on 401, don't return null. Returning null made an expired session
+    // look like a SUCCESSFUL query with no rows, so every list page rendered
+    // its "you have nothing yet" empty state — no error, no toast, nothing to
+    // act on. A logged-out user was told "Welcome! Add your first patient"
+    // while their real patients sat safely on the server (hit live during a
+    // customer demo, 2026-08-24). Auth failure and emptiness are different
+    // things and must render differently.
+    //
+    // useAuth keeps returnNull explicitly: for /api/auth/user, "401" genuinely
+    // means "not logged in yet", and treating it as an error would fire the
+    // session-expired toast at anonymous visitors on public pages.
+    queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: Infinity,
