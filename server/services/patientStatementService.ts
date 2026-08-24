@@ -10,6 +10,7 @@ import {
   patientStatements,
   claims,
   patients,
+  paymentPostings,
   type PatientStatement,
   type InsertPatientStatement,
 } from '@shared/schema';
@@ -79,22 +80,62 @@ export async function generateStatement(
       ),
     );
 
-  // Build line items from claims
-  const lineItems: StatementLineItem[] = patientClaims.map((claim: typeof patientClaims[number]) => {
-    const totalAmount = parseFloat(claim.totalAmount) || 0;
-    const paidAmount = parseFloat(claim.paidAmount || '0') || 0;
-    const patientOwes = Math.max(0, totalAmount - paidAmount);
+  // What the patient owes comes from the payer's adjudication (the PR-group
+  // amounts on the payment posting), NOT from charge - insurance paid.
+  //
+  // The old arithmetic billed the contractual write-off: $200 charged,
+  // $110 allowed, $80 paid, $30 patient responsibility produced a $120
+  // statement instead of $30. For an in-network practice that is balance
+  // billing — the $90 difference is exactly the discount the practice agreed
+  // to accept in the payer contract, and it cannot be passed to the patient.
+  const claimIds = patientClaims.map((c: typeof patientClaims[number]) => c.id);
+  const postings = claimIds.length
+    ? await db
+        .select({
+          claimId: paymentPostings.claimId,
+          patientResponsibility: sql<string>`COALESCE(SUM(CASE WHEN ${paymentPostings.reversed} = false THEN ${paymentPostings.patientResponsibility}::numeric ELSE 0 END), 0)::text`,
+          paid: sql<string>`COALESCE(SUM(CASE WHEN ${paymentPostings.reversed} = false THEN ${paymentPostings.paymentAmount}::numeric ELSE 0 END), 0)::text`,
+          postingCount: sql<number>`COUNT(*) FILTER (WHERE ${paymentPostings.reversed} = false)::int`,
+        })
+        .from(paymentPostings)
+        .where(
+          and(
+            eq(paymentPostings.practiceId, practiceId),
+            inArray(paymentPostings.claimId, claimIds),
+          ),
+        )
+        .groupBy(paymentPostings.claimId)
+    : [];
 
-    return {
-      dateOfService: claim.createdAt
-        ? claim.createdAt.toISOString().split('T')[0]
-        : startDate,
-      description: `Claim #${claim.claimNumber || claim.id}`,
-      charges: totalAmount.toFixed(2),
-      insurancePaid: paidAmount.toFixed(2),
-      patientOwes: patientOwes.toFixed(2),
-    };
-  });
+  const byClaim = new Map<number, { patientResponsibility: number; paid: number; postingCount: number }>();
+  for (const p of postings) {
+    byClaim.set(p.claimId, {
+      patientResponsibility: parseFloat(p.patientResponsibility) || 0,
+      paid: parseFloat(p.paid) || 0,
+      postingCount: p.postingCount ?? 0,
+    });
+  }
+
+  // Build line items from ADJUDICATED claims only. A claim the payer has not
+  // adjudicated has no known patient share — billing it would charge the
+  // patient the full sticker price for a visit insurance is about to pay for.
+  const lineItems: StatementLineItem[] = patientClaims
+    .filter((claim: typeof patientClaims[number]) => (byClaim.get(claim.id)?.postingCount ?? 0) > 0)
+    .map((claim: typeof patientClaims[number]) => {
+      const totalAmount = parseFloat(claim.totalAmount) || 0;
+      const adjudicated = byClaim.get(claim.id)!;
+      const patientOwes = Math.max(0, adjudicated.patientResponsibility);
+
+      return {
+        dateOfService: claim.createdAt
+          ? claim.createdAt.toISOString().split('T')[0]
+          : startDate,
+        description: `Claim #${claim.claimNumber || claim.id}`,
+        charges: totalAmount.toFixed(2),
+        insurancePaid: adjudicated.paid.toFixed(2),
+        patientOwes: patientOwes.toFixed(2),
+      };
+    });
 
   // Calculate totals
   let totalCharges = 0;
@@ -138,7 +179,10 @@ export async function generateStatement(
     dueDate: dueDate.toISOString().split('T')[0],
     totalCharges: totalCharges.toFixed(2),
     insurancePaid: totalInsurancePaid.toFixed(2),
-    adjustments: '0.00',
+    // The contractual write-off, shown so the statement reconciles:
+    // charges - insurance paid - adjustments = patient balance. Hardcoding
+    // '0.00' made the statement appear to justify billing the write-off.
+    adjustments: Math.max(0, totalCharges - totalInsurancePaid - totalPatientBalance).toFixed(2),
     patientBalance: (totalPatientBalance + previousBalance).toFixed(2),
     previousBalance: previousBalance.toFixed(2),
     lineItems,

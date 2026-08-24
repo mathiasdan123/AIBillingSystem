@@ -16,9 +16,13 @@ function makeSelectChain() {
       selectCallIndex++;
       return {
         orderBy: vi.fn().mockReturnValue(results),
-        groupBy: vi.fn().mockReturnValue({
+        // groupBy must be usable as a TERMINAL (awaited directly) as well as
+        // chained into orderBy — the statement service awaits it directly.
+        groupBy: vi.fn().mockImplementation(() => ({
           orderBy: vi.fn().mockReturnValue(results),
-        }),
+          then: (resolve: any) => resolve(results),
+          [Symbol.iterator]: function* () { yield* results; },
+        })),
         // Also return as array for destructuring [first] = await db.select()...where()
         then: (resolve: any) => resolve(results),
         [Symbol.iterator]: function* () { yield* results; },

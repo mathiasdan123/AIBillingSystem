@@ -471,6 +471,17 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
   allowedAmount: number | null;
   paidAmount: number;
   adjustmentAmount: number;
+  /**
+   * Sum of CAS adjustments in the PR (Patient Responsibility) group only —
+   * deductible, coinsurance, copay. This is the ONLY amount that may be
+   * billed to the patient. CO (Contractual Obligation) amounts are the
+   * write-off the practice agreed to absorb; billing those is balance
+   * billing. adjustmentAmount mixes both groups, so it must never be used
+   * to work out what a patient owes.
+   */
+  patientResponsibility: number;
+  /** CO/OA/PI group total — the write-off. Never billable to the patient. */
+  contractualAdjustment: number;
   adjustmentReasonCodes: Array<{ code: string; description: string }>;
   remarkCodes: Array<{ code: string; description: string }>;
 }> {
@@ -483,6 +494,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
     allowedAmount: number | null;
     paidAmount: number;
     adjustmentAmount: number;
+    patientResponsibility: number;
+    contractualAdjustment: number;
     adjustmentReasonCodes: Array<{ code: string; description: string }>;
     remarkCodes: Array<{ code: string; description: string }>;
   }> = [];
@@ -492,6 +505,10 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
       for (const svc of claim.serviceLines) {
         const allAdj = [...claim.adjustments, ...svc.adjustments];
         const adjAmount = allAdj.reduce((sum, a) => sum + a.amount, 0);
+        const prAmount = allAdj
+          .filter((a) => a.groupCode === 'PR')
+          .reduce((sum, a) => sum + a.amount, 0);
+        const coAmount = adjAmount - prAmount;
         const adjCodes = allAdj.map(a => ({
           code: `${a.groupCode}-${a.reasonCode}`,
           description: `${getAdjustmentGroupDescription(a.groupCode)}: ${getReasonCodeDescription(a.reasonCode)}`,
@@ -510,6 +527,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
           allowedAmount: svc.allowedAmount ?? null,
           paidAmount: svc.paidAmount,
           adjustmentAmount: adjAmount,
+          patientResponsibility: prAmount,
+          contractualAdjustment: coAmount,
           adjustmentReasonCodes: adjCodes,
           remarkCodes: rmkCodes,
         });
@@ -517,6 +536,13 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
     } else {
       // Claim-level only (no service lines)
       const adjAmount = claim.adjustments.reduce((sum, a) => sum + a.amount, 0);
+      // Prefer the claim's own CLP05 patient-responsibility when present;
+      // fall back to summing the PR-group CAS lines.
+      const prFromCas = claim.adjustments
+        .filter((a) => a.groupCode === 'PR')
+        .reduce((sum, a) => sum + a.amount, 0);
+      const prAmount = claim.patientResponsibility ?? prFromCas;
+      const coAmount = adjAmount - prFromCas;
       const adjCodes = claim.adjustments.map(a => ({
         code: `${a.groupCode}-${a.reasonCode}`,
         description: `${getAdjustmentGroupDescription(a.groupCode)}: ${getReasonCodeDescription(a.reasonCode)}`,
@@ -531,6 +557,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
         allowedAmount: null,
         paidAmount: claim.paidAmount,
         adjustmentAmount: adjAmount,
+        patientResponsibility: prAmount,
+        contractualAdjustment: coAmount,
         adjustmentReasonCodes: adjCodes,
         remarkCodes: [],
       });

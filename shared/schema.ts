@@ -3297,6 +3297,14 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
   allowedAmount: decimal("allowed_amount", { precision: 10, scale: 2 }),
   paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
   adjustmentAmount: decimal("adjustment_amount", { precision: 10, scale: 2 }),
+  /**
+   * PR-group CAS total — deductible/coinsurance/copay. The ONLY amount
+   * billable to the patient. adjustmentAmount mixes this with CO write-offs,
+   * so statements must never derive a patient balance from it.
+   */
+  patientResponsibility: decimal("patient_responsibility", { precision: 10, scale: 2 }),
+  /** CO/OA/PI total — the contractual write-off. Never billable. */
+  contractualAdjustment: decimal("contractual_adjustment", { precision: 10, scale: 2 }),
   adjustmentReasonCodes: jsonb("adjustment_reason_codes"), // e.g. [{ code: "CO-45", description: "..." }]
   remarkCodes: jsonb("remark_codes"), // e.g. [{ code: "N130", description: "..." }]
   status: varchar("status").default("unmatched").notNull(), // matched, unmatched, partial
