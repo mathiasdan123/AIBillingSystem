@@ -414,6 +414,8 @@ const INSURANCE_FIELDS = new Set([
   // The practice's own copay figure. Editable here so it can be corrected
   // when the payer's eligibility response is wrong or absent.
   'copayAmount',
+  // Percentage share for plans with no copay (out-of-network especially).
+  'coinsurancePercent',
   'secondaryInsuranceProvider',
   'secondaryInsurancePayerId',
   'secondaryInsuranceMemberId',
@@ -484,6 +486,14 @@ router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
     // copayAmount ends up on a card charge at check-in, so it is validated
     // rather than trusted: a stray character must not become a $0 copay, and
     // a mistyped 3000 must not be chargeable.
+    if (patch.coinsurancePercent != null) {
+      const pct = Number(String(patch.coinsurancePercent).replace(/%/g, '').trim());
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+        return res.status(400).json({ error: 'Coinsurance must be a percentage between 0 and 100' });
+      }
+      patch.coinsurancePercent = pct.toFixed(2);
+    }
+
     if (patch.copayAmount != null) {
       const amount = Number(String(patch.copayAmount).replace(/[$,]/g, ''));
       if (!Number.isFinite(amount) || amount < 0) {

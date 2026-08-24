@@ -34,6 +34,7 @@ export interface InsuranceFields {
   effectiveDate?: string | null;
   terminationDate?: string | null;
   copayAmount?: string | null;
+  coinsurancePercent?: string | null;
   secondaryInsuranceProvider?: string | null;
   secondaryInsurancePayerId?: string | null;
   secondaryInsuranceMemberId?: string | null;
@@ -63,6 +64,7 @@ const EMPTY: InsuranceFields = {
   effectiveDate: '',
   terminationDate: '',
   copayAmount: '',
+  coinsurancePercent: '',
   secondaryInsuranceProvider: '',
   secondaryInsurancePayerId: '',
   secondaryInsuranceMemberId: '',
@@ -175,6 +177,23 @@ export default function InsuranceEditDialog({
                   value={form.copayAmount ?? ''}
                   onChange={set('copayAmount')}
                   data-testid="input-copay-amount"
+                />
+              </Field>
+              <Field
+                label="Coinsurance %"
+                id="ico"
+                hint="For plans with no copay — e.g. 20 means the patient owes 20% after their deductible. Shown to the front desk as guidance; the exact amount is billed after insurance processes."
+              >
+                <Input
+                  id="ico"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  placeholder="e.g. 20"
+                  value={form.coinsurancePercent ?? ''}
+                  onChange={set('coinsurancePercent')}
+                  data-testid="input-coinsurance-percent"
                 />
               </Field>
             </div>

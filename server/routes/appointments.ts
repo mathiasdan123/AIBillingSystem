@@ -698,6 +698,8 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
 
     let expectedCents: number | null = null;
     let source: 'eligibility' | 'cache' | 'none' | 'recorded' | 'patient' = 'none';
+    let coinsurancePercent: number | null = null;
+    let coinsuranceSource: 'patient' | 'eligibility' | null = null;
     let stale = false;
     let lastCheckedAt: string | null = null;
     let eligibilityId: number | null = null;
@@ -717,9 +719,28 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
         source = 'patient';
       }
 
+      // Coinsurance is INFORMATION, never a chargeable amount. The patient's
+      // real share is a percentage of the ALLOWED amount, which nobody knows
+      // until the payer adjudicates — computing it against the billed charge
+      // at the front desk would overcharge them, the same error as billing a
+      // contractual write-off. It is reported so staff know what to tell the
+      // patient; the true figure arrives on the ERA.
+      const patientCoins = (patientRecord as any)?.coinsurancePercent;
+      if (patientCoins != null && parseFloat(patientCoins) > 0) {
+        coinsurancePercent = parseFloat(patientCoins);
+        coinsuranceSource = 'patient';
+      }
+
       const elig = expectedCents == null
         ? await storage.getPatientEligibility(appointment.patientId).catch(() => null)
         : null;
+      if (elig && coinsurancePercent == null && (elig as any).coinsurance != null) {
+        const eligCoins = Number((elig as any).coinsurance);
+        if (Number.isFinite(eligCoins) && eligCoins > 0) {
+          coinsurancePercent = eligCoins;
+          coinsuranceSource = 'eligibility';
+        }
+      }
       if (elig && (elig as any).copay) {
         expectedCents = Math.round(parseFloat((elig as any).copay) * 100);
         source = 'eligibility';
@@ -781,6 +802,10 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
       paymentMethods,
       chargingEnabled,
       maxAmountCents,
+      // Not chargeable — see above. Present so the desk can tell the patient
+      // what to expect and route them to "bill after insurance".
+      coinsurancePercent,
+      coinsuranceSource,
     });
   } catch (error) {
     logger.error('Error fetching copay info', {

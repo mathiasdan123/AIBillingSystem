@@ -1878,6 +1878,7 @@ export default function Patients() {
             effectiveDate: (selectedPatient as any).effectiveDate,
             terminationDate: (selectedPatient as any).terminationDate,
             copayAmount: (selectedPatient as any).copayAmount,
+            coinsurancePercent: (selectedPatient as any).coinsurancePercent,
             secondaryInsuranceProvider: selectedPatient.secondaryInsuranceProvider,
             secondaryInsuranceMemberId: selectedPatient.secondaryInsuranceMemberId,
             secondaryInsurancePolicyNumber: selectedPatient.secondaryInsurancePolicyNumber,
