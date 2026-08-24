@@ -67,7 +67,8 @@ export function WalkInDialog({ open, onOpenChange, patients, therapists }: Props
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [newPatient, setNewPatient] = useState({ firstName: "", lastName: "" });
   const [therapistId, setTherapistId] = useState<string>("");
-  const [duration, setDuration] = useState<number>(60);
+  // Standard session length; changeable in the dialog before scheduling.
+  const [duration, setDuration] = useState<number>(45);
 
   function reset() {
     setPatientSearchOpen(false);
