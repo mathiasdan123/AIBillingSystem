@@ -953,7 +953,6 @@ function AddWaitlistForm({
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
           dateOfBirth: "2000-01-01",
-          practiceId: 1,
         });
         const created = await res.json();
         patientId = String(created.id);

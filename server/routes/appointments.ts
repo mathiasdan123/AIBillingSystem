@@ -99,6 +99,13 @@ router.post('/', isAuthenticated, async (req: any, res) => {
   try {
     const { recurrencePattern, recurrenceEndDate, numberOfOccurrences, ...appointmentData } = req.body;
 
+    // Tenant safety: never trust a client-supplied practiceId on create — bind
+    // the appointment to the caller's own practice. Several client pages still
+    // post a hardcoded practiceId: 1, which would otherwise file every new
+    // practice's appointments into practice 1 (a real billing entity, and the
+    // wrong PHI custodian). Same rule as patients.ts.
+    appointmentData.practiceId = getAuthorizedPracticeId(req);
+
     // Convert date strings to Date objects
     appointmentData.startTime = new Date(appointmentData.startTime);
     appointmentData.endTime = new Date(appointmentData.endTime);

@@ -92,7 +92,6 @@ export function WalkInDialog({ open, onOpenChange, patients, therapists }: Props
           firstName: newPatient.firstName.trim(),
           lastName: newPatient.lastName.trim(),
           dateOfBirth: "2000-01-01",
-          practiceId: 1,
         });
         const created = await patientRes.json();
         finalPatientId = String(created.id);
@@ -104,7 +103,6 @@ export function WalkInDialog({ open, onOpenChange, patients, therapists }: Props
       const start = new Date();
       const end = new Date(start.getTime() + duration * 60_000);
       const res = await apiRequest("POST", "/api/appointments", {
-        practiceId: 1,
         patientId: parseInt(finalPatientId, 10),
         therapistId: therapistId || null,
         title: "Walk-in",

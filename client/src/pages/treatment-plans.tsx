@@ -551,7 +551,6 @@ export default function TreatmentPlansPage() {
                           firstName: newPatientData.firstName.trim(),
                           lastName: newPatientData.lastName.trim(),
                           dateOfBirth: "2000-01-01",
-                          practiceId: 1,
                         });
                         const newPatient = await res.json();
                         setSelectedPatientId(newPatient.id);
