@@ -24,6 +24,52 @@ export function getDailyReportRecipients(): string[] {
   return dailyReportRecipients;
 }
 
+
+/**
+ * Who receives a practice's operational report.
+ *
+ * These reports contain that practice's claim and patient activity, so they
+ * must go to that practice's own admins — the reports previously ran for
+ * practice 1 only and sent to a single global env-configured list, which
+ * meant every other practice got nothing at all. Naively iterating practices
+ * without fixing recipients would have been worse than the bug: it would have
+ * mailed one practice's data to another's inbox.
+ *
+ * The globally-configured list is kept for the founder's own practice so
+ * today's behaviour there is unchanged.
+ */
+const FOUNDER_PRACTICE_ID = 1;
+
+export async function reportRecipientsForPractice(practiceId: number): Promise<string[]> {
+  const recipients = new Set<string>();
+  try {
+    const admins = await storage.getAdminsByPractice(practiceId);
+    for (const admin of admins) {
+      if ((admin as any)?.email) recipients.add((admin as any).email);
+    }
+  } catch (error) {
+    logger.warn('Could not resolve report recipients for practice', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (practiceId === FOUNDER_PRACTICE_ID) {
+    for (const email of dailyReportRecipients) recipients.add(email);
+  }
+  return Array.from(recipients);
+}
+
+/** Every real practice — the demo sandbox is never emailed a report. */
+async function realPracticeIds(): Promise<number[]> {
+  const ids = await storage.getAllPracticeIds();
+  try {
+    const demo = await storage.getDemoPractice();
+    return demo ? ids.filter((id) => id !== demo.id) : ids;
+  } catch {
+    return ids;
+  }
+}
+
 async function generateAndSendDailyDeniedClaimsReport(practiceId: number = 1) {
   logger.info('Running daily denied claims report for practice', { practiceId });
 
@@ -32,8 +78,9 @@ async function generateAndSendDailyDeniedClaimsReport(practiceId: number = 1) {
     return;
   }
 
-  if (dailyReportRecipients.length === 0) {
-    logger.info('No recipients configured for daily report');
+  const recipients = await reportRecipientsForPractice(practiceId);
+  if (recipients.length === 0) {
+    logger.info('No recipients for daily report', { practiceId });
     return;
   }
 
@@ -92,7 +139,7 @@ async function generateAndSendDailyDeniedClaimsReport(practiceId: number = 1) {
       reportUrl: process.env.APP_URL ? `${process.env.APP_URL}/reports` : undefined,
     };
 
-    const result = await sendDeniedClaimsReport(dailyReportRecipients, reportData);
+    const result = await sendDeniedClaimsReport(recipients, reportData);
 
     if (result.success) {
       logger.info('Daily denied claims report sent successfully');
@@ -112,7 +159,8 @@ async function generateAndSendWeeklyCancellationReport(practiceId: number = 1) {
     return;
   }
 
-  if (dailyReportRecipients.length === 0) {
+  const recipients = await reportRecipientsForPractice(practiceId);
+  if (recipients.length === 0) {
     logger.info('No recipients configured for weekly cancellation report');
     return;
   }
@@ -168,7 +216,7 @@ async function generateAndSendWeeklyCancellationReport(practiceId: number = 1) {
       reportUrl: process.env.APP_URL ? `${process.env.APP_URL}/calendar` : undefined,
     };
 
-    const result = await sendWeeklyCancellationReport(dailyReportRecipients, reportData);
+    const result = await sendWeeklyCancellationReport(recipients, reportData);
     if (result.success) {
       logger.info('Weekly cancellation report sent successfully');
     } else {
@@ -304,7 +352,11 @@ function registerJobs() {
   // Schedule daily report at 8:00 AM
   // Cron format: minute hour day-of-month month day-of-week
   const dailyReportTask = cron.schedule('0 8 * * *', () => {
-    generateAndSendDailyDeniedClaimsReport();
+    void (async () => {
+      for (const practiceId of await realPracticeIds()) {
+        await generateAndSendDailyDeniedClaimsReport(practiceId);
+      }
+    })();
   }, {
     timezone: process.env.TIMEZONE || 'America/New_York',
   });
@@ -838,7 +890,11 @@ function registerJobs() {
 
   // Weekly cancellation report - Monday 8:00 AM
   const weeklyCancellationTask = cron.schedule('0 8 * * 1', () => {
-    generateAndSendWeeklyCancellationReport();
+    void (async () => {
+      for (const practiceId of await realPracticeIds()) {
+        await generateAndSendWeeklyCancellationReport(practiceId);
+      }
+    })();
   }, {
     timezone: process.env.TIMEZONE || 'America/New_York',
   });
