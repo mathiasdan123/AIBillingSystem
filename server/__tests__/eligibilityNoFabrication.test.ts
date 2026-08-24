@@ -173,12 +173,15 @@ describe('real practice never receives fabricated eligibility', () => {
 
 describe('demo practice keeps generated data', () => {
   it('appointments check-eligibility returns and persists demo_mock data', async () => {
-    storageStub.getPractice.mockResolvedValue({ id: 2, isDemo: true });
-    storageStub.getAppointment.mockResolvedValue({ ...APPOINTMENT, practiceId: 2 });
-    storageStub.getPatient.mockResolvedValue({ ...PATIENT, practiceId: 2 });
+    // The demo user operates within their own (demo) practice — id 1 here to
+    // match the auth mock's userPracticeId. A cross-practice ?practiceId hop is
+    // no longer honored (tenant isolation), so the demo scenario is modeled as
+    // the user acting in their own demo-flagged practice.
+    storageStub.getPractice.mockResolvedValue({ id: 1, isDemo: true });
+    storageStub.getAppointment.mockResolvedValue({ ...APPOINTMENT, practiceId: 1 });
+    storageStub.getPatient.mockResolvedValue({ ...PATIENT, practiceId: 1 });
 
-    // Admin context is practice 1; the route resolves the appointment's own practice.
-    const res = await request(makeApp()).post('/api/appointments/5/check-eligibility?practiceId=2');
+    const res = await request(makeApp()).post('/api/appointments/5/check-eligibility');
 
     expect(res.status).toBe(200);
     expect(storageStub.createEligibilityCheck).toHaveBeenCalledTimes(1);

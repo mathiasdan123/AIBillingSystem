@@ -1,96 +1,80 @@
 /**
- * Regression guard for the cross-tenant IDOR fixes (adversarial-audit P0 #1-4).
- *
- * Mounts the real patients router and asserts that the router.use('/:id')
- * ownership guard blocks a non-admin user from reaching another practice's
- * patient via a sub-route, and that list/search are scoped to the caller's
- * practice. If someone removes the guard or unscopes the list query, these fail.
+ * Multi-tenant isolation (P0). A practice's own admin must NOT read or write
+ * another practice by passing ?practiceId=. Only a platform (founder) admin
+ * may. Tests the fixed resolver + verifyPatientAccess from patients.ts, the
+ * canonical copy of the pattern replicated across the route layer.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import express, { type Express } from 'express';
-import request from 'supertest';
 
 const { mockStorage } = vi.hoisted(() => ({
-  mockStorage: {
-    getPatient: vi.fn(),
-    getAllPatients: vi.fn(),
-    countAllPatients: vi.fn(),
-    searchPatients: vi.fn(),
-    getPatientDocuments: vi.fn(),
-    batchGetConsentStatus: vi.fn(),
-    createPatient: vi.fn(),
-    updatePatient: vi.fn(),
-    getPractice: vi.fn(),
-  },
+  mockStorage: { getPatient: vi.fn() },
 }));
 
 vi.mock('../storage', () => ({ storage: mockStorage }));
-
-// Non-admin user in practice 1.
-let currentUser = { sub: 'user-1', practiceId: 1, role: 'therapist' };
-vi.mock('../replitAuth', () => ({
-  setupAuth: vi.fn(),
-  isAuthenticated: (req: any, _res: any, next: any) => {
-    req.user = { claims: { sub: currentUser.sub } };
-    req.userPracticeId = currentUser.practiceId;
-    req.userRole = currentUser.role;
-    next();
-  },
+vi.mock('../db', () => ({ db: {}, getDb: () => ({}) }));
+vi.mock('../services/logger', () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock('../middleware/validate', () => ({ validate: () => (_r: any, _s: any, n: any) => n() }));
-vi.mock('../middleware/consentCheck', () => ({ requirePatientConsent: (_r: any, _s: any, n: any) => n() }));
-vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock('../services/emailService', () => ({ sendEmail: vi.fn() }));
-vi.mock('../utils/pagination', () => ({
-  parsePagination: () => ({ page: 1, limit: 50, offset: 0 }),
-  paginatedResponse: (rows: any) => ({ data: rows, page: 1, total: rows.length }),
-}));
-vi.mock('../db', () => ({ db: {} }));
 
-import patientsRouter from '../routes/patients';
+import { getAuthorizedPracticeId, verifyPatientAccess } from '../routes/patients';
 
-let app: Express;
-beforeEach(() => {
-  vi.clearAllMocks();
-  currentUser = { sub: 'user-1', practiceId: 1, role: 'therapist' };
-  app = express();
-  app.use(express.json());
-  app.use('/api/patients', patientsRouter);
-  mockStorage.batchGetConsentStatus.mockResolvedValue(new Map());
+function req(opts: {
+  role?: string;
+  practice?: number;
+  platform?: boolean;
+  requested?: number;
+}): any {
+  return {
+    userRole: opts.role ?? 'therapist',
+    userPracticeId: opts.practice,
+    isPlatformAdmin: !!opts.platform,
+    query: opts.requested ? { practiceId: String(opts.requested) } : {},
+    user: { claims: { sub: 'u1' } },
+  };
+}
+
+describe('getAuthorizedPracticeId — tenant isolation', () => {
+  it('clamps a practice admin to their own practice, ignoring a foreign ?practiceId', () => {
+    expect(getAuthorizedPracticeId(req({ role: 'admin', practice: 2, requested: 1 }))).toBe(2);
+  });
+
+  it('clamps a demo admin (non-platform) to the demo practice', () => {
+    // Demo login is role=admin bound to the demo practice; ?practiceId=1 must not leak practice 1.
+    expect(getAuthorizedPracticeId(req({ role: 'admin', practice: 2, requested: 1 }))).toBe(2);
+  });
+
+  it('lets a platform (founder) admin resolve a foreign practice', () => {
+    expect(getAuthorizedPracticeId(req({ role: 'admin', practice: 1, platform: true, requested: 5 }))).toBe(5);
+  });
+
+  it('clamps a therapist to their own practice', () => {
+    expect(getAuthorizedPracticeId(req({ role: 'therapist', practice: 3, requested: 9 }))).toBe(3);
+  });
+
+  it('honors ?practiceId when it equals the admin\'s own practice', () => {
+    expect(getAuthorizedPracticeId(req({ role: 'admin', practice: 4, requested: 4 }))).toBe(4);
+  });
 });
 
-describe('tenant isolation — patients router', () => {
-  it('blocks a sub-route for a patient in another practice (404, not the data)', async () => {
-    // Patient 777 belongs to practice 99; caller is in practice 1.
-    mockStorage.getPatient.mockResolvedValue({ id: 777, practiceId: 99 });
-    mockStorage.getPatientDocuments.mockResolvedValue([{ id: 1, name: 'secret.pdf' }]);
+describe('verifyPatientAccess — IDOR', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-    const res = await request(app).get('/api/patients/777/documents');
-
-    expect(res.status).toBe(404);
-    // The guard must short-circuit before the handler touches the data.
-    expect(mockStorage.getPatientDocuments).not.toHaveBeenCalled();
+  it('denies a practice admin access to a patient in another practice', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 10, practiceId: 1, firstName: 'Real' });
+    const r = await verifyPatientAccess(req({ role: 'admin', practice: 2 }), 10);
+    expect(r.authorized).toBe(false);
+    expect(r.patient).toBeNull();
   });
 
-  it('allows a sub-route for a patient in the caller’s own practice', async () => {
-    mockStorage.getPatient.mockResolvedValue({ id: 5, practiceId: 1 });
-    mockStorage.getPatientDocuments.mockResolvedValue([]);
-
-    const res = await request(app).get('/api/patients/5/documents');
-
-    expect(res.status).toBe(200);
-    expect(mockStorage.getPatientDocuments).toHaveBeenCalled();
+  it('allows a platform admin to reach any patient', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 10, practiceId: 1, firstName: 'Real' });
+    const r = await verifyPatientAccess(req({ role: 'admin', practice: 2, platform: true }), 10);
+    expect(r.authorized).toBe(true);
   });
 
-  it('scopes the list endpoint to the caller’s practice', async () => {
-    mockStorage.getAllPatients.mockResolvedValue([]);
-    await request(app).get('/api/patients');
-    expect(mockStorage.getAllPatients).toHaveBeenCalledWith(1, undefined);
-  });
-
-  it('scopes search to the caller’s practice', async () => {
-    mockStorage.searchPatients.mockResolvedValue([]);
-    await request(app).get('/api/patients/search?q=smith');
-    expect(mockStorage.searchPatients).toHaveBeenCalledWith(1, 'smith', expect.any(Number));
+  it('allows an admin to reach a patient in their own practice', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 11, practiceId: 2, firstName: 'Mine' });
+    const r = await verifyPatientAccess(req({ role: 'admin', practice: 2 }), 11);
+    expect(r.authorized).toBe(true);
   });
 });

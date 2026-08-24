@@ -18,7 +18,7 @@ const getAuthorizedPracticeId = (req: any): number => {
     ? parseInt(req.query.practiceId as string)
     : undefined;
 
-  if (userRole === 'admin') {
+  if (userRole === 'admin' && req.isPlatformAdmin) {
     return requestedPracticeId || userPracticeId || 1;
   }
   if (!userPracticeId) {

@@ -120,12 +120,17 @@ describe('PATCH /api/patients/:id/insurance', () => {
     expect(mockStorage.updatePatient).not.toHaveBeenCalled();
   });
 
-  it('rejects 403 when patient is in a different practice', async () => {
+  it('rejects a cross-practice edit at the tenant guard', async () => {
+    // A non-platform admin editing another practice's patient is denied by the
+    // router.use('/:id') tenant guard, which returns 404 for cross-tenant (and
+    // not-found alike) to avoid patient-id enumeration. Previously admins
+    // bypassed the guard and were caught by the route's own 403; the guard now
+    // enforces isolation for every role (P0 tenant-isolation fix).
     mockStorage.getPatient.mockResolvedValue({ id: PATIENT_ID, practiceId: OTHER_PRACTICE });
     const res = await request(app)
       .patch(`/api/patients/${PATIENT_ID}/insurance`)
       .send({ insuranceProvider: 'X' });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
     expect(mockStorage.updatePatient).not.toHaveBeenCalled();
   });
 

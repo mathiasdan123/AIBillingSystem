@@ -60,7 +60,9 @@ const getAuthorizedPracticeId = (req: any): number => {
     ? parseInt(req.query.practiceId as string)
     : undefined;
 
-  if (userRole === 'admin' && requestedPracticeId) {
+  // Only a platform admin may resolve a foreign practice; a practice admin
+  // is clamped to their own practice.
+  if (req.isPlatformAdmin && requestedPracticeId) {
     return requestedPracticeId;
   }
   return userPracticeId || 1;

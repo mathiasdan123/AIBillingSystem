@@ -46,7 +46,7 @@ const getAuthorizedPracticeId = (req: any): number => {
   const userPracticeId = req.userPracticeId;
   const userRole = req.userRole;
   const requested = req.query.practiceId ? parseInt(req.query.practiceId as string) : undefined;
-  if (userRole === 'admin') return requested || userPracticeId || 1;
+  if (userRole === 'admin' && req.isPlatformAdmin) return requested || userPracticeId || 1;
   if (!userPracticeId) throw new Error('User not assigned to a practice. Contact administrator.');
   if (requested && requested !== userPracticeId) {
     logger.warn(`Practice access restricted: requested ${requested} but assigned to ${userPracticeId}`);

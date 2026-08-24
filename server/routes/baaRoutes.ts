@@ -11,8 +11,9 @@ function getAuthorizedPracticeId(req: any): number {
   const userPracticeId = req.user?.claims?.practiceId || req.user?.practiceId;
   const requestedPracticeId = req.query?.practiceId ? parseInt(req.query.practiceId as string) : undefined;
 
-  if (userRole === 'admin') {
-    // For admin without practice, default to practice 1 (demo mode)
+  // Only a platform (founder) admin may resolve a foreign practice; a
+  // practice's own admin is clamped to their own practice.
+  if (userRole === 'admin' && req.isPlatformAdmin) {
     const practiceId = requestedPracticeId || userPracticeId || 1;
     return practiceId;
   }
