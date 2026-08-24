@@ -1266,6 +1266,43 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
         }
       }
 
+      // A claim the clearinghouse didn't accept must not be recorded as
+      // 'submitted' or counted as a success in the batch summary — see the
+      // single-submit path above.
+      if (submissionMethod === 'stedi' && clearinghouseResult?.success === false) {
+        const failureErrors: string[] = clearinghouseResult?.errors?.length
+          ? clearinghouseResult.errors
+          : ['Clearinghouse did not accept the claim'];
+        try {
+          await storage.updateClaim(claim.id, {
+            status: 'held',
+            holdReason: `Clearinghouse submission failed: ${failureErrors.join('; ')}`.slice(0, 500),
+            clearinghouseClaimId: clearinghouseResult?.stediClaimId || null,
+            clearinghouseStatus: clearinghouseResult?.status || 'rejected',
+            clearinghouseResponse: clearinghouseResult || null,
+            clearinghouseSubmittedAt: new Date(),
+          } as any);
+        } catch (holdError: any) {
+          logger.error('Failed to hold claim after failed submission', {
+            claimId: claim.id,
+            error: holdError.message,
+          });
+        }
+        logger.warn('Batch claim not accepted by clearinghouse', {
+          claimId: claim.id,
+          status: clearinghouseResult?.status,
+          errors: failureErrors,
+        });
+        results.push({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          success: false,
+          submissionMethod,
+          error: failureErrors.join('; '),
+        });
+        continue;
+      }
+
       // Update claim with submission info
       try {
         await storage.updateClaim(claim.id, {
@@ -1749,6 +1786,45 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           errors: [stediError.message],
         };
       }
+    }
+
+    // A failed clearinghouse submission must NOT be recorded as 'submitted'.
+    // It previously was, with a "submitted successfully" message, so a claim
+    // the clearinghouse never accepted looked filed — and surfaced only once
+    // the timely-filing window had closed. Hold it instead: 'held' keeps the
+    // claim submittable again once the problem is fixed.
+    if (submissionMethod === 'stedi' && clearinghouseResult?.success === false) {
+      const failureErrors: string[] = clearinghouseResult?.errors?.length
+        ? clearinghouseResult.errors
+        : ['Clearinghouse did not accept the claim'];
+
+      const heldClaim = await storage.updateClaim(claimId, {
+        status: 'held',
+        holdReason: `Clearinghouse submission failed: ${failureErrors.join('; ')}`.slice(0, 500),
+        clearinghouseClaimId: clearinghouseResult?.stediClaimId || null,
+        clearinghouseStatus: clearinghouseResult?.status || 'rejected',
+        clearinghouseResponse: clearinghouseResult || null,
+        clearinghouseSubmittedAt: new Date(),
+      } as any);
+
+      logger.warn('Claim submission not accepted by clearinghouse', {
+        claimId,
+        status: clearinghouseResult?.status,
+        errors: failureErrors,
+      });
+
+      return res.status(502).json({
+        success: false,
+        message:
+          clearinghouseResult?.status === 'pending'
+            ? 'Submission could not be confirmed — the claim is on hold. Check the clearinghouse before resubmitting.'
+            : 'The clearinghouse did not accept this claim. It is on hold — fix the errors and resubmit.',
+        claim: heldClaim,
+        clearinghouse: clearinghouseResult,
+        errors: failureErrors,
+        submissionMethod,
+        scrubResult,
+      });
     }
 
     // Update claim with submission info
