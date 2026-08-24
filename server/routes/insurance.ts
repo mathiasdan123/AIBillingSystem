@@ -30,6 +30,7 @@ import { predictOONReimbursement, type OONPredictionInput } from '../services/oo
 import { uploadLimiter } from '../middleware/rate-limiter';
 import { createFileValidator, FileValidationContexts } from '../middleware/file-validator';
 import { cache, CacheKeys, CacheTTL } from '../services/cacheService';
+import { requireFinancialRole } from '../middleware/financial-access';
 
 const router = Router();
 
@@ -169,6 +170,58 @@ router.get('/insurances', isAuthenticated, async (req: any, res) => {
   } catch (error) {
     logger.error('Error fetching insurances', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch insurances' });
+  }
+});
+
+/**
+ * POST /api/insurances — add a payer to the directory.
+ *
+ * The catalog was seed-only: the single insert lived in seeds.ts, so a
+ * practice whose payer mix included anything outside the founder's seed list
+ * (a regional Blues subsidiary, an EAP, a state plan) had no way to bill it
+ * without database surgery. Claim submission resolves the payer from
+ * claim.insuranceId, so an unbillable payer meant an unbillable patient.
+ *
+ * Entries are keyed on a real clearinghouse payer ID rather than free text.
+ * A directory of hand-typed names cannot route a claim — "Blue Cross Blue
+ * Shield" names ~35 different companies — and the payer ID is what actually
+ * reaches the 837P. Callers get one from GET /api/payer-mapping/search,
+ * which queries the clearinghouse's payer registry.
+ */
+router.post('/insurances', isAuthenticated, requireFinancialRole, async (req: any, res) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const payerCode = typeof req.body?.payerCode === 'string' ? req.body.payerCode.trim() : '';
+
+    if (!name) {
+      return res.status(400).json({ message: 'Payer name is required' });
+    }
+    if (!payerCode) {
+      return res.status(400).json({
+        message:
+          'A clearinghouse payer ID is required. Search for the payer so the claim can be routed to them.',
+      });
+    }
+    if (!/^[A-Za-z0-9._-]{2,40}$/.test(payerCode)) {
+      return res.status(400).json({ message: 'That payer ID does not look valid' });
+    }
+
+    const { insurance, created } = await storage.findOrCreateInsurance({ name, payerCode });
+
+    // The payer list is cached globally; a new entry must appear immediately
+    // or the user who just added it will not see it in their dropdown.
+    await cache.del(CacheKeys.payers());
+
+    logger.info(created ? 'Payer added to directory' : 'Payer already in directory', {
+      payerCode,
+      insuranceId: insurance.id,
+      by: req.user?.claims?.sub,
+    });
+
+    res.status(created ? 201 : 200).json({ ...insurance, created });
+  } catch (error) {
+    logger.error('Error adding payer', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to add payer' });
   }
 });
 
