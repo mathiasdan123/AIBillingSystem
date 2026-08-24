@@ -603,6 +603,47 @@ export async function getInsurances(): Promise<Insurance[]> {
     .orderBy(insurances.name);
 }
 
+/**
+ * Add a payer to the directory, or return the existing entry.
+ *
+ * `insurances` is a GLOBAL catalog — payers are shared entities, so Aetna is
+ * the same Aetna for every practice. That is why this de-duplicates on
+ * payerCode instead of inserting blindly: without it, each practice that
+ * billed Horizon would add its own "Horizon" row and every practice's payer
+ * dropdown would fill with near-duplicates nobody could tell apart.
+ *
+ * Reactivates a soft-deactivated payer rather than creating a second row.
+ */
+export async function findOrCreateInsurance(input: {
+  name: string;
+  payerCode: string;
+}): Promise<{ insurance: Insurance; created: boolean }> {
+  const [existing] = await db
+    .select()
+    .from(insurances)
+    .where(eq(insurances.payerCode, input.payerCode))
+    .limit(1);
+
+  if (existing) {
+    if (existing.isActive === false) {
+      const [reactivated] = await db
+        .update(insurances)
+        .set({ isActive: true })
+        .where(eq(insurances.id, existing.id))
+        .returning();
+      return { insurance: reactivated, created: false };
+    }
+    return { insurance: existing, created: false };
+  }
+
+  const [created] = await db
+    .insert(insurances)
+    .values({ name: input.name, payerCode: input.payerCode, isActive: true })
+    .returning();
+
+  return { insurance: created, created: true };
+}
+
 export async function getInsurance(id: number): Promise<Insurance | undefined> {
   const [insurance] = await db
     .select()

@@ -34,6 +34,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { DemoBadge } from "@/components/DemoBadge";
 import InsuranceEditDialog from "@/components/InsuranceEditDialog";
+import AddPayerDialog from "@/components/AddPayerDialog";
 
 const claimSchema = z.object({
   patientId: z.string().min(1, "Patient is required"),
@@ -1005,6 +1006,8 @@ export default function Claims() {
   // Holds the patient ID whose insurance the user is fixing inline from the
   // scrub-error dialog. Null = the fix-insurance dialog is closed.
   const [insuranceFixPatientId, setInsuranceFixPatientId] = useState<number | null>(null);
+  // Payer name we are adding to the directory, from the "not in your list" prompt.
+  const [addPayerFor, setAddPayerFor] = useState<string | null>(null);
 
   // Authorization / scrub state
   const [showAuthDialog, setShowAuthDialog] = useState(false);
@@ -2196,10 +2199,21 @@ export default function Claims() {
                           </Select>
                         </FormControl>
                         {showMissingPayerWarning && (
-                          <p className="text-xs text-amber-700 mt-1" data-testid="warning-payer-not-in-catalog">
+                          <div className="text-xs text-amber-700 mt-1" data-testid="warning-payer-not-in-catalog">
                             Patient's insurance "<strong>{patientProvider}</strong>" isn't in your payer list.
-                            Add it under Payer Management, or pick the closest match above.
-                          </p>
+                            {/* This used to say "add it under Payer Management", which was a dead
+                                end — that page manages credentials, and nothing in the product
+                                could add a payer at all. */}
+                            <Button
+                              type="button"
+                              variant="link"
+                              className="h-auto p-0 ml-1 text-xs text-amber-800 underline"
+                              onClick={() => setAddPayerFor(patientProvider)}
+                              data-testid="button-add-missing-payer"
+                            >
+                              Add {patientProvider}
+                            </Button>
+                          </div>
                         )}
                         <FormMessage />
                       </FormItem>
@@ -3674,6 +3688,18 @@ export default function Claims() {
           />
         );
       })()}
+
+      <AddPayerDialog
+        open={addPayerFor != null}
+        onOpenChange={(open) => { if (!open) setAddPayerFor(null); }}
+        initialQuery={addPayerFor ?? ''}
+        onAdded={(insurance) => {
+          // Select the payer we just added so the user does not have to find
+          // it again in the dropdown they were already blocked on.
+          form.setValue('insuranceId', String(insurance.id), { shouldDirty: true });
+          setAddPayerFor(null);
+        }}
+      />
 
       {/* Hidden Superbill Print Trigger */}
       <div style={{ display: "none" }}>
