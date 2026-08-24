@@ -1020,3 +1020,52 @@ export function intakeSubmissionNotification(data: IntakeSubmissionNotificationD
     text,
   };
 }
+
+export interface PracticeLinkInviteData {
+  practiceName: string;
+  /** Public booking page — no PHI, safe to send to someone who is not a patient. */
+  siteUrl: string;
+  /** Optional note the staff member wants included. */
+  message?: string;
+}
+
+/**
+ * Invite someone to a practice's PUBLIC page.
+ *
+ * Deliberately contains no patient information: this is the one invitation
+ * that may be sent to an address that is not on a patient record — a
+ * prospective patient who called and asked how to book. The portal invite is
+ * the opposite (magic link, patient-specific, only ever to the address on
+ * file), so the two must not be confused. From this page a returning patient
+ * can reach the portal themselves.
+ */
+export function practiceLinkInvite(data: PracticeLinkInviteData): EmailOutput {
+  const subject = `${data.practiceName} — book an appointment`;
+
+  const bodyContent = `
+      ${pText(`Here is the link to ${escapeHtml(data.practiceName)}.`, '#1e293b')}
+      ${data.message ? pText(escapeHtml(data.message)) : ''}
+      ${pText('You can request an appointment, and existing patients can sign in to the patient portal from the same page.')}
+      ${buttonHtml('Visit ' + escapeHtml(data.practiceName), data.siteUrl)}
+      <p style="color: #64748b; font-size: 14px;">If you were not expecting this, you can ignore it — it contains no personal information.</p>`;
+
+  const html = wrapHtml(
+    'Book an appointment',
+    'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+    escapeHtml(data.practiceName),
+    bodyContent,
+    footerText([data.practiceName]),
+  );
+
+  const text = `${data.practiceName}
+
+Here is the link to ${data.practiceName}.
+${data.message ? `\n${data.message}\n` : ''}
+You can request an appointment, and existing patients can sign in to the patient portal from the same page.
+
+${data.siteUrl}
+
+If you were not expecting this, you can ignore it — it contains no personal information.`;
+
+  return { subject, html, text };
+}

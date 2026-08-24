@@ -63,6 +63,7 @@ const SONNET_TOOLS = new Set([
   'review_underpayments',
   'draft_underpayment_dispute',
   'send_patient_portal_invite',
+  'send_practice_link',
   'send_appointment_reminder',
   'get_claim_status',
   'create_invoice',
@@ -100,6 +101,7 @@ const MUTATION_TOOLS = new Set<string>([
   'check_out_appointment',
   'mark_no_show',
   'send_patient_portal_invite',
+  'send_practice_link',
   'send_appointment_reminder',
   'submit_claim',
   'create_invoice',
@@ -200,6 +202,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Mark appointment ${args.appointmentId ?? ''} as no-show`.trim();
     case 'send_patient_portal_invite':
       return `Send portal invite${name ? ` to ${name}` : ''}${args.email ? ` (${args.email})` : ''}`;
+    case 'send_practice_link':
+      return `Email the practice's public booking link to ${args.email ?? 'a recipient'}`;
     case 'send_appointment_reminder':
       return `Send appointment reminder${args.appointmentId ? ` for #${args.appointmentId}` : ''} via ${args.channel ?? 'email'}`;
     case 'submit_claim':
@@ -1435,6 +1439,23 @@ const assistantTools: Anthropic.Tool[] = [
         endHour: { type: 'number' as const, description: 'Latest hour to start a slot, 0-23 (default 17)' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'send_practice_link',
+    description:
+      "Email someone a link to the practice's PUBLIC page, where they can request an appointment and " +
+      'existing patients can sign in to the patient portal. Use for a PROSPECTIVE patient, or anyone who is ' +
+      'not yet a patient, since the page contains no personal health information. To give an EXISTING patient ' +
+      'direct portal access, use send_patient_portal_invite instead — that sends a personal magic link to the ' +
+      'address already on their record.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        email: { type: 'string' as const, description: 'Recipient email address' },
+        message: { type: 'string' as const, description: 'Optional short note to include. Must not contain any patient health information.' },
+      },
+      required: ['email'],
     },
   },
   {
@@ -4146,6 +4167,64 @@ export async function executeTool(
         } catch (err: any) {
           return JSON.stringify({ error: err?.message || 'Failed to draft underpayment dispute.' });
         }
+      }
+
+      case 'send_practice_link': {
+        const email = typeof args.email === 'string' ? args.email.trim() : '';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return JSON.stringify({ error: 'A valid email address is required.' });
+        }
+
+        const linkPractice = await storage.getPractice(practiceId);
+        if (!linkPractice) return JSON.stringify({ error: 'Practice not found.' });
+
+        const slug = (linkPractice as any).bookingPageSlug;
+        if (!slug) {
+          return JSON.stringify({
+            error:
+              'This practice has no public booking page yet. Set a booking page link under ' +
+              'Scheduling → Online Booking first, then I can send it.',
+          });
+        }
+
+        const linkBaseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
+        const siteUrl = `${linkBaseUrl}/book/${slug}`;
+
+        // The note is free text a staff member dictated. It goes to an address
+        // that may not belong to a patient, so it must not carry PHI — cap it
+        // and keep it plain rather than letting a diagnosis ride along.
+        const note = typeof args.message === 'string' ? args.message.trim().slice(0, 300) : undefined;
+
+        const { practiceLinkInvite } = await import('../services/emailTemplates');
+        const { sendEmail: sendPublicLink } = await import('../services/emailService');
+        const linkEmail = practiceLinkInvite({
+          practiceName: linkPractice.name || 'Your Healthcare Provider',
+          siteUrl,
+          message: note,
+        });
+
+        const linkResult = await sendPublicLink({
+          to: email,
+          subject: linkEmail.subject,
+          html: linkEmail.html,
+          text: linkEmail.text,
+          fromName: linkPractice.name || undefined,
+        });
+
+        if (!linkResult?.success) {
+          return JSON.stringify({
+            error: `Could not send the email${linkResult?.error ? `: ${linkResult.error}` : '.'}`,
+          });
+        }
+
+        logger.info('Practice public link emailed', { practiceId, to: email, by: userId });
+
+        return JSON.stringify({
+          sent: true,
+          to: email,
+          siteUrl,
+          note: 'Public page only — it contains no patient information. For an existing patient who needs portal access, use send_patient_portal_invite.',
+        });
       }
 
       case 'send_patient_portal_invite': {
