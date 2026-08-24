@@ -339,6 +339,24 @@ function registerJobs() {
 
   scheduledTasks.set('billingEngineMonthly', billingEngineTask);
 
+  // Close sessions at their scheduled end so the front desk does not have to
+  // click a button at exactly the right moment. Every 5 minutes: frequent
+  // enough that the in-session board stays honest, cheap enough to ignore.
+  const sessionAutoEndTask = cron.schedule('*/5 * * * *', async () => {
+    try {
+      const { autoEndDueSessions } = await import('./services/sessionAutoEndService');
+      await autoEndDueSessions();
+    } catch (error) {
+      logger.error('Session auto-end run failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+
+  scheduledTasks.set('sessionAutoEnd', sessionAutoEndTask);
+
   // Daily billing summary report - 7:00 AM
   const dailyBillingSummaryTask = cron.schedule('0 7 * * *', async () => {
     try {

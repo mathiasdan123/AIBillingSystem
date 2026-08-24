@@ -844,7 +844,7 @@
     "emptyReadyToCheckOut": "No one ready to check out",
     "checkIn": "Check in",
     "startSession": "Start session",
-    "endSession": "End session",
+    "endSession": "End early",
     "checkOut": "Check out",
     "summary": {
       "total": "Today",

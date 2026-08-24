@@ -799,7 +799,7 @@
     "emptyReadyToCheckOut": "Nadie listo para salir",
     "checkIn": "Registrar llegada",
     "startSession": "Iniciar sesión",
-    "endSession": "Finalizar sesión",
+    "endSession": "Finalizar antes",
     "checkOut": "Registrar salida",
     "summary": {
       "total": "Hoy",
