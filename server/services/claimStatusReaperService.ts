@@ -57,7 +57,7 @@ export interface ReapPracticeSummary {
   polled: number;
   transitionedToPaid: number;
   transitionedToDenied: number;
-  transitionedToPending: number;
+  transitionedToRejected: number;
   unchanged: number;
   errors: Array<{ claimId: number; claimNumber?: string | null; error: string }>;
   /** Claim IDs that transitioned to `denied` this run — fed to the denial pipeline. */
@@ -73,7 +73,7 @@ export interface ReapRunSummary {
     polled: number;
     transitionedToPaid: number;
     transitionedToDenied: number;
-    transitionedToPending: number;
+    transitionedToRejected: number;
     unchanged: number;
     errors: number;
   };
@@ -127,7 +127,7 @@ export interface StaleClaimRow {
 }
 
 export interface ClaimTransitionUpdate {
-  status: 'paid' | 'denied' | 'pending' | 'submitted';
+  status: 'paid' | 'denied' | 'rejected' | 'submitted';
   clearinghouseStatus?: string | null;
   clearinghouseStatusValue?: string | null;
   clearinghouseResponse?: any;
@@ -221,28 +221,41 @@ async function defaultMarkPolled(claimId: number, when: Date): Promise<void> {
 }
 
 /**
- * Map the fine-grained Stedi bucket to the 4-value enum the reaper traffics
- * in. Spec: 'paid' | 'denied' | 'pending' | (no change → leave 'submitted').
+ * Map the fine-grained Stedi bucket to the coarse claim.status the rest of
+ * the app reasons about. The specific subcategory is preserved on
+ * clearinghouseStatus / clearinghouseStatusValue for the UI.
+ *
+ * This MUST agree with mapStediStatusToClaim in automatedClaimStatusService.
+ * It previously did not: this mapper returned 'pending' for the in-flight
+ * buckets while the 4-hour poller returned 'submitted' for the same ones, and
+ * since the daily reaper ran last it won. 'pending' is a status NOTHING reads
+ * — not the stale-claims query, not claimFollowUpService, not any biller
+ * cockpit bucket (which query 'submitted', 'held', 'draft', 'denied') — so a
+ * claim that reached it disappeared from every worklist while still counting
+ * as an A/R dollar. That is the normal payer acknowledgement roughly a day
+ * after submission, i.e. the DEFAULT path, so claims were routinely being
+ * made invisible.
  */
 export function mapStediBucketToReaperStatus(
   bucket: ClaimStatusResponse['status'],
-): 'paid' | 'denied' | 'pending' | 'submitted' {
+): 'paid' | 'denied' | 'rejected' | 'submitted' {
   switch (bucket) {
     case 'paid':
       return 'paid';
     case 'finalized_denied':
       return 'denied';
-    case 'pending':
-    case 'received':
-    case 'returned_for_correction':
-      return 'pending';
-    // Rejections are not a coverage decision yet — leave the claim as
-    // 'submitted' so the biller fixes & resubmits via the existing flow
-    // rather than burying it as a permanent 'denied'.
+    // Payer wants a correction — actionable, and the biller fixes and
+    // resubmits through the existing rejected-claim flow.
     case 'rejected':
     case 'rejected_invalid_data':
     case 'rejected_relational_error':
+    case 'returned_for_correction':
     case 'error_submission':
+      return 'rejected';
+    // Still in flight: acknowledged, queued, or unknown. Stays 'submitted' so
+    // it remains visible in the cockpit and keeps aging toward follow-up.
+    case 'received':
+    case 'pending':
     case 'unknown':
     default:
       return 'submitted';
@@ -341,7 +354,7 @@ async function processClaim(
   else if (reaperStatus === 'denied') {
     practiceSummary.transitionedToDenied += 1;
     practiceSummary.deniedClaimIds.push(claim.id);
-  } else if (reaperStatus === 'pending') practiceSummary.transitionedToPending += 1;
+  } else if (reaperStatus === 'rejected') practiceSummary.transitionedToRejected += 1;
 }
 
 async function reapPractice(
@@ -354,7 +367,7 @@ async function reapPractice(
     polled: 0,
     transitionedToPaid: 0,
     transitionedToDenied: 0,
-    transitionedToPending: 0,
+    transitionedToRejected: 0,
     unchanged: 0,
     errors: [],
     deniedClaimIds: [],
@@ -447,7 +460,7 @@ export async function runClaimStatusReap(
         polled: 0,
         transitionedToPaid: 0,
         transitionedToDenied: 0,
-        transitionedToPending: 0,
+        transitionedToRejected: 0,
         unchanged: 0,
         errors: [{ claimId: -1, error: err?.message || String(err) }],
         deniedClaimIds: [],
@@ -460,7 +473,7 @@ export async function runClaimStatusReap(
       acc.polled += p.polled;
       acc.transitionedToPaid += p.transitionedToPaid;
       acc.transitionedToDenied += p.transitionedToDenied;
-      acc.transitionedToPending += p.transitionedToPending;
+      acc.transitionedToRejected += p.transitionedToRejected;
       acc.unchanged += p.unchanged;
       acc.errors += p.errors.length;
       return acc;
@@ -469,7 +482,7 @@ export async function runClaimStatusReap(
       polled: 0,
       transitionedToPaid: 0,
       transitionedToDenied: 0,
-      transitionedToPending: 0,
+      transitionedToRejected: 0,
       unchanged: 0,
       errors: 0,
     },
@@ -500,7 +513,7 @@ export async function runClaimStatusReap(
           polled: p.polled,
           transitionedToPaid: p.transitionedToPaid,
           transitionedToDenied: p.transitionedToDenied,
-          transitionedToPending: p.transitionedToPending,
+          transitionedToRejected: p.transitionedToRejected,
           unchanged: p.unchanged,
           errorSample: p.errors.slice(0, 5),
           startedAt: startedAt.toISOString(),

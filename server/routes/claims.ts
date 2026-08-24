@@ -577,12 +577,41 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
 });
 
 // Update claim
+/**
+ * Fields this generic endpoint may change.
+ *
+ * Everything omitted is either tenancy (practiceId, patientId), an identity
+ * (claimNumber), or DERIVED from something that already has its own audited
+ * route: paidAmount and status come from payment postings and the dedicated
+ * /paid, /deny and /reopen endpoints; submittedAt and the clearinghouse_*
+ * columns come from submission. Letting those through here meant a claim's
+ * money and lifecycle could be rewritten with no record of who did it or
+ * why — and, before the ownership check below, on another practice's claim.
+ */
+const CLAIM_PATCHABLE_FIELDS = new Set([
+  'insuranceId',
+  'sessionId',
+  'totalAmount',
+  'expectedAmount',
+  'denialReason',
+  'authorizationNumber',
+  'holdReason',
+  'billingOrder',
+]);
+
 router.patch('/:id', isAuthenticated, async (req: any, res) => {
   try {
     const claimId = parseInt(req.params.id);
     const existingClaim = await storage.getClaim(claimId);
 
     if (!existingClaim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
+    // Tenant isolation: a claim id from another practice is not found, not
+    // forbidden — a distinguishable 403 would confirm the claim exists.
+    const practiceId = getAuthorizedPracticeId(req);
+    if (existingClaim.practiceId !== practiceId) {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
@@ -594,7 +623,24 @@ router.patch('/:id', isAuthenticated, async (req: any, res) => {
       }
     }
 
-    const updatedClaim = await storage.updateClaim(claimId, req.body);
+    const updates: Record<string, any> = {};
+    for (const [key, value] of Object.entries(req.body ?? {})) {
+      if (CLAIM_PATCHABLE_FIELDS.has(key)) updates[key] = value;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        message: 'No editable fields supplied. Payment and status changes use their own endpoints.',
+      });
+    }
+
+    const updatedClaim = await storage.updateClaim(claimId, updates);
+    logger.info('Claim updated', {
+      claimId,
+      practiceId,
+      fields: Object.keys(updates),
+      by: req.user?.claims?.sub,
+    });
     res.json(updatedClaim);
   } catch (error) {
     logger.error('Error updating claim', { error: error instanceof Error ? error.message : String(error) });

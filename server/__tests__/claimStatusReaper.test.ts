@@ -75,17 +75,37 @@ beforeEach(() => {
 });
 
 describe('mapStediBucketToReaperStatus', () => {
-  it('maps Stedi buckets to the 4-value reaper enum', () => {
+  it('agrees with the 4-hour poller and never parks a claim in a status nothing reads', () => {
     expect(mapStediBucketToReaperStatus('paid')).toBe('paid');
     expect(mapStediBucketToReaperStatus('finalized_denied')).toBe('denied');
-    expect(mapStediBucketToReaperStatus('pending')).toBe('pending');
-    expect(mapStediBucketToReaperStatus('received')).toBe('pending');
-    expect(mapStediBucketToReaperStatus('returned_for_correction')).toBe('pending');
-    // Rejection-likes stay 'submitted' so the biller fixes & resubmits
-    expect(mapStediBucketToReaperStatus('rejected')).toBe('submitted');
-    expect(mapStediBucketToReaperStatus('rejected_invalid_data')).toBe('submitted');
-    expect(mapStediBucketToReaperStatus('error_submission')).toBe('submitted');
+
+    // Still in flight → stays 'submitted', so the claim remains in the biller
+    // cockpit and keeps aging toward follow-up. It previously became
+    // 'pending', which NO query reads (cockpit buckets are submitted/held/
+    // draft/denied), so the claim vanished from every worklist while still
+    // counting as an A/R dollar — and this is the DEFAULT path, the normal
+    // payer acknowledgement a day after submission.
+    expect(mapStediBucketToReaperStatus('pending')).toBe('submitted');
+    expect(mapStediBucketToReaperStatus('received')).toBe('submitted');
     expect(mapStediBucketToReaperStatus('unknown')).toBe('submitted');
+
+    // Payer wants a correction → actionable via the rejected-claim flow.
+    expect(mapStediBucketToReaperStatus('rejected')).toBe('rejected');
+    expect(mapStediBucketToReaperStatus('rejected_invalid_data')).toBe('rejected');
+    expect(mapStediBucketToReaperStatus('returned_for_correction')).toBe('rejected');
+    expect(mapStediBucketToReaperStatus('error_submission')).toBe('rejected');
+  });
+
+  it('never returns a status outside the set the rest of the app queries', () => {
+    const readable = new Set(['paid', 'denied', 'rejected', 'submitted']);
+    const buckets = [
+      'paid', 'finalized_denied', 'pending', 'received', 'unknown',
+      'rejected', 'rejected_invalid_data', 'rejected_relational_error',
+      'returned_for_correction', 'error_submission',
+    ] as const;
+    for (const bucket of buckets) {
+      expect(readable.has(mapStediBucketToReaperStatus(bucket as any))).toBe(true);
+    }
   });
 });
 
@@ -123,7 +143,9 @@ describe('runClaimStatusReap', () => {
 
     expect(checker).toHaveBeenCalledTimes(2);
     expect(result.totals.polled).toBe(2);
-    expect(result.totals.transitionedToPending).toBe(2);
+    // Both came back 'pending' (acknowledged, still in flight): no state
+    // change to record, and they stay 'submitted' in the worklist.
+    expect(result.totals.unchanged).toBe(2);
     expect(markPolled).toHaveBeenCalledTimes(2);
   });
 
@@ -207,7 +229,7 @@ describe('runClaimStatusReap', () => {
     expect(result.practices[0].deniedClaimIds).toEqual([1]);
   });
 
-  it('transitions a claim to pending on a Stedi "pending" bucket', async () => {
+  it('leaves a claim submitted on a Stedi "pending" bucket, so it stays in the worklist', async () => {
     const getStaleSubmittedClaims = vi.fn().mockResolvedValue([row()]);
     const checker = vi.fn().mockResolvedValue({
       claimId: 'CLM-001',
@@ -228,14 +250,15 @@ describe('runClaimStatusReap', () => {
       },
     );
 
-    expect(applyClaimTransition).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({ status: 'pending' }),
-    );
-    expect(result.totals.transitionedToPending).toBe(1);
+    // 'pending' from the payer means "acknowledged, still working it" — the
+    // claim has not changed state as far as the app is concerned, so there is
+    // nothing to write and it keeps aging in the cockpit. Previously this
+    // wrote status 'pending', which no query reads.
+    expect(applyClaimTransition).not.toHaveBeenCalled();
+    expect(result.totals.unchanged).toBe(1);
   });
 
-  it('counts unchanged when Stedi returns "unknown" or a rejection (stays "submitted")', async () => {
+  it('leaves "unknown" alone but moves a rejection into the rejected worklist', async () => {
     const getStaleSubmittedClaims = vi.fn().mockResolvedValue([
       row({ id: 1 }),
       row({ id: 2 }),
@@ -257,8 +280,14 @@ describe('runClaimStatusReap', () => {
       },
     );
 
-    expect(applyClaimTransition).not.toHaveBeenCalled();
-    expect(result.totals.unchanged).toBe(2);
+    // 'unknown' is not a state change; a rejection is, and it must become
+    // visible rather than sitting as an indistinguishable 'submitted'.
+    expect(result.totals.unchanged).toBe(1);
+    expect(applyClaimTransition).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ status: 'rejected' }),
+    );
+    expect(result.totals.transitionedToRejected).toBe(1);
     expect(result.totals.transitionedToPaid).toBe(0);
   });
 
@@ -289,7 +318,8 @@ describe('runClaimStatusReap', () => {
     expect(checker).toHaveBeenCalledTimes(3);
     expect(result.totals.polled).toBe(3);
     expect(result.totals.transitionedToPaid).toBe(1);
-    expect(result.totals.transitionedToPending).toBe(1);
+    // The third claim came back 'pending' → unchanged, not a transition.
+    expect(result.totals.unchanged).toBe(1);
     expect(result.totals.errors).toBe(1);
     expect(result.practices[0].errors[0].error).toContain('Stedi 502');
     // Even the errored claim was marked polled so it doesn't get
