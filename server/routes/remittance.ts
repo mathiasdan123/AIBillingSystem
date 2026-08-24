@@ -17,12 +17,14 @@ import { parse835, flattenToLineItems } from '../services/edi835Parser';
 import { assessUnderpayment } from '../services/underpaymentAnalyzer';
 import { postPayment } from '../services/paymentPostingService';
 import { ensureUnderpaymentFollowUp } from '../services/underpaymentPipelineService';
+import { scoreClaimAgainstRemittanceLine, isAutoMatch } from '../services/eraMatchScoring';
 import { db } from '../db';
 import {
   remittanceAdvice,
   remittanceLineItems,
   claims,
   claimLineItems,
+  cptCodes,
   patients,
   feeSchedules,
 } from '@shared/schema';
@@ -384,7 +386,15 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
       })
       .from(claims)
       .innerJoin(patients, eq(claims.patientId, patients.id))
-      .where(eq(claims.practiceId, practiceId));
+      // A payer cannot be paying a claim that was never transmitted, so
+      // drafts and held claims are not candidates. Leaving them in only
+      // creates opportunities to post real money onto the wrong record.
+      .where(
+        and(
+          eq(claims.practiceId, practiceId),
+          sql`${claims.status} NOT IN ('draft', 'held')`,
+        ),
+      );
 
     // patients.firstName/lastName are PHI-encrypted at rest and this is a raw
     // join, so decrypt them — otherwise the name-matching below compares the
@@ -401,6 +411,13 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
       .where(
         sql`${claimLineItems.claimId} IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`
       );
+
+    // Resolve CPT ids to their actual codes. Without this the "CPT match"
+    // below could only test that a line HAD a cpt id — which, on a NOT NULL
+    // column, is always true.
+    const allCptCodes = await db.select({ id: cptCodes.id, code: cptCodes.code }).from(cptCodes);
+    const cptCodeById = new Map<number, string>();
+    for (const c of allCptCodes) cptCodeById.set(c.id, String(c.code));
 
     // Build lookup structures
     const claimLineItemsByClaimId = new Map<number, typeof allClaimLineItems>();
@@ -421,72 +438,24 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
       let bestMatch: { claimId: number; score: number; matchType: string } | null = null;
 
       for (const claim of practiceClaims) {
-        let score = 0;
-        const matchTypes: string[] = [];
+        const candidate = scoreClaimAgainstRemittanceLine(
+          claim,
+          claimLineItemsByClaimId.get(claim.claimId) || [],
+          lineItem,
+          cptCodeById,
+        );
 
-        // Patient name matching (fuzzy)
-        const claimPatientName = `${claim.patientFirstName} ${claim.patientLastName}`.toLowerCase().trim();
-        const remittancePatientName = (lineItem.patientName || '').toLowerCase().trim();
+        // Identity is mandatory: corroborating signals can raise confidence in
+        // a claim already tied to this patient, but can never establish the
+        // tie. See services/eraMatchScoring.
+        if (!isAutoMatch(candidate)) continue;
 
-        if (claimPatientName && remittancePatientName) {
-          // Exact match
-          if (claimPatientName === remittancePatientName) {
-            score += 40;
-            matchTypes.push('exact_name');
-          } else {
-            // Check last name match (most reliable)
-            const claimLast = (claim.patientLastName || '').toLowerCase().trim();
-            const remitParts = remittancePatientName.split(/\s+/);
-            // Try both "First Last" and "Last, First" formats
-            const remitLast = remitParts.length > 1 ? remitParts[remitParts.length - 1] : remitParts[0];
-            const remitFirst = remitParts.length > 1 ? remitParts[0] : '';
-
-            if (claimLast === remitLast || claimLast === remitParts[0]) {
-              score += 25;
-              matchTypes.push('last_name');
-              // First name bonus
-              const claimFirst = (claim.patientFirstName || '').toLowerCase().trim();
-              if (claimFirst === remitFirst || claimFirst === remitParts[remitParts.length - 1]) {
-                score += 15;
-                matchTypes.push('first_name');
-              }
-            }
-          }
-        }
-
-        // Service date + CPT matching against claim line items
-        const claimLines = claimLineItemsByClaimId.get(claim.claimId) || [];
-        for (const cli of claimLines) {
-          if (lineItem.serviceDate && cli.dateOfService) {
-            const lineDate = lineItem.serviceDate.replace(/-/g, '');
-            const claimDate = cli.dateOfService.replace(/-/g, '');
-            if (lineDate === claimDate) {
-              score += 20;
-              matchTypes.push('service_date');
-            }
-          }
-
-          // CPT code matching (would need to join cptCodes table for the code string)
-          // For now, we check if lineItem.cptCode matches the cptCodeId indirectly
-          if (lineItem.cptCode && cli.cptCodeId) {
-            // We'll do a simple check - if there's a CPT match it's strong signal
-            score += 15;
-            matchTypes.push('cpt_potential');
-          }
-        }
-
-        // Amount matching as tie-breaker
-        if (lineItem.chargedAmount && claim.totalAmount) {
-          const lineCharged = parseFloat(String(lineItem.chargedAmount));
-          const claimAmount = parseFloat(String(claim.totalAmount));
-          if (Math.abs(lineCharged - claimAmount) < 0.01) {
-            score += 10;
-            matchTypes.push('amount');
-          }
-        }
-
-        if (score > (bestMatch?.score || 0) && score >= 40) {
-          bestMatch = { claimId: claim.claimId, score, matchType: matchTypes.join('+') };
+        if (candidate.score > (bestMatch?.score || 0)) {
+          bestMatch = {
+            claimId: claim.claimId,
+            score: candidate.score,
+            matchType: candidate.matchTypes.join('+'),
+          };
         }
       }
 
