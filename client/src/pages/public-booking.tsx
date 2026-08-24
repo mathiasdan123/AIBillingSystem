@@ -213,7 +213,19 @@ export default function PublicBookingPage() {
       {/* Header */}
       <div className="bg-primary text-white py-8">
         <div className="max-w-3xl mx-auto px-4">
-          <h1 className="text-3xl font-bold">{pageData.practice.name}</h1>
+          <div className="flex items-start justify-between gap-4">
+            <h1 className="text-3xl font-bold">{pageData.practice.name}</h1>
+            {/* Existing patients arrive here from a shared link too — give
+                them the way in rather than making them hunt for a URL. No PHI
+                is involved: this is just the portal sign-in page. */}
+            <a
+              href="/portal"
+              className="shrink-0 text-sm underline underline-offset-4 opacity-90 hover:opacity-100"
+              data-testid="link-patient-portal"
+            >
+              Patient portal sign in
+            </a>
+          </div>
           {pageData.practice.address && (
             <p className="flex items-center gap-2 mt-2 opacity-90">
               <MapPin className="h-4 w-4" />

@@ -153,6 +153,10 @@ const SURFACE_ONLY_REASONS: Record<string, string> = {
   unmark_demo_patients: 'in-app only: admin one-off helper',
   get_practice_setup_status: 'in-app only: drives the in-app onboarding checklist',
   send_patient_portal_invite: 'in-app only: web-chat flow with a button affordance',
+  send_practice_link:
+    'in-app only, deliberately: this is the one email that may go to an address NOT on a patient record, ' +
+    'so it relies on the in-app confirmation gate showing the recipient before it sends. Exposing it over MCP ' +
+    'would let a Desktop session email arbitrary addresses with no such prompt.',
 
   // ── in-app only: tool overlaps a PARITY tool semantically; merge or alias decision pending ──
   get_patient_count: 'in-app only: lightweight aggregate; folded into get_dashboard_stats on MCP',
