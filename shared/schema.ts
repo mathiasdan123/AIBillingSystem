@@ -260,6 +260,24 @@ export const patients = pgTable("patients", {
   // these two are the user-editable basics.
   effectiveDate: date("effective_date"),
   terminationDate: date("termination_date"),
+  /**
+   * The patient's copay, as the practice knows it.
+   *
+   * Copay was previously derivable ONLY from an eligibility response. When a
+   * payer returns no copay, returns a wrong one, or the patient is self-pay,
+   * nobody could record the real amount — front-desk staff could only
+   * override it in the moment, one visit at a time, and that override was
+   * forgotten by the next visit.
+   *
+   * Set here, it takes precedence over the eligibility figure (the practice
+   * setting it is asserting they know better) and is still overridable per
+   * visit at check-in. NULL means "not set — use eligibility", which is the
+   * previous behaviour and what every existing row keeps.
+   *
+   * Not a substitute for coinsurance-based plans: an out-of-network patient
+   * paying 20% after deductible has no copay, and this stays null for them.
+   */
+  copayAmount: decimal("copay_amount", { precision: 10, scale: 2 }),
   // Payer-advocacy (2026-05-31): employer / plan sponsor name. Needed to match
   // a member to the correct employer plan terms (self-funded plans vary by
   // employer) and to disambiguate Transparency-in-Coverage negotiated rates.

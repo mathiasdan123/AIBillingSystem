@@ -23,7 +23,7 @@ interface CopayInfo {
   isTelehealth: boolean;
   expectedCents: number | null;
   expectedFormatted: string | null;
-  source: 'eligibility' | 'cache' | 'none' | 'recorded';
+  source: 'eligibility' | 'cache' | 'none' | 'recorded' | 'patient';
   stale: boolean;
   lastCheckedAt: string | null;
   eligibilityId: number | null;
@@ -193,6 +193,19 @@ export default function CopayModal({
                   <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
                     {t('copay.expectedLabel', 'Expected copay')}
                   </div>
+                  {/* Where the number came from. Staff are about to charge a
+                      card, and "the payer said so" and "we set this on the
+                      patient" carry different weight when it looks wrong. */}
+                  {data?.source === 'patient' && (
+                    <div className="text-[11px] text-muted-foreground">
+                      {t('copay.sourcePatient', "Set on this patient's record")}
+                    </div>
+                  )}
+                  {data?.source === 'eligibility' && (
+                    <div className="text-[11px] text-muted-foreground">
+                      {t('copay.sourceEligibility', 'From the insurance eligibility check')}
+                    </div>
+                  )}
                   <div className="text-2xl font-semibold tabular-nums text-foreground mt-0.5">
                     {formatCents(effectiveAmountCents)}
                   </div>

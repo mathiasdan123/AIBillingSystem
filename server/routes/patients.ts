@@ -411,6 +411,9 @@ const INSURANCE_FIELDS = new Set([
   'groupNumber',
   'effectiveDate',
   'terminationDate',
+  // The practice's own copay figure. Editable here so it can be corrected
+  // when the payer's eligibility response is wrong or absent.
+  'copayAmount',
   'secondaryInsuranceProvider',
   'secondaryInsurancePayerId',
   'secondaryInsuranceMemberId',
@@ -476,6 +479,20 @@ router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
       // Normalize empty strings to null so the form's "Clear" gesture
       // actually clears the column instead of writing "" into a date.
       patch[k] = v === '' ? null : v;
+    }
+
+    // copayAmount ends up on a card charge at check-in, so it is validated
+    // rather than trusted: a stray character must not become a $0 copay, and
+    // a mistyped 3000 must not be chargeable.
+    if (patch.copayAmount != null) {
+      const amount = Number(String(patch.copayAmount).replace(/[$,]/g, ''));
+      if (!Number.isFinite(amount) || amount < 0) {
+        return res.status(400).json({ error: 'Copay must be a positive dollar amount' });
+      }
+      if (amount > 1000) {
+        return res.status(400).json({ error: 'Copay over $1,000 looks wrong — check the amount' });
+      }
+      patch.copayAmount = amount.toFixed(2);
     }
 
     if (Object.keys(patch).length === 0) {
