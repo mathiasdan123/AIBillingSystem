@@ -34,7 +34,7 @@ import { CONSENT_MAPPINGS } from '../services/consentTypes';
 const router = Router();
 
 // Helper to get authorized practiceId from request
-const getAuthorizedPracticeId = (req: any): number => {
+export const getAuthorizedPracticeId = (req: any): number => {
   if (req.authorizedPracticeId) {
     return req.authorizedPracticeId;
   }
@@ -45,7 +45,7 @@ const getAuthorizedPracticeId = (req: any): number => {
     ? parseInt(req.query.practiceId as string)
     : undefined;
 
-  if (userRole === 'admin') {
+  if (userRole === 'admin' && req.isPlatformAdmin) {
     return requestedPracticeId || userPracticeId || 1;
   }
 
@@ -65,7 +65,7 @@ const getAuthorizedPracticeId = (req: any): number => {
  * Security: Verify user has access to the specified patient
  * Prevents IDOR attacks by checking patient belongs to user's practice
  */
-const verifyPatientAccess = async (req: any, patientId: number): Promise<{
+export const verifyPatientAccess = async (req: any, patientId: number): Promise<{
   patient: any | null;
   authorized: boolean;
   error?: string;
@@ -77,9 +77,12 @@ const verifyPatientAccess = async (req: any, patientId: number): Promise<{
     }
 
     const userPracticeId = req.userPracticeId;
-    const userRole = req.userRole;
 
-    if (userRole === 'admin') {
+    // Platform (founder) admin may reach any patient. A practice's own admin
+    // is NOT a platform admin and is scoped to their practice below — the
+    // previous `userRole === 'admin'` bypass let any practice admin read any
+    // patient by id (cross-tenant IDOR).
+    if (req.isPlatformAdmin) {
       return { patient, authorized: true };
     }
 

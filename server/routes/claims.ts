@@ -98,7 +98,7 @@ const getAuthorizedPracticeId = (req: any): number => {
     ? parseInt(req.query.practiceId as string)
     : undefined;
 
-  if (userRole === 'admin') {
+  if (userRole === 'admin' && req.isPlatformAdmin) {
     return requestedPracticeId || userPracticeId || 1;
   }
 
@@ -979,6 +979,18 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
 
     const practiceId = getAuthorizedPracticeId(req);
 
+    // Practice-level firewall (B7): refuse the whole batch for the demo
+    // practice — its seeded claims are isDemo=false so the per-claim check
+    // below misses them, and a demo-session admin must not transmit real
+    // 837Ps. Mirrors the single-submit and MCP guards.
+    const batchPractice = await storage.getPractice(practiceId);
+    if ((batchPractice as any)?.isDemo) {
+      return res.status(400).json({
+        message: 'This is the demo practice — claims are not transmitted to a real payer.',
+        code: 'demo_practice_refused',
+      });
+    }
+
     // Validate all claims exist and are submittable
     const validationErrors: Array<{ claimId: number; error: string }> = [];
     const validClaims: Array<{ claim: any; patient: any; practice: any; insurance: any; lineItems: any[] }> = [];
@@ -990,10 +1002,11 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
         continue;
       }
 
-      // Security: Verify user has access to this claim's practice
-      const userPracticeId = (req as any).userPracticeId;
-      const userRole = (req as any).userRole;
-      if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+      // Security: a claim must belong to the resolved practice. (Previously a
+      // plain `userRole !== 'admin'` bypass let any practice admin submit
+      // another tenant's claims; practiceId is now the tenant-clamped value
+      // from getAuthorizedPracticeId.)
+      if (claim.practiceId !== practiceId) {
         validationErrors.push({ claimId, error: 'Access denied' });
         continue;
       }
@@ -1442,6 +1455,19 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           "Demo data is for practice only. To submit for real, create a claim from a real patient, " +
           "or ask Blanche to clear_demo_data and start fresh.",
         code: 'demo_data_refused',
+      });
+    }
+
+    // Practice-level firewall (B7): the isolated demo practice's seeded rows
+    // are deliberately isDemo=false, so the per-claim check above misses them.
+    // Any "Try Free Demo" prospect is an admin on the demo practice and could
+    // otherwise transmit a fabricated 837P through the real Stedi account.
+    // Mirrors the MCP guard in server/mcp/tools/claims.ts.
+    const submitPractice = await storage.getPractice(claim.practiceId);
+    if ((submitPractice as any)?.isDemo) {
+      return res.status(400).json({
+        message: 'This is the demo practice — claims are not transmitted to a real payer.',
+        code: 'demo_practice_refused',
       });
     }
 

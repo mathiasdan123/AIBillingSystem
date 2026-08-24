@@ -3,6 +3,7 @@ import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
+import { isPlatformAdminEmail } from "./services/platformAdmin";
 import localAuthRoutes from "./routes/localAuth";
 
 // Detect environment for logging
@@ -140,6 +141,12 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
         (req as any).userPracticeId = dbUser.practiceId;
         (req as any).userRole = dbUser.role;
         (req as any).userEmail = dbUser.email;
+        // Platform (founder) admin may resolve any practice; a regular
+        // practice admin is tenant-scoped to their own practice. Gates the
+        // cross-practice branch of getAuthorizedPracticeId (multi-tenant
+        // isolation — a practice admin must not read another tenant via
+        // ?practiceId=).
+        (req as any).isPlatformAdmin = isPlatformAdminEmail(dbUser.email);
       }
     } catch (error) {
       console.error('Error fetching user practice info:', error);
