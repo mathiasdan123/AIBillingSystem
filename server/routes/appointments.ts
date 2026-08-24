@@ -17,7 +17,7 @@ import { validate } from '../middleware/validate';
 import { createAppointmentSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
-import { chargeCopay, isStripeConfigured, createPatientPaymentLink } from '../services/stripeService';
+import { chargeCopay, isStripeConfigured, createPatientPaymentLink, practiceMayCollectPatientPayments } from '../services/stripeService';
 
 const router = Router();
 
@@ -468,6 +468,14 @@ router.post('/:id/self-pay-invoice', isAuthenticated, async (req: any, res) => {
     const description = typeof req.body?.description === 'string' && req.body.description.trim()
       ? req.body.description.trim()
       : `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+    if (!practiceMayCollectPatientPayments(appt.practiceId!)) {
+      return res.status(409).json({
+        error:
+          'Collecting patient payments is not enabled for this practice yet. ' +
+          'Insurance still pays the practice directly.',
+        code: 'patient_payments_not_enabled',
+      });
+    }
     const paymentLink = await createPatientPaymentLink({
       amount: Math.round(amountDollars * 100),
       patientName: `${patient.firstName} ${patient.lastName}`,
@@ -825,6 +833,17 @@ router.post('/:id/copay/charge', isAuthenticated, async (req: any, res) => {
     const ownedPM = pms.find((pm: any) => pm.stripePaymentMethodId === paymentMethodId);
     if (!ownedPM) {
       return res.status(400).json({ error: 'Payment method does not belong to this patient' });
+    }
+
+    // Not a card failure — this practice simply isn't set up to collect
+    // patient money yet, so don't record a failed charge attempt for it.
+    if (!practiceMayCollectPatientPayments(practiceId)) {
+      return res.status(409).json({
+        error:
+          'Collecting patient payments is not enabled for this practice yet. ' +
+          'Insurance still pays the practice directly.',
+        code: 'patient_payments_not_enabled',
+      });
     }
 
     // Fire the charge. off_session + confirm means Stripe will either succeed

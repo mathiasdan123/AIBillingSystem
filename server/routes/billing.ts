@@ -232,6 +232,15 @@ router.post('/billing/patient-payment-link', isAuthenticated, async (req: any, r
       return res.status(404).json({ message: 'Patient not found' });
     }
 
+    if (!stripeService.practiceMayCollectPatientPayments(patient.practiceId)) {
+      return res.status(409).json({
+        message:
+          'Collecting patient payments is not enabled for this practice yet. ' +
+          'Insurance still pays the practice directly.',
+        code: 'patient_payments_not_enabled',
+      });
+    }
+
     const paymentLink = await stripeService.createPatientPaymentLink({
       amount: Math.round(amount * 100), // Convert to cents
       patientName: `${patient.firstName} ${patient.lastName}`,
