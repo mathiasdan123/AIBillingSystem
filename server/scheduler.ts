@@ -311,6 +311,34 @@ function registerJobs() {
 
   scheduledTasks.set('dailyDeniedClaimsReport', dailyReportTask);
 
+  // Billing engine — percentage of collections, on the 2nd of each month at
+  // 6:00 AM for the month just ended. The 2nd, not the 1st, so late ERA
+  // postings for the final days of the month have landed before we compute a
+  // basis we will invoice on.
+  //
+  // Produces DRAFT invoices only. Nothing is charged without a human sending
+  // the invoice — see billingEngineService for why.
+  const billingEngineTask = cron.schedule('0 6 2 * *', async () => {
+    try {
+      const { runBillingEngineForMonth, previousMonth } = await import('./services/billingEngineService');
+      const result = await runBillingEngineForMonth(previousMonth(new Date()));
+      logger.info('Billing engine monthly run finished', {
+        periodMonth: result.periodMonth,
+        invoicesDrafted: result.invoicesDrafted,
+        skippedZero: result.skippedZero,
+        errors: result.errors,
+      });
+    } catch (error) {
+      logger.error('Billing engine monthly run failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+
+  scheduledTasks.set('billingEngineMonthly', billingEngineTask);
+
   // Daily billing summary report - 7:00 AM
   const dailyBillingSummaryTask = cron.schedule('0 7 * * *', async () => {
     try {

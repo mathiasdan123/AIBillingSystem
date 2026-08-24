@@ -32,6 +32,7 @@ import {
   claimCorrectionsRouter,
   mcpApiKeysRouter,
   investorMetricsRouter,
+  billingEngineRouter,
   mcpTransportRouter,
   getMcpAuthRouter,
   mcpOAuthProvider,
@@ -350,6 +351,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Investor metrics (admin-only): daily KPI time series
   app.use('/api/investor-metrics', investorMetricsRouter);
+  // Billing engine (TherapyBill's own % -of-collections revenue): platform admin only
+  app.use('/api/billing-engine', billingEngineRouter);
 
   // MCP OAuth 2.1 auth endpoints (mounted at root for well-known discovery + authorize/token/register)
   // These are required for Claude Desktop's "Add custom connector" flow.
