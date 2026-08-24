@@ -187,7 +187,7 @@ export default function ReviewsPage() {
   const { data: stats } = useQuery<ReviewStats>({
     queryKey: ["/api/reviews/stats"],
     queryFn: async () => {
-      const res = await fetch("/api/reviews/stats?practiceId=1");
+      const res = await fetch("/api/reviews/stats");
       if (!res.ok) throw new Error("Failed to fetch stats");
       return res.json();
     },
@@ -211,7 +211,7 @@ export default function ReviewsPage() {
   const { data: requests = [] } = useQuery<ReviewRequest[]>({
     queryKey: ["/api/reviews/requests"],
     queryFn: async () => {
-      const res = await fetch("/api/reviews/requests?practiceId=1");
+      const res = await fetch("/api/reviews/requests");
       if (!res.ok) throw new Error("Failed to fetch requests");
       return res.json();
     },
@@ -221,7 +221,7 @@ export default function ReviewsPage() {
   const { data: patients = [] } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
     queryFn: async () => {
-      const res = await fetch("/api/patients?practiceId=1");
+      const res = await fetch("/api/patients");
       if (!res.ok) throw new Error("Failed to fetch patients");
       return res.json();
     },
@@ -245,7 +245,7 @@ export default function ReviewsPage() {
   const { data: feedbackStats } = useQuery<FeedbackStats>({
     queryKey: ["/api/feedback/stats"],
     queryFn: async () => {
-      const res = await fetch("/api/feedback/stats?practiceId=1");
+      const res = await fetch("/api/feedback/stats");
       if (!res.ok) throw new Error("Failed to fetch feedback stats");
       return res.json();
     },

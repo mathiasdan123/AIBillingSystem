@@ -324,7 +324,14 @@ router.post('/sessions', isAuthenticated, async (req: any, res) => {
         });
       }
     }
-    const session = await storage.createSession(req.body);
+    // Tenant safety: bind the session to the caller's own practice rather
+    // than trusting a client-supplied practiceId (soap-notes.tsx still posts
+    // a hardcoded 1). Sessions feed billing, so a misfiled one corrupts
+    // another practice's revenue data.
+    const session = await storage.createSession({
+      ...req.body,
+      practiceId: getAuthorizedPracticeId(req),
+    });
     res.json(session);
   } catch (error) {
     logger.error('Error creating session', { error: error instanceof Error ? error.message : String(error) });

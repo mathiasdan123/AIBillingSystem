@@ -210,7 +210,7 @@ export default function CalendarPage() {
   const queryRangeEnd = view === "month" ? monthGridEnd : weekEnd;
 
   const { data: appointments = [] } = useQuery<Appointment[]>({
-    queryKey: ["/api/appointments", `?practiceId=1&start=${queryRangeStart.toISOString()}&end=${queryRangeEnd.toISOString()}`],
+    queryKey: ["/api/appointments", `?start=${queryRangeStart.toISOString()}&end=${queryRangeEnd.toISOString()}`],
   });
 
   // This week's cancellation summary
@@ -367,7 +367,6 @@ export default function CalendarPage() {
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
           dateOfBirth: "2000-01-01",
-          practiceId: 1,
           // Optional insurance — only sent if the user filled them in.
           // Blank strings would otherwise persist as "" and confuse the
           // claim scrubber's "missing insurance" check.
@@ -396,7 +395,6 @@ export default function CalendarPage() {
     const endDt = new Date(startDt.getTime() + durationMin * 60_000);
 
     const payload: any = {
-      practiceId: 1,
       patientId: parseInt(patientId),
       therapistId: newAppointment.therapistId || null,
       locationId: newAppointment.locationId ? parseInt(newAppointment.locationId) : null,

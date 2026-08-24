@@ -381,7 +381,7 @@ export default function InsuranceRates() {
   });
 
   const { data: patients } = useQuery<any[]>({
-    queryKey: ['/api/patients?practiceId=1'],
+    queryKey: ['/api/patients'],
   });
 
   const { data: cptCodes } = useQuery<any[]>({

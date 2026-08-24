@@ -121,7 +121,7 @@ export default function BookingSettingsPage() {
   const { data: settings } = useQuery<BookingSettings>({
     queryKey: ["/api/booking/settings"],
     queryFn: async () => {
-      const res = await fetch("/api/booking/settings?practiceId=1");
+      const res = await fetch("/api/booking/settings");
       if (!res.ok) throw new Error("Failed to fetch settings");
       return res.json();
     },
@@ -131,7 +131,7 @@ export default function BookingSettingsPage() {
   const { data: appointmentTypes = [] } = useQuery<AppointmentType[]>({
     queryKey: ["/api/booking/appointment-types"],
     queryFn: async () => {
-      const res = await fetch("/api/booking/appointment-types?practiceId=1");
+      const res = await fetch("/api/booking/appointment-types");
       if (!res.ok) throw new Error("Failed to fetch types");
       return res.json();
     },
@@ -141,7 +141,7 @@ export default function BookingSettingsPage() {
   const { data: availability = [] } = useQuery<TherapistAvailability[]>({
     queryKey: ["/api/booking/availability"],
     queryFn: async () => {
-      const res = await fetch("/api/booking/availability?practiceId=1");
+      const res = await fetch("/api/booking/availability");
       if (!res.ok) throw new Error("Failed to fetch availability");
       return res.json();
     },
@@ -151,7 +151,7 @@ export default function BookingSettingsPage() {
   const { data: pendingBookings = [] } = useQuery<OnlineBooking[]>({
     queryKey: ["/api/booking/bookings", "pending"],
     queryFn: async () => {
-      const res = await fetch("/api/booking/bookings?practiceId=1&status=pending");
+      const res = await fetch("/api/booking/bookings?status=pending");
       if (!res.ok) throw new Error("Failed to fetch bookings");
       return res.json();
     },
@@ -163,7 +163,7 @@ export default function BookingSettingsPage() {
       const res = await fetch("/api/booking/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, practiceId: 1 }),
+        body: JSON.stringify({ ...data }),
       });
       if (!res.ok) throw new Error("Failed to save settings");
       return res.json();
@@ -184,7 +184,7 @@ export default function BookingSettingsPage() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, practiceId: 1 }),
+        body: JSON.stringify({ ...data }),
       });
       if (!res.ok) throw new Error("Failed to save appointment type");
       return res.json();

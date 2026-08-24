@@ -919,7 +919,6 @@ export default function SoapNotes() {
           firstName: newPatientData.firstName.trim(),
           lastName: newPatientData.lastName.trim(),
           dateOfBirth: "2000-01-01",
-          practiceId: 1,
         });
         const newPatient = await res.json();
         patientId = newPatient.id;
@@ -934,7 +933,6 @@ export default function SoapNotes() {
       const primaryCode = generatedNote.cptCodes[0]?.code || "97530";
 
       const sessionData = {
-        practiceId: 1,
         patientId,
         therapistId: user?.id || "",
         sessionDate,

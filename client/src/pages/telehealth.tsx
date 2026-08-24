@@ -103,7 +103,7 @@ export default function TelehealthPage() {
   const { data: settings } = useQuery<TelehealthSettings>({
     queryKey: ["/api/telehealth/settings"],
     queryFn: async () => {
-      const res = await fetch("/api/telehealth/settings?practiceId=1");
+      const res = await fetch("/api/telehealth/settings");
       if (!res.ok) throw new Error("Failed to fetch settings");
       return res.json();
     },
@@ -113,7 +113,7 @@ export default function TelehealthPage() {
   const { data: todaysSessions = [], isLoading } = useQuery<TelehealthSession[]>({
     queryKey: ["/api/telehealth/sessions/today"],
     queryFn: async () => {
-      const res = await fetch("/api/telehealth/sessions/today?practiceId=1");
+      const res = await fetch("/api/telehealth/sessions/today");
       if (!res.ok) throw new Error("Failed to fetch sessions");
       return res.json();
     },
@@ -124,7 +124,7 @@ export default function TelehealthPage() {
   const { data: allSessions = [] } = useQuery<TelehealthSession[]>({
     queryKey: ["/api/telehealth/sessions"],
     queryFn: async () => {
-      const res = await fetch("/api/telehealth/sessions?practiceId=1");
+      const res = await fetch("/api/telehealth/sessions");
       if (!res.ok) throw new Error("Failed to fetch sessions");
       return res.json();
     },
@@ -136,7 +136,7 @@ export default function TelehealthPage() {
       const res = await fetch("/api/telehealth/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, practiceId: 1 }),
+        body: JSON.stringify({ ...data }),
       });
       if (!res.ok) throw new Error("Failed to save settings");
       return res.json();
