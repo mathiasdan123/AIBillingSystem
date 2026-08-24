@@ -655,12 +655,62 @@ export async function submitClaim(claim: ClaimSubmission, practiceId?: number): 
     }
 
     const data = await response.json();
+
+    // A 2xx does NOT mean the clearinghouse accepted the claim — edit-level
+    // rejections come back with a success HTTP status and the detail in the
+    // body. Treating every 2xx as 'accepted' reported rejected claims as
+    // submitted, so nobody looked at them again until the timely-filing
+    // window had closed.
+    const bodyErrors: string[] = [];
+    if (Array.isArray(data?.errors)) {
+      bodyErrors.push(...data.errors.map((e: any) => (typeof e === 'string' ? e : e?.message ?? JSON.stringify(e))));
+    } else if (typeof data?.errors === 'string') {
+      bodyErrors.push(data.errors);
+    }
+    if (typeof data?.error === 'string') bodyErrors.push(data.error);
+
+    const statusText = String(data?.status ?? data?.claimStatus ?? '').toLowerCase();
+    const statusRejected = /reject|denied|error|fail/.test(statusText);
+    const stediClaimId = data?.claimId || data?.id;
+
+    if (bodyErrors.length > 0 || statusRejected || data?.success === false) {
+      return {
+        success: false,
+        claimId: claim.claimId,
+        stediClaimId,
+        status: 'rejected',
+        raw: data,
+        errors: bodyErrors.length
+          ? bodyErrors
+          : [`Clearinghouse rejected the claim${statusText ? ` (status: ${statusText})` : ''}`],
+      };
+    }
+
+    // Accepted responses carry an identifier we can track the claim by. No
+    // identifier and no error means we cannot confirm it was accepted — say
+    // so rather than assert success we can't back up.
+    if (!stediClaimId) {
+      return {
+        success: false,
+        claimId: claim.claimId,
+        status: 'pending',
+        raw: data,
+        errors: [
+          'Clearinghouse returned no claim identifier — submission could not be confirmed. ' +
+            'Check the clearinghouse portal before resubmitting to avoid a duplicate.',
+        ],
+      };
+    }
+
     return {
       success: true,
       claimId: claim.claimId,
-      stediClaimId: data.claimId || data.id,
+      stediClaimId,
       status: 'accepted',
       raw: data,
+      warnings: Array.isArray(data?.warnings)
+        ? data.warnings.map((w: any) => (typeof w === 'string' ? w : w?.message ?? JSON.stringify(w)))
+        : undefined,
     };
   } catch (error: any) {
     console.error('Stedi claim submission error:', error);
