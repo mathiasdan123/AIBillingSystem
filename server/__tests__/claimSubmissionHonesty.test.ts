@@ -15,8 +15,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../services/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock('../storage', () => ({
-  storage: { getPractice: vi.fn(), getPracticeStediConfig: vi.fn() },
+const { mockStorage } = vi.hoisted(() => ({
+  mockStorage: { getPractice: vi.fn(), getPracticeStediConfig: vi.fn() },
+}));
+vi.mock('../storage', () => ({ storage: mockStorage }));
+vi.mock('../services/phiEncryptionService', () => ({
+  decryptField: (v: any) => v,
+  encryptField: (v: any) => v,
 }));
 vi.mock('../db', () => ({ db: {}, getDb: () => ({}) }));
 
@@ -59,6 +64,9 @@ function mockFetchJson(ok: boolean, body: any) {
 beforeEach(() => {
   vi.resetModules();
   process.env.STEDI_API_KEY = 'test_key';
+  // Live mode: sandbox mode legitimately refuses to transmit, which would
+  // short-circuit these response-parsing tests before any fetch happens.
+  mockStorage.getPractice.mockResolvedValue({ id: 1, sandboxMode: false });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -67,7 +75,7 @@ describe('submitClaim — a 2xx is not proof of acceptance', () => {
     mockFetchJson(true, { claimId: 'STEDI-9', errors: ['Missing subscriber ID'] });
     const { submitClaim } = await import('../services/stediService');
 
-    const result = await submitClaim(sampleClaim);
+    const result = await submitClaim(sampleClaim, 1);
 
     expect(result.success).toBe(false);
     expect(result.status).toBe('rejected');
@@ -78,7 +86,7 @@ describe('submitClaim — a 2xx is not proof of acceptance', () => {
     mockFetchJson(true, { claimId: 'STEDI-9', status: 'REJECTED' });
     const { submitClaim } = await import('../services/stediService');
 
-    const result = await submitClaim(sampleClaim);
+    const result = await submitClaim(sampleClaim, 1);
 
     expect(result.success).toBe(false);
     expect(result.status).toBe('rejected');
@@ -88,7 +96,7 @@ describe('submitClaim — a 2xx is not proof of acceptance', () => {
     mockFetchJson(true, {});
     const { submitClaim } = await import('../services/stediService');
 
-    const result = await submitClaim(sampleClaim);
+    const result = await submitClaim(sampleClaim, 1);
 
     expect(result.success).toBe(false);
     expect(result.status).toBe('pending');
@@ -99,7 +107,7 @@ describe('submitClaim — a 2xx is not proof of acceptance', () => {
     mockFetchJson(true, { claimId: 'STEDI-001' });
     const { submitClaim } = await import('../services/stediService');
 
-    const result = await submitClaim(sampleClaim);
+    const result = await submitClaim(sampleClaim, 1);
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('accepted');

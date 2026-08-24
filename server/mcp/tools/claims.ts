@@ -109,7 +109,9 @@ export function registerClaimTools(
           : [],
       };
 
-      return stediService.submitClaim(submission);
+      // Pass the practice so sandbox mode is honored and a per-practice
+      // clearinghouse key is used, exactly as on the HTTP path.
+      return stediService.submitClaim(submission, ctx.practiceId);
     }),
   );
 

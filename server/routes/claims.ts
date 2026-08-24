@@ -1247,7 +1247,7 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
             isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
           };
 
-          clearinghouseResult = await stediService.submitClaim(claimSubmission);
+          clearinghouseResult = await stediService.submitClaim(claimSubmission, claim.practiceId ?? practiceId);
           submissionMethod = 'stedi';
 
           logger.info('Batch claim submitted via Stedi', {
@@ -1769,7 +1769,7 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
         };
 
-        clearinghouseResult = await stediService.submitClaim(claimSubmission);
+        clearinghouseResult = await stediService.submitClaim(claimSubmission, claim.practiceId ?? practiceId);
         submissionMethod = 'stedi';
 
         logger.info('Claim submitted via Stedi', {
