@@ -128,6 +128,8 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
         allowedAmount: item.allowedAmount != null ? parseFloat(item.allowedAmount) : null,
         paidAmount: parseFloat(item.paidAmount) || 0,
         adjustmentAmount: parseFloat(item.adjustmentAmount) || 0,
+        patientResponsibility: item.patientResponsibility != null ? parseFloat(item.patientResponsibility) : null,
+        contractualAdjustment: item.contractualAdjustment != null ? parseFloat(item.contractualAdjustment) : null,
         adjustmentReasonCodes: item.adjustmentReasonCodes || [],
         remarkCodes: item.remarkCodes || [],
       }));
@@ -214,6 +216,8 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
         allowedAmount: item.allowedAmount != null ? String(item.allowedAmount) : null,
         paidAmount: item.paidAmount != null ? String(item.paidAmount) : null,
         adjustmentAmount: item.adjustmentAmount != null ? String(item.adjustmentAmount) : null,
+        patientResponsibility: item.patientResponsibility != null ? String(item.patientResponsibility) : null,
+        contractualAdjustment: item.contractualAdjustment != null ? String(item.contractualAdjustment) : null,
         adjustmentReasonCodes: item.adjustmentReasonCodes,
         remarkCodes: item.remarkCodes,
         status: 'unmatched' as const,
@@ -586,6 +590,12 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
             paymentDate: remittance.checkDate ?? remittance.receivedDate,
             paymentAmount: String(paidAmt.toFixed(2)),
             adjustmentAmount: String(parseFloat(String(lineItem.adjustmentAmount || '0')).toFixed(2)),
+            // Only the PR group is billable to the patient. Statements read
+            // this; deriving a balance from charge - paid instead would bill
+            // them the contractual write-off (balance billing).
+            patientResponsibility: String(
+              parseFloat(String((lineItem as any).patientResponsibility ?? '0')).toFixed(2),
+            ),
             allowedAmount: lineItem.allowedAmount != null ? String(lineItem.allowedAmount) : null,
             postedBy: req.user?.claims?.sub ?? null,
           } as any);
@@ -721,6 +731,9 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
       paymentDate: remittance.checkDate ?? remittance.receivedDate,
       paymentAmount: String(paidAmt.toFixed(2)),
       adjustmentAmount: String(parseFloat(String(lineItem.adjustmentAmount || '0')).toFixed(2)),
+      patientResponsibility: String(
+        parseFloat(String((lineItem as any).patientResponsibility ?? '0')).toFixed(2),
+      ),
       allowedAmount: lineItem.allowedAmount != null ? String(lineItem.allowedAmount) : null,
       postedBy: req.user?.claims?.sub ?? null,
     } as any);
