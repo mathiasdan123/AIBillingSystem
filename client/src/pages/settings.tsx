@@ -1521,7 +1521,11 @@ export default function Settings() {
     { id: "profile", label: "Profile", icon: User },
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
-    { id: "billing", label: "Billing", icon: CreditCard },
+    // The Billing tab shows TherapyBill's own subscription pricing. The demo
+    // practice is walked through by prospects and partner therapists, and
+    // pricing conversations happen off-product — so the tab stays out of the
+    // demo entirely.
+    ...(practice?.isDemo ? [] : [{ id: "billing", label: "Billing", icon: CreditCard }]),
     { id: "fee-schedule", label: "Fee Schedule", icon: DollarSign },
     { id: "therapists", label: "Therapists", icon: BadgeCheck },
     ...(isAdmin ? [
@@ -2343,7 +2347,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {activeTab === "billing" && (
+          {activeTab === "billing" && !practice?.isDemo && (
             <Card>
               <CardHeader>
                 <CardTitle>Billing Settings</CardTitle>
