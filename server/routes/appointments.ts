@@ -632,8 +632,23 @@ router.post('/:id/session-end', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ error: 'Session already ended' });
     }
 
+    // Optional explicit time: ending early, or correcting a session the
+    // auto-end job closed at its scheduled length. Rejected if it precedes
+    // the start, which would record a negative session.
+    let endedAt = new Date();
+    if (req.body?.endedAt) {
+      const supplied = new Date(req.body.endedAt);
+      if (Number.isNaN(supplied.getTime())) {
+        return res.status(400).json({ error: 'endedAt is not a valid date' });
+      }
+      if (supplied < new Date(appointment.sessionStartedAt)) {
+        return res.status(400).json({ error: 'A session cannot end before it started' });
+      }
+      endedAt = supplied;
+    }
+
     const updated = await storage.updateAppointment(appointmentId, {
-      sessionEndedAt: new Date(),
+      sessionEndedAt: endedAt,
     } as any);
 
     res.json(updated);

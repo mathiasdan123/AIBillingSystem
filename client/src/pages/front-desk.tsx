@@ -444,7 +444,10 @@ function AppointmentCard({ apt, column, accentBg, now, patientName, therapistNam
   let primaryAction: { label: string; action: "check-in" | "session-start" | "session-end" | "check-out"; icon: typeof LogIn } | null = null;
   if (column === "arriving") primaryAction = { label: t("frontDesk.checkIn"), action: "check-in", icon: LogIn };
   else if (column === "waiting") primaryAction = { label: t("frontDesk.startSession"), action: "session-start", icon: PlayCircle };
-  else if (column === "inSession") primaryAction = { label: t("frontDesk.endSession"), action: "session-end", icon: CheckCircle2 };
+  // Sessions close themselves at their scheduled end (sessionAutoEndService),
+  // so this is an optional "finished early" override rather than a step the
+  // desk must remember to perform.
+  else if (column === "inSession") primaryAction = { label: t("frontDesk.endSession", "End early"), action: "session-end", icon: CheckCircle2 };
   else if (column === "readyToCheckOut") primaryAction = { label: t("frontDesk.checkOut"), action: "check-out", icon: LogOut };
 
   // Flag: waiting longer than a soft threshold → amber text

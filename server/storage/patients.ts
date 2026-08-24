@@ -56,12 +56,31 @@ export async function createPatient(patient: InsertPatient): Promise<Patient> {
 }
 
 export async function getPatients(practiceId: number): Promise<Patient[]> {
+  // Ordered by most recently SEEN, not most recently added.
+  //
+  // A therapist picking a patient is nearly always reaching for someone they
+  // are actively treating, and that is a different set from whoever was
+  // entered into the system last. Patients with no visit yet (a fresh intake)
+  // fall back to their created date, so a just-added patient still surfaces
+  // near the top instead of sinking to the bottom of the list.
+  const lastVisit = db
+    .select({
+      patientId: appointments.patientId,
+      lastSeen: sql<string>`MAX(${appointments.startTime})`.as('last_seen'),
+    })
+    .from(appointments)
+    .where(eq(appointments.practiceId, practiceId))
+    .groupBy(appointments.patientId)
+    .as('last_visit');
+
   const rows = await db
-    .select()
+    .select({ patient: patients })
     .from(patients)
+    .leftJoin(lastVisit, eq(lastVisit.patientId, patients.id))
     .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt)))
-    .orderBy(desc(patients.createdAt));
-  return rows.map((r: any) => decryptPatientRecord(r) as Patient);
+    .orderBy(sql`COALESCE(${lastVisit.lastSeen}, ${patients.createdAt}) DESC NULLS LAST`);
+
+  return rows.map((r: any) => decryptPatientRecord(r.patient) as Patient);
 }
 
 export async function getPatient(id: number): Promise<Patient | undefined> {

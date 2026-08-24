@@ -13,7 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck, DollarSign } from "lucide-react";
+import { useLocation } from "wouter";
+import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck, DollarSign, FileText } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
 import CopayModal from "@/components/CopayModal";
@@ -37,6 +38,7 @@ const CANCELLATION_REASONS = [
 ];
 
 export default function CalendarPage() {
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -1720,6 +1722,30 @@ export default function CalendarPage() {
                           </Button>
                         </div>
                       </div>
+                    )}
+                    {/* Write the note without leaving the schedule: opens the
+                        SOAP editor with this visit's patient and date already
+                        selected. Hidden for a cancelled visit — there is no
+                        session to document. */}
+                    {!isCancelled && (
+                      <Button
+                        variant="default"
+                        className="w-full"
+                        onClick={() => {
+                          setShowApptActionsDialog(false);
+                          const params = new URLSearchParams({
+                            patientId: String(a.patientId),
+                            appointmentId: String(a.id),
+                          });
+                          if (a.startTime) {
+                            params.set('date', new Date(a.startTime).toISOString().split('T')[0]);
+                          }
+                          setLocation(`/soap-notes?${params.toString()}`);
+                        }}
+                        data-testid="button-actions-write-note"
+                      >
+                        <FileText className="w-4 h-4 mr-2" />Write Session Note
+                      </Button>
                     )}
                     {!isCancelled && !a.checkedOutAt && (
                       <Button

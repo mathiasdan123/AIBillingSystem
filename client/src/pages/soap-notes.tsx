@@ -238,10 +238,29 @@ export default function SoapNotes() {
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "" });
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
-  const [duration, setDuration] = useState(60); // Default to 1 hour sessions
+  const [duration, setDuration] = useState(45); // Standard session length
   const [sessionType, setSessionType] = useState("treatment"); // treatment, initial_eval, re_eval
   const [location, setLocation] = useState("Sensory Gym");
   const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // $289 per 15-min unit
+
+  // Prefill from the calendar: "Write Session Note" on an appointment links
+  // here with the visit's patient and date, so the therapist does not have to
+  // find the patient again in a list they were just looking at.
+  // NOTE: `setLocation` above is this page's session-location state, not the
+  // router — hence reading the query string directly.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const patientIdParam = params.get('patientId');
+    const dateParam = params.get('date');
+    if (patientIdParam) {
+      const parsed = parseInt(patientIdParam, 10);
+      if (Number.isFinite(parsed)) setSelectedPatient(parsed);
+    }
+    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      setSessionDate(dateParam);
+    }
+    // Once only, on mount — later edits by the user must not be overwritten.
+  }, []);
 
   // Subjective
   const [mood, setMood] = useState("");
