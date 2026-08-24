@@ -24,6 +24,8 @@ interface CopayInfo {
   expectedCents: number | null;
   expectedFormatted: string | null;
   source: 'eligibility' | 'cache' | 'none' | 'recorded' | 'patient';
+  coinsurancePercent?: number | null;
+  coinsuranceSource?: 'patient' | 'eligibility' | null;
   stale: boolean;
   lastCheckedAt: string | null;
   eligibilityId: number | null;
@@ -262,8 +264,27 @@ export default function CopayModal({
             </div>
           )}
 
+          {/* Coinsurance plan: there is no copay to collect, and the real
+              amount is a percentage of the payer's ALLOWED amount, which is
+              unknown until adjudication. Say that plainly rather than leaving
+              the desk to guess (or to charge a percentage of the charge,
+              which would overbill the patient). */}
+          {!isLoading && !hasExpected && !telehealth && !alreadyResolved && data?.coinsurancePercent ? (
+            <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900 text-[13px]">
+              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
+              <div>
+                {t('copay.coinsurancePlan', {
+                  percent: data.coinsurancePercent,
+                  defaultValue:
+                    'No copay on this plan — the patient owes {{percent}}% after their deductible. ' +
+                    'Nothing to collect today; they are billed once insurance processes the claim.',
+                })}
+              </div>
+            </div>
+          ) : null}
+
           {/* No-eligibility hint when not telehealth and no copay data */}
-          {!isLoading && !hasExpected && !telehealth && !alreadyResolved && data?.source === 'none' && (
+          {!isLoading && !hasExpected && !telehealth && !alreadyResolved && !data?.coinsurancePercent && data?.source === 'none' && (
             <div className="flex items-start gap-2 rounded-md bg-sky-50 border border-sky-200 px-3 py-2 text-sky-800 text-[13px]">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
               <div>{t('copay.noEligibility')}</div>

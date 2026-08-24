@@ -278,6 +278,24 @@ export const patients = pgTable("patients", {
    * paying 20% after deductible has no copay, and this stays null for them.
    */
   copayAmount: decimal("copay_amount", { precision: 10, scale: 2 }),
+  /**
+   * The patient's coinsurance share, as a percentage (20 = 20%).
+   *
+   * The companion to copayAmount for plans that have no copay — an
+   * out-of-network patient typically owes a percentage of the ALLOWED amount
+   * after their deductible, which is why copayAmount stays null for them.
+   *
+   * Deliberately NOT chargeable at check-in. The allowed amount is not known
+   * until the payer adjudicates, so any figure computed at the front desk is
+   * an estimate against the billed charge — and billing a percentage of the
+   * charge rather than the allowed amount is how a practice overcharges a
+   * patient (the same error class as billing a contractual write-off). It
+   * informs the front desk and produces a clearly-labelled estimate; the real
+   * amount comes from the ERA.
+   *
+   * NULL means "not set — use the eligibility figure".
+   */
+  coinsurancePercent: decimal("coinsurance_percent", { precision: 5, scale: 2 }),
   // Payer-advocacy (2026-05-31): employer / plan sponsor name. Needed to match
   // a member to the correct employer plan terms (self-funded plans vary by
   // employer) and to disambiguate Transparency-in-Coverage negotiated rates.

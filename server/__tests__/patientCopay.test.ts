@@ -124,3 +124,59 @@ describe('PATCH /api/patients/:id/insurance — copayAmount', () => {
     expect(mockStorage.updatePatient).not.toHaveBeenCalled();
   });
 });
+
+describe('PATCH /api/patients/:id/insurance — coinsurancePercent', () => {
+  it('records a percentage for a plan with no copay', async () => {
+    const res = await request(app)
+      .patch(`/api/patients/${PATIENT_ID}/insurance`)
+      .send({ coinsurancePercent: '20' });
+
+    expect(res.status).toBe(200);
+    expect(mockStorage.updatePatient.mock.calls[0][1]).toEqual({ coinsurancePercent: '20.00' });
+  });
+
+  it('accepts a typed percent sign', async () => {
+    await request(app)
+      .patch(`/api/patients/${PATIENT_ID}/insurance`)
+      .send({ coinsurancePercent: '20%' });
+
+    expect(mockStorage.updatePatient.mock.calls[0][1].coinsurancePercent).toBe('20.00');
+  });
+
+  it('rejects a percentage over 100', async () => {
+    const res = await request(app)
+      .patch(`/api/patients/${PATIENT_ID}/insurance`)
+      .send({ coinsurancePercent: '120' });
+
+    expect(res.status).toBe(400);
+    expect(mockStorage.updatePatient).not.toHaveBeenCalled();
+  });
+
+  it('rejects a negative percentage', async () => {
+    const res = await request(app)
+      .patch(`/api/patients/${PATIENT_ID}/insurance`)
+      .send({ coinsurancePercent: '-5' });
+
+    expect(res.status).toBe(400);
+    expect(mockStorage.updatePatient).not.toHaveBeenCalled();
+  });
+
+  it('clears to NULL so the eligibility figure is used again', async () => {
+    await request(app)
+      .patch(`/api/patients/${PATIENT_ID}/insurance`)
+      .send({ coinsurancePercent: '' });
+
+    expect(mockStorage.updatePatient.mock.calls[0][1]).toEqual({ coinsurancePercent: null });
+  });
+
+  it('can hold both a copay and a coinsurance percentage', async () => {
+    await request(app)
+      .patch(`/api/patients/${PATIENT_ID}/insurance`)
+      .send({ copayAmount: '30', coinsurancePercent: '20' });
+
+    expect(mockStorage.updatePatient.mock.calls[0][1]).toEqual({
+      copayAmount: '30.00',
+      coinsurancePercent: '20.00',
+    });
+  });
+});
