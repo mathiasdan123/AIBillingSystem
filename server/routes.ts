@@ -175,6 +175,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/appeals', requireFinancialRole);
   app.use('/api/billing', requireFinancialRole);
   app.use('/api/payment-transactions', requireFinancialRole);
+  // Enrollment identity (NPI/TIN) + payer enrollments are billing-ops
+  // surfaces: admin/billing manage them, therapists never see them.
+  app.use('/api/provider-profile', requireFinancialRole);
+  app.use('/api/payer-enrollments', requireFinancialRole);
 
   // Auth routes: /api/auth/*, /api/users/*, /api/mfa/*, /api/invites/*, /api/therapists/*
   app.use('/api', authRouter);

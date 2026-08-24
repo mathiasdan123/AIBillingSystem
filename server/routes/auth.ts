@@ -431,7 +431,10 @@ router.get('/mfa/status', isAuthenticated, async (req: any, res) => {
 
 router.post('/invites', isAuthenticated, isAdmin, async (req: any, res) => {
   try {
-    const { email, role, practiceId } = req.body;
+    // Default to the inviter's own practice — the onboarding wizard (and any
+    // sane client) invites into the practice it belongs to.
+    const { email, role } = req.body;
+    const practiceId = req.body.practiceId ?? req.userPracticeId ?? null;
     const invitedById = req.user?.claims?.sub;
 
     logger.info("Creating invite for:", { email, role, practiceId, invitedById });

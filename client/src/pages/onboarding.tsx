@@ -144,8 +144,14 @@ export default function OnboardingWizard() {
 
   const savePracticeMutation = useMutation({
     mutationFn: async (data: Record<string, string>) => {
-      const res = await fetch("/api/practices/1", {
-        method: "PUT",
+      // PATCH the caller's own practice. This was PUT /api/practices/1 —
+      // a method that doesn't exist on the router (every save silently
+      // failed) aimed at a hardcoded practice id (practice 1 is a real
+      // billing entity; practice #2's onboarding must never write to it).
+      const practiceId = (user as any)?.practiceId;
+      if (!practiceId) throw new Error("No practice for this account");
+      const res = await fetch(`/api/practices/${practiceId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
         credentials: "include",
@@ -168,6 +174,7 @@ export default function OnboardingWizard() {
           role: "therapist",
           firstName: data.firstName,
           lastName: data.lastName,
+          practiceId: (user as any)?.practiceId,
         }),
         credentials: "include",
       });
@@ -194,7 +201,8 @@ export default function OnboardingWizard() {
           dateOfBirth: data.dateOfBirth || undefined,
           email: data.email || undefined,
           phone: data.phone || undefined,
-          practiceId: 1,
+          // The caller's own practice — never a hardcoded id.
+          practiceId: (user as any)?.practiceId,
         }),
         credentials: "include",
       });
@@ -274,6 +282,9 @@ export default function OnboardingWizard() {
     { label: t("onboarding.stepPracticeInfo"), icon: Building2 },
     { label: t("onboarding.stepTherapist"), icon: UserPlus },
     { label: t("onboarding.stepPatient"), icon: Users },
+    // Step 4 renders the enrollment-authorization card; this label was
+    // missing, leaving the stepper one short of TOTAL_STEPS (6).
+    { label: t("onboarding.stepAuthorization", "Billing Authorization"), icon: FileText },
     { label: t("onboarding.stepReady"), icon: CheckCircle },
   ];
 
@@ -711,19 +722,18 @@ export default function OnboardingWizard() {
                       });
                       return;
                     }
-                    // PATCH to the canonical practice update endpoint
-                    // (the existing PUT mutation in this page hits a
-                    // route that doesn't exist — pre-existing bug).
-                    const practiceIdForSave = (user as any)?.practiceId ?? 1;
-                    fetch(`/api/practices/${practiceIdForSave}`, {
-                      method: "PATCH",
+                    // The canonical authorization endpoint: server stamps
+                    // the timestamp AND auto-creates the Stedi provider
+                    // record when the profile is already complete, so a new
+                    // practice leaves onboarding clearinghouse-ready.
+                    fetch(`/api/provider-profile/authorize`, {
+                      method: "POST",
                       headers: { "Content-Type": "application/json" },
                       credentials: "include",
                       body: JSON.stringify({
                         ownerName: signatureForm.ownerName,
                         ownerTitle: signatureForm.ownerTitle,
                         ownerSignature: signatureForm.ownerSignature,
-                        enrollmentAuthorizedAt: new Date().toISOString(),
                       }),
                     })
                       .then((r) => {

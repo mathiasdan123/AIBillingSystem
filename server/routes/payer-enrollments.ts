@@ -28,10 +28,13 @@ import { sanitizeExternalError } from '../services/errorSanitizer';
 
 const router = Router();
 
-const getAuthorizedPracticeId = (req: any): number => {
-  if (req.authorizedPracticeId) return req.authorizedPracticeId;
-  return req.userPracticeId ?? 1;
-};
+// Resolve the caller's practice — null when there is no practice context.
+// No `?? 1` fallback: practice 1 is a real billing entity, and a fallback
+// here would let a practice-less account read practice 1's enrollment
+// status or submit live enrollments in its name (same rule as
+// provider-profile.ts).
+const getAuthorizedPracticeId = (req: any): number | null =>
+  req.authorizedPracticeId ?? req.userPracticeId ?? null;
 
 /**
  * Known-payer catalog. Source of truth for which payers appear on the
@@ -68,6 +71,9 @@ type TransactionType = (typeof TRANSACTION_TYPES)[number];
 router.get('/', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
+    if (!practiceId) {
+      return res.status(400).json({ message: 'No practice context for this user' });
+    }
 
     // Fetch all enrollment rows for this practice.
     const rows = await db
@@ -113,6 +119,9 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
 router.post('/', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
+    if (!practiceId) {
+      return res.status(400).json({ message: 'No practice context for this user' });
+    }
     const { payerName, payerId, transactionType, status, notes, rejectionReason } = req.body || {};
 
     if (!payerName || typeof payerName !== 'string') {
@@ -292,6 +301,9 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
 router.post('/submit', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
+    if (!practiceId) {
+      return res.status(400).json({ message: 'No practice context for this user' });
+    }
     const { payerName, payerId, transactionType } = req.body || {};
 
     if (!payerName || typeof payerName !== 'string') {
