@@ -98,11 +98,28 @@ router.get('/:id/patients-missing-plan-documents', isAuthenticated, async (req: 
 router.get('/:id', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = parseInt(req.params.id);
+
+    // Tenant isolation. This route returned the WHOLE practice row for any id
+    // to any authenticated user, and getPractice DECRYPTS taxId and
+    // stediApiKey — so a user at one practice could read another practice's
+    // EIN and its live clearinghouse credential, and file claims as them.
+    const callerPracticeId = req.authorizedPracticeId ?? req.userPracticeId ?? null;
+    if (!req.isPlatformAdmin && practiceId !== callerPracticeId) {
+      return res.status(404).json({ message: "Practice not found" });
+    }
+
     const practice = await storage.getPractice(practiceId);
     if (!practice) {
       return res.status(404).json({ message: "Practice not found" });
     }
-    res.json(practice);
+
+    // A live API key has no business in a browser even for your own practice.
+    // The UI only needs to know whether one is configured, so send that.
+    const { stediApiKey, ownerSignature, ...safePractice } = practice as any;
+    res.json({
+      ...safePractice,
+      stediApiKeySet: Boolean(stediApiKey),
+    });
   } catch (error) {
     logger.error("Error fetching practice", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch practice" });

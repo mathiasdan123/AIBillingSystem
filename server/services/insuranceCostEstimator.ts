@@ -96,7 +96,17 @@ export async function estimatePatientCost(
   const codeEstimates = await Promise.all(
     cptCodes.map(async (code) => {
       const cptInfo = allCptCodes.find((c: any) => c.code === code.code);
-      const baseRate = parseFloat(cptInfo?.baseRate || '289');
+      // No invented rate. This figure reaches a PATIENT as an estimate of
+      // what they will owe, and '289' was a placeholder treatment rate — for
+      // any code the catalog does not price, it produced a confident-looking
+      // number with nothing behind it. Unpriced codes contribute nothing and
+      // the estimate says so instead.
+      const rawRate = cptInfo?.baseRate != null ? parseFloat(String(cptInfo.baseRate)) : NaN;
+      const baseRate = Number.isFinite(rawRate) ? rawRate : 0;
+      if (!Number.isFinite(rawRate)) {
+        notes.push(`No charge on file for ${code.code} — it is not included in this estimate.`);
+        confidence = 'low';
+      }
       const billedAmount = baseRate * code.units;
 
       // Get insurance rate for this code

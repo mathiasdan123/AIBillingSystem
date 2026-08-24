@@ -205,7 +205,7 @@ function ClearinghouseTab() {
             <div className="flex gap-2 mt-1">
               <Input
                 type="password"
-                placeholder={practice?.stediApiKey ? "Key saved (enter new to replace)" : "Leave blank to use our managed clearinghouse"}
+                placeholder={practice?.stediApiKeySet ? "Key saved (enter new to replace)" : "Leave blank to use our managed clearinghouse"}
                 value={stediKey}
                 onChange={(e) => setStediKey(e.target.value)}
               />

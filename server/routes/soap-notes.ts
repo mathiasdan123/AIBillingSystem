@@ -206,7 +206,9 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               sessionId: session.id,
               insuranceId: null,
               claimNumber,
-              totalAmount: accuracyReview.estimatedAmount.toFixed(2),
+              // Starts at zero and is recalculated from the line items below;
+              // the AI's estimate is not a charge.
+              totalAmount: '0.00',
               status: 'draft',
               aiReviewNotes: `AI Billing Accuracy Review (${accuracyReview.complianceScore}% compliance): ${accuracyReview.accuracyNotes}`,
             });
@@ -252,10 +254,20 @@ router.post('/', isAuthenticated, async (req: any, res) => {
               });
             }
 
+            // The claim header must equal the sum of its own line items.
+            // It was set from the AI's REIMBURSEMENT ESTIMATE while the lines
+            // priced from the practice fee schedule, and any code with no
+            // charge set was skipped above while its dollars stayed in the
+            // header. Two harms: a CLM02-vs-SV1 mismatch is a standard 837P
+            // front-end rejection, and where the header is honored the
+            // practice bills the payer's estimate instead of its own charge —
+            // the same under-billing as the $289-vs-$550 OT eval.
+            const claimTotal = await storage.recalculateClaimTotal(claim.id);
+
             generatedClaim = {
               id: claim.id,
               claimNumber: claim.claimNumber,
-              totalAmount: accuracyReview.estimatedAmount.toFixed(2),
+              totalAmount: claimTotal,
               lineItems: createdLineItems,
               optimization: {
                 totalUnits: accuracyReview.totalUnits,
