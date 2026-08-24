@@ -3269,10 +3269,19 @@ export const remittanceAdvice = pgTable("remittance_advice", {
   rawData: jsonb("raw_data"), // Full 835 parsed data
   processedAt: timestamp("processed_at"),
   status: varchar("status").default("pending").notNull(), // pending, processed, error
+  /**
+   * SHA-256 of the uploaded content, for idempotency. Uploading the same 835
+   * twice would otherwise post every payment on it twice — inflating the
+   * practice's A/R and the collections basis TherapyBill invoices 6% of.
+   * Nullable so rows that predate this column stay valid; Postgres unique
+   * indexes ignore NULLs, so they do not collide with each other.
+   */
+  fileHash: varchar("file_hash"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_remittance_advice_practice_status").on(table.practiceId, table.status),
   index("idx_remittance_advice_practice_date").on(table.practiceId, table.receivedDate),
+  uniqueIndex("uq_remittance_advice_practice_file").on(table.practiceId, table.fileHash),
 ]);
 
 // Remittance Line Items - individual claim-level payment details
