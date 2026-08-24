@@ -27,6 +27,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PatientBillingTab from "@/components/PatientBillingTab";
+import QueryErrorState from "@/components/QueryErrorState";
 import PatientProgressNotesManager from "@/components/PatientProgressNotesManager";
 import { DemoBadge } from "@/components/DemoBadge";
 import InsuranceEditDialog from "@/components/InsuranceEditDialog";
@@ -1249,6 +1250,12 @@ export default function Patients() {
           <div className="col-span-full">
             <Card>
               <CardContent className="p-12">
+                {/* A failed load must never render as an empty roster — that
+                    tells the user their patients are gone. Error first,
+                    always. */}
+                {patientsError ? (
+                  <QueryErrorState error={patientsError} what="patients" />
+                ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Users className="h-12 w-12 text-muted-foreground mb-4" />
                   {searchTerm ? (
@@ -1278,6 +1285,7 @@ export default function Patients() {
                     </>
                   )}
                 </div>
+                )}
               </CardContent>
             </Card>
           </div>
