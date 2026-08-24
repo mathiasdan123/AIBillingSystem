@@ -20,6 +20,43 @@ export function isStripeConfigured(): boolean {
   return !!process.env.STRIPE_SECRET_KEY;
 }
 
+/**
+ * Patient money collected through this Stripe account lands in TherapyBill's
+ * own balance. For the founder's practice that is simply their own account.
+ * For any OTHER practice it would mean holding their patients' money with no
+ * mechanism to remit it — commingling, and a money-transmission problem.
+ *
+ * Until Stripe Connect gives each practice its own connected account (so
+ * funds settle directly to them), patient-facing collection is restricted to
+ * the practices listed in PATIENT_PAYMENT_PRACTICE_IDS (comma-separated;
+ * defaults to practice 1, whose Stripe account this is). Insurance billing —
+ * the actual product — is unaffected: payers pay the practice directly.
+ */
+export class PatientPaymentsNotEnabledError extends Error {
+  readonly code = 'patient_payments_not_enabled';
+  constructor() {
+    super(
+      'Collecting patient payments is not enabled for this practice yet. ' +
+        'Insurance still pays the practice directly; patient balances can be invoiced outside TherapyBill for now.',
+    );
+    this.name = 'PatientPaymentsNotEnabledError';
+  }
+}
+
+export function practiceMayCollectPatientPayments(practiceId: number): boolean {
+  const raw = process.env.PATIENT_PAYMENT_PRACTICE_IDS;
+  const allowed = (raw && raw.trim() ? raw.split(',') : ['1'])
+    .map((v) => parseInt(v.trim(), 10))
+    .filter((v) => Number.isFinite(v));
+  return allowed.includes(practiceId);
+}
+
+function assertMayCollectPatientPayments(practiceId: number): void {
+  if (!practiceMayCollectPatientPayments(practiceId)) {
+    throw new PatientPaymentsNotEnabledError();
+  }
+}
+
 // ─── Pricing Plans ──────────────────────────────────────────────────────────
 
 export const PRICING_PLANS = {
@@ -242,6 +279,7 @@ export async function chargeCopay(params: {
   patientId: number;
   appointmentId: number;
 }): Promise<Stripe.PaymentIntent> {
+  assertMayCollectPatientPayments(params.practiceId);
   const paymentIntent = await getStripe().paymentIntents.create({
     amount: params.amount,
     currency: 'usd',
@@ -273,6 +311,7 @@ export async function createPatientPaymentIntent(params: {
   claimId?: number;
   description: string;
 }): Promise<Stripe.PaymentIntent> {
+  assertMayCollectPatientPayments(params.practiceId);
   const paymentIntent = await getStripe().paymentIntents.create({
     amount: params.amount,
     currency: 'usd',
@@ -299,6 +338,7 @@ export async function createPatientPaymentLink(params: {
   patientId: number;
   description: string;
 }): Promise<Stripe.PaymentLink> {
+  assertMayCollectPatientPayments(params.practiceId);
   // First create a price for this one-time payment
   const price = await getStripe().prices.create({
     unit_amount: params.amount,
