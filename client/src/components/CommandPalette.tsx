@@ -31,7 +31,7 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [, setLocation] = useLocation();
   const { t } = useTranslation();
-  const { isAdmin } = useAuth();
+  const { isAdmin, hasFinancialAccess } = useAuth();
 
   // Global hotkey
   useEffect(() => {
@@ -60,11 +60,11 @@ export function CommandPalette() {
   };
 
   // Flatten top-level + section items into groups for the palette.
-  const visibleTopLevel = topLevelItems.filter((i) => itemVisibleToUser(i, isAdmin));
+  const visibleTopLevel = topLevelItems.filter((i) => itemVisibleToUser(i, isAdmin, hasFinancialAccess));
   const groupedSections = navigationSections
     .map((section) => ({
       labelKey: section.labelKey,
-      items: flattenNavItems(section.items, isAdmin),
+      items: flattenNavItems(section.items, isAdmin, hasFinancialAccess),
     }))
     .filter((section) => section.items.length > 0);
 

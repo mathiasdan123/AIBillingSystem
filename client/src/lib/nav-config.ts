@@ -47,6 +47,10 @@ export interface NavItem {
   href?: string;
   icon: LucideIcon;
   adminOnly: boolean;
+  /** Practice financials (rates, claim charges, ERAs, revenue): visible to
+   * admin + billing roles, hidden from therapists. The server enforces the
+   * same boundary via requireFinancialRole — this only keeps the nav honest. */
+  financial?: boolean;
   children?: NavItem[];
 }
 
@@ -94,16 +98,18 @@ export const navigationSections: NavSection[] = [
   {
     labelKey: 'nav.sectionBilling',
     items: [
-      { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false },
-      { nameKey: 'nav.billerCockpit', href: '/biller-cockpit', icon: ClipboardList, adminOnly: true },
-      { nameKey: 'nav.recoveryLedger', href: '/recovery-ledger', icon: DollarSign, adminOnly: true },
-      { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false },
-      { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false },
-      { nameKey: 'nav.revenueAtRisk', href: '/revenue-at-risk', icon: AlertTriangle, adminOnly: false },
-      { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false },
-      { nameKey: 'nav.rates', href: '/insurance-rates', icon: DollarSign, adminOnly: false },
-      { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false },
-      { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false },
+      { nameKey: 'nav.claims', href: '/claims', icon: FileText, adminOnly: false, financial: true },
+      // Cockpit + ledger were adminOnly, but their APIs allow the billing
+      // role too — `financial` matches the nav to what the server permits.
+      { nameKey: 'nav.billerCockpit', href: '/biller-cockpit', icon: ClipboardList, adminOnly: false, financial: true },
+      { nameKey: 'nav.recoveryLedger', href: '/recovery-ledger', icon: DollarSign, adminOnly: false, financial: true },
+      { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false, financial: true },
+      { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false, financial: true },
+      { nameKey: 'nav.revenueAtRisk', href: '/revenue-at-risk', icon: AlertTriangle, adminOnly: false, financial: true },
+      { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false, financial: true },
+      { nameKey: 'nav.rates', href: '/insurance-rates', icon: DollarSign, adminOnly: false, financial: true },
+      { nameKey: 'nav.reimbursement', href: '/reimbursement', icon: TrendingUp, adminOnly: false, financial: true },
+      { nameKey: 'nav.expenses', href: '/expenses', icon: Receipt, adminOnly: false, financial: true },
       { nameKey: 'nav.accounting', href: '/accounting', icon: DollarSign, adminOnly: true },
     ],
   },
@@ -181,12 +187,17 @@ export const sectionLabelFallbacks: Record<string, string> = {
 
 // Flatten a NavItem tree (including children) into a list of leaf items
 // visible to the current user. Leaves always have an href.
-export function flattenNavItems(items: NavItem[], isAdmin: boolean): NavItem[] {
+export function flattenNavItems(
+  items: NavItem[],
+  isAdmin: boolean,
+  hasFinancialAccess: boolean,
+): NavItem[] {
   const out: NavItem[] = [];
   for (const item of items) {
     if (item.adminOnly && !isAdmin) continue;
+    if (item.financial && !hasFinancialAccess) continue;
     if (item.children && item.children.length > 0) {
-      out.push(...flattenNavItems(item.children, isAdmin));
+      out.push(...flattenNavItems(item.children, isAdmin, hasFinancialAccess));
     } else if (item.href) {
       out.push(item);
     }
@@ -196,10 +207,15 @@ export function flattenNavItems(items: NavItem[], isAdmin: boolean): NavItem[] {
 
 // Section is visible if it has at least one visible leaf. Parent items with
 // all-adminOnly children effectively become admin-only themselves.
-export function itemVisibleToUser(item: NavItem, isAdmin: boolean): boolean {
+export function itemVisibleToUser(
+  item: NavItem,
+  isAdmin: boolean,
+  hasFinancialAccess: boolean,
+): boolean {
   if (item.adminOnly && !isAdmin) return false;
+  if (item.financial && !hasFinancialAccess) return false;
   if (item.children && item.children.length > 0) {
-    return item.children.some((c) => itemVisibleToUser(c, isAdmin));
+    return item.children.some((c) => itemVisibleToUser(c, isAdmin, hasFinancialAccess));
   }
   return true;
 }

@@ -1142,6 +1142,9 @@ export default function Settings() {
 
   // Check if current user is admin
   const isAdmin = (user as any)?.role === 'admin';
+  // Financial tabs (Billing, Fee Schedule) are admin/billing only — the
+  // fee-schedule API 403s therapists anyway (requireFinancialRole).
+  const hasFinancialAccess = isAdmin || (user as any)?.role === 'billing';
 
   const form = useForm<PracticeFormData>({
     resolver: zodResolver(practiceSchema),
@@ -1525,8 +1528,8 @@ export default function Settings() {
     // practice is walked through by prospects and partner therapists, and
     // pricing conversations happen off-product — so the tab stays out of the
     // demo entirely.
-    ...(practice?.isDemo ? [] : [{ id: "billing", label: "Billing", icon: CreditCard }]),
-    { id: "fee-schedule", label: "Fee Schedule", icon: DollarSign },
+    ...(practice?.isDemo || !hasFinancialAccess ? [] : [{ id: "billing", label: "Billing", icon: CreditCard }]),
+    ...(hasFinancialAccess ? [{ id: "fee-schedule", label: "Fee Schedule", icon: DollarSign }] : []),
     { id: "therapists", label: "Therapists", icon: BadgeCheck },
     ...(isAdmin ? [
       { id: "users", label: "User Management", icon: Users },
@@ -2347,7 +2350,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {activeTab === "billing" && !practice?.isDemo && (
+          {activeTab === "billing" && !practice?.isDemo && hasFinancialAccess && (
             <Card>
               <CardHeader>
                 <CardTitle>Billing Settings</CardTitle>
@@ -2404,7 +2407,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {activeTab === "fee-schedule" && (
+          {activeTab === "fee-schedule" && hasFinancialAccess && (
             <FeeScheduleTab />
           )}
 

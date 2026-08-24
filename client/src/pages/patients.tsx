@@ -556,7 +556,7 @@ function eligibilityErrorMessage(error: unknown): string {
 }
 
 export default function Patients() {
-  const { user, isAuthenticated, isLoading, isAdmin } = useAuth();
+  const { user, isAuthenticated, isLoading, isAdmin, hasFinancialAccess } = useAuth();
 
   // Practice network participation — an out-of-network practice should hear
   // the OON tier in eligibility summaries, not the in-network copay.
@@ -1423,7 +1423,9 @@ export default function Patients() {
                 when the modal opens. */}
             <UpcomingAppointmentsSummary patientId={selectedPatient.id} />
             <Tabs defaultValue="details" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
+              {/* Billing tab shows claim charges and balances — admin/billing
+                  roles only, matching the server's requireFinancialRole gate. */}
+              <TabsList className={`grid w-full ${hasFinancialAccess ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 <TabsTrigger value="details">Details</TabsTrigger>
                 <TabsTrigger value="intake" className="relative">
                   Intake
@@ -1431,16 +1433,18 @@ export default function Patients() {
                     <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block" />
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="billing">Billing</TabsTrigger>
+                {hasFinancialAccess && <TabsTrigger value="billing">Billing</TabsTrigger>}
                 <TabsTrigger value="progress-notes">Notes</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="billing" className="mt-4">
-                <PatientBillingTab
-                  patientId={selectedPatient.id}
-                  patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
-                />
-              </TabsContent>
+              {hasFinancialAccess && (
+                <TabsContent value="billing" className="mt-4">
+                  <PatientBillingTab
+                    patientId={selectedPatient.id}
+                    patientName={`${selectedPatient.firstName} ${selectedPatient.lastName}`}
+                  />
+                </TabsContent>
+              )}
 
               <TabsContent value="intake" className="mt-4">
                 <PatientIntakeDataView patient={selectedPatient} />
