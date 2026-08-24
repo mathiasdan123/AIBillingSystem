@@ -633,6 +633,37 @@ export interface ClaimSubmissionResponse {
 
 export async function submitClaim(claim: ClaimSubmission, practiceId?: number): Promise<ClaimSubmissionResponse> {
   const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
+
+  // Sandbox mode must actually mean sandbox. Settings tells the practice
+  // "Claims are sent to a test environment. No real submissions to insurance
+  // companies" — but sandbox resolved to the SAME global production key, and
+  // isSandbox was read nowhere, so a practice that believed it was testing
+  // would file real 837Ps to real payers under its own NPI. Refuse instead.
+  if (stediKey?.isSandbox) {
+    return {
+      success: false,
+      claimId: claim.claimId,
+      status: 'rejected',
+      raw: null,
+      errors: [
+        'This practice is in Sandbox Mode, so the claim was not transmitted. ' +
+          'Switch to Live Mode in Settings → Clearinghouse when you are ready to send real claims.',
+      ],
+    };
+  }
+
+  // No practiceId means we cannot tell sandbox from live. Refuse rather than
+  // fall through to the global production key on an unknown practice.
+  if (!practiceId) {
+    return {
+      success: false,
+      claimId: claim.claimId,
+      status: 'rejected',
+      raw: null,
+      errors: ['Internal error: claim submission attempted without a practice context.'],
+    };
+  }
+
   const payload = build837P(claim);
 
   try {

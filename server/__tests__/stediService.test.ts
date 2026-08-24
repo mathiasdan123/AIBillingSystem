@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// submitClaim now refuses without a practice context (and in sandbox mode),
+// so these transport-level tests run against a practice in live mode.
+const { mockStorage } = vi.hoisted(() => ({
+  mockStorage: { getPractice: vi.fn(async () => ({ id: 1, sandboxMode: false })) },
+}));
+vi.mock('../storage', () => ({ storage: mockStorage }));
+vi.mock('../services/phiEncryptionService', () => ({
+  decryptField: (v: any) => v,
+  encryptField: (v: any) => v,
+}));
+
 // Save original env
 const originalEnv = { ...process.env };
 
@@ -232,7 +243,7 @@ describe('stediService', () => {
       }));
 
       const { submitClaim } = await import('../services/stediService');
-      const result = await submitClaim(sampleClaim);
+      const result = await submitClaim(sampleClaim, 1);
 
       expect(result.success).toBe(true);
       expect(result.status).toBe('accepted');
@@ -247,7 +258,7 @@ describe('stediService', () => {
       }));
 
       const { submitClaim } = await import('../services/stediService');
-      const result = await submitClaim(sampleClaim);
+      const result = await submitClaim(sampleClaim, 1);
 
       expect(result.success).toBe(false);
       expect(result.status).toBe('rejected');
@@ -258,7 +269,7 @@ describe('stediService', () => {
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Connection refused')));
 
       const { submitClaim } = await import('../services/stediService');
-      const result = await submitClaim(sampleClaim);
+      const result = await submitClaim(sampleClaim, 1);
 
       expect(result.success).toBe(false);
       expect(result.status).toBe('rejected');
