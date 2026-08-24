@@ -1117,6 +1117,23 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
 
     for (let i = 0; i < validClaims.length; i++) {
       const { claim, patient, practice, insurance, lineItems } = validClaims[i];
+
+      // Defense in depth: the scrubber above already rejects a claim whose
+      // line items carry no diagnosis. Never transmit one regardless — the
+      // old code substituted a hardcoded F41.1 (generalized anxiety) to make
+      // the 837P validate, putting a fabricated diagnosis on the patient's
+      // insurance record.
+      if (!lineItems.some((item: any) => item.icd10CodeId)) {
+        results.push({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          success: false,
+          submissionMethod: 'none',
+          error: 'Claim has no diagnosis code — add the diagnosis to each line item before submitting',
+        });
+        continue;
+      }
+
       let clearinghouseResult: any = null;
       let submissionMethod = 'manual';
 
@@ -1223,7 +1240,7 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
               name: insurance.name || 'Unknown',
             },
             serviceLines,
-            diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+            diagnosisCodes,
             serviceTypeCodes: stcsForClaim,
             strictStcValidation: Boolean((practice as any)?.strictStcValidation),
             // Resubmission path — after reopen, send as 837P replacement (freq '7').
@@ -1409,7 +1426,7 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
         name: insurance.name || 'Unknown',
       },
       serviceLines,
-      diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+      diagnosisCodes,
       serviceTypeCodes: stcsForClaim,
       strictStcValidation: Boolean((practice as any)?.strictStcValidation),
       isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
@@ -1629,6 +1646,18 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
         );
         const diagnosisCodes = Array.from(diagnosisCodeSet);
 
+        // Defense in depth: the scrubber already errors on a line item with no
+        // diagnosis, so this should be unreachable. Refuse rather than
+        // transmit a claim with no diagnosis (the old code substituted a
+        // hardcoded F41.1 here).
+        if (diagnosisCodes.length === 0) {
+          return res.status(400).json({
+            message:
+              'This claim has no diagnosis code. Add the diagnosis to each line item before submitting.',
+            code: 'diagnosis_required',
+          });
+        }
+
         // Simple address parser
         const parseAddress = (addr: string | null) => {
           const parts = (addr || '').split(',').map(p => p.trim());
@@ -1697,7 +1726,7 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
             name: insurance.name || 'Unknown',
           },
           serviceLines,
-          diagnosisCodes: diagnosisCodes.length > 0 ? diagnosisCodes : ['F41.1'],
+          diagnosisCodes,
           serviceTypeCodes: stcsForSingle,
           strictStcValidation: Boolean((practice as any)?.strictStcValidation),
           isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,

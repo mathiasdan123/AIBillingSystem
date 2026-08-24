@@ -118,7 +118,12 @@ export async function scrubClaim(claimId: number, practiceId: number): Promise<S
         }
 
         if (!item.icd10CodeId) {
-          warnings.push(
+          // ERROR, not a warning: submission used to proceed and the route
+          // substituted a hardcoded F41.1 (generalized anxiety) so the 837P
+          // would validate. That put a fabricated psychiatric diagnosis on a
+          // real patient's insurance record. A claim with no diagnosis must
+          // not be transmitted — the provider supplies the code.
+          errors.push(
             `Line item for ${cpt?.code || 'unknown CPT'} has no diagnosis code linked`
           );
         } else {

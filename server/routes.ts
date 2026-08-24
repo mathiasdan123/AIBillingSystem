@@ -179,6 +179,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // surfaces: admin/billing manage them, therapists never see them.
   app.use('/api/provider-profile', requireFinancialRole);
   app.use('/api/payer-enrollments', requireFinancialRole);
+  // Gaps found by the GTM audit: these return cash collected, net collection
+  // rate, and revenue by payer/CPT/provider — the exact data the therapist
+  // gate exists to hide — but were never added to this block.
+  app.use('/api/daily-report', requireFinancialRole);
+  app.use('/api/practice-analytics', requireFinancialRole);
 
   // Auth routes: /api/auth/*, /api/users/*, /api/mfa/*, /api/invites/*, /api/therapists/*
   app.use('/api', authRouter);
