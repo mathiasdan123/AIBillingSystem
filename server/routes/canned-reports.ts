@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { isAuthenticated } from '../replitAuth';
+import { requireFinancialRole } from '../middleware/financial-access';
 import { decryptField } from '../services/phiEncryptionService';
 import {
   appointments,
@@ -162,7 +163,9 @@ router.get('/cancellations', isAuthenticated, async (req: any, res) => {
 // past the typical 90-day filing deadline. Practices override per-payer
 // in payer_contracts; defaulting to 90 days here for a usable single view.
 // Date of service lives on treatmentSessions (claims.sessionId join).
-router.get('/timely-filing', isAuthenticated, async (req: any, res) => {
+// Financial: claim dollars at risk. (The clinical/ops reports in this file
+// stay open to therapists.)
+router.get('/timely-filing', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const filingDays = parseInt((req.query.filingDays as string) || '90');
@@ -216,7 +219,8 @@ router.get('/timely-filing', isAuthenticated, async (req: any, res) => {
 // ============================================================
 // Adjustments live on the claims.primaryAdjustmentAmount column (primary
 // payer write-offs); aggregated by month-of-service and payer.
-router.get('/adjustments', isAuthenticated, async (req: any, res) => {
+// Financial: payer adjustments and write-off dollars.
+router.get('/adjustments', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const { start, end } = parseRange(req);

@@ -2351,58 +2351,22 @@ export default function Settings() {
           )}
 
           {activeTab === "billing" && !practice?.isDemo && hasFinancialAccess && (
+            /* The old tab rendered a fully hardcoded fake card (invented plan
+               status, a 2024 billing date, fabricated usage, dead buttons).
+               Real subscription data lives on /subscription (Stripe-backed);
+               this tab now just routes there. */
             <Card>
               <CardHeader>
                 <CardTitle>Billing Settings</CardTitle>
                 <CardDescription>
-                  Manage your subscription and billing preferences
+                  Your TherapyBill subscription, payment methods, and invoices
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="font-medium text-slate-900 mb-2">Current Plan</h4>
-                    <div className="p-4 bg-slate-50 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium text-slate-900">Practice Management Plan</p>
-                          <p className="text-sm text-slate-600">Flat monthly fee + 6% billing engine</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-medium text-slate-900">Active</p>
-                          <p className="text-sm text-slate-600">Next billing: Dec 15, 2024</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div>
-                    <h4 className="font-medium text-slate-900 mb-2">Usage This Month</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 bg-slate-50 rounded-lg">
-                        <p className="text-2xl font-bold text-slate-900">147</p>
-                        <p className="text-sm text-slate-600">Claims Processed</p>
-                      </div>
-                      <div className="p-4 bg-slate-50 rounded-lg">
-                        <p className="text-2xl font-bold text-slate-900">$18,450</p>
-                        <p className="text-sm text-slate-600">Total Volume</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex space-x-2">
-                    <Button variant="outline">
-                      <CreditCard className="w-4 h-4 mr-2" />
-                      Update Payment Method
-                    </Button>
-                    <Button variant="outline">
-                      <FileText className="w-4 h-4 mr-2" />
-                      Download Invoice
-                    </Button>
-                  </div>
-                </div>
+              <CardContent>
+                <Button onClick={() => window.location.assign('/subscription')}>
+                  <CreditCard className="w-4 h-4 mr-2" />
+                  Open Subscription & Billing
+                </Button>
               </CardContent>
             </Card>
           )}
