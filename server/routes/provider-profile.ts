@@ -56,6 +56,78 @@ function maskTaxId(decrypted: string | null): string | null {
   return `•••••${digits.slice(-4)}`;
 }
 
+/**
+ * Auto-chain: the moment a practice's profile is complete AND authorized,
+ * create its Stedi provider record without a separate manual click. Called
+ * after profile updates and after authorization; also the body of the
+ * explicit POST /stedi-provider. Never throws — a Stedi failure must not
+ * fail the profile save that triggered it, so the result reports status and
+ * the practice can retry from the checklist.
+ */
+type StediProviderAttempt =
+  | { attempted: false; reason: 'not_ready' | 'already_linked' }
+  | { attempted: true; ok: true; stediProviderId: string }
+  | { attempted: true; ok: false; error: string };
+
+export async function tryCreateStediProvider(practiceId: number): Promise<StediProviderAttempt> {
+  const p = await storage.getPractice(practiceId);
+  if (!p) return { attempted: false, reason: 'not_ready' };
+  if (p.stediProviderId) return { attempted: false, reason: 'already_linked' };
+
+  const readiness = computeReadiness(p);
+  if (!readiness.complete || !p.enrollmentAuthorizedAt) {
+    return { attempted: false, reason: 'not_ready' };
+  }
+
+  const taxId = decryptField(p.taxId);
+  if (!taxId) return { attempted: true, ok: false, error: 'Tax ID missing or undecryptable' };
+
+  try {
+    const { apiKey } = await getStediApiKeyForPractice(practiceId);
+    const contactName = p.billingContactName || p.ownerName || '';
+    const [firstName, ...rest] = contactName.trim().split(/\s+/);
+    const result = await ensureStediProvider(apiKey, {
+      displayName: p.name!,
+      npi: p.npi!,
+      taxId,
+      taxIdType: 'EIN',
+      contact: {
+        firstName: firstName || undefined,
+        lastName: rest.join(' ') || undefined,
+        organizationName: p.name!,
+        email: p.billingContactEmail || p.enrollmentNotificationEmail || undefined,
+        phone: p.billingContactPhone || undefined,
+        streetAddress1: p.addressStreet || p.address || undefined,
+        city: p.addressCity || undefined,
+        state: p.addressState || undefined,
+        zipCode: p.addressZip || undefined,
+      },
+    });
+
+    if (!result.ok || !result.providerId) {
+      logger.warn('Stedi provider creation failed', {
+        practiceId,
+        error: result.error,
+        raw: result.raw,
+      });
+      return { attempted: true, ok: false, error: sanitizeExternalError(result.error) };
+    }
+
+    await storage.updatePractice(practiceId, { stediProviderId: result.providerId });
+    logger.info('Stedi provider record created', {
+      practiceId,
+      stediProviderId: result.providerId,
+    });
+    return { attempted: true, ok: true, stediProviderId: result.providerId };
+  } catch (error) {
+    logger.error('Stedi provider auto-create failed', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { attempted: true, ok: false, error: 'Stedi provider creation failed' };
+  }
+}
+
 // GET /api/provider-profile
 router.get('/', isAuthenticated, async (req: any, res: Response) => {
   try {
@@ -176,7 +248,10 @@ router.put('/', isAuthenticated, async (req: any, res: Response) => {
 
     const updated = await storage.updatePractice(practiceId, update);
     logger.info('Provider profile updated', { practiceId, fields: Object.keys(update) });
-    res.json({ ok: true, readiness: computeReadiness(updated) });
+    // Auto-chain: if this save completed the profile (and authorization is
+    // already recorded), create the Stedi provider record now.
+    const stediProvider = await tryCreateStediProvider(practiceId);
+    res.json({ ok: true, readiness: computeReadiness(updated), stediProvider });
   } catch (error: any) {
     // Postgres unique violation on practices.npi (23505) — another practice
     // already registered this NPI. Surface a clear 409 instead of a 500.
@@ -225,7 +300,14 @@ router.post('/authorize', isAuthenticated, async (req: any, res: Response) => {
       enrollmentAuthorizedAt: new Date(),
     });
     logger.info('Enrollment authorization recorded', { practiceId, ownerName });
-    res.json({ ok: true, enrollmentAuthorizedAt: updated.enrollmentAuthorizedAt });
+    // Auto-chain: authorization is usually the last gate — create the Stedi
+    // provider record immediately if the profile is already complete.
+    const stediProvider = await tryCreateStediProvider(practiceId);
+    res.json({
+      ok: true,
+      enrollmentAuthorizedAt: updated.enrollmentAuthorizedAt,
+      stediProvider,
+    });
   } catch (error) {
     logger.error('Failed to record enrollment authorization', {
       error: error instanceof Error ? error.message : String(error),
@@ -235,6 +317,8 @@ router.post('/authorize', isAuthenticated, async (req: any, res: Response) => {
 });
 
 // POST /api/provider-profile/stedi-provider  (Phase 2)
+// Explicit retry surface for the auto-chain above (e.g. after a transient
+// Stedi failure). Same preconditions: complete profile + authorization.
 router.post('/stedi-provider', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getPracticeId(req);
@@ -242,61 +326,35 @@ router.post('/stedi-provider', isAuthenticated, async (req: any, res: Response) 
     const p = await storage.getPractice(practiceId);
     if (!p) return res.status(404).json({ message: 'Practice not found' });
 
+    if (p.stediProviderId) {
+      return res.json({
+        ok: true,
+        stediProviderId: p.stediProviderId,
+        readiness: computeReadiness(p),
+      });
+    }
+
     const readiness = computeReadiness(p);
-    if (!readiness.complete) {
+    if (!readiness.complete || !p.enrollmentAuthorizedAt) {
       return res.status(412).json({
-        message: 'Provider profile incomplete — finish it before creating the Stedi provider record',
+        message: !readiness.complete
+          ? 'Provider profile incomplete — finish it before creating the Stedi provider record'
+          : 'Enrollment not authorized — record authorization before creating the Stedi provider record',
         missing: readiness.missing,
       });
     }
 
-    const taxId = decryptField(p.taxId);
-    if (!taxId) return res.status(400).json({ message: 'Tax ID missing or undecryptable' });
-
-    const { apiKey } = await getStediApiKeyForPractice(practiceId);
-    const contactName = p.billingContactName || p.ownerName || '';
-    const [firstName, ...rest] = contactName.trim().split(/\s+/);
-    const result = await ensureStediProvider(apiKey, {
-      displayName: p.name!,
-      npi: p.npi!,
-      taxId,
-      taxIdType: 'EIN',
-      contact: {
-        firstName: firstName || undefined,
-        lastName: rest.join(' ') || undefined,
-        organizationName: p.name!,
-        email: p.billingContactEmail || p.enrollmentNotificationEmail || undefined,
-        phone: p.billingContactPhone || undefined,
-        streetAddress1: p.addressStreet || p.address || undefined,
-        city: p.addressCity || undefined,
-        state: p.addressState || undefined,
-        zipCode: p.addressZip || undefined,
-      },
-    });
-
-    if (!result.ok || !result.providerId) {
-      // Log the raw Stedi response server-side only — it can echo provider
-      // identifiers and shouldn't reach the browser.
-      logger.warn('Stedi provider creation failed', {
-        practiceId,
-        error: result.error,
-        raw: result.raw,
-      });
-      return res.status(502).json({
-        message: 'Stedi provider creation failed',
-        error: sanitizeExternalError(result.error),
+    const attempt = await tryCreateStediProvider(practiceId);
+    if (attempt.attempted && attempt.ok) {
+      const updated = await storage.getPractice(practiceId);
+      return res.json({
+        ok: true,
+        stediProviderId: attempt.stediProviderId,
+        readiness: computeReadiness(updated!),
       });
     }
-
-    const updated = await storage.updatePractice(practiceId, {
-      stediProviderId: result.providerId,
-    });
-    logger.info('Stedi provider record created', { practiceId, stediProviderId: result.providerId });
-    res.json({
-      ok: true,
-      stediProviderId: updated.stediProviderId,
-      readiness: computeReadiness(updated),
-    });
+    const errorMessage = attempt.attempted && !attempt.ok ? attempt.error : 'Not ready';
+    res.status(502).json({ message: 'Stedi provider creation failed', error: errorMessage });
   } catch (error) {
     logger.error('Failed to create Stedi provider record', {
       error: error instanceof Error ? error.message : String(error),

@@ -14,6 +14,7 @@ import AtRiskAuthorizationsWidget from "@/components/AtRiskAuthorizationsWidget"
 import CredentialingDeadlinesWidget from "@/components/CredentialingDeadlinesWidget";
 import PreSessionAuthCheckWidget from "@/components/PreSessionAuthCheckWidget";
 import MissingPlanDocumentsWidget from "@/components/MissingPlanDocumentsWidget";
+import BillingSetupChecklist from "@/components/BillingSetupChecklist";
 import { Plus, AlertCircle, CheckCircle, Clock, XCircle, Ban, DollarSign, FileText, Users, ArrowRight, Sparkles, Upload, BarChart3, Mail, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/skeleton";
@@ -249,6 +250,10 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* Insurance billing setup — guided enrollment path; renders only for
+          admin/billing users until every step is complete */}
+      <BillingSetupChecklist />
 
       {/* Daily Insights Widget */}
       {dailyInsights && (

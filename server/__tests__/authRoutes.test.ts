@@ -283,13 +283,29 @@ describe('auth routes (server/routes/auth.ts)', () => {
       expect(res.body.message).toBe('Please enter a valid email address');
     });
 
-    it('should return 400 when practiceId is missing', async () => {
-      const res = await request(app)
+    it('falls back to the inviter practice when body practiceId is missing', async () => {
+      // The onboarding wizard omits practiceId; the route must default to the
+      // inviter's own practice (req.userPracticeId), never require the client
+      // to know its id — and never fall back to a hardcoded practice.
+      mockStorage.getAllUsers.mockResolvedValue([]);
+      mockStorage.getInviteByEmail.mockResolvedValue(null);
+      mockStorage.createInvite.mockResolvedValue({
+        id: 2,
+        email: 'valid@example.com',
+        role: 'therapist',
+        token: 'invite-token-fallback',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        practiceId: 1,
+      });
+
+      await request(app)
         .post('/api/invites')
         .send({ email: 'valid@example.com' })
-        .expect(400);
+        .expect(200);
 
-      expect(res.body.message).toBe('Practice ID is required for invites');
+      expect(mockStorage.createInvite).toHaveBeenCalledWith(
+        expect.objectContaining({ practiceId: 1 }),
+      );
     });
 
     it('should return 400 when user with email already exists', async () => {
