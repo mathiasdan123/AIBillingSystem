@@ -43,6 +43,7 @@ vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: { firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com' },
     isAdmin: true,
+    hasFinancialAccess: true,
     currentRole: 'admin',
   }),
 }));

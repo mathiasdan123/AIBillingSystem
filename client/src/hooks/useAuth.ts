@@ -6,7 +6,7 @@ interface User {
   firstName?: string;
   lastName?: string;
   profileImageUrl?: string | null;
-  role?: 'admin' | 'therapist';
+  role?: 'admin' | 'billing' | 'therapist';
   practiceId?: number;
   // True when the user is authenticated but has not yet enabled MFA.
   // Set by GET /api/auth/user (server/routes/auth.ts). Used to gate access
@@ -48,6 +48,10 @@ export function useAuth() {
     isLoading,
     isAuthenticated,
     isAdmin: effectiveRole === 'admin',
+    // Practice financials (fee schedules, claim charges, ERAs, revenue) are
+    // admin/billing only. Mirrors the server-side requireFinancialRole gate —
+    // this just keeps therapist users from seeing nav/tabs that would 403.
+    hasFinancialAccess: effectiveRole === 'admin' || effectiveRole === 'billing',
     currentRole: effectiveRole || 'therapist',
     // Expose actual role (ignoring demo override) for certain checks
     actualRole: user?.role || 'therapist',

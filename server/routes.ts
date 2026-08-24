@@ -50,6 +50,7 @@ import {
 import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
 import { mfaSetupRequired } from "./middleware/mfa-setup-required";
+import { requireFinancialRole } from "./middleware/financial-access";
 import { authLimiter } from "./middleware/rate-limiter";
 import logger from "./services/logger";
 import { cache } from "./services/cacheService";
@@ -154,6 +155,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerComplianceRoutes(app);
 
   // ==================== MODULAR ROUTERS ====================
+
+  // ---- Role gate: practice financials are admin/billing only ----
+  // Therapist-role users must not see what the practice bills per CPT code /
+  // session: fee schedules, contracted rates, claim charges, ERAs, revenue.
+  // Gating happens here at the prefix so every route under these paths is
+  // covered no matter which router serves it. The matching client-side change
+  // hides the same surfaces from the nav for therapist users; this is the
+  // enforcement layer. MCP + Blanche tools use the storage layer directly and
+  // bypass these HTTP routes, so they are unaffected.
+  app.use('/api/claims', requireFinancialRole);
+  app.use('/api/fee-schedules', requireFinancialRole);
+  app.use('/api/payer-contracts', requireFinancialRole);
+  app.use('/api/remittance', requireFinancialRole);
+  app.use('/api/revenue-at-risk', requireFinancialRole);
+  app.use('/api/payment-postings', requireFinancialRole);
+  app.use('/api/payer-intel', requireFinancialRole);
+  app.use('/api/superbills', requireFinancialRole);
+  app.use('/api/appeals', requireFinancialRole);
+  app.use('/api/billing', requireFinancialRole);
+  app.use('/api/payment-transactions', requireFinancialRole);
 
   // Auth routes: /api/auth/*, /api/users/*, /api/mfa/*, /api/invites/*, /api/therapists/*
   app.use('/api', authRouter);

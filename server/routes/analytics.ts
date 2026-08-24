@@ -21,6 +21,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
+import { requireFinancialRole } from '../middleware/financial-access';
 import logger from '../services/logger';
 import { getDb } from '../db';
 import { users, appointments, claims, treatmentSessions, soapNotes } from '@shared/schema';
@@ -94,7 +95,7 @@ router.get('/dashboard', isAuthenticated, async (req: any, res) => {
 
 // Per-patient / per-therapist claim aggregates for the analytics page — replaces
 // the page's former full `/api/claims` fetch + client-side reduction.
-router.get('/claims-rollup', isAuthenticated, async (req: any, res) => {
+router.get('/claims-rollup', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const rollup = await storage.getClaimsAnalyticsRollup(practiceId);
@@ -127,7 +128,7 @@ router.get('/wait-times', isAuthenticated, async (req: any, res) => {
   }
 });
 
-router.get('/revenue', isAuthenticated, async (req: any, res) => {
+router.get('/revenue', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const timeRange = req.query.timeRange as string || '12months';
@@ -147,7 +148,7 @@ router.get('/revenue', isAuthenticated, async (req: any, res) => {
 });
 
 // Revenue forecast analytics
-router.get('/revenue/forecast', isAuthenticated, async (req: any, res) => {
+router.get('/revenue/forecast', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const months = parseInt(req.query.months as string) || 3;
@@ -164,7 +165,7 @@ router.get('/revenue/forecast', isAuthenticated, async (req: any, res) => {
 });
 
 // Revenue by location and therapist
-router.get('/revenue-by-location-therapist', isAuthenticated, async (req: any, res) => {
+router.get('/revenue-by-location-therapist', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const startDate = req.query.start ? new Date(req.query.start as string) : undefined;
@@ -212,7 +213,7 @@ router.get('/denial-reasons', isAuthenticated, async (req: any, res) => {
 });
 
 // Collection rate analytics
-router.get('/collection-rate', isAuthenticated, async (req: any, res) => {
+router.get('/collection-rate', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const data = await cache.wrap(
@@ -273,7 +274,7 @@ router.get('/capacity', isAuthenticated, async (req: any, res) => {
 });
 
 // AR aging analytics
-router.get('/ar-aging', isAuthenticated, async (req: any, res) => {
+router.get('/ar-aging', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const data = await cache.wrap(
@@ -289,7 +290,7 @@ router.get('/ar-aging', isAuthenticated, async (req: any, res) => {
 });
 
 // Patient billing AR aging (statement-based, separate from insurance claims AR)
-router.get('/patient-ar-aging', isAuthenticated, async (req: any, res) => {
+router.get('/patient-ar-aging', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const data = await cache.wrap(

@@ -57,11 +57,12 @@ import {
 // One stroke-width everywhere so the icon rail reads as precise rather than chunky.
 const ICON_STROKE = 1.5;
 
-// Bottom tab bar items (the 4 primary + More) — unchanged contract
+// Bottom tab bar items (the 4 primary + More) — unchanged contract.
+// `financial` mirrors nav-config: those tabs disappear for therapist role.
 const bottomTabItems = [
   { nameKey: 'nav.dashboard', href: '/', icon: Home },
   { nameKey: 'nav.patients', href: '/patients', icon: Users },
-  { nameKey: 'nav.claims', href: '/claims', icon: FileText },
+  { nameKey: 'nav.claims', href: '/claims', icon: FileText, financial: true },
   { nameKey: 'nav.calendar', href: '/calendar', icon: Calendar },
 ];
 
@@ -310,7 +311,7 @@ function NavSectionBlock({
 
 export default function SimpleNavigation() {
   const [location, setLocation] = useLocation();
-  const { user, isAdmin, currentRole } = useAuth();
+  const { user, isAdmin, hasFinancialAccess, currentRole } = useAuth();
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
@@ -323,22 +324,22 @@ export default function SimpleNavigation() {
       ...section,
       items: section.items
         .map((item): NavItem | null => {
-          if (!itemVisibleToUser(item, isAdmin)) return null;
+          if (!itemVisibleToUser(item, isAdmin, hasFinancialAccess)) return null;
           if (item.children && item.children.length > 0) {
             return {
               ...item,
-              children: item.children.filter(c => itemVisibleToUser(c, isAdmin)),
+              children: item.children.filter(c => itemVisibleToUser(c, isAdmin, hasFinancialAccess)),
             };
           }
           return item;
         })
         .filter((item): item is NavItem => item !== null),
     }))
-    .filter(section => section.items.length > 0), [isAdmin]);
+    .filter(section => section.items.length > 0), [isAdmin, hasFinancialAccess]);
 
   const filteredTopLevelItems = useMemo(
-    () => topLevelItems.filter(item => itemVisibleToUser(item, isAdmin)),
-    [isAdmin]
+    () => topLevelItems.filter(item => itemVisibleToUser(item, isAdmin, hasFinancialAccess)),
+    [isAdmin, hasFinancialAccess]
   );
 
   // ---- Sidebar expand/collapse state (persisted) ----
@@ -446,7 +447,7 @@ export default function SimpleNavigation() {
   const moreNavSections = filteredSections
     .map(section => ({
       ...section,
-      items: flattenNavItems(section.items, isAdmin).filter(
+      items: flattenNavItems(section.items, isAdmin, hasFinancialAccess).filter(
         item => !item.href || !bottomTabHrefs.has(item.href)
       ),
     }))
@@ -712,7 +713,7 @@ export default function SimpleNavigation() {
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-background border-t border-border safe-area-bottom"
       >
         <div className="flex items-stretch justify-around h-16 px-1">
-          {bottomTabItems.map((item) => {
+          {bottomTabItems.filter((item) => !(item as any).financial || hasFinancialAccess).map((item) => {
             const Icon = item.icon;
             const isActive = isBottomTabActive(item.href);
             return (
