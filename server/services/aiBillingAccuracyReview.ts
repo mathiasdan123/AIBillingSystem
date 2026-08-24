@@ -158,7 +158,7 @@ CODE EQUIVALENCIES (same intervention can often be coded multiple ways):
 ${equivalencyHints}
 
 AVAILABLE CPT CODES:
-${availableCptCodes.map(c => `- ${c.code}: ${c.description} (Rate: $${c.baseRate || '289'})`).join('\n')}
+${availableCptCodes.map(c => `- ${c.code}: ${c.description} (Rate: ${c.baseRate ? `$${c.baseRate}` : 'not set by this practice'})`).join('\n')}
 
 BILLING RULES TO FOLLOW:
 1. DOCUMENTATION SUPPORT IS PRIMARY - only recommend codes the documentation clearly supports with skilled, functional clinical content.
@@ -272,7 +272,10 @@ Recommend the most ACCURATE, defensible coding. If the documentation is thin, re
     const totalUnits = lineItems.reduce((sum: number, item: any) => sum + item.units, 0);
     const estimatedAmount = lineItems.reduce((sum: number, item: any) => {
       // Use actual reimbursement rate if available, otherwise use base rate
-      const rate = item.reimbursementRate || parseFloat(availableCptCodes.find(c => c.id === item.cptCodeId)?.baseRate || '289');
+      // Unpriced codes contribute nothing rather than a placeholder $289 —
+      // the claim's real total is recalculated from its line items anyway.
+      const cataloged = availableCptCodes.find(c => c.id === item.cptCodeId)?.baseRate;
+      const rate = item.reimbursementRate || (cataloged ? parseFloat(cataloged) : 0);
       return sum + (rate * item.units);
     }, 0);
 
@@ -301,7 +304,7 @@ Recommend the most ACCURATE, defensible coding. If the documentation is thin, re
         reimbursementRate: undefined
       }],
       totalUnits: Math.min(totalAvailableUnits, 2),
-      estimatedAmount: parseFloat(defaultCode.baseRate || '289') * Math.min(totalAvailableUnits, 2),
+      estimatedAmount: (defaultCode.baseRate ? parseFloat(defaultCode.baseRate) : 0) * Math.min(totalAvailableUnits, 2),
       accuracyNotes: "Fallback billing applied - please review manually",
       suppressedCodes: [],
       complianceScore: 70,
