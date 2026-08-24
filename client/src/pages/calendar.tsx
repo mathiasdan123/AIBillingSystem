@@ -72,7 +72,7 @@ export default function CalendarPage() {
     // legacy behavior preserved (type string + 60min default).
     appointmentTypeId: "",
     // Minutes. String to match Select value contract; coerced to number on POST.
-    durationMinutes: "60",
+    durationMinutes: "45",
     notes: "",
     locationId: "",
     recurrencePattern: "none" as "none" | "weekly" | "biweekly" | "monthly",
@@ -231,7 +231,7 @@ export default function CalendarPage() {
         ? `Created ${data.seriesInfo.totalCreated} appointments (${data.seriesInfo.recurrenceDescription})`
         : "Appointment created successfully.";
       toast({ title: "Appointment Scheduled", description: desc });
-      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", appointmentTypeId: "", durationMinutes: "60", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", appointmentTypeId: "", durationMinutes: "45", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
       setIsNewPatient(false);
       setNewPatientData({ firstName: "", lastName: "", phone: "", email: "", insuranceProvider: "", insuranceId: "", policyNumber: "", groupNumber: "", effectiveDate: "" });
     },
@@ -390,7 +390,9 @@ export default function CalendarPage() {
 
     // Compute endTime from the chosen duration instead of the prior hardcoded
     // +1 hour. Default 60 if a stale state somehow lands here without one.
-    const durationMin = parseInt(newAppointment.durationMinutes, 10) || 60;
+    // 45 minutes is the standard session length for this practice, so it is
+    // the default rather than 60. Still editable per appointment.
+    const durationMin = parseInt(newAppointment.durationMinutes, 10) || 45;
     const startDt = new Date(`${newAppointment.date}T${newAppointment.startTime}:00`);
     const endDt = new Date(startDt.getTime() + durationMin * 60_000);
 

@@ -653,7 +653,7 @@ function AppointmentTypeForm({
   const [formData, setFormData] = useState({
     name: type?.name || "",
     description: type?.description || "",
-    duration: type?.duration || 60,
+    duration: type?.duration || 45,
     price: type?.price || "",
     isActive: type?.isActive ?? true,
     allowOnlineBooking: type?.allowOnlineBooking ?? true,

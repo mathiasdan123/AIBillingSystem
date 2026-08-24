@@ -53,12 +53,57 @@ function isoDate(offsetDays: number): string {
  * Find or create the isolated demo practice, seeding a representative dataset
  * the first time. Safe to call on every demo-login.
  */
+
+/**
+ * Demo charges read as round numbers.
+ *
+ * The platform catalog prices treatment codes at $289.00, which is a real
+ * figure for a real practice but looks arbitrary in a sandbox a prospect is
+ * clicking through. In the DEMO practice only, those become $100.00.
+ *
+ * Deliberately scoped to rows still at the catalog default: a rate someone
+ * edited inside the demo is theirs to keep, and evaluation codes keep their
+ * own pricing. Runs on every ensureDemoPractice call so the existing demo
+ * practice in production picks it up, and is a no-op once applied.
+ */
+const DEMO_DEFAULT_TREATMENT_RATE = '100.00';
+const CATALOG_TREATMENT_RATE = '289.00';
+
+async function normalizeDemoRates(practiceId: number): Promise<void> {
+  try {
+    const pool = await getPool();
+    const result = await pool.query(
+      `UPDATE practice_cpt_rates
+          SET base_rate = $1
+        WHERE practice_id = $2
+          AND base_rate::numeric = $3::numeric`,
+      [DEMO_DEFAULT_TREATMENT_RATE, practiceId, CATALOG_TREATMENT_RATE],
+    );
+    if (result.rowCount) {
+      logger.info('Demo practice charges normalized', {
+        practiceId,
+        updated: result.rowCount,
+        rate: DEMO_DEFAULT_TREATMENT_RATE,
+      });
+    }
+  } catch (error) {
+    // Cosmetic for the demo — never block a demo login over it.
+    logger.warn('Could not normalize demo practice charges', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function ensureDemoPractice(): Promise<Practice> {
   // Fast path: already provisioned + seeded — no lock needed.
   const existing = await storage.getDemoPractice();
   if (existing) {
     const patients = await storage.getPatients(existing.id);
-    if (patients.length > 0) return existing;
+    if (patients.length > 0) {
+      await normalizeDemoRates(existing.id);
+      return existing;
+    }
   }
 
   // Slow path (first provision, or a prior run that crashed mid-seed): take a
@@ -95,6 +140,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
       logger.info('Demo practice dataset seeded', { practiceId: practice.id });
     }
 
+    await normalizeDemoRates(practice.id);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
