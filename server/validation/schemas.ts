@@ -16,7 +16,13 @@ import { z } from 'zod';
  * Validates required fields and sanitizes input
  */
 export const createPatientSchema = z.object({
-  practiceId: z.number().int().positive('Practice ID must be a positive integer'),
+  // Optional on purpose: the route OVERWRITES this with the caller's own
+  // practice (tenant safety — see routes/patients.ts), so a client-supplied
+  // value is ignored either way. Requiring it here rejected every caller that
+  // correctly stopped sending a practiceId, which broke patient creation from
+  // the calendar, front-desk walk-in, waitlist, SOAP notes and treatment
+  // plans until this was made optional.
+  practiceId: z.number().int().positive('Practice ID must be a positive integer').optional(),
   firstName: z.string()
     .min(1, 'First name is required')
     .max(100, 'First name must be 100 characters or less')
