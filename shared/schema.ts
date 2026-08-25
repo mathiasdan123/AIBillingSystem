@@ -133,6 +133,13 @@ export const practices = pgTable("practices", {
   stediApiKey: varchar("stedi_api_key"),
   stediPartnerId: varchar("stedi_partner_id"),
   sandboxMode: boolean("sandbox_mode").default(true),
+  /**
+   * High-water mark for the automated ERA poller. NULL means "never polled" —
+   * the poller then starts from a bounded lookback rather than the beginning
+   * of time, so enabling it on an established practice does not try to
+   * re-ingest years of remittances in one run.
+   */
+  lastEraPolledAt: timestamp("last_era_polled_at"),
   // When true, this whole practice is an isolated demo sandbox (the target of
   // the public "Try Free Demo" login). Its data is fake and it must NEVER
   // perform real external actions — submit_claim and other clearinghouse/payment
@@ -3313,11 +3320,22 @@ export const remittanceAdvice = pgTable("remittance_advice", {
    * indexes ignore NULLs, so they do not collide with each other.
    */
   fileHash: varchar("file_hash"),
+  /**
+   * Stedi's transaction id when this ERA arrived via the automated poller
+   * rather than a manual upload. This is the authoritative dedupe key for
+   * polled ERAs: Stedi's polling window is time-based and overlaps on purpose
+   * (a cursor that advanced past an in-flight transaction would drop money
+   * silently), so the SAME transaction is expected to be seen more than once.
+   * fileHash alone is not enough — Stedi may re-serialize the JSON.
+   * NULL for manually uploaded remittances.
+   */
+  stediTransactionId: varchar("stedi_transaction_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_remittance_advice_practice_status").on(table.practiceId, table.status),
   index("idx_remittance_advice_practice_date").on(table.practiceId, table.receivedDate),
   uniqueIndex("uq_remittance_advice_practice_file").on(table.practiceId, table.fileHash),
+  uniqueIndex("uq_remittance_advice_practice_txn").on(table.practiceId, table.stediTransactionId),
 ]);
 
 // Remittance Line Items - individual claim-level payment details
