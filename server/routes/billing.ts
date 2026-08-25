@@ -628,6 +628,62 @@ router.post('/webhooks/stripe', async (req: any, res) => {
                 metadata: sessionMeta,
               });
             }
+          } else if (session.mode === 'payment') {
+            /**
+             * A patient paying through a payment link. This branch did not
+             * exist: only 'subscription' was handled, so a patient's card
+             * payment was taken by Stripe and recorded NOWHERE. Their balance
+             * never cleared and the practice kept dunning someone who had
+             * already paid — the worst kind of billing error, because the
+             * patient knows they paid and the practice's records say they
+             * did not.
+             */
+            const payMeta = session.metadata || {};
+            const payPracticeId = parseInt(payMeta.practiceId);
+            const payPatientId = parseInt(payMeta.patientId);
+            const amountCents = session.amount_total ?? 0;
+
+            if (!Number.isFinite(payPracticeId) || !Number.isFinite(payPatientId)) {
+              // Loud, not a shrug: this is money we cannot attribute.
+              logger.error('Patient payment received but could not be attributed', {
+                sessionId: session.id,
+                paymentIntent: session.payment_intent,
+                amountCents,
+                metadata: payMeta,
+              });
+              break;
+            }
+
+            // Idempotency: Stripe retries webhooks, and a double-credited
+            // payment is as wrong as a missing one.
+            const transactionId = String(session.payment_intent || session.id);
+            const alreadyRecorded = await storage.getPaymentByTransactionId(transactionId);
+            if (alreadyRecorded) {
+              logger.info('Patient payment already recorded, skipping duplicate webhook', {
+                transactionId,
+              });
+              break;
+            }
+
+            await storage.createPayment({
+              practiceId: payPracticeId,
+              patientId: payPatientId,
+              amount: (amountCents / 100).toFixed(2),
+              paymentMethod: 'patient',
+              paymentType: payMeta.paymentType || 'full',
+              paymentDate: new Date().toISOString().split('T')[0],
+              transactionId,
+              referenceNumber: session.id,
+              notes: 'Paid by the patient through a portal payment link',
+              status: 'completed',
+            } as any);
+
+            logger.info('Patient payment recorded from payment link', {
+              practiceId: payPracticeId,
+              patientId: payPatientId,
+              amountCents,
+              transactionId,
+            });
           }
           break;
         }

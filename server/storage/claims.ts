@@ -393,6 +393,22 @@ export async function updateExpense(id: number, expense: Partial<InsertExpense>)
 
 // ==================== PAYMENTS ====================
 
+/**
+ * Look up a recorded payment by its processor transaction id.
+ *
+ * Stripe retries webhooks, so the payment-recording path needs a way to tell
+ * a retry from a second payment. Double-crediting a patient is as wrong as
+ * losing the payment entirely.
+ */
+export async function getPaymentByTransactionId(transactionId: string): Promise<Payment | undefined> {
+  const [existing] = await db
+    .select()
+    .from(payments)
+    .where(eq(payments.transactionId, transactionId))
+    .limit(1);
+  return existing;
+}
+
 export async function createPayment(payment: InsertPayment): Promise<Payment> {
   const [newPayment] = await db
     .insert(payments)
