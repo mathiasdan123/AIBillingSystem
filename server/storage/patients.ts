@@ -91,19 +91,32 @@ export async function getPatient(id: number): Promise<Patient | undefined> {
   return patient ? decryptPatientRecord(patient) as Patient : undefined;
 }
 
-export async function getPatientByEmail(email: string): Promise<Patient | undefined> {
+/**
+ * Every patient whose record carries this email.
+ *
+ * This used to return the FIRST match found while scanning an unordered,
+ * unscoped table — and there is no caregiver→patient model, so siblings in a
+ * paediatric therapy practice necessarily share one parent's address. A
+ * parent asking for their own login link was therefore handed whichever
+ * child the scan happened to reach first, and every sibling after the first
+ * was permanently unreachable. Callers must decide what to do with more than
+ * one match; they may not silently pick.
+ */
+export async function getPatientsByEmail(email: string): Promise<Patient[]> {
   const allPatients = await db
     .select()
     .from(patients)
     .where(isNull(patients.deletedAt));
 
+  const target = email.trim().toLowerCase();
+  const matches: Patient[] = [];
   for (const patient of allPatients) {
     const decrypted = decryptPatientRecord(patient) as Patient;
-    if (decrypted.email?.toLowerCase() === email.toLowerCase()) {
-      return decrypted;
+    if (decrypted.email?.trim().toLowerCase() === target) {
+      matches.push(decrypted);
     }
   }
-  return undefined;
+  return matches;
 }
 
 export async function updatePatient(id: number, patient: Partial<InsertPatient>): Promise<Patient> {

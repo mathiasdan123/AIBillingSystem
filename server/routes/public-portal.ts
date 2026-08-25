@@ -37,6 +37,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { storage } from '../storage';
 import logger from '../services/logger';
+import { logAuditEvent } from '../middleware/auditMiddleware';
 import { sendEmail } from '../services/emailService';
 
 const router = Router();
@@ -701,75 +702,107 @@ router.post('/patient-portal/request-login', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' });
     }
 
-    // Find patient by email across all practices
-    const patient = await storage.getPatientByEmail(email);
+    /**
+     * One address can legitimately belong to several patients — siblings in a
+     * paediatric practice share a parent's email, and there is no
+     * caregiver→patient model to express that. The old code returned whichever
+     * record an unordered scan reached first, so a parent could be handed a
+     * different child's chart, and every sibling after the first could never
+     * log in at all.
+     *
+     * A link is now issued for EACH matching patient. That is safe because
+     * every link goes to the address already on those records — the same
+     * address that just requested it — and the email names the patient so the
+     * recipient can tell them apart.
+     */
+    const matches = await storage.getPatientsByEmail(email);
 
-    if (!patient) {
-      // For security, don't reveal whether the email exists
-      return res.json({ message: 'If an account exists with this email, a login link will be sent.' });
+    // Never reveal whether an address is on file.
+    const genericResponse = { message: 'If an account exists with this email, a login link will be sent.' };
+
+    if (matches.length === 0) {
+      return res.json(genericResponse);
     }
 
-    // Generate or refresh portal access with magic link
-    let access = await storage.getPatientPortalAccess(patient.id);
-
-    // Generate new magic link token
-    const magicLinkToken = crypto.randomBytes(32).toString('hex');
-    const magicLinkExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-
-    if (access) {
-      // Update with new magic link
-      await storage.updatePatientPortalMagicLink(access.id, magicLinkToken, magicLinkExpires);
-    } else {
-      // Create new portal access
-      const portalToken = crypto.randomBytes(32).toString('hex');
-      const portalTokenExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
-
-      await storage.createPatientPortalAccess({
-        patientId: patient.id,
-        practiceId: patient.practiceId,
-        portalToken,
-        portalTokenExpiresAt: portalTokenExpires,
-        magicLinkToken,
-        magicLinkExpiresAt: magicLinkExpires,
+    // A shared clinic address mistakenly saved onto many records would
+    // otherwise mail out a pile of working credentials. Refuse and let staff
+    // look at it rather than guessing which ones are real.
+    const MAX_LINKS_PER_REQUEST = 5;
+    if (matches.length > MAX_LINKS_PER_REQUEST) {
+      logger.warn('Portal login requested for an email on an implausible number of patients', {
+        matchCount: matches.length,
       });
+      return res.json(genericResponse);
     }
 
-    // Send email with magic link
-    const loginUrl = `${process.env.BASE_URL || 'http://localhost:5000'}/patient-portal/login/${magicLinkToken}`;
+    // One magic link per matching patient, each naming who it is for.
+    for (const p of matches) {
+      // Generate or refresh portal access with magic link
+      let access = await storage.getPatientPortalAccess(p.id);
 
-    try {
-      const { isEmailConfigured } = await import('../email');
-      if (isEmailConfigured()) {
-        const nodemailer = await import('nodemailer');
-        const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.SMTP_PORT || '587'),
-          secure: process.env.SMTP_SECURE === 'true',
-          auth: {
-            user: process.env.SMTP_USER || '',
-            pass: process.env.SMTP_PASS || '',
-          },
-        });
+      // Generate new magic link token
+      const magicLinkToken = crypto.randomBytes(32).toString('hex');
+      const magicLinkExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-        await transporter.sendMail({
-          from: `"Patient Portal" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
-          to: patient.email!,
-          subject: 'Your Patient Portal Login Link',
-          html: `
-            <h2>Patient Portal Access</h2>
-            <p>Hi ${patient.firstName},</p>
-            <p>Click the link below to access your patient portal:</p>
-            <p><a href="${loginUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Log In to Patient Portal</a></p>
-            <p>This link will expire in 15 minutes for your security.</p>
-            <p>If you didn't request this link, you can safely ignore this email.</p>
-          `,
+      if (access) {
+        // Update with new magic link
+        await storage.updatePatientPortalMagicLink(access.id, magicLinkToken, magicLinkExpires);
+      } else {
+        // Create new portal access
+        const portalToken = crypto.randomBytes(32).toString('hex');
+        const portalTokenExpires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
+
+        await storage.createPatientPortalAccess({
+          patientId: p.id,
+          practiceId: p.practiceId,
+          portalToken,
+          portalTokenExpiresAt: portalTokenExpires,
+          magicLinkToken,
+          magicLinkExpiresAt: magicLinkExpires,
         });
       }
-    } catch (emailError) {
-      logger.error('Error sending login email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
+
+      // Send email with magic link
+      const loginUrl = `${process.env.BASE_URL || 'http://localhost:5000'}/patient-portal/login/${magicLinkToken}`;
+
+      try {
+        const { isEmailConfigured } = await import('../email');
+        if (isEmailConfigured()) {
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port: parseInt(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+              user: process.env.SMTP_USER || '',
+              pass: process.env.SMTP_PASS || '',
+            },
+          });
+
+          await transporter.sendMail({
+            from: `"Patient Portal" <${process.env.EMAIL_FROM || 'noreply@therapybill.ai'}>`,
+            to: p.email!,
+            // Names the patient: a caregiver with two children in the practice
+          // receives two of these, and they must be distinguishable in an
+          // inbox before either is clicked.
+          subject: `Patient Portal login link for ${p.firstName}`,
+            html: `
+              <h2>Patient Portal Access</h2>
+              <p>Hi ${p.firstName},</p>
+              <p>Click the link below to access your patient portal:</p>
+              <p><a href="${loginUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Log In to Patient Portal</a></p>
+              <p>This link will expire in 15 minutes for your security.</p>
+              <p>If you didn't request this link, you can safely ignore this email.</p>
+            `,
+          });
+        }
+      } catch (emailError) {
+        logger.error('Error sending login email', { error: emailError instanceof Error ? emailError.message : String(emailError) });
+      }
+
     }
 
-    res.json({ message: 'If an account exists with this email, a login link will be sent.' });
+    res.json(genericResponse);
   } catch (error) {
     logger.error('Error requesting login', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to process request' });
@@ -1118,12 +1151,30 @@ router.put('/patient-portal/profile', async (req, res) => {
       return res.status(403).json({ message: 'Profile updates not allowed' });
     }
 
-    // Only allow specific fields to be updated
+    /**
+     * Contact details and insurance are legitimate self-service. IDENTITY is
+     * not.
+     *
+     * email, firstName, lastName and dateOfBirth used to be writable here.
+     * email is the account-recovery channel: whoever holds a portal token —
+     * an ex-partner, a forwarded invite, a shared tablet — could point it at
+     * themselves, and from then on every magic link, statement and reminder
+     * went to them while the real patient could no longer get back in. That
+     * is a permanent, silent account takeover performed with no credential
+     * beyond a link. Name and date of birth are the identifiers the chart and
+     * the payer match on, so a change there is a clinical-record change, not
+     * a preference.
+     *
+     * Those four now require staff to make the change, which is also the only
+     * way anyone would notice it happening.
+     */
     const allowedFields = [
-      'firstName', 'lastName', 'email', 'phone', 'phoneType',
-      'dateOfBirth', 'address', 'preferredContactMethod', 'smsConsentGiven',
+      'phone', 'phoneType', 'address', 'preferredContactMethod', 'smsConsentGiven',
       'insuranceProvider', 'insuranceId', 'policyNumber', 'groupNumber'
     ];
+
+    const IDENTITY_FIELDS = ['email', 'firstName', 'lastName', 'dateOfBirth'];
+    const attemptedIdentityChange = IDENTITY_FIELDS.filter((f) => req.body[f] !== undefined);
 
     const updates: Record<string, any> = {};
     for (const field of allowedFields) {
@@ -1132,11 +1183,46 @@ router.put('/patient-portal/profile', async (req, res) => {
       }
     }
 
+    if (attemptedIdentityChange.length > 0) {
+      // Recorded, not silently dropped: an attempt to move the recovery
+      // address is exactly what a breach investigation would want to see.
+      logger.warn('Portal profile attempted an identity change', {
+        patientId: patient.id,
+        practiceId: patient.practiceId,
+        fields: attemptedIdentityChange,
+      });
+      await logAuditEvent({
+        eventCategory: 'phi_access',
+        eventType: 'update',
+        resourceType: 'patient_portal',
+        resourceId: String(patient.id),
+        practiceId: patient.practiceId ?? undefined,
+        details: { blockedFields: attemptedIdentityChange, reason: 'identity_not_portal_editable' },
+        success: false,
+      });
+    }
+
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ message: 'No valid fields to update' });
+      return res.status(400).json({
+        message:
+          attemptedIdentityChange.length > 0
+            ? 'Your name, date of birth and email are on your medical record — please contact the practice to change them.'
+            : 'No valid fields to update',
+      });
     }
 
     const updatedPatient = await storage.updatePatient(patient.id, updates);
+
+    await logAuditEvent({
+      eventCategory: 'phi_access',
+      eventType: 'update',
+      resourceType: 'patient_portal',
+      resourceId: String(patient.id),
+      practiceId: patient.practiceId ?? undefined,
+      details: { fields: Object.keys(updates) },
+      success: true,
+    });
+
     res.json(updatedPatient);
   } catch (error) {
     logger.error('Error updating profile', { error: error instanceof Error ? error.message : String(error) });
