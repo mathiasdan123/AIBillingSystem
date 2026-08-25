@@ -8,6 +8,9 @@
   ("want me to continue?", "which should I do next?", "say the word"). He steps away during long runs, so a question
   sitting only in the terminal stalls the work silently and wastes the whole gap; he has asked for this twice.
   **Before ending any turn, re-read your final paragraph: if it asks anything, send the notification first.**
+  This is PER TURN, not per topic — re-raising a question you already notified about still needs a fresh
+  notification, because the turn he actually reads may be the one without it. "I sent one earlier" is not an
+  exception; he raised this a third time on 2026-08-25 for exactly that reason.
   The tool returning "not sent" because he is at the terminal is expected, not a failure.
 
 ## Project Overview
