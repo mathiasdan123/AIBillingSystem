@@ -31,6 +31,26 @@ function classifyRoute(method: string, path: string): RouteClassification {
     return { resourceType: 'breach_notification', eventCategory: 'admin' };
   }
 
+  // Patient-portal routes. These are reached with a portal token rather than a
+  // staff session, so they are the one PHI surface where the actor is the
+  // patient (or whoever holds their link) — exactly the access a breach
+  // investigation needs to reconstruct. Classified before the generic
+  // /api/patients rule so they are not swallowed by it.
+  if (path.match(/\/api\/patient-portal/) || path.match(/\/api\/portal/)) {
+    return { resourceType: 'patient_portal', eventCategory: 'phi_access' };
+  }
+  if (path.match(/\/api\/public\/telehealth/)) {
+    return { resourceType: 'telehealth_join', eventCategory: 'phi_access' };
+  }
+  if (path.match(/\/api\/patient-intake/) || path.match(/\/api\/intake-forms/)) {
+    return { resourceType: 'patient_intake', eventCategory: 'phi_access' };
+  }
+  if (path.match(/\/api\/public\/book/)) {
+    // A booking request carries a prospective patient's name and contact
+    // details. Not a chart, but not nothing.
+    return { resourceType: 'public_booking', eventCategory: 'phi_access' };
+  }
+
   // PHI routes - HIPAA requires logging all access to protected health information
   if (path.match(/\/api\/patients/)) {
     return { resourceType: 'patient', eventCategory: 'phi_access' };
@@ -103,7 +123,26 @@ function extractResourceId(path: string): string | null {
 
 export function auditMiddleware(req: Request, res: Response, next: NextFunction) {
   const startTime = Date.now();
-  const { method, path } = req;
+  const method = req.method;
+
+  /**
+   * Express strips the mount prefix from req.path. This middleware is mounted
+   * at '/api', so req.path for a request to /api/patients is '/patients' —
+   * which meant the guard below returned early on EVERY request and this
+   * middleware logged nothing, ever. Not one PHI access, staff or patient,
+   * was recorded, and the tamper-evident hash chain was protecting an empty
+   * table (HIPAA 164.312(b)).
+   *
+   * req.baseUrl + req.path rebuilds '/api/patients'. Deliberately NOT
+   * req.originalUrl: that carries the query string, and portal links put a
+   * live 90-day access token in `?token=` — writing it into the audit trail
+   * would turn the compliance record into a credential store.
+   *
+   * Every classifier below matches on /api/... paths, so they only work once
+   * this reconstruction is in place; fixing the guard alone would have
+   * produced a table full of 'system'/null rows that look like coverage.
+   */
+  const path = `${req.baseUrl || ''}${req.path}`;
 
   // Skip non-API routes and health checks
   if (!path.startsWith('/api') || path === '/api/health') {
