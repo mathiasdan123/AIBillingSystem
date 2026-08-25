@@ -3,6 +3,12 @@
 ## Workflow
 - After completing a round of changes, automatically run `npx tsc --noEmit` and `npm test` to verify everything works.
 - If both pass, auto-commit the changes with a descriptive commit message without asking. Do not push unless explicitly asked.
+- **ALWAYS send a PushNotification when ending a turn that needs Daniel's input.** This is not optional and not limited to
+  `AskUserQuestion` — it covers any turn whose last paragraph asks something, offers a choice, or waits for a go-ahead
+  ("want me to continue?", "which should I do next?", "say the word"). He steps away during long runs, so a question
+  sitting only in the terminal stalls the work silently and wastes the whole gap; he has asked for this twice.
+  **Before ending any turn, re-read your final paragraph: if it asks anything, send the notification first.**
+  The tool returning "not sent" because he is at the terminal is expected, not a failure.
 
 ## Project Overview
 Medical billing and practice management platform for behavioral health / therapy practices. HIPAA-compliant with PHI encryption, MFA, audit logging, and breach management.

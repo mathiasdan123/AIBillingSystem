@@ -160,11 +160,29 @@ export async function generateStatement(
       ),
     );
 
+  /**
+   * Rolling a balance forward has to CLOSE the statement it came from.
+   *
+   * The unpaid balance of every open statement was folded into the new one,
+   * but the old statements were left open — so the same money appeared on
+   * two live statements at once. A/R counted it twice, and a patient who
+   * paid the new statement in full was still shown, and dunned for, the old
+   * one.
+   *
+   * The superseded statements are marked below, after the new statement
+   * exists, so a failure part-way through cannot close a statement whose
+   * balance was never carried anywhere.
+   */
   let previousBalance = 0;
+  const supersededStatementIds: number[] = [];
   for (const stmt of previousStatements) {
     const balance = parseFloat(stmt.patientBalance) || 0;
     const paid = parseFloat(stmt.paidAmount || '0') || 0;
-    previousBalance += Math.max(0, balance - paid);
+    const outstanding = Math.max(0, balance - paid);
+    if (outstanding > 0) {
+      previousBalance += outstanding;
+      supersededStatementIds.push(stmt.id);
+    }
   }
 
   // Set due date to 30 days from now
@@ -193,6 +211,23 @@ export async function generateStatement(
     .insert(patientStatements)
     .values(insertData)
     .returning();
+
+  // Close the statements whose balance this one now carries. Done AFTER the
+  // insert: closing them first would lose the balance entirely if the insert
+  // failed.
+  if (supersededStatementIds.length > 0) {
+    await db
+      .update(patientStatements)
+      .set({ status: 'superseded', updatedAt: new Date() })
+      .where(inArray(patientStatements.id, supersededStatementIds));
+
+    logger.info('Previous statements superseded by a rolled-forward balance', {
+      patientId,
+      supersededStatementIds,
+      carriedForward: previousBalance.toFixed(2),
+      newStatementId: statement.id,
+    });
+  }
 
   logger.info('Patient statement generated', {
     statementId: statement.id,
