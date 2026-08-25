@@ -355,6 +355,18 @@ export async function createPatientPaymentLink(params: {
       patientId: params.patientId.toString(),
       type: 'patient_payment',
     },
+    // Metadata on the LINK does not reach the PaymentIntent. Without this the
+    // resulting charge arrived with no practice or patient on it, so the
+    // webhook could not tell whose money it was: it parsed NaN, warned, and
+    // dropped it. The patient's balance never cleared and dunning continued
+    // against someone who had already paid.
+    payment_intent_data: {
+      metadata: {
+        practiceId: params.practiceId.toString(),
+        patientId: params.patientId.toString(),
+        type: 'patient_payment',
+      },
+    },
     after_completion: {
       type: 'redirect',
       redirect: {

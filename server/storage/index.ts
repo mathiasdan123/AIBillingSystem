@@ -181,6 +181,7 @@ export const storage = {
   getExpense: claimFns.getExpense,
   updateExpense: claimFns.updateExpense,
   createPayment: claimFns.createPayment,
+  getPaymentByTransactionId: claimFns.getPaymentByTransactionId,
   getPayments: claimFns.getPayments,
   getCptCodes: claimFns.getCptCodes,
   getAllCptCodes: claimFns.getAllCptCodes,
