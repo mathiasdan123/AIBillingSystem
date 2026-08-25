@@ -156,8 +156,37 @@ export async function estimatePatientCost(
   // Adjust insurance payment for coinsurance
   expectedInsurancePayment = expectedInsurancePayment - coinsurance;
 
-  // Calculate balance billing (difference between your rate and insurance allowed)
-  const balanceBilling = Math.max(0, sessionRate - expectedInsurancePayment - coinsurance - copayAmount);
+  /**
+   * Balance billing is legitimate ONLY out of network.
+   *
+   * The gap between the practice's rate and what the payer allows is the
+   * CONTRACTUAL WRITE-OFF for an in-network provider — the discount the
+   * practice agreed to accept — and billing it to the patient is prohibited.
+   * This figure was added unconditionally, so an in-network patient was shown
+   * an estimate inflated by the entire write-off. It reaches the patient in
+   * the portal, which is worse than an internal number being wrong: they may
+   * decline care over a price that is not real.
+   *
+   * Same defect class as the patient-statement fix (#253), in a second place.
+   */
+  const estimatePractice = patient.practiceId
+    ? await storage.getPractice(patient.practiceId)
+    : null;
+  const isOutOfNetwork = (estimatePractice as any)?.networkStatus === 'out_of_network';
+
+  const rawBalanceBilling = Math.max(0, sessionRate - expectedInsurancePayment - coinsurance - copayAmount);
+  const balanceBilling = isOutOfNetwork ? rawBalanceBilling : 0;
+
+  if (!isOutOfNetwork && rawBalanceBilling > 0) {
+    notes.push(
+      'The difference between our rate and the plan\'s allowed amount is written off — you are not billed for it.',
+    );
+  }
+  if (isOutOfNetwork && rawBalanceBilling > 0) {
+    notes.push(
+      'We are out-of-network with this plan, so the balance above the plan\'s allowed amount is your responsibility.',
+    );
+  }
 
   // Total patient responsibility
   const patientResponsibility = coinsurance + copayAmount + balanceBilling;
