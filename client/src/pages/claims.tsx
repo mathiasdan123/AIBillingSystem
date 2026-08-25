@@ -1381,13 +1381,26 @@ export default function Claims() {
         sessionId: data.sessionId ? parseInt(data.sessionId) : null,
         insuranceId: parseInt(data.insuranceId),
       });
-      const claim = await response.json();
+      const created = await response.json();
+      // POST /api/claims answers { message, claim } — NOT the claim itself.
+      // Reading `.id` off the envelope yielded undefined, so every line item
+      // was posted to /api/claims/undefined/line-items and rejected. The claim
+      // was created; only its codes were lost, which is why a "failed" claim
+      // still turned up in the list with no procedures on it.
+      // Accept either shape so this cannot break again if the envelope changes.
+      const claimId = created?.claim?.id ?? created?.id;
+      if (!claimId) {
+        throw new Error(
+          'The claim was created but the server did not return its id, so the CPT codes were not attached. Open the claim and add them there.',
+        );
+      }
+      const claim = created?.claim ?? created;
 
       // Line items are a second call — the claim POST has no nested-line-item
       // contract. The server recomputes the claim total after each add, so the
       // stored total always matches the codes actually attached.
       for (const item of validLineItems) {
-        await apiRequest("POST", `/api/claims/${claim.id}/line-items`, {
+        await apiRequest("POST", `/api/claims/${claimId}/line-items`, {
           cptCodeId: parseInt(item.cptCodeId),
           icd10CodeId: item.icd10CodeId ? parseInt(item.icd10CodeId) : undefined,
           units: item.units,
@@ -1420,7 +1433,10 @@ export default function Claims() {
       }
       toast({
         title: "Error",
-        description: "Failed to create claim",
+        // The server explains actionable failures precisely — an unpriced CPT
+        // code, a missing charge, a rejected date. A hardcoded string threw all
+        // of that away and left the user with nothing to act on.
+        description: error?.message?.replace(/^\d{3}:\s*/, '') || "Failed to create claim",
         variant: "destructive",
       });
     },
@@ -1991,6 +2007,26 @@ export default function Claims() {
       });
       return;
     }
+    // Every billed line needs a diagnosis. A payer cannot adjudicate a
+    // procedure without knowing what it treated: the 837P carries diagnosis
+    // pointers per service line, and a line with none is denied outright.
+    // The field was labelled "optional", which it never was.
+    const linesMissingDiagnosis = newClaimLineItems
+      .filter((item) => item.cptCodeId && !item.icd10CodeId)
+      .map((item) => {
+        const cpt = cptCodes?.find((c: any) => c.id === parseInt(item.cptCodeId));
+        return cpt?.code || 'a code';
+      });
+    if (linesMissingDiagnosis.length > 0) {
+      toast({
+        title: "Add a diagnosis",
+        description: `${linesMissingDiagnosis.join(', ')} ${
+          linesMissingDiagnosis.length === 1 ? 'has' : 'have'
+        } no ICD-10 diagnosis. Payers deny a procedure with nothing to justify it.`,
+        variant: "destructive",
+      });
+      return;
+    }
     if (!newClaimLineItems.some((item) => item.cptCodeId)) {
       toast({
         title: "Add a CPT code",
@@ -2402,7 +2438,7 @@ export default function Claims() {
                               }
                             >
                               <SelectTrigger>
-                                <SelectValue placeholder="ICD-10 diagnosis (optional)" />
+                                <SelectValue placeholder="ICD-10 diagnosis (required)" />
                               </SelectTrigger>
                               <SelectContent>
                                 {icd10Codes?.map((icd) => (
