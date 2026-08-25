@@ -330,6 +330,14 @@ export async function getDaysInAR(practiceId: number): Promise<{
   const unpaidWhere = and(
     eq(claims.practiceId, practiceId),
     or(eq(claims.status, 'submitted'), eq(claims.status, 'pending')),
+    // Exclude demo rows, as every other metric in this file already does.
+    // Practice 1 still carries legacy showcase claims (CLM-DEMO-*) marked
+    // submitted with no clearinghouse id — they were never transmitted to
+    // anyone. Counting them made a practice with ZERO real claims report
+    // $794 outstanding at 145 days in A/R, which is the direction that
+    // matters: a dashboard showing plausible-looking receivables is how a
+    // real ageing problem stays hidden.
+    NOT_DEMO_CLAIM,
   );
 
   const [bucketRows, insuranceRows] = await Promise.all([
