@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "next-themes";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ import PatientPortalMessages from "./PatientPortalMessages";
 
 export default function PatientPortalPage() {
   const params = useParams<{ token?: string; tab?: string }>();
+  const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -55,17 +56,35 @@ export default function PatientPortalPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Get token from localStorage or URL query param (for demo QR code)
+  /**
+   * A magic link in the URL ALWAYS wins over whatever is in localStorage.
+   *
+   * Two bugs lived here:
+   *
+   * 1. Shadowing. This initializer never looked at `params.token`, and the
+   *    login screen — which is what actually redeems a magic link — only
+   *    renders when there is no stored token. So a caregiver logged in for
+   *    one child who opened the second child's emailed link on the same
+   *    tablet was shown the FIRST child's chart: name, DOB, insurance ID,
+   *    statements, documents, messages. No login screen, no mismatch
+   *    warning. That is ordinary family behaviour on a shared device, not an
+   *    attack, and it is a wrong-patient PHI disclosure.
+   *
+   * 2. `?token=` was accepted straight off the query string and written to
+   *    localStorage. Anyone could send a link carrying a token minted on
+   *    THEIR record; the recipient's browser would silently adopt that
+   *    session, and the insurance cards, signed consents and saved card the
+   *    caregiver then submitted would land in the attacker's chart. Session
+   *    fixation. The magic-link path route covers every legitimate entry, so
+   *    the query-param branch is simply removed.
+   */
   const [portalToken, setPortalToken] = useState<string | null>(() => {
-    // Check URL query params first (for QR code demo login)
-    const urlParams = new URLSearchParams(window.location.search);
-    const tokenFromUrl = urlParams.get('token');
-    if (tokenFromUrl) {
-      // Store in localStorage and clean up URL
-      localStorage.setItem("patientPortalToken", tokenFromUrl);
-      // Remove token from URL without page reload
-      window.history.replaceState({}, '', window.location.pathname);
-      return tokenFromUrl;
+    // A path token means "log in as this patient" — drop any existing
+    // session so the link is redeemed by PatientPortalLogin below rather
+    // than being shadowed by the previous patient's token.
+    if (params.token) {
+      localStorage.removeItem("patientPortalToken");
+      return null;
     }
     return localStorage.getItem("patientPortalToken");
   });
@@ -110,12 +129,19 @@ export default function PatientPortalPage() {
 
   // Handle login success
   const handleLoginSuccess = (token: string) => {
+    // Drop every cached response before adopting the new session. Portal
+    // queries are keyed by URL, not by patient, so without this the previous
+    // patient's dashboard, statements and documents would render for the new
+    // one until each query happened to refetch.
+    queryClient.clear();
     setPortalToken(token);
     localStorage.setItem("patientPortalToken", token);
   };
 
   // Handle logout
   const handleLogout = () => {
+    // Leave nothing behind on a shared device.
+    queryClient.clear();
     localStorage.removeItem("patientPortalToken");
     setPortalToken(null);
     setLocation("/patient-portal");
