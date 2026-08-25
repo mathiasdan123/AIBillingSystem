@@ -1361,10 +1361,19 @@ router.get('/patient-portal/therapists', async (req, res) => {
       return res.status(401).json({ message: 'Invalid or expired session' });
     }
 
-    const users = await storage.getAllUsers();
-    const therapists = users.filter(u => u.role === 'therapist' || u.role === 'admin');
+    // Scoped to the patient's OWN practice. This called getAllUsers() and
+    // returned every therapist and admin on the PLATFORM to any portal token
+    // holder — including a token obtained from the public demo login. A
+    // patient of one practice could enumerate the staff of every other
+    // practice on the system: a cross-tenant disclosure with no login at all.
+    const practiceId = auth.patient.practiceId;
+    if (!practiceId) {
+      return res.json([]);
+    }
 
-    res.json(therapists.map(t => ({
+    const therapists = await storage.getTherapistsByPractice(practiceId);
+
+    res.json(therapists.map((t: any) => ({
       id: t.id,
       firstName: t.firstName,
       lastName: t.lastName,

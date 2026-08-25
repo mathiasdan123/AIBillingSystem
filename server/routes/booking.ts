@@ -296,6 +296,13 @@ router.post('/appointment-requests/:id/approve', isAuthenticated, async (req: an
 
     const request = await storage.getAppointmentRequest(requestId);
     if (!request) return res.status(404).json({ message: 'Request not found' });
+    // Tenant check: request ids are serial, so without this a staff member at
+    // one practice could act on another practice's patient request — creating
+    // a real appointment on their calendar, or rejecting and emailing their
+    // patient. 404, not 403: a distinguishable error confirms it exists.
+    if (request.practiceId !== getAuthorizedPracticeId(req)) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
     if (request.status !== 'pending_approval') {
       return res.status(400).json({ message: 'Request has already been processed' });
     }
@@ -377,6 +384,13 @@ router.post('/appointment-requests/:id/reject', isAuthenticated, async (req: any
 
     const request = await storage.getAppointmentRequest(requestId);
     if (!request) return res.status(404).json({ message: 'Request not found' });
+    // Tenant check: request ids are serial, so without this a staff member at
+    // one practice could act on another practice's patient request — creating
+    // a real appointment on their calendar, or rejecting and emailing their
+    // patient. 404, not 403: a distinguishable error confirms it exists.
+    if (request.practiceId !== getAuthorizedPracticeId(req)) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
     if (request.status !== 'pending_approval') {
       return res.status(400).json({ message: 'Request has already been processed' });
     }
