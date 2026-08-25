@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/react";
+import { redactSensitiveUrl, redactTransactionName } from "@shared/redactSensitiveUrl";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
@@ -19,10 +20,19 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       if (event.request) {
         delete event.request.cookies;
         delete event.request.query_string;
+        // Portal magic links carry the token as a path segment, so the URL
+        // itself is a credential. Same redaction as the server — the two must
+        // not drift, since leaking it from either side is the same breach.
+        if (event.request.url) {
+          event.request.url = redactSensitiveUrl(event.request.url);
+        }
         if (event.request.headers) {
           delete event.request.headers.cookie;
           delete event.request.headers.authorization;
         }
+      }
+      if (event.transaction) {
+        event.transaction = redactTransactionName(event.transaction);
       }
       // Scrub breadcrumb data (may contain PHI from fetch/XHR bodies)
       if (event.breadcrumbs) {
@@ -33,12 +43,27 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       }
       return event;
     },
+    // Traces are sampled independently of errors, so beforeSend never sees
+    // them — a fifth of portal requests would otherwise carry their token.
+    beforeSendTransaction(event) {
+      if (event.request?.url) {
+        event.request.url = redactSensitiveUrl(event.request.url);
+      }
+      if (event.transaction) {
+        event.transaction = redactTransactionName(event.transaction);
+      }
+      return event;
+    },
     beforeBreadcrumb(breadcrumb) {
       // Strip XHR/fetch request/response bodies from breadcrumbs
       if (breadcrumb.category === "xhr" || breadcrumb.category === "fetch") {
         if (breadcrumb.data) {
           delete breadcrumb.data.request_body;
           delete breadcrumb.data.response_body;
+        }
+        // A breadcrumb's url is the fetched endpoint — same leak.
+        if (breadcrumb.data?.url) {
+          breadcrumb.data.url = redactSensitiveUrl(String(breadcrumb.data.url));
         }
       }
       return breadcrumb;
