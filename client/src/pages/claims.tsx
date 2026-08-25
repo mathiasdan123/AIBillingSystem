@@ -131,6 +131,11 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   const [editRate, setEditRate] = useState("");
   const [editModifier, setEditModifier] = useState("");
   const [editReason, setEditReason] = useState("");
+  // Date of service is per line item and drives the service date on the 837P.
+  // It was neither shown nor editable here, so a claim created with the wrong
+  // date (the server defaults a dateless line to TODAY) could not be corrected
+  // from the UI at all — only rebuilt from scratch.
+  const [editDate, setEditDate] = useState("");
   const [busyItemId, setBusyItemId] = useState<number | null>(null);
 
   const beginEdit = (item: any) => {
@@ -139,6 +144,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
     setEditRate(item.rate ? Number(item.rate).toFixed(2) : "");
     setEditModifier(item.modifier || "");
     setEditReason(item.rateOverrideReason || "");
+    setEditDate(item.dateOfService ? String(item.dateOfService).slice(0, 10) : "");
   };
 
   const cancelEdit = () => setEditingItemId(null);
@@ -151,6 +157,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
         rate: editRate === "" ? null : editRate,
         modifier: editModifier || null,
         rateOverrideReason: editReason || null,
+        dateOfService: editDate || undefined,
       });
       toast({ title: "Line item updated" });
       setEditingItemId(null);
@@ -353,6 +360,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                   <tr>
                     <th className="text-left p-2 font-medium text-muted-foreground">CPT</th>
                     <th className="text-left p-2 font-medium text-muted-foreground">Description</th>
+                    <th className="text-left p-2 font-medium text-muted-foreground">Date of Service</th>
                     <th className="text-center p-2 font-medium text-muted-foreground">Mod</th>
                     <th className="text-center p-2 font-medium text-muted-foreground">Units</th>
                     <th className="text-right p-2 font-medium text-muted-foreground">Rate</th>
@@ -397,6 +405,27 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                               placeholder="Reason for custom charge (optional)"
                               className="mt-1 h-7 text-xs"
                             />
+                          )}
+                        </td>
+                        <td className="p-2 text-xs whitespace-nowrap">
+                          {editing ? (
+                            <Input
+                              type="date"
+                              value={editDate}
+                              max={new Date().toISOString().split('T')[0]}
+                              onChange={(e) => setEditDate(e.target.value)}
+                              className="h-7 text-xs w-36"
+                              aria-label="Date of service"
+                              data-testid={`input-line-date-${item.id}`}
+                            />
+                          ) : item.dateOfService ? (
+                            String(item.dateOfService).slice(0, 10)
+                          ) : (
+                            // Never render a blank here. A missing date does not
+                            // mean "none" — the server files it as today.
+                            <span className="text-amber-700" title="No date recorded — this claim would be filed dated today.">
+                              not set
+                            </span>
                           )}
                         </td>
                         <td className="p-2 text-center text-xs">
@@ -502,7 +531,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                 </tbody>
                 <tfoot className="border-t-2 border-slate-300 bg-slate-100">
                   <tr>
-                    <td colSpan={5} className="p-2 text-right font-semibold">Total Billed:</td>
+                    <td colSpan={6} className="p-2 text-right font-semibold">Total Billed:</td>
                     <td className="p-2 text-right font-bold">${billed.toFixed(2)}</td>
                     {isDraft && <td />}
                   </tr>
