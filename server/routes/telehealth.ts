@@ -22,6 +22,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { telehealthJoinLimiter } from '../middleware/rate-limiter';
 
 const router = Router();
 
@@ -152,6 +153,14 @@ router.get('/telehealth/sessions/:id', isAuthenticated, async (req: any, res) =>
     if (!session) {
       return res.status(404).json({ message: 'Session not found' });
     }
+    // Tenant check. Session ids are serial and this response carries
+    // patientAccessCode — the single thing needed to join a live therapy
+    // session anonymously — so without this any authenticated user of any
+    // practice could walk the id space and harvest join codes.
+    // 404 rather than 403: a distinguishable error confirms the session exists.
+    if (session.practiceId !== getAuthorizedPracticeId(req)) {
+      return res.status(404).json({ message: 'Session not found' });
+    }
     res.json(session);
   } catch (error) {
     logger.error('Error fetching telehealth session', { error: error instanceof Error ? error.message : String(error) });
@@ -207,9 +216,31 @@ router.post('/telehealth/sessions', isAuthenticated, async (req: any, res) => {
 });
 
 // Update telehealth session
+/** Fields a practice may change on a session. Anything else — practiceId,
+ *  patientId, roomUrl, patientAccessCode — is identity or a credential. */
+const TELEHEALTH_PATCHABLE = new Set([
+  'scheduledStart', 'scheduledEnd', 'status', 'waitingRoomEnabled', 'notes',
+]);
+
 router.patch('/telehealth/sessions/:id', isAuthenticated, async (req: any, res) => {
   try {
-    const session = await storage.updateTelehealthSession(parseInt(req.params.id), req.body);
+    const sessionId = parseInt(req.params.id);
+    const existing = await storage.getTelehealthSession(sessionId);
+    if (!existing || existing.practiceId !== getAuthorizedPracticeId(req)) {
+      return res.status(404).json({ message: 'Session not found' });
+    }
+
+    // req.body went straight into the update, so a caller could rewrite the
+    // room URL or the access code of a session they do not own.
+    const updates: Record<string, any> = {};
+    for (const [key, value] of Object.entries(req.body ?? {})) {
+      if (TELEHEALTH_PATCHABLE.has(key)) updates[key] = value;
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: 'No editable fields supplied' });
+    }
+
+    const session = await storage.updateTelehealthSession(sessionId, updates);
     res.json(session);
   } catch (error) {
     logger.error('Error updating telehealth session', { error: error instanceof Error ? error.message : String(error) });
@@ -221,7 +252,12 @@ router.patch('/telehealth/sessions/:id', isAuthenticated, async (req: any, res) 
 router.post('/telehealth/sessions/:id/join', isAuthenticated, async (req: any, res) => {
   try {
     const { isTherapist } = req.body;
-    const session = await storage.startTelehealthSession(parseInt(req.params.id), isTherapist);
+    const sessionId = parseInt(req.params.id);
+    const existingSession = await storage.getTelehealthSession(sessionId);
+    if (!existingSession || existingSession.practiceId !== getAuthorizedPracticeId(req)) {
+      return res.status(404).json({ message: 'Session not found' });
+    }
+    const session = await storage.startTelehealthSession(sessionId, isTherapist);
     res.json(session);
   } catch (error) {
     logger.error('Error joining telehealth session', { error: error instanceof Error ? error.message : String(error) });
@@ -232,7 +268,12 @@ router.post('/telehealth/sessions/:id/join', isAuthenticated, async (req: any, r
 // End a telehealth session
 router.post('/telehealth/sessions/:id/end', isAuthenticated, async (req: any, res) => {
   try {
-    const session = await storage.endTelehealthSession(parseInt(req.params.id));
+    const endSessionId = parseInt(req.params.id);
+    const sessionToEnd = await storage.getTelehealthSession(endSessionId);
+    if (!sessionToEnd || sessionToEnd.practiceId !== getAuthorizedPracticeId(req)) {
+      return res.status(404).json({ message: 'Session not found' });
+    }
+    const session = await storage.endTelehealthSession(endSessionId);
     res.json(session);
   } catch (error) {
     logger.error('Error ending telehealth session', { error: error instanceof Error ? error.message : String(error) });
@@ -243,7 +284,7 @@ router.post('/telehealth/sessions/:id/end', isAuthenticated, async (req: any, re
 // ==================== PUBLIC TELEHEALTH ENDPOINTS (for patients) ====================
 
 // Join by access code (patient)
-router.get('/public/telehealth/join/:code', async (req: any, res) => {
+router.get('/public/telehealth/join/:code', telehealthJoinLimiter, async (req: any, res) => {
   try {
     const session = await storage.getTelehealthSessionByAccessCode(req.params.code.toUpperCase());
     if (!session) {

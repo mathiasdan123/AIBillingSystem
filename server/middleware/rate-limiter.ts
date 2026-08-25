@@ -436,6 +436,24 @@ export const passwordResetLimiter = createRateLimiter('password-reset', {
 });
 
 /**
+ * Rate limiter for telehealth join-by-code.
+ *
+ * The access code is the ONLY thing between an outsider and a live therapy
+ * session — there is no login on this route by design, because a patient
+ * joins from a link. An unlimited endpoint that answers "is this code valid?"
+ * is therefore a guessing oracle, so guesses are capped per IP.
+ *
+ * Apply to: GET /api/public/telehealth/join/:code
+ */
+export const telehealthJoinLimiter = createRateLimiter('telehealth-join', {
+  maxRequests: 10,
+  windowMs: 15 * 60 * 1000,
+  description: 'Telehealth join-code rate limiter',
+  keyGenerator: authKeyGenerator,
+  message: 'Too many attempts. Please check your access code and try again shortly.',
+});
+
+/**
  * Rate limiter for account registration
  *
  * Moderate limits to prevent spam registrations:
