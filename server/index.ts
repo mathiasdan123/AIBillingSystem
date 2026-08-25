@@ -402,27 +402,24 @@ app.use('/api', (_req, res, next) => {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
+  /**
+   * Request logging. Method, path, status, duration — and deliberately NOT
+   * the response body.
+   *
+   * Every /api JSON body used to be stringified into this line. On a HIPAA
+   * system that writes patient names, emails and diagnoses into the
+   * application log, and worse: GET /api/patient-portal/login/:token responds
+   * with { portalToken }, so a single line carried the magic link in the path
+   * AND the session token in the body. Truncating at 80 characters did not
+   * help — the token starts well inside that.
+   *
+   * The path is redacted with the same helper used for Sentry and the audit
+   * trail, since several portal routes carry the token as a path segment.
+   */
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+      log(`${req.method} ${redactSensitiveUrl(path)} ${res.statusCode} in ${duration}ms`);
     }
   });
 

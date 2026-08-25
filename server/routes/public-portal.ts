@@ -474,6 +474,13 @@ router.get('/public/portal/:token/statements/:id', async (req, res) => {
       return res.status(401).json({ message: 'Invalid or expired session' });
     }
 
+    // The sibling list endpoint enforces this flag; fetching one by id did
+    // not, so a practice that had switched statements off for a patient still
+    // served them one directly.
+    if (!access.canViewStatements) {
+      return res.status(403).json({ message: 'Statement viewing not allowed' });
+    }
+
     const statement = await storage.getPatientStatement(parseInt(id));
     if (!statement || statement.patientId !== access.patientId) {
       return res.status(404).json({ message: 'Statement not found' });
@@ -592,6 +599,14 @@ router.post('/public/portal/:token/documents/:id/sign', async (req, res) => {
     const access = await storage.getPatientPortalByToken(token);
     if (!access) {
       return res.status(401).json({ message: 'Invalid or expired session' });
+    }
+
+    // Signing is a stronger act than viewing, so it cannot be looser: a
+    // patient whose document access is switched off must not be able to put a
+    // signature on one. Ownership was already checked; the permission flag
+    // its sibling list endpoint enforces was not.
+    if (!access.canViewDocuments) {
+      return res.status(403).json({ message: 'Document access not allowed' });
     }
 
     const document = await storage.getPatientDocument(parseInt(id));

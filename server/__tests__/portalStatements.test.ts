@@ -96,3 +96,36 @@ describe('GET /public/portal/:token/statements/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('permission flags are enforced on by-id and sign routes, not just lists', () => {
+  it('refuses a statement by id when statement viewing is off', async () => {
+    mockStorage.getPatientPortalByToken.mockResolvedValue({
+      id: 1, patientId: 10, practiceId: 1, canViewStatements: false,
+    });
+    mockStorage.getPatientStatement.mockResolvedValue({
+      id: 1, patientId: 10, status: 'sent',
+    });
+
+    const res = await request(app).get(`/api/public/portal/${TOKEN}/statements/1`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses to sign a document when document access is off', async () => {
+    mockStorage.getPatientPortalByToken.mockResolvedValue({
+      id: 1, patientId: 10, practiceId: 1, canViewDocuments: false,
+    });
+    (mockStorage as any).getPatientDocument = vi.fn().mockResolvedValue({
+      id: 5, patientId: 10, requiresSignature: true, signedAt: null,
+    });
+    (mockStorage as any).signDocument = vi.fn();
+
+    const res = await request(app)
+      .post(`/api/public/portal/${TOKEN}/documents/5/sign`)
+      .send({ signatureData: 'data:image/png;base64,AAA' });
+
+    expect(res.status).toBe(403);
+    // Signing is a stronger act than viewing; it must not be the looser gate.
+    expect((mockStorage as any).signDocument).not.toHaveBeenCalled();
+  });
+});
