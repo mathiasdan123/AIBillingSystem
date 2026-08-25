@@ -39,7 +39,20 @@ export async function getStediApiKeyForPractice(practiceId: number): Promise<{ a
     const { storage } = await import('../storage');
     const { decryptField } = await import('./phiEncryptionService');
     const practice = await storage.getPractice(practiceId);
-    if (practice && !practice.sandboxMode) {
+    // Live ONLY on an explicit sandboxMode === false.
+    //
+    // This was `!practice.sandboxMode`, which also treated NULL as live. The
+    // column's DB default is true and the Settings toggle renders NULL as
+    // Sandbox (`sandboxMode !== false`), so for a legacy row predating the
+    // column the UI said "sandbox, nothing is being sent" while this function
+    // said "live" and transmitted real 837Ps to real payers under the
+    // practice's own NPI. That mismatch is the exact failure the sandbox
+    // guard in submitClaim exists to prevent.
+    //
+    // Unset now means sandbox: an unanswered question resolves to the state
+    // that cannot file a claim by accident. Flipping the toggle in Settings
+    // writes an explicit false and puts the practice live.
+    if (practice && practice.sandboxMode === false) {
       // Live mode — use practice's own key if set, otherwise global production key
       if (practice.stediApiKey) {
         const decryptedKey = typeof practice.stediApiKey === 'string'
