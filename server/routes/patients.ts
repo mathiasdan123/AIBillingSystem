@@ -1364,7 +1364,19 @@ router.post('/:id/send-portal-link', isAuthenticated, requirePatientConsent, asy
 
     // Create magic link
     const magicLink = await storage.createMagicLink(patientId);
-    const portalUrl = `${req.protocol}://${req.get('host')}/portal/login/${magicLink.token}`;
+    // Built from configuration, NOT the request. req.get('host') is
+    // attacker-controlled: a crafted Host header would make us email the
+    // patient a real, valid magic link pointing at someone else's server,
+    // which then captures the token as the patient clicks it. The invite is
+    // trustworthy precisely because it comes from us.
+    const portalBaseUrl = process.env.BASE_URL || process.env.APP_URL;
+    if (!portalBaseUrl) {
+      logger.error('Cannot send portal link: BASE_URL is not configured');
+      return res.status(503).json({
+        message: 'Portal links are not configured yet. Set BASE_URL before sending invites.',
+      });
+    }
+    const portalUrl = `${portalBaseUrl.replace(/\/$/, '')}/portal/login/${magicLink.token}`;
 
     // Send email with magic link
     if (patient.email) {
