@@ -91,7 +91,7 @@
     "react-hook-form": "^7.55.0",
     "react-i18next": "^15.7.4",
     "recharts": "^2.15.2",
-    "stripe": "^18.5.0",
+    "stripe": "^22.5.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "tailwind-merge": "^2.6.0",

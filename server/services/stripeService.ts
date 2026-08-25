@@ -10,7 +10,23 @@ function getStripe(): Stripe {
       throw new Error('STRIPE_SECRET_KEY environment variable is not configured');
     }
     stripe = new Stripe(apiKey, {
-      apiVersion: '2025-08-27.basil',
+      /**
+       * Deliberately pinned to the version this code was written and tested
+       * against, even though the SDK now bundles a newer one.
+       *
+       * The SDK upgrade (18 -> 22) and an API-VERSION change are two
+       * different risks. The SDK changes our types and client code; the API
+       * version changes how Stripe itself behaves — response shapes and
+       * defaults for subscriptions, invoices and payment intents that are
+       * already handling real money. Bumping both at once would make a
+       * payment regression impossible to attribute.
+       *
+       * The cast is required because the SDK's types are generated for its
+       * bundled version; the wire protocol accepts any released version, and
+       * Stripe honours whatever Stripe-Version we send. The version bump is
+       * its own change, with its own verification.
+       */
+      apiVersion: '2025-08-27.basil' as Stripe.StripeConfig['apiVersion'],
     });
   }
   return stripe;
