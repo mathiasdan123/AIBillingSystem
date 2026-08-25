@@ -1701,6 +1701,35 @@ function registerJobs() {
   });
   scheduledTasks.set('stediEnrollmentSync', stediEnrollmentSyncTask);
 
+  // ERA (835) polling — every 2 hours.
+  //
+  // Payers drop remittances throughout the day, and until this ran the only
+  // way one entered the system was a human downloading an 835 and pasting it
+  // in. Everything downstream (matching, posting, underpayment detection,
+  // patient responsibility) already worked; it just sat behind a manual step.
+  // Two-hourly keeps posted payments close to same-day without hammering
+  // Stedi — the poll window overlaps by design, so nothing is missed between
+  // runs and re-seen transactions are deduped on Stedi's transaction id.
+  const eraPollTask = cron.schedule('30 */2 * * *', async () => {
+    try {
+      const { pollAndIngestEras } = await import('./services/eraPollingService');
+      const summary = await pollAndIngestEras();
+      logger.info('ERA poll completed', summary);
+      if (summary.postingFailures > 0) {
+        // Matched but not recorded: the claim looks reconciled while the money
+        // is missing from collections. Never let this sit only in a summary.
+        logger.error('ERA poll finished with payment postings that failed', {
+          postingFailures: summary.postingFailures,
+        });
+      }
+    } catch (error: any) {
+      logger.error('ERA poll task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('eraPoll', eraPollTask);
+
   // Investor metrics snapshot — daily at 11:55 PM, after the day's payer
   // syncs, so the persisted KPI time series (claims, first-pass %, recovered
   // dollars) reflects the full day. Global rollup over real practices only.

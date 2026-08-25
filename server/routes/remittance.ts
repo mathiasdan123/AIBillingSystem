@@ -10,14 +10,14 @@
  */
 
 import { Router, type Response } from 'express';
-import crypto from 'crypto';
 import { isAuthenticated } from '../replitAuth';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import { parse835, flattenToLineItems } from '../services/edi835Parser';
 import { assessUnderpayment } from '../services/underpaymentAnalyzer';
 import { postPayment } from '../services/paymentPostingService';
 import { ensureUnderpaymentFollowUp } from '../services/underpaymentPipelineService';
-import { scoreClaimAgainstRemittanceLine, isAutoMatch } from '../services/eraMatchScoring';
+import { autoMatchRemittance } from '../services/eraAutoMatchService';
+import { ingestRemittance } from '../services/remittanceIngestionService';
 import { db } from '../db';
 import {
   remittanceAdvice,
@@ -137,101 +137,45 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
       }));
     }
 
-    // ---- Idempotency ----
-    // Re-uploading the same ERA would post every payment on it a second time:
-    // the practice's A/R would show money that never arrived, and the
-    // collections basis TherapyBill invoices 6% of would be inflated. Both
-    // checks below refuse the upload rather than silently duplicating it.
-    const fileHash = crypto
-      .createHash('sha256')
-      .update(typeof rawDataForStorage === 'string' ? rawDataForStorage : JSON.stringify(rawDataForStorage))
-      .digest('hex');
-
-    const [duplicateFile] = await db
-      .select({ id: remittanceAdvice.id, createdAt: remittanceAdvice.createdAt })
-      .from(remittanceAdvice)
-      .where(and(eq(remittanceAdvice.practiceId, practiceId), eq(remittanceAdvice.fileHash, fileHash)))
-      .limit(1);
-
-    if (duplicateFile) {
-      return res.status(409).json({
-        message: 'This remittance has already been uploaded — its payments are already recorded.',
-        code: 'duplicate_remittance',
-        existingRemittanceId: duplicateFile.id,
-        uploadedAt: duplicateFile.createdAt,
-      });
-    }
-
-    // Same check from a differently-formatted file (e.g. re-exported by the
-    // payer portal) hashes differently but is still the same money.
-    if (checkNumber && !req.body?.allowDuplicateCheck) {
-      const [duplicateCheck] = await db
-        .select({ id: remittanceAdvice.id })
-        .from(remittanceAdvice)
-        .where(
-          and(
-            eq(remittanceAdvice.practiceId, practiceId),
-            eq(remittanceAdvice.payerName, payerName),
-            eq(remittanceAdvice.checkNumber, checkNumber),
-            checkDate ? eq(remittanceAdvice.checkDate, checkDate) : sql`TRUE`,
-          ),
-        )
-        .limit(1);
-
-      if (duplicateCheck) {
-        return res.status(409).json({
-          message:
-            `Check ${checkNumber} from ${payerName} is already recorded. ` +
-            'Re-send with allowDuplicateCheck to record it anyway.',
-          code: 'duplicate_check_number',
-          existingRemittanceId: duplicateCheck.id,
-        });
-      }
-    }
-
-    // Insert remittance advice record
-    const [remittance] = await db
-      .insert(remittanceAdvice)
-      .values({
-        fileHash,
-        practiceId,
-        receivedDate: new Date().toISOString().split('T')[0],
+    // Idempotency, duplicate detection and insertion all live in
+    // remittanceIngestionService, shared with the automated ERA poller. Two
+    // ingestion paths would drift, and the half that drifted would be the
+    // idempotency — the half that decides whether money is recorded twice.
+    const outcome = await ingestRemittance(
+      practiceId,
+      {
         payerName,
         payerId,
         checkNumber,
         checkDate,
-        totalPaymentAmount: totalPaymentAmount.toFixed(2),
+        totalPaymentAmount,
+        lineItems: lineItemsData as any,
+      },
+      {
         rawData: rawDataForStorage,
-        status: 'pending',
-      })
-      .returning();
+        allowDuplicateCheck: !!req.body?.allowDuplicateCheck,
+        encryptLineItem: encryptRemittanceLineItem,
+      },
+    );
 
-    // Insert line items
-    if (lineItemsData.length > 0) {
-      const lineItemValues = lineItemsData.map(item => ({
-        remittanceId: remittance.id,
-        patientName: item.patientName,
-        memberId: item.memberId,
-        serviceDate: item.serviceDate,
-        cptCode: item.cptCode,
-        chargedAmount: item.chargedAmount != null ? String(item.chargedAmount) : null,
-        allowedAmount: item.allowedAmount != null ? String(item.allowedAmount) : null,
-        paidAmount: item.paidAmount != null ? String(item.paidAmount) : null,
-        adjustmentAmount: item.adjustmentAmount != null ? String(item.adjustmentAmount) : null,
-        patientResponsibility: item.patientResponsibility != null ? String(item.patientResponsibility) : null,
-        contractualAdjustment: item.contractualAdjustment != null ? String(item.contractualAdjustment) : null,
-        adjustmentReasonCodes: item.adjustmentReasonCodes,
-        remarkCodes: item.remarkCodes,
-        status: 'unmatched' as const,
-      }));
-
-      // Encrypt PHI (patientName, memberId) before storing.
-      await db.insert(remittanceLineItems).values(lineItemValues.map(encryptRemittanceLineItem) as any);
+    if (outcome.status === 'duplicate') {
+      const messages = {
+        transaction_id: 'This remittance has already been ingested from the clearinghouse.',
+        file_hash: 'This remittance has already been uploaded — its payments are already recorded.',
+        check_number:
+          `Check ${checkNumber} from ${payerName} is already recorded. ` +
+          'Re-send with allowDuplicateCheck to record it anyway.',
+      } as const;
+      return res.status(409).json({
+        message: messages[outcome.reason],
+        code: outcome.reason === 'check_number' ? 'duplicate_check_number' : 'duplicate_remittance',
+        existingRemittanceId: outcome.remittanceId,
+      });
     }
 
     // Fetch the inserted record with line items
     const result = await db.query.remittanceAdvice.findFirst({
-      where: eq(remittanceAdvice.id, remittance.id),
+      where: eq(remittanceAdvice.id, outcome.remittanceId),
       with: { lineItems: true },
     });
 
@@ -346,277 +290,30 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
       return res.status(400).json({ message: 'Invalid remittance ID' });
     }
 
-    // Verify remittance belongs to practice
-    const remittance = await db.query.remittanceAdvice.findFirst({
-      where: and(
-        eq(remittanceAdvice.id, id),
-        eq(remittanceAdvice.practiceId, practiceId),
-      ),
-      with: { lineItems: true },
-    });
+    // Delegates to eraAutoMatchService so this button and the automated ERA
+    // poller run identical matching and posting logic.
+    const result = await autoMatchRemittance(practiceId, id, req.user?.claims?.sub ?? null);
 
-    if (!remittance) {
+    if (!result) {
       return res.status(404).json({ message: 'Remittance record not found' });
     }
 
-    // Decrypt line-item PHI before matching — the matcher compares patientName
-    // against claim patient names below.
-    if (remittance.lineItems) {
-      remittance.lineItems = remittance.lineItems.map(decryptRemittanceLineItem) as any;
-    }
-
-    // Get unmatched line items
-    const unmatchedItems = remittance.lineItems.filter((li: any) => li.status === 'unmatched');
-
-    if (unmatchedItems.length === 0) {
+    if (result.total === 0) {
       return res.json({ message: 'No unmatched line items to process', matched: 0, total: 0 });
     }
 
-    // Get all claims for this practice with patient info
-    const practiceClaims = await db
-      .select({
-        claimId: claims.id,
-        claimNumber: claims.claimNumber,
-        patientId: claims.patientId,
-        patientFirstName: patients.firstName,
-        patientLastName: patients.lastName,
-        totalAmount: claims.totalAmount,
-        status: claims.status,
-        createdAt: claims.createdAt,
-      })
-      .from(claims)
-      .innerJoin(patients, eq(claims.patientId, patients.id))
-      // A payer cannot be paying a claim that was never transmitted, so
-      // drafts and held claims are not candidates. Leaving them in only
-      // creates opportunities to post real money onto the wrong record.
-      .where(
-        and(
-          eq(claims.practiceId, practiceId),
-          sql`${claims.status} NOT IN ('draft', 'held')`,
-        ),
-      );
-
-    // patients.firstName/lastName are PHI-encrypted at rest and this is a raw
-    // join, so decrypt them — otherwise the name-matching below compares the
-    // (decrypted) remittance name against ciphertext and never matches.
-    for (const c of practiceClaims) {
-      c.patientFirstName = decryptField(c.patientFirstName) as any;
-      c.patientLastName = decryptField(c.patientLastName) as any;
-    }
-
-    // Get claim line items for service date + CPT matching
-    const allClaimLineItems = await db
-      .select()
-      .from(claimLineItems)
-      .where(
-        sql`${claimLineItems.claimId} IN (SELECT id FROM claims WHERE practice_id = ${practiceId})`
-      );
-
-    // Resolve CPT ids to their actual codes. Without this the "CPT match"
-    // below could only test that a line HAD a cpt id — which, on a NOT NULL
-    // column, is always true.
-    const allCptCodes = await db.select({ id: cptCodes.id, code: cptCodes.code }).from(cptCodes);
-    const cptCodeById = new Map<number, string>();
-    for (const c of allCptCodes) cptCodeById.set(c.id, String(c.code));
-
-    // Build lookup structures
-    const claimLineItemsByClaimId = new Map<number, typeof allClaimLineItems>();
-    for (const cli of allClaimLineItems) {
-      const existing = claimLineItemsByClaimId.get(cli.claimId) || [];
-      existing.push(cli);
-      claimLineItemsByClaimId.set(cli.claimId, existing);
-    }
-
-    let matchedCount = 0;
-    const matchResults: Array<{ lineItemId: number; claimId: number | null; matchType: string }> = [];
-    // Lines matched to a claim whose payment posting failed to record. These
-    // are surfaced in the response — a "matched N" toast that hides a missing
-    // payment is how collections silently go missing.
-    const postingFailures: Array<{ claimId: number; lineItemId: number }> = [];
-
-    for (const lineItem of unmatchedItems) {
-      let bestMatch: { claimId: number; score: number; matchType: string } | null = null;
-
-      for (const claim of practiceClaims) {
-        const candidate = scoreClaimAgainstRemittanceLine(
-          claim,
-          claimLineItemsByClaimId.get(claim.claimId) || [],
-          lineItem,
-          cptCodeById,
-        );
-
-        // Identity is mandatory: corroborating signals can raise confidence in
-        // a claim already tied to this patient, but can never establish the
-        // tie. See services/eraMatchScoring.
-        if (!isAutoMatch(candidate)) continue;
-
-        if (candidate.score > (bestMatch?.score || 0)) {
-          bestMatch = {
-            claimId: claim.claimId,
-            score: candidate.score,
-            matchType: candidate.matchTypes.join('+'),
-          };
-        }
-      }
-
-      if (bestMatch) {
-        // Update line item with match
-        await db
-          .update(remittanceLineItems)
-          .set({
-            claimId: bestMatch.claimId,
-            status: 'matched',
-          })
-          .where(eq(remittanceLineItems.id, lineItem.id));
-
-        // Record the payment. postPayment owns claim.paidAmount and status:
-        // it SUMS non-reversed postings, so a multi-line ERA accumulates
-        // instead of the last line overwriting the total, and a partial
-        // payment lands on 'partial' rather than closing the claim. Writing
-        // those fields here instead is what made a $0.01 payment mark a $200
-        // claim fully paid and drop it out of A/R.
-        const paidAmt = parseFloat(String(lineItem.paidAmount || '0'));
-        const claimUpdate: Record<string, any> = {
-          updatedAt: new Date(),
-        };
-
-        // --- Underpayment detection ---
-        // Look up the fee schedule for this payer + CPT code to find expected reimbursement
-        if (lineItem.cptCode && remittance.payerName) {
-          try {
-            const today = new Date().toISOString().split('T')[0];
-            const feeScheduleEntries = await db
-              .select()
-              .from(feeSchedules)
-              .where(
-                and(
-                  eq(feeSchedules.practiceId, practiceId),
-                  eq(feeSchedules.cptCode, lineItem.cptCode),
-                  ilike(feeSchedules.payerName, `%${remittance.payerName}%`),
-                  lte(feeSchedules.effectiveDate, today),
-                )
-              )
-              .orderBy(desc(feeSchedules.effectiveDate))
-              .limit(1);
-
-            if (feeScheduleEntries.length > 0) {
-              const feeEntry = feeScheduleEntries[0];
-              const expectedReimbursement = parseFloat(String(feeEntry.expectedReimbursement));
-
-              // Flag as underpayment if paid amount is more than $5 below expected
-              if (expectedReimbursement > 0 && paidAmt < expectedReimbursement - 5) {
-                // Set expectedAmount on the claim for tracking
-                claimUpdate.expectedAmount = String(expectedReimbursement);
-
-                logger.info('Underpayment detected during ERA auto-match', {
-                  claimId: bestMatch.claimId,
-                  cptCode: lineItem.cptCode,
-                  payerName: remittance.payerName,
-                  expectedReimbursement,
-                  paidAmount: paidAmt,
-                  underpaymentAmount: expectedReimbursement - paidAmt,
-                });
-
-                // Surface the underpayment in the billing work queue.
-                const matchedClaim = practiceClaims.find(
-                  (c: any) => c.claimId === bestMatch!.claimId,
-                );
-                await ensureUnderpaymentFollowUp({
-                  claimId: bestMatch.claimId,
-                  practiceId,
-                  claimNumber: matchedClaim?.claimNumber,
-                  expectedAmount: expectedReimbursement,
-                  paidAmount: paidAmt,
-                  cptCode: lineItem.cptCode,
-                  payerName: remittance.payerName,
-                });
-              }
-            }
-          } catch (feeErr) {
-            // Non-blocking — don't fail the match if fee schedule lookup fails
-            logger.error('Fee schedule lookup failed during underpayment detection', {
-              error: feeErr instanceof Error ? feeErr.message : String(feeErr),
-              cptCode: lineItem.cptCode,
-              payerName: remittance.payerName,
-            });
-          }
-        }
-
-        await db
-          .update(claims)
-          .set(claimUpdate)
-          .where(eq(claims.id, bestMatch.claimId));
-
-        // The payment posting is the record the whole money path reads from
-        // (A/R, patient statements, and the 6%-of-collections basis). Until
-        // this call existed, ERA matching updated the claim and wrote no
-        // posting at all, so collections read as $0 forever.
-        try {
-          await postPayment(practiceId, {
-            // Authoritative: supersedes any 277-derived posting on this claim.
-            source: 'era',
-            claimId: bestMatch.claimId,
-            payerName: remittance.payerName,
-            checkNumber: remittance.checkNumber ?? null,
-            paymentDate: remittance.checkDate ?? remittance.receivedDate,
-            paymentAmount: String(paidAmt.toFixed(2)),
-            adjustmentAmount: String(parseFloat(String(lineItem.adjustmentAmount || '0')).toFixed(2)),
-            // Only the PR group is billable to the patient. Statements read
-            // this; deriving a balance from charge - paid instead would bill
-            // them the contractual write-off (balance billing).
-            patientResponsibility: String(
-              parseFloat(String((lineItem as any).patientResponsibility ?? '0')).toFixed(2),
-            ),
-            allowedAmount: lineItem.allowedAmount != null ? String(lineItem.allowedAmount) : null,
-            postedBy: req.user?.claims?.sub ?? null,
-          } as any);
-        } catch (postError) {
-          // A failed posting must be visible, not swallowed — the claim would
-          // otherwise show matched with no money behind it.
-          logger.error('ERA auto-match: failed to record payment posting', {
-            claimId: bestMatch.claimId,
-            remittanceId: remittance.id,
-            error: postError instanceof Error ? postError.message : String(postError),
-          });
-          postingFailures.push({ claimId: bestMatch.claimId, lineItemId: lineItem.id });
-        }
-
-        matchedCount++;
-        matchResults.push({ lineItemId: lineItem.id, claimId: bestMatch.claimId, matchType: bestMatch.matchType });
-      } else {
-        matchResults.push({ lineItemId: lineItem.id, claimId: null, matchType: 'no_match' });
-      }
-    }
-
-    // Update remittance status
-    const allItems = await db
-      .select()
-      .from(remittanceLineItems)
-      .where(eq(remittanceLineItems.remittanceId, id));
-
-    const allMatched = allItems.every((item: any) => item.status === 'matched');
-    const someMatched = allItems.some((item: any) => item.status === 'matched');
-
-    await db
-      .update(remittanceAdvice)
-      .set({
-        status: allMatched ? 'processed' : someMatched ? 'pending' : 'pending',
-        processedAt: allMatched ? new Date() : undefined,
-      })
-      .where(eq(remittanceAdvice.id, id));
-
     res.json({
       message:
-        postingFailures.length > 0
-          ? `Auto-matching complete: ${matchedCount} of ${unmatchedItems.length} line items matched, ` +
-            `but ${postingFailures.length} payment(s) could not be recorded — review before relying on these totals.`
-          : `Auto-matching complete: ${matchedCount} of ${unmatchedItems.length} line items matched`,
-      matched: matchedCount,
+        result.postingFailures.length > 0
+          ? `Auto-matching complete: ${result.matched} of ${result.total} line items matched, ` +
+            `but ${result.postingFailures.length} payment(s) could not be recorded — review before relying on these totals.`
+          : `Auto-matching complete: ${result.matched} of ${result.total} line items matched`,
+      matched: result.matched,
       // Non-empty means money was matched but NOT recorded — must not be
       // presented as a clean success.
-      postingFailures,
-      total: unmatchedItems.length,
-      results: matchResults,
+      postingFailures: result.postingFailures,
+      total: result.total,
+      results: result.results,
     });
   } catch (error) {
     return safeErrorResponse(res, 500, 'Failed to auto-match remittance line items', error);
