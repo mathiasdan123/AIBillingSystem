@@ -644,7 +644,12 @@ export interface ClaimSubmissionResponse {
   warnings?: string[];
 }
 
-export async function submitClaim(claim: ClaimSubmission, practiceId?: number): Promise<ClaimSubmissionResponse> {
+export async function submitClaim(
+  claim: ClaimSubmission,
+  practiceId?: number,
+  options: { testMode?: boolean } = {},
+): Promise<ClaimSubmissionResponse> {
+  const { testMode = false } = options;
   const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
 
   // Sandbox mode must actually mean sandbox. Settings tells the practice
@@ -652,7 +657,12 @@ export async function submitClaim(claim: ClaimSubmission, practiceId?: number): 
   // companies" — but sandbox resolved to the SAME global production key, and
   // isSandbox was read nowhere, so a practice that believed it was testing
   // would file real 837Ps to real payers under its own NPI. Refuse instead.
-  if (stediKey?.isSandbox) {
+  // A TEST claim is exempt: usageIndicator 'T' means Stedi's test
+  // clearinghouse handles it and never forwards it to the payer, which is
+  // precisely what a sandbox practice should be able to do. Blocking it here
+  // would leave sandbox mode with no way to test anything, which is the
+  // opposite of its purpose.
+  if (stediKey?.isSandbox && !testMode) {
     return {
       success: false,
       claimId: claim.claimId,
@@ -677,7 +687,7 @@ export async function submitClaim(claim: ClaimSubmission, practiceId?: number): 
     };
   }
 
-  const payload = build837P(claim);
+  const payload = build837P(claim, testMode);
 
   try {
     const response = await fetch(`${STEDI_API_BASE}${STEDI_CLAIMS_PATH}`, {
@@ -1093,12 +1103,20 @@ function parseClaimStatusResponse(claimId: string, data: any): ClaimStatusRespon
   return response;
 }
 
-export function build837P(claim: ClaimSubmission): any {
+export function build837P(claim: ClaimSubmission, testMode = false): any {
   // Build the 837P claim payload for Stedi
   // This is a simplified version - real implementation would be more comprehensive
 
   return {
     controlNumber: generateControlNumber(),
+    // ISA15. Stedi's rule: "all API claim submissions are sent as production
+    // claims unless you explicitly designate them as test data." This field
+    // did not exist anywhere in the codebase, which meant there was no way to
+    // rehearse a claim — the FIRST 837P a practice ever sent was a real one to
+    // a real payer, on a code path that had never once succeeded. 'T' routes
+    // to Stedi's test clearinghouse, which returns a 277CA and never forwards
+    // to the payer.
+    usageIndicator: testMode ? 'T' : 'P',
     tradingPartnerServiceId: claim.payer.id,
     submitter: {
       organizationName: claim.provider.organizationName,

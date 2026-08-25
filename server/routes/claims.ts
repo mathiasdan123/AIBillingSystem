@@ -1539,6 +1539,12 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
 router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
   try {
     const claimId = parseInt(req.params.id);
+    // Dry run: build and transmit the SAME 837P with usageIndicator 'T', which
+    // Stedi's test clearinghouse acknowledges and never forwards to the payer.
+    // It reuses this whole route on purpose — a separate "validate" path that
+    // assembled the claim differently would validate something other than what
+    // actually gets filed, which is worse than not validating at all.
+    const dryRun = req.body?.dryRun === true || req.query?.dryRun === 'true';
     const claim = await storage.getClaim(claimId);
 
     if (!claim) {
@@ -1815,10 +1821,14 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           isResubmission: ((claim as any).resubmissionCount ?? 0) > 0,
         };
 
-        clearinghouseResult = await stediService.submitClaim(claimSubmission, claim.practiceId ?? practiceId);
+        clearinghouseResult = await stediService.submitClaim(
+          claimSubmission,
+          claim.practiceId ?? practiceId,
+          { testMode: dryRun },
+        );
         submissionMethod = 'stedi';
 
-        logger.info('Claim submitted via Stedi', {
+        logger.info(dryRun ? 'Claim dry-run validated via Stedi' : 'Claim submitted via Stedi', {
           claimId,
           stediClaimId: clearinghouseResult.stediClaimId,
           status: clearinghouseResult.status,
@@ -1832,6 +1842,44 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           errors: [stediError.message],
         };
       }
+    }
+
+    // A dry run must leave no trace on the real record: no status change, no
+    // clearinghouseClaimId, no submittedAt. Otherwise "just testing" would
+    // mark the claim filed and it would drop out of the work queue while
+    // nothing had actually been sent to the payer.
+    if (dryRun) {
+      // If the claim never reached Stedi at all (no key, no insurance), the
+      // run validated NOTHING. Saying "accepted" there would be the same
+      // silence-as-success mistake that let the 404'd endpoints look healthy
+      // for months — report it as inconclusive instead.
+      if (submissionMethod !== 'stedi') {
+        return res.status(503).json({
+          success: false,
+          dryRun: true,
+          inconclusive: true,
+          message:
+            'Dry run could not reach the clearinghouse, so the claim was not validated. ' +
+            'Check that the practice has a clearinghouse key and the claim has an insurance attached.',
+          errors: clearinghouseResult?.errors ?? [],
+          submissionMethod,
+          scrubResult,
+        });
+      }
+
+      const accepted = clearinghouseResult?.success !== false;
+      return res.json({
+        success: accepted,
+        dryRun: true,
+        message: accepted
+          ? 'Dry run accepted by the clearinghouse. Nothing was sent to the payer — submit for real when ready.'
+          : 'Dry run rejected. Fix these errors before filing for real.',
+        errors: clearinghouseResult?.errors ?? [],
+        warnings: clearinghouseResult?.warnings ?? [],
+        clearinghouse: clearinghouseResult,
+        submissionMethod,
+        scrubResult,
+      });
     }
 
     // A failed clearinghouse submission must NOT be recorded as 'submitted'.
