@@ -306,8 +306,35 @@ router.get('/public/portal/:token/dashboard', async (req, res) => {
     await storage.updatePortalAccess(access.patientId);
     const dashboard = await storage.getPatientPortalDashboard(access.patientId);
 
+    /**
+     * Send only what the portal renders.
+     *
+     * `patient` was the whole database row: date of birth, address, both
+     * insurance sets, policy numbers, internal flags, intake data. The portal
+     * dashboard displays five fields. Everything beyond them was extra PHI
+     * handed to whoever holds the link, for nothing.
+     *
+     * The permission flags were also returned as data but never ENFORCED
+     * here, so a patient whose practice had switched off statements or
+     * documents still received both in this payload — while the sibling
+     * list endpoints correctly refuse them.
+     */
+    const p: any = dashboard.patient;
     res.json({
-      ...dashboard,
+      patient: p
+        ? {
+            id: p.id,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            email: p.email,
+            phone: p.phone,
+            insuranceProvider: p.insuranceProvider,
+          }
+        : null,
+      upcomingAppointments: access.canViewAppointments ? dashboard.upcomingAppointments : [],
+      recentStatements: access.canViewStatements ? dashboard.recentStatements : [],
+      documents: access.canViewDocuments ? dashboard.documents : [],
+      unreadMessages: access.canSendMessages ? dashboard.unreadMessages : 0,
       permissions: {
         canViewAppointments: access.canViewAppointments,
         canViewStatements: access.canViewStatements,
