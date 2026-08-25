@@ -829,6 +829,44 @@ router.get('/patient-portal/login/:token', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/patient-portal/logout — end the session on the SERVER.
+ *
+ * Logging out only cleared localStorage, so the token stayed valid: anyone
+ * who had a copy, or who picked up the shared tablet the patient had just
+ * "logged out" of, could keep using it for the rest of its life. Revoking
+ * server-side is what makes the button mean what a patient thinks it means.
+ */
+router.post('/patient-portal/logout', async (req: any, res) => {
+  try {
+    const auth = await getPatientFromPortalToken(req);
+    // Nothing to revoke, or an already-dead token: report success either way
+    // so logging out is never something a patient can fail to do.
+    if (!auth) {
+      return res.json({ message: 'Logged out' });
+    }
+
+    await storage.revokePortalAccess(auth.patient.id);
+
+    await logAuditEvent({
+      eventCategory: 'phi_access',
+      eventType: 'delete',
+      resourceType: 'patient_portal',
+      resourceId: String(auth.patient.id),
+      practiceId: auth.patient.practiceId ?? undefined,
+      details: { action: 'portal_logout_revoked_token' },
+      success: true,
+    });
+
+    res.json({ message: 'Logged out' });
+  } catch (error) {
+    logger.error('Error logging out of portal', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to log out' });
+  }
+});
+
 // Demo login for patient portal.
 // SAFE IN PRODUCTION: scoped to the isolated demo practice (practices.isDemo)
 // and one of its seeded fake patients — never a real patient. The earlier prod
