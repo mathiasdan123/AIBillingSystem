@@ -100,6 +100,38 @@ export default function PayerEnrollmentsPage() {
     },
   });
 
+  // The DERIVED plan: which payers this practice actually bills, and what
+  // Stedi says each one requires today. The grid below it is still driven by a
+  // hardcoded payer list, which cannot show a payer it was never seeded with —
+  // Horizon BCBS NJ among them. This section is what makes onboarding a
+  // practice with unfamiliar payers need no code change.
+  const { data: plan } = useQuery<any>({
+    queryKey: ['/api/payer-enrollments/plan'],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/payer-enrollments/plan');
+      return res.json();
+    },
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: async (approvals: Array<{ payerId: string; transactionType: string }>) => {
+      const res = await apiRequest('POST', '/api/payer-enrollments/plan/approve', { approvals });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: 'Enrollments submitted', description: data.message });
+      queryClient.invalidateQueries({ queryKey: ['/api/payer-enrollments/plan'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/payer-enrollments'] });
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Could not submit',
+        description: err?.message ?? 'Enrollment submission failed',
+        variant: 'destructive',
+      });
+    },
+  });
+
   // Cross-link: pull provider credentials so we can show per-payer
   // "X providers credentialed" alongside the EDI enrollment grid.
   const { data: credentials = [] } = useQuery<any[]>({
@@ -208,6 +240,68 @@ export default function PayerEnrollmentsPage() {
           <Button variant="outline" size="sm">Cross-practice overview</Button>
         </Link>
       </div>
+
+      {/* Derived plan — what this practice actually needs */}
+      {plan && (plan.actionableCount > 0 || plan.unresolvedCount > 0) && (
+        <div className="mb-6 rounded-md border border-border p-4" data-testid="enrollment-plan">
+          <h2 className="font-semibold mb-1">Enrollments this practice needs</h2>
+          <p className="text-sm text-muted-foreground mb-3">
+            Based on the payers you actually bill and what the clearinghouse requires today.
+          </p>
+
+          {plan.blockers?.length > 0 && (
+            <div className="mb-3 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 text-sm">
+              Finish these before submitting: {plan.blockers.join(' ')}
+            </div>
+          )}
+
+          <ul className="space-y-2 mb-3">
+            {plan.payers
+              .filter((p: any) => p.unresolved || p.proposals.some((x: any) => x.needed))
+              .map((p: any) => (
+                <li key={p.payerName} className="text-sm">
+                  <span className="font-medium">{p.payerName}</span>{' '}
+                  <span className="text-muted-foreground">({p.usageCount} patient/claim record(s))</span>
+                  {p.unresolved ? (
+                    <span className="ml-2 text-amber-700 dark:text-amber-400">
+                      — could not match this payer in the clearinghouse directory; pick it manually.
+                    </span>
+                  ) : (
+                    <span className="ml-2">
+                      needs:{' '}
+                      {p.proposals
+                        .filter((x: any) => x.needed)
+                        .map((x: any) => x.transactionType)
+                        .join(', ')}
+                    </span>
+                  )}
+                </li>
+              ))}
+          </ul>
+
+          <Button
+            size="sm"
+            disabled={!plan.canSubmit || plan.actionableCount === 0 || approveMutation.isPending}
+            onClick={() => {
+              // Only ever submits what is currently shown as needed. The server
+              // re-derives the plan and skips anything that changed in between.
+              const approvals = plan.payers
+                .filter((p: any) => !p.unresolved)
+                .flatMap((p: any) =>
+                  p.proposals
+                    .filter((x: any) => x.needed)
+                    .map((x: any) => ({ payerId: p.payerId, transactionType: x.transactionType })),
+                );
+              approveMutation.mutate(approvals);
+            }}
+            data-testid="button-approve-enrollment-plan"
+          >
+            {approveMutation.isPending
+              ? 'Submitting…'
+              : `Review and submit ${plan.actionableCount} enrollment(s)`}
+          </Button>
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">

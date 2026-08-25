@@ -25,6 +25,7 @@ import {
   mapTransactionTypeToStedi,
 } from '../services/stediEnrollmentService';
 import { sanitizeExternalError } from '../services/errorSanitizer';
+import { submitEnrollmentForPractice } from '../services/payerEnrollmentSubmitService';
 
 const router = Router();
 
@@ -298,6 +299,115 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
  *
  * Body: { payerName, payerId, transactionType }
  */
+// ==================== GET /plan ====================
+// The enrollment plan, derived from what this practice ACTUALLY bills and
+// what Stedi says each payer requires today — not from a hardcoded list.
+//
+// GET / above is still backed by KNOWN_PAYERS, which cannot show a payer it
+// was never seeded with (Horizon BCBS NJ among them) and carries guessed
+// requirement flags. This is its replacement: nothing here is declared, it is
+// all derived, so onboarding a practice with unfamiliar payers needs no code
+// change.
+router.get('/plan', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    if (!practiceId) {
+      return res.status(400).json({ message: 'No practice context for this user' });
+    }
+
+    const { buildEnrollmentPlan } = await import('../services/enrollmentAutopilotService');
+    const plan = await buildEnrollmentPlan(practiceId);
+
+    // Readiness is reported alongside the plan rather than blocking it: a
+    // practice should be able to SEE what it will need before it has finished
+    // filling in its profile.
+    const practice = await storage.getPractice(practiceId);
+    const blockers: string[] = [];
+    if (!practice?.stediProviderId) blockers.push('No clearinghouse provider record yet.');
+    if (!practice?.enrollmentAuthorizedAt) blockers.push('Enrollment authorization not recorded.');
+
+    res.json({ ...plan, blockers, canSubmit: blockers.length === 0 });
+  } catch (error) {
+    logger.error('Failed to build enrollment plan', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to build enrollment plan' });
+  }
+});
+
+// ==================== POST /plan/approve ====================
+// Submit an explicitly approved subset of the plan.
+//
+// Deliberately NOT automatic. Submitting an enrollment names the practice's
+// NPI and TIN to a payer — an outward-facing act that is awkward to retract —
+// so the system prepares the work and a human approves it. The caller must
+// name each (payerId, transactionType) it wants; there is no "submit
+// everything" flag, because approving a list you have not read is the same as
+// not approving it.
+router.post('/plan/approve', isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    if (!practiceId) {
+      return res.status(400).json({ message: 'No practice context for this user' });
+    }
+
+    const approvals = Array.isArray(req.body?.approvals) ? req.body.approvals : null;
+    if (!approvals || approvals.length === 0) {
+      return res.status(400).json({ message: 'approvals[] is required — nothing was approved.' });
+    }
+
+    const { buildEnrollmentPlan } = await import('../services/enrollmentAutopilotService');
+    const plan = await buildEnrollmentPlan(practiceId);
+
+    const results: any[] = [];
+    for (const approval of approvals) {
+      const payer = plan.payers.find((p: any) => p.payerId === approval.payerId);
+      const proposal = payer?.proposals.find(
+        (x: any) => x.transactionType === approval.transactionType,
+      );
+
+      // Only submit what the freshly-rebuilt plan still says is needed. The
+      // plan the human approved may be minutes old, and re-submitting an
+      // enrollment that has since gone through is noise the payer sees.
+      if (!payer || !proposal?.needed) {
+        results.push({
+          ...approval,
+          submitted: false,
+          reason: !payer
+            ? 'Payer is no longer in this practice plan.'
+            : 'No longer needed — already enrolled, pending, or not required.',
+        });
+        continue;
+      }
+
+      try {
+        const outcome = await submitEnrollmentForPractice(practiceId, {
+          payerName: payer.payerName,
+          payerId: payer.payerId as string,
+          transactionType: approval.transactionType,
+        });
+        results.push({ ...approval, submitted: true, enrollment: outcome });
+      } catch (err: any) {
+        // One payer's failure must not abort the rest of the batch.
+        results.push({ ...approval, submitted: false, reason: err?.message ?? 'Submission failed' });
+      }
+    }
+
+    const submitted = results.filter((r) => r.submitted).length;
+    res.json({
+      submitted,
+      skipped: results.length - submitted,
+      results,
+      message: `${submitted} enrollment(s) submitted; ${results.length - submitted} skipped.`,
+    });
+  } catch (error) {
+    logger.error('Failed to approve enrollment plan', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to approve enrollment plan' });
+  }
+});
+
 router.post('/submit', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
@@ -318,146 +428,25 @@ router.post('/submit', isAuthenticated, async (req: any, res: Response) => {
         .json({ message: `transactionType must be one of: ${TRANSACTION_TYPES.join(', ')}` });
     }
 
-    const stediTransaction = mapTransactionTypeToStedi(transactionType);
-    if (!stediTransaction) {
-      return res.status(400).json({ message: 'Unsupported transaction type for enrollment' });
-    }
-
-    const practice = await storage.getPractice(practiceId);
-    if (!practice) return res.status(404).json({ message: 'Practice not found' });
-    if (!practice.stediProviderId) {
-      return res.status(412).json({
-        message: 'No Stedi provider record yet — create the provider record first (provider profile).',
-      });
-    }
-    if (!practice.enrollmentAuthorizedAt) {
-      return res.status(412).json({
-        message: 'Enrollment not authorized — record authorization before submitting.',
-      });
-    }
-
-    const userEmail =
-      practice.enrollmentNotificationEmail ||
-      practice.billingContactEmail ||
-      practice.email ||
-      undefined;
-    if (!userEmail) {
-      return res.status(412).json({
-        message: 'No notification email on file — set a billing/enrollment contact email first.',
-      });
-    }
-
-    // Stedi requires a primary contact with email, phone, and full address.
-    if (
-      !practice.billingContactEmail ||
-      !practice.billingContactPhone ||
-      !practice.addressStreet ||
-      !practice.addressCity ||
-      !practice.addressState ||
-      !practice.addressZip
-    ) {
-      return res.status(412).json({
-        message:
-          'Enrollment needs a billing contact email + phone and a structured practice address — complete the provider profile first.',
-      });
-    }
-    const contactName = practice.billingContactName || practice.ownerName || '';
-    const [contactFirst, ...contactRest] = contactName.trim().split(/\s+/);
-
-    const { apiKey } = await getStediApiKeyForPractice(practiceId);
-    const result = await createStediEnrollment(apiKey, {
-      providerId: practice.stediProviderId,
-      payerId,
-      transaction: stediTransaction,
-      userEmail,
-      primaryContact: {
-        firstName: contactFirst || undefined,
-        lastName: contactRest.join(' ') || undefined,
-        organizationName: practice.name || undefined,
-        email: practice.billingContactEmail,
-        phone: practice.billingContactPhone,
-        streetAddress1: practice.addressStreet,
-        city: practice.addressCity,
-        state: practice.addressState,
-        zipCode: practice.addressZip,
-      },
-      // Deliberately no aggregationPreference: it's ERA-only AND payer-gated —
-      // Stedi 400s (empty body) when the payer doesn't accept a preference
-      // (verified against Horizon BCBS NJ 2026-07-02, which auto-derives
-      // TIN aggregation). Payers that support it apply their default.
-      submit: true,
-    });
-
-    if (!result.ok) {
-      logger.warn('Stedi enrollment submission failed', {
-        practiceId,
+    try {
+      const outcome = await submitEnrollmentForPractice(practiceId, {
         payerName,
+        payerId,
         transactionType,
-        error: result.error,
-        raw: result.raw,
       });
-      return res.status(502).json({
-        message: 'Stedi enrollment submission failed',
-        error: sanitizeExternalError(result.error),
-      });
+      return res.json({ ok: true, enrollment: outcome.row, stediStatus: outcome.stediStatus });
+    } catch (err: any) {
+      // Preconditions are the practice's own profile gaps (412); a clearinghouse
+      // refusal is upstream (502). Collapsing both into 500 would tell a user
+      // with a missing phone number that the system is broken.
+      if (err?.code === 'precondition') {
+        return res.status(412).json({ message: err.message });
+      }
+      if (err?.code === 'upstream') {
+        return res.status(502).json({ message: 'Stedi enrollment submission failed', error: err.detail });
+      }
+      throw err;
     }
-
-    const now = new Date();
-    const localStatus = result.localStatus ?? 'pending';
-
-    // Upsert the local row to reflect the submitted request.
-    const [existing] = await db
-      .select()
-      .from(payerEnrollments)
-      .where(
-        and(
-          eq(payerEnrollments.practiceId, practiceId),
-          eq(payerEnrollments.payerName, payerName),
-          eq(payerEnrollments.transactionType, transactionType),
-        ),
-      )
-      .limit(1);
-
-    let row;
-    if (existing) {
-      const [updated] = await db
-        .update(payerEnrollments)
-        .set({
-          status: localStatus,
-          payerId,
-          stediEnrollmentId: result.enrollmentId ?? existing.stediEnrollmentId,
-          requestedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(payerEnrollments.id, existing.id))
-        .returning();
-      row = updated;
-    } else {
-      const [inserted] = await db
-        .insert(payerEnrollments)
-        .values({
-          practiceId,
-          payerName,
-          payerId,
-          transactionType,
-          status: localStatus,
-          stediEnrollmentId: result.enrollmentId ?? null,
-          requestedAt: now,
-        })
-        .returning();
-      row = inserted;
-    }
-
-    logger.info('Stedi enrollment submitted', {
-      practiceId,
-      payerName,
-      transactionType,
-      enrollmentId: result.enrollmentId,
-      stediStatus: result.status,
-      localStatus,
-    });
-
-    res.json({ ok: true, enrollment: row, stediStatus: result.status });
   } catch (error) {
     logger.error('Failed to submit Stedi enrollment', {
       error: error instanceof Error ? error.message : String(error),
