@@ -4128,6 +4128,15 @@ export const paymentPostings = pgTable("payment_postings", {
   coinsuranceAmount: decimal("coinsurance_amount", { precision: 10, scale: 2 }).default("0"),
   copayAmount: decimal("copay_amount", { precision: 10, scale: 2 }).default("0"),
   remarkCode: varchar("remark_code"),
+  // Where this posting came from: 'era' (835 remittance — authoritative, carries
+  // the full CAS breakdown), 'claim_status' (derived from a 276/277 response,
+  // which reports a paid amount but NO adjustment or patient-responsibility
+  // detail), or 'manual'. Nullable: rows predating this column are ERA/manual.
+  //
+  // An 'era' posting SUPERSEDES any 'claim_status' posting on the same claim —
+  // see postPayment. Without that, a claim confirmed paid by the 4-hourly
+  // status cron and then again by the ERA would count the money twice.
+  source: varchar("source"),
   postedBy: varchar("posted_by").references(() => users.id),
   postedAt: timestamp("posted_at").defaultNow(),
   reversed: boolean("reversed").default(false),

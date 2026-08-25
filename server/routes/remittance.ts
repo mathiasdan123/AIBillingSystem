@@ -553,6 +553,8 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
         // posting at all, so collections read as $0 forever.
         try {
           await postPayment(practiceId, {
+            // Authoritative: supersedes any 277-derived posting on this claim.
+            source: 'era',
             claimId: bestMatch.claimId,
             payerName: remittance.payerName,
             checkNumber: remittance.checkNumber ?? null,
@@ -694,6 +696,8 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     // A/R, patient statements and the collections basis all read from.
     const paidAmt = parseFloat(String(lineItem.paidAmount || '0'));
     await postPayment(practiceId, {
+      // Authoritative: supersedes any 277-derived posting on this claim.
+      source: 'era',
       claimId: targetClaimId,
       payerName: remittance.payerName,
       checkNumber: remittance.checkNumber ?? null,

@@ -62,6 +62,31 @@ export async function postPayment(
 
     const claim = claimResults[0];
 
+    // An ERA is authoritative and supersedes anything the 276/277 status cron
+    // inferred for this claim. Reverse those first, inside the same
+    // transaction, so the SUM below sees only one record of the money.
+    // Without this, a claim marked paid by the status cron and then confirmed
+    // by the ERA would be counted twice — which is worse than the bug this
+    // whole change fixes, because it over-reports collections and over-bills
+    // the 6% platform fee rather than under-reporting it.
+    if (data.source === 'era') {
+      await tx
+        .update(paymentPostings)
+        .set({
+          reversed: true,
+          reversedAt: new Date(),
+          reversalReason: 'Superseded by ERA remittance for the same claim',
+        })
+        .where(
+          and(
+            eq(paymentPostings.claimId, data.claimId),
+            eq(paymentPostings.practiceId, practiceId),
+            eq(paymentPostings.source, 'claim_status'),
+            eq(paymentPostings.reversed, false),
+          ),
+        );
+    }
+
     // Insert the payment posting
     const insertData: InsertPaymentPosting = {
       ...data,
