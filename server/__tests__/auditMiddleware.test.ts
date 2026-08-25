@@ -78,6 +78,24 @@ describe('auditMiddleware writes a record when mounted at /api', () => {
     expect(lastCall().details.path).toBe('/api/patients/42');
   });
 
+  it('redacts a token carried in the PATH, not just the query string', async () => {
+    const token = 'b'.repeat(64);
+    const app = express();
+    app.use('/api', auditMiddleware);
+    app.get(`/api/public/portal/${token}/statements`, (_req, res) => res.json([]));
+
+    await request(app).get(`/api/public/portal/${token}/statements`).expect(200);
+
+    // Several portal routes put the access token in the path. Storing it raw
+    // would make the audit log — a table an auditor may read — a store of
+    // live credentials to patient charts.
+    const serialized = JSON.stringify(lastCall());
+    expect(serialized).not.toContain(token);
+    expect(lastCall().details.path).toContain('[redacted]');
+    // Classification still works: the route is recognised despite redaction.
+    expect(lastCall().eventCategory).toBe('phi_access');
+  });
+
   it('still skips the health check', async () => {
     await request(makeApp()).get('/api/health').expect(200);
     expect(createAuditLog).not.toHaveBeenCalled();

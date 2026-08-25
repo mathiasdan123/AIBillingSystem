@@ -425,7 +425,11 @@ router.get('/public/portal/:token/statements', async (req, res) => {
       return res.status(403).json({ message: 'Statement viewing not allowed' });
     }
 
-    const statements = await storage.getPatientStatements(access.patientId);
+    // Drafts are the practice's work in progress — a bill they have not
+    // decided to send. Showing them to the patient presented unfinished
+    // figures as an amount owed.
+    const allStatements = await storage.getPatientStatements(access.patientId);
+    const statements = allStatements.filter((st: any) => st.status !== 'draft');
     res.json(statements);
   } catch (error) {
     logger.error('Error fetching statements', { error: error instanceof Error ? error.message : String(error) });
@@ -448,9 +452,12 @@ router.get('/public/portal/:token/statements/:id', async (req, res) => {
       return res.status(404).json({ message: 'Statement not found' });
     }
 
-    // Mark as sent (viewed via portal) if still in draft
+    // A draft is not a bill yet. Opening one used to silently flip it to
+    // 'sent' — so the act of a patient looking at unfinished figures turned
+    // them into an issued statement, which then drives aging and dunning.
+    // The practice decides when a statement is sent, not the patient.
     if (statement.status === 'draft') {
-      await storage.markStatementSent(statement.id, 'portal');
+      return res.status(404).json({ message: 'Statement not found' });
     }
 
     res.json(statement);

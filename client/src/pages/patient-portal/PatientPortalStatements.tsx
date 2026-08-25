@@ -9,8 +9,12 @@ interface Statement {
   id: number;
   statementNumber: string;
   statementDate: string;
-  totalAmount: string;
-  balanceDue: string;
+  // These are the columns the API actually returns (patient_statements).
+  // The client previously read totalAmount/balanceDue, which do not exist, so
+  // formatCurrency(undefined) rendered every balance in the portal as "$NaN".
+  totalCharges: string;
+  patientBalance: string;
+  paidAmount?: string | null;
   status: string;
 }
 
@@ -121,7 +125,7 @@ export default function PatientPortalStatements({ token }: PatientPortalStatemen
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="font-bold">{formatCurrency(stmt.balanceDue)}</p>
+                  <p className="font-bold">{formatCurrency(stmt.patientBalance)}</p>
                   <Badge
                     variant={
                       stmt.status === "paid"

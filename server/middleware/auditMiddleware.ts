@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import logger from '../services/logger';
 import { createAuditLog } from '../storage/audit';
+import { redactSensitiveUrl } from '@shared/redactSensitiveUrl';
 
 // Map route patterns to resource types and event categories
 interface RouteClassification {
@@ -36,7 +37,14 @@ function classifyRoute(method: string, path: string): RouteClassification {
   // patient (or whoever holds their link) — exactly the access a breach
   // investigation needs to reconstruct. Classified before the generic
   // /api/patients rule so they are not swallowed by it.
-  if (path.match(/\/api\/patient-portal/) || path.match(/\/api\/portal/)) {
+  // /api/public/portal/:token/... is the statements + documents surface; it
+  // was falling through to 'system', so a patient reading their own chart was
+  // not recorded as PHI access at all.
+  if (
+    path.match(/\/api\/patient-portal/) ||
+    path.match(/\/api\/public\/portal/) ||
+    path.match(/\/api\/portal/)
+  ) {
     return { resourceType: 'patient_portal', eventCategory: 'phi_access' };
   }
   if (path.match(/\/api\/public\/telehealth/)) {
@@ -170,7 +178,12 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
     // Build detailed audit record
     const auditDetails: Record<string, any> = {
       method,
-      path,
+      // Redacted before storage. Several portal routes carry the access token
+      // as a PATH segment (/api/public/portal/<token>/statements), so writing
+      // the raw path here would put live credentials to patient charts into
+      // the audit log — a table an auditor is entitled to read. Classification
+      // above deliberately uses the UNredacted path so routes still match.
+      path: redactSensitiveUrl(path),
       statusCode: res.statusCode,
       duration,
     };
