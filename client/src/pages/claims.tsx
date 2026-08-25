@@ -19,6 +19,8 @@ import {
   TriangleAlert, CircleAlert, Info, Lightbulb, Download, Printer,
   ChevronsUpDown, Check, Pencil, Trash2
 } from "lucide-react";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Link } from "wouter";
 import { exportToCsv } from "@/lib/exportUtils";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import PrintLayout from "@/components/PrintLayout";
@@ -1095,6 +1097,21 @@ export default function Claims() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
+  // Sandbox mode blocks transmission server-side (stediService.submitClaim
+  // refuses and returns a rejection). It is the DEFAULT for a new practice,
+  // and the only place it was visible was Settings — so the first anyone knew
+  // of it was a claim they believed they had filed coming back untransmitted.
+  // Surface it where claims are actually submitted.
+  const { data: practice } = useQuery<{ id: number; sandboxMode?: boolean }>({
+    queryKey: [`/api/practices/${practiceId}`],
+    enabled: isAuthenticated && !!practiceId,
+    retry: false,
+  });
+  // Default-on: treat "not loaded yet" as NOT sandbox so the banner never
+  // flashes on a live practice, but treat an explicit true (or a null/absent
+  // column, which the DB default makes true) as sandbox.
+  const isSandboxMode = practice ? practice.sandboxMode !== false : false;
+
   const { data: patients } = useQuery<any[]>({
     queryKey: [`/api/patients?practiceId=${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
@@ -2008,6 +2025,20 @@ export default function Claims() {
 
   return (
     <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+      {isSandboxMode && (
+        <Alert variant="destructive" className="mb-4" data-testid="alert-sandbox-mode">
+          <ShieldAlert className="h-4 w-4" />
+          <AlertTitle>Sandbox Mode — claims are not being transmitted</AlertTitle>
+          <AlertDescription>
+            Submitting records the claim here but sends nothing to the clearinghouse or the
+            payer. Switch to Live Mode in{" "}
+            <Link href="/settings" className="underline font-medium">
+              Settings → Clearinghouse
+            </Link>{" "}
+            before filing real claims.
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
         <div>
