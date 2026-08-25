@@ -1,5 +1,6 @@
 // Sentry must be initialized before all other imports
 import * as Sentry from "@sentry/node";
+import { redactSensitiveUrl, redactTransactionName } from "@shared/redactSensitiveUrl";
 
 const SENTRY_RELEASE = process.env.SENTRY_RELEASE || "development";
 
@@ -16,10 +17,19 @@ if (process.env.SENTRY_DSN) {
         delete event.request.cookies;
         delete event.request.data;
         delete event.request.query_string;
+        // The URL was NOT scrubbed. Portal magic links carry the token as a
+        // path segment, so a live credential to a patient's chart was being
+        // shipped to a vendor outside the BAA.
+        if (event.request.url) {
+          event.request.url = redactSensitiveUrl(event.request.url);
+        }
         if (event.request.headers) {
           delete event.request.headers.cookie;
           delete event.request.headers.authorization;
         }
+      }
+      if (event.transaction) {
+        event.transaction = redactTransactionName(event.transaction);
       }
       // Scrub breadcrumb data (may contain PHI from fetch/XHR)
       if (event.breadcrumbs) {
@@ -27,6 +37,20 @@ if (process.env.SENTRY_DSN) {
           ...b,
           data: undefined,
         }));
+      }
+      return event;
+    },
+    /**
+     * beforeSend runs on ERROR events only. Performance traces are sampled
+     * separately (tracesSampleRate above), so without this hook a fifth of
+     * all portal requests carried their token straight past the scrubber.
+     */
+    beforeSendTransaction(event: any) {
+      if (event.request?.url) {
+        event.request.url = redactSensitiveUrl(event.request.url);
+      }
+      if (event.transaction) {
+        event.transaction = redactTransactionName(event.transaction);
       }
       return event;
     },
