@@ -63,6 +63,83 @@ const safeErrorResponse = (res: Response, statusCode: number, publicMessage: str
   return res.status(statusCode).json({ message: publicMessage });
 };
 
+
+/**
+ * Turn the dialog's { cptCodeId, units, icd10CodeId } line items into the
+ * resolved shape the superbills table stores.
+ *
+ * Prices from the practice's own fee schedule with NO fallback to the shared
+ * catalog figure, matching the claim line-item rule: that column is a platform
+ * suggestion, and putting it on a superbill would hand the patient an amount
+ * their practice never agreed to — which they then submit to their insurer.
+ */
+async function resolveSuperbillLineItems(
+  practiceId: number,
+  lineItems: Array<{ cptCodeId: number; units?: number; icd10CodeId?: number }>,
+): Promise<
+  | { procedureCodes: any[]; diagnosisCodes: string[]; totalAmount: string }
+  | { error: { message: string; code?: string; cptCode?: string } }
+> {
+  const { storage } = await import('../storage');
+  const [cptCatalog, icdCatalog] = await Promise.all([
+    storage.getCptCodes(),
+    storage.getIcd10Codes(),
+  ]);
+
+  const procedureCodes: any[] = [];
+  const diagnosisCodes: string[] = [];
+  let totalCents = 0;
+
+  for (const item of lineItems) {
+    const cpt: any = cptCatalog.find((c: any) => c.id === item.cptCodeId);
+    if (!cpt) {
+      return { error: { message: `Invalid CPT code on one of the line items.` } };
+    }
+
+    const rate = await storage.resolvePracticeCptRate(practiceId, item.cptCodeId);
+    if (rate === null) {
+      return {
+        error: {
+          message: `No charge is set for CPT ${cpt.code}. Set your charge under Insurance Rates → Your Charges before creating a superbill with this code.`,
+          code: 'RATE_NOT_SET',
+          cptCode: cpt.code,
+        },
+      };
+    }
+
+    const units = item.units && item.units > 0 ? item.units : 1;
+    // Integer cents: multiplying a float rate by units and summing reintroduces
+    // binary-float error into a dollar figure the patient sees.
+    const lineCents = Math.round(parseFloat(rate) * 100) * units;
+    totalCents += lineCents;
+
+    procedureCodes.push({
+      code: cpt.code,
+      description: cpt.description ?? cpt.shortDescription ?? '',
+      units,
+      fee: (lineCents / 100).toFixed(2),
+    });
+
+    if (item.icd10CodeId) {
+      const icd: any = icdCatalog.find((c: any) => c.id === item.icd10CodeId);
+      if (icd?.code && !diagnosisCodes.includes(icd.code)) {
+        diagnosisCodes.push(icd.code);
+      }
+    }
+  }
+
+  if (diagnosisCodes.length === 0) {
+    return {
+      error: {
+        message:
+          'A superbill needs at least one diagnosis code — an insurer cannot reimburse without one. Add an ICD-10 code to a line item.',
+      },
+    };
+  }
+
+  return { procedureCodes, diagnosisCodes, totalAmount: (totalCents / 100).toFixed(2) };
+}
+
 // GET /superbills - List superbills with optional filters
 router.get('/', isAuthenticated, async (req: any, res: Response) => {
   try {
@@ -102,7 +179,31 @@ router.get('/:id', isAuthenticated, async (req: any, res: Response) => {
 router.post('/', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { patientId, providerId, appointmentId, dateOfService, diagnosisCodes, procedureCodes, totalAmount, notes } = req.body;
+    let { patientId, providerId, appointmentId, dateOfService, diagnosisCodes, procedureCodes, totalAmount, notes } = req.body;
+
+    // The Create Superbill dialog sends what a user can actually pick — a
+    // patient, a date, and CPT/ICD line items — not the fully-resolved
+    // procedureCodes/diagnosisCodes/totalAmount this route originally
+    // demanded. The two contracts never matched, so the dialog returned 400
+    // on every attempt and no superbill could be created from the UI at all.
+    //
+    // Resolving here rather than in the client is deliberate: fees come from
+    // THIS practice's own schedule, and a client that sent its own `fee` could
+    // put an amount nobody chose on a document the patient submits to their
+    // insurer.
+    if (Array.isArray(req.body?.lineItems) && req.body.lineItems.length > 0) {
+      const resolved = await resolveSuperbillLineItems(practiceId, req.body.lineItems);
+      if ('error' in resolved) {
+        return res.status(400).json(resolved.error);
+      }
+      procedureCodes = resolved.procedureCodes;
+      diagnosisCodes = resolved.diagnosisCodes;
+      totalAmount = resolved.totalAmount;
+      // A superbill records who rendered the care. Default to the signed-in
+      // user rather than asking again — the alternative was a required field
+      // the dialog never collected.
+      providerId = providerId || req.user?.claims?.sub || null;
+    }
 
     if (!patientId || !providerId || !dateOfService || !diagnosisCodes || !procedureCodes || !totalAmount) {
       return res.status(400).json({ message: 'Missing required fields: patientId, providerId, dateOfService, diagnosisCodes, procedureCodes, totalAmount' });
