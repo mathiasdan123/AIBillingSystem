@@ -44,6 +44,7 @@ import {
   type InsertAppointmentRequest,
 } from "@shared/schema";
 import { db } from "../db";
+import { randomBytes } from "crypto";
 import { eq, desc, and, gte, lte, ne, lt, isNull, count, sql } from "drizzle-orm";
 import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
@@ -1406,16 +1407,32 @@ export async function upsertTelehealthSettings(settings: InsertTelehealthSetting
 }
 
 export function generateTelehealthRoomName(): string {
+  // randomBytes, not Math.random: the room name is part of the URL that lets
+  // someone into a live therapy session.
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 8);
+  const random = randomBytes(6).toString('hex');
   return `session-${timestamp}-${random}`;
 }
 
+/**
+ * The code a patient types to join their session.
+ *
+ * Math.random() is not a CSPRNG — its internal state is recoverable from
+ * observed outputs, so codes issued by the same process become predictable
+ * once a few are seen. This code is the ONLY thing standing between an
+ * outsider and a live therapy session, so it is generated with randomBytes
+ * and widened from 6 to 8 characters (32^8 ≈ 1.1 trillion).
+ *
+ * Rejection sampling rather than modulo, so every character is equally
+ * likely: a modulo bias would shrink the effective keyspace.
+ */
 export function generatePatientAccessCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no look-alikes
+  const bytes = randomBytes(8);
   let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < 8; i++) {
+    // 256 is a multiple of 32, so masking the low 5 bits is unbiased.
+    code += chars.charAt(bytes[i] & 31);
   }
   return code;
 }
