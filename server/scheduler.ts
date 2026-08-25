@@ -1730,6 +1730,49 @@ function registerJobs() {
   });
   scheduledTasks.set('eraPoll', eraPollTask);
 
+  // ERA silence check — daily 07:45.
+  //
+  // An absence is the hardest fault to notice, and this system has already
+  // been bitten once: the Stedi endpoints 404'd on every call for months and
+  // the only symptom was nothing happening, which is indistinguishable from
+  // nothing having happened yet. The ERA poller is exposed to the same trap
+  // and its envelope shape has never been seen against a live account. So
+  // when a practice is ERA-enrolled AND claims are being paid AND no
+  // remittance has arrived through the poller, say so out loud.
+  const eraSilenceTask = cron.schedule('45 7 * * *', async () => {
+    try {
+      const { runEraSilenceCheck, describeFinding, SILENCE_DAYS } = await import(
+        './services/eraSilenceMonitor'
+      );
+      const report = await runEraSilenceCheck();
+      if (report.findings.length === 0) return;
+
+      for (const finding of report.findings) {
+        const admins = await storage.getAdminsByPractice(finding.practiceId);
+        const recipients = admins.map((a: any) => a.email).filter(Boolean);
+        if (recipients.length === 0) continue;
+
+        const summary = describeFinding(finding);
+        for (const email of recipients) {
+          await sendEmail({
+            to: email,
+            subject: `Action needed: no electronic remittances received in ${SILENCE_DAYS} days`,
+            html: `<p>${summary}</p><p>Payments may be arriving at the bank without being
+                   recorded in TherapyBill, which means claims stay open in A/R and patients
+                   are not billed their share.</p>`,
+            text: summary,
+            fromName: 'TherapyBill AI Alerts',
+          });
+        }
+      }
+    } catch (error: any) {
+      logger.error('ERA silence check failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('eraSilenceCheck', eraSilenceTask);
+
   // Investor metrics snapshot — daily at 11:55 PM, after the day's payer
   // syncs, so the persisted KPI time series (claims, first-pass %, recovered
   // dollars) reflects the full day. Global rollup over real practices only.
