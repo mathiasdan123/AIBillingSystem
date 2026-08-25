@@ -159,7 +159,7 @@ export function registerClaimTools(
         claimAmount: Number((claim as any).totalAmount) || undefined,
       };
 
-      return stediService.checkClaimStatus(request);
+      return stediService.checkClaimStatus(request, context.practiceId);
     },
   );
 

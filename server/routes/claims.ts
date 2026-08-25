@@ -2147,7 +2147,7 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
         },
         dateOfService,
         claimAmount: parseFloat(claim.totalAmount as any),
-      });
+      }, claim.practiceId);
 
       let updateData: any = {
         clearinghouseStatus: statusResult.status,

@@ -812,8 +812,13 @@ export interface ClaimStatusResponse {
   errors?: string[];
 }
 
-export async function checkClaimStatus(request: ClaimStatusRequest, practiceId?: number): Promise<ClaimStatusResponse> {
-  const stediKey = practiceId ? await getStediApiKeyForPractice(practiceId) : undefined;
+// practiceId is REQUIRED, not optional. It was optional, and four of the five
+// call sites simply omitted it — the 4-hourly status cron included — so
+// getHeaders fell through to the global STEDI_API_KEY and every practice's 276
+// went out under the platform key rather than its own. An optional argument
+// that must always be passed is not a safeguard; the type is.
+export async function checkClaimStatus(request: ClaimStatusRequest, practiceId: number): Promise<ClaimStatusResponse> {
+  const stediKey = await getStediApiKeyForPractice(practiceId);
   const payload = {
     controlNumber: generateControlNumber(),
     tradingPartnerServiceId: request.payer.id,

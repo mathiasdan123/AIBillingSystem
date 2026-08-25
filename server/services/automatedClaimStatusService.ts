@@ -230,8 +230,15 @@ async function processClaimStatusCheck(
     claimAmount: claim.totalAmount ? parseFloat(claim.totalAmount) : undefined,
   };
 
-  // Call Stedi
-  const statusResponse: ClaimStatusResponse = await checkClaimStatus(statusRequest);
+  // Call Stedi with the OWNING practice's key. Omitting practiceId here made
+  // checkClaimStatus fall through to the global STEDI_API_KEY (getHeaders),
+  // so every practice's 276 went out under the platform key instead of its
+  // own — one tenant's claim status inquired for under another's credentials.
+  // claimStatusReaperService already passes it; this path was the outlier.
+  const statusResponse: ClaimStatusResponse = await checkClaimStatus(
+    statusRequest,
+    claim.practiceId,
+  );
 
   // Check if status changed
   const previousStatus = claim.status;
