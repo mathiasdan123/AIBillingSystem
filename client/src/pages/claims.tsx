@@ -1245,7 +1245,11 @@ export default function Claims() {
       invalidateClaims();
       toast({
         title: "Superbill Created",
-        description: `Claim ${data.claim.claimNumber} created for $${data.totalAmount}`,
+        // This endpoint returns a SUPERBILL, not a claim. The old message read
+        // `data.claim.claimNumber`, which this response has never contained —
+        // it would have thrown on the one path that was supposed to mean
+        // success.
+        description: `Superbill created for $${data.totalAmount}. Find it under Superbills to finalize and send.`,
       });
       setShowSuperbillDialog(false);
       // Reset form
@@ -1256,8 +1260,11 @@ export default function Claims() {
     },
     onError: (error: any) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to create superbill",
+        title: "Couldn't create superbill",
+        // The server explains actionable failures precisely — an unpriced CPT
+        // code, or a missing diagnosis. Replacing that with a generic string
+        // would leave the user with no idea what to fix.
+        description: error?.message || "Failed to create superbill",
         variant: "destructive",
       });
     },
@@ -2515,7 +2522,9 @@ export default function Claims() {
           <DialogHeader>
             <DialogTitle>Create Superbill</DialogTitle>
             <DialogDescription>
-              Create a superbill with multiple CPT codes for billing
+              An itemized receipt the patient submits to their insurer for out-of-network
+              reimbursement. This does <strong>not</strong> file a claim — use New Claim to
+              bill the payer directly.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
