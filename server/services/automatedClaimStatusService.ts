@@ -20,6 +20,7 @@ import { checkClaimStatus, isStediConfigured } from './stediService';
 import type { ClaimStatusRequest, ClaimStatusResponse } from './stediService';
 import { logger } from './logger';
 import { decryptField, resolveEncryptedDob } from './phiEncryptionService';
+import { recordStatusDerivedPayment } from './statusDerivedPayment';
 
 const RATE_LIMIT_DELAY_MS = 200;
 const MAX_CLAIMS_PER_BATCH = 50;
@@ -329,7 +330,29 @@ async function updateClaimStatus(
     .update(claims)
     .set(updateData)
     .where(eq(claims.id, claim.id));
+
+  // Writing claims.paidAmount is not the same as recording the money.
+  //
+  // A/R, patient statements, the collections rate and the 6%-of-collections
+  // basis all read payment_postings, not claims.paidAmount. This path wrote
+  // the claim column and nothing else, so a claim the status cron confirmed
+  // paid contributed $0 to every one of those.
+  //
+  // Normally the ERA repairs that — postPayment recomputes paidAmount from the
+  // sum of postings. But ERA delivery is enrollment-gated per payer, so for a
+  // practice not yet enrolled NO ERA ever arrives and the 277 is the only
+  // signal that exists. The gap is permanent for them, not transient.
+  if (newStatus === 'paid' && statusResponse.paidAmount) {
+    await recordStatusDerivedPayment({
+      claimId: claim.id,
+      practiceId: claim.practiceId,
+      payerName: claim.insuranceName,
+      paidAmount: statusResponse.paidAmount,
+      paidDate: statusResponse.paidDate,
+    });
+  }
 }
+
 
 /**
  * Creates a claimStatusCheck record for audit trail

@@ -39,6 +39,7 @@ import { db } from '../db';
 import { claims, claimStatusChecks, patients, insurances, practices } from '@shared/schema';
 import { eq, and, isNull, lt, or, sql } from 'drizzle-orm';
 import { storage } from '../storage';
+import { recordStatusDerivedPayment } from './statusDerivedPayment';
 import logger from './logger';
 import { decryptField, resolveEncryptedDob } from './phiEncryptionService';
 import {
@@ -102,6 +103,12 @@ export interface ReapDeps {
   recordStatusCheck: (row: any) => Promise<void>;
   /** Pluggable "mark we polled this" writer for idempotency. */
   markPolled: (claimId: number, when: Date) => Promise<void>;
+  /**
+   * Records a 277-derived payment into payment_postings. Setting
+   * claims.paidAmount alone leaves collections, A/R, patient statements and
+   * the 6% basis reading $0, because those all read payment_postings.
+   */
+  recordStatusDerivedPayment: typeof recordStatusDerivedPayment;
 }
 
 export interface StaleClaimRow {
@@ -143,6 +150,7 @@ const defaultDeps = (): ReapDeps => ({
   applyClaimTransition: defaultApplyClaimTransition,
   recordStatusCheck: defaultRecordStatusCheck,
   markPolled: defaultMarkPolled,
+  recordStatusDerivedPayment,
 });
 
 async function defaultGetStaleSubmittedClaims(
@@ -334,6 +342,18 @@ async function processClaim(
   }
 
   await deps.applyClaimTransition(claim.id, update);
+
+  // The transition above writes claims.paidAmount; this records the money
+  // where the money is actually read from. Idempotent and non-fatal.
+  if (reaperStatus === 'paid' && response.paidAmount != null) {
+    await deps.recordStatusDerivedPayment({
+      claimId: claim.id,
+      practiceId: claim.practiceId,
+      payerName: claim.insuranceName,
+      paidAmount: response.paidAmount,
+      paidDate: response.paidDate,
+    });
+  }
 
   await deps.recordStatusCheck({
     claimId: claim.id,
