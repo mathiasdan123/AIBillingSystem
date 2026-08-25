@@ -88,14 +88,31 @@ export async function pollTransactions(params: {
   // Be liberal about the envelope: the field has been named differently across
   // Stedi API generations, and guessing one shape and silently reading an
   // empty list is the failure mode this whole file exists to avoid.
-  const list: any[] =
-    data?.transactions ?? data?.items ?? data?.results ?? (Array.isArray(data) ? data : []);
+  const KNOWN_KEYS = ['transactions', 'items', 'results'] as const;
+  const matchedKey = KNOWN_KEYS.find((k) => Array.isArray((data as any)?.[k]));
+  const list: any[] = matchedKey
+    ? (data as any)[matchedKey]
+    : Array.isArray(data)
+      ? data
+      : [];
 
   if (!Array.isArray(list)) {
     logger.warn('Stedi polling returned an unexpected envelope', {
       keys: Object.keys(data ?? {}),
     });
     return { transactions: [], nextPageToken: null };
+  }
+
+  // The envelope shape has never been observed against a live account, so a
+  // mismatch is a real possibility — and its failure mode is indistinguishable
+  // from "no remittances yet" unless we say so. That ambiguity is exactly what
+  // let the 404'd endpoints look healthy for months.
+  if (!matchedKey && !Array.isArray(data) && data && Object.keys(data).length > 0) {
+    logger.error(
+      'Stedi polling returned a payload we could not read as a transaction list — ' +
+        'this is NOT the same as having no ERAs. Check the envelope shape.',
+      { keys: Object.keys(data), url },
+    );
   }
 
   return {
