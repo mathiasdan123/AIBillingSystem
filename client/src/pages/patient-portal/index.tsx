@@ -140,6 +140,20 @@ export default function PatientPortalPage() {
 
   // Handle logout
   const handleLogout = () => {
+    // Revoke on the SERVER too. Clearing localStorage alone left the token
+    // valid, so anyone with a copy — or whoever picks up the shared tablet
+    // next — could keep using it. Fire-and-forget: the local session is torn
+    // down regardless, so logging out can never fail from the patient's side.
+    const token = portalToken;
+    if (token) {
+      fetch('/api/patient-portal/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {
+        /* best effort — local teardown below still happens */
+      });
+    }
+
     // Leave nothing behind on a shared device.
     queryClient.clear();
     localStorage.removeItem("patientPortalToken");

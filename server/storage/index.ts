@@ -560,6 +560,7 @@ export const storage = {
   getPatientPortalByMagicLink: auditFns.getPatientPortalByMagicLink,
   createMagicLink: auditFns.createMagicLink,
   useMagicLink: auditFns.useMagicLink,
+  revokePortalAccess: auditFns.revokePortalAccess,
   updatePortalAccess: auditFns.updatePortalAccess,
   refreshPortalToken: auditFns.refreshPortalToken,
   createPatientDocument: auditFns.createPatientDocument,

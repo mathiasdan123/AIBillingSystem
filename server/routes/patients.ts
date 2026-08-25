@@ -1298,6 +1298,53 @@ router.post('/:id/portal-access', isAuthenticated, requirePatientConsent, async 
 });
 
 // Send magic link to patient
+/**
+ * POST /api/patients/:id/portal-access/revoke — kill a patient's portal link.
+ *
+ * getPatientPortalByToken already refuses an inactive row, but nothing in the
+ * codebase ever set isActive=false, so a link that went to the wrong person —
+ * a forwarded invite, a shared device, an ex-partner — could not be stopped
+ * by anyone. Re-inviting did not help either: the invite reused the same
+ * token, handing the leaker's copy straight back. This is the stop button.
+ *
+ * The patient can be re-invited afterwards; that mints a fresh token.
+ */
+router.post('/:id/portal-access/revoke', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(patientId)) {
+      return res.status(400).json({ message: 'Invalid patient id' });
+    }
+
+    // req.patient is set by the tenant guard on /:id routes above.
+    const patient = req.patient ?? (await storage.getPatient(patientId));
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    const revoked = await storage.revokePortalAccess(patientId);
+
+    logger.info('Patient portal access revoked', {
+      patientId,
+      practiceId: patient.practiceId,
+      by: req.user?.claims?.sub,
+      hadAccess: revoked,
+    });
+
+    res.json({
+      revoked,
+      message: revoked
+        ? 'Portal access revoked. Any existing link for this patient no longer works.'
+        : 'This patient had no portal access to revoke.',
+    });
+  } catch (error) {
+    logger.error('Error revoking portal access', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ message: 'Failed to revoke portal access' });
+  }
+});
+
 router.post('/:id/send-portal-link', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);

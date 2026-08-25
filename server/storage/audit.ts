@@ -748,13 +748,37 @@ export async function createMagicLink(patientId: number): Promise<{ token: strin
   return { token, expiresAt };
 }
 
+/** How long a portal session token stays valid, refreshed on each login. */
+export const PORTAL_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 export async function useMagicLink(token: string): Promise<PatientPortalAccess | null> {
   const access = await getPatientPortalByMagicLink(token);
   if (!access) return null;
 
+  /**
+   * Redeeming a magic link ROTATES the portal token.
+   *
+   * It previously returned the same long-lived token every time, so a token
+   * that leaked once — a forwarded invite, a shared tablet, a link sitting in
+   * an old email — stayed valid for its full life and re-inviting the patient
+   * handed the leaker's copy right back. Rotation makes a new login
+   * invalidate every older copy, which is what gives "just send them a fresh
+   * link" any security value at all.
+   *
+   * The expiry is refreshed at the same time. It was set once at creation and
+   * never extended, so an active patient was silently locked out on day 90
+   * and re-inviting could not fix it (the invite reused the same expired
+   * token). A sliding window keeps regular users logged in and still expires
+   * an abandoned session.
+   */
+  const rotatedToken = randomBytes(32).toString('hex');
+
   const [result] = await db
     .update(patientPortalAccess)
     .set({
+      portalToken: rotatedToken,
+      portalTokenExpiresAt: new Date(Date.now() + PORTAL_TOKEN_TTL_MS),
+      isActive: true,
       magicLinkUsedAt: new Date(),
       lastAccessedAt: new Date(),
       accessCount: (access.accessCount || 0) + 1,
@@ -764,6 +788,30 @@ export async function useMagicLink(token: string): Promise<PatientPortalAccess |
     .returning();
 
   return result;
+}
+
+/**
+ * Revoke portal access — the missing half of the token lifecycle.
+ *
+ * getPatientPortalByToken already refuses a row with isActive=false, but
+ * NOTHING in the codebase ever set it false, so a leaked link could not be
+ * killed by anyone: not the patient, not the practice. Used by patient logout
+ * and by staff when a link goes to the wrong person.
+ */
+export async function revokePortalAccess(patientId: number): Promise<boolean> {
+  const result = await db
+    .update(patientPortalAccess)
+    .set({
+      isActive: false,
+      // Rotate on the way out so the old token is dead even if the row is
+      // reactivated later.
+      portalToken: randomBytes(32).toString('hex'),
+      updatedAt: new Date(),
+    })
+    .where(eq(patientPortalAccess.patientId, patientId))
+    .returning();
+
+  return result.length > 0;
 }
 
 export async function updatePortalAccess(patientId: number): Promise<void> {
