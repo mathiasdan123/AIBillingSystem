@@ -1056,6 +1056,14 @@ export default function Claims() {
     units: number;
     icd10CodeId?: string;
   }>>([{ cptCodeId: "", units: 1 }]);
+  // Date of service. The New Claim dialog had no field for this at all, and
+  // the server defaults a line item with no date to TODAY — so a claim for
+  // last week's session was filed dated today. The 837P takes its service date
+  // from the first line item, so that is a materially wrong claim: the payer
+  // denies it, and it misstates when care was actually delivered.
+  const [newClaimDateOfService, setNewClaimDateOfService] = useState(
+    new Date().toISOString().split('T')[0],
+  );
 
   const addClaimLineItem = () =>
     setNewClaimLineItems((prev) => [...prev, { cptCodeId: "", units: 1 }]);
@@ -1347,6 +1355,7 @@ export default function Claims() {
           cptCodeId: parseInt(item.cptCodeId),
           icd10CodeId: item.icd10CodeId ? parseInt(item.icd10CodeId) : undefined,
           units: item.units,
+          dateOfService: newClaimDateOfService,
         });
       }
       return claim;
@@ -1927,6 +1936,25 @@ export default function Claims() {
   };
 
   const onSubmit = (data: ClaimFormData) => {
+    if (!newClaimDateOfService) {
+      toast({
+        title: "Date of service is required",
+        description:
+          "Enter the date the session actually happened. Leaving it blank files the claim dated today.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (newClaimDateOfService > new Date().toISOString().split('T')[0]) {
+      // A future date of service is never legitimate on a claim and payers
+      // reject it outright.
+      toast({
+        title: "Date of service can't be in the future",
+        description: "Claims can only be filed for sessions that have already happened.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!newClaimLineItems.some((item) => item.cptCodeId)) {
       toast({
         title: "Add a CPT code",
@@ -2251,6 +2279,25 @@ export default function Claims() {
                     );
                   }}
                 />
+
+                {/* Date of service. Required on the 837P and NOT safe to
+                    default silently: an unset date became "today", which files
+                    the wrong service date on a real claim. */}
+                <div className="space-y-2">
+                  <Label htmlFor="claim-date-of-service">Date of Service</Label>
+                  <Input
+                    id="claim-date-of-service"
+                    type="date"
+                    value={newClaimDateOfService}
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setNewClaimDateOfService(e.target.value)}
+                    data-testid="input-claim-date-of-service"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    The date the session actually happened — not today's date, unless the
+                    session was today.
+                  </p>
+                </div>
 
                 {/* CPT line items. The claim total is derived from these
                     rather than typed — the server recomputes it from the
