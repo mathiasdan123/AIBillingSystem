@@ -30,7 +30,7 @@ vi.mock('../services/phiEncryptionService', () => ({
   encryptField: (v: any) => v,
 }));
 
-import { build837P, submitClaim } from '../services/stediService';
+import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone } from '../services/stediService';
 
 // Shaped to the real ClaimSubmission interface, so build837P exercises the
 // same code path a genuine submission takes.
@@ -269,5 +269,63 @@ describe('837P address field names', () => {
   it('omits address2 rather than sending an empty field', () => {
     const payload = build837P(CLAIM);
     expect('address2' in payload.subscriber.address).toBe(false);
+  });
+});
+
+describe('one-line address parsing and phone normalization', () => {
+  /**
+   * The fifth dry run reached the clearinghouse's CONTENT edits and rejected
+   * on data: "Missing Country Code / Invalid State" for subscriber and
+   * billing, and "Invalid Telephone number 0000000000" for the submitter.
+   *
+   * Root causes: the route's parser split addresses on commas only, so a
+   * comma-less address produced empty city/state/zip that went on the wire;
+   * and the submitter phone was a hardcoded placeholder the clearinghouse
+   * rejects by rule (must not start 0 or 1).
+   */
+  it("parses the comma-less address that failed live", () => {
+    // As stored on the real patient record.
+    expect(parseOneLineAddress('70 VAN VALKENBURG AVE ATLANTA GA 30305')).toEqual({
+      line1: '70 VAN VALKENBURG AVE ATLANTA',
+      city: '',
+      state: 'GA',
+      zip: '30305',
+    });
+    // Comma-less: state+zip recovered; street/city split needs the comma, so
+    // completeness validation still (correctly) demands the comma form.
+  });
+
+  it('parses the guided "Street, City, ST 12345" form completely', () => {
+    expect(parseOneLineAddress('70 Van Valkenburg Ave, Lakewood, NJ 08701')).toEqual({
+      line1: '70 Van Valkenburg Ave',
+      city: 'Lakewood',
+      state: 'NJ',
+      zip: '08701',
+    });
+  });
+
+  it('handles a ZIP+4 and stray commas', () => {
+    expect(parseOneLineAddress('1 Main St, Springfield, MA, 01103-2200')).toEqual({
+      line1: '1 Main St',
+      city: 'Springfield',
+      state: 'MA',
+      zip: '01103',
+    });
+  });
+
+  it('isCompleteAddress refuses what the clearinghouse would refuse', () => {
+    // Empty city/state/zip — exactly what went on the wire live.
+    expect(isCompleteAddress(parseOneLineAddress('70 VAN VALKENBURG AVE'))).toBe(false);
+    expect(isCompleteAddress(parseOneLineAddress('70 Van Valkenburg Ave, Lakewood, NJ 08701'))).toBe(true);
+  });
+
+  it('normalizes phones and refuses the placeholder the clearinghouse named', () => {
+    expect(toStediPhone('(555) 123-4567')).toBe('5551234567');
+    expect(toStediPhone('1-555-123-4567')).toBe('5551234567');
+    // "Area codes and phone numbers must not begin with 0 or 1."
+    expect(toStediPhone('0000000000')).toBeNull();
+    expect(toStediPhone('1234567890')).toBeNull();
+    expect(toStediPhone('')).toBeNull();
+    expect(toStediPhone(null)).toBeNull();
   });
 });

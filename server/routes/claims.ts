@@ -1273,17 +1273,15 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
           );
           const diagnosisCodes = Array.from(diagnosisCodeSet);
 
-          const parseAddress = (addr: string | null) => {
-            const parts = (addr || '').split(',').map(p => p.trim());
-            return {
-              line1: parts[0] || '',
-              city: parts[1] || '',
-              state: parts[2]?.split(' ')[0] || '',
-              zip: parts[2]?.split(' ')[1] || parts[3] || '',
-            };
-          };
-          const patientAddr = parseAddress(patient.address);
-          const practiceAddr = parseAddress(practice.address);
+          const patientAddr = stediService.parseOneLineAddress(patient.address);
+          const practiceAddr = (practice as any).addressStreet
+            ? {
+                line1: (practice as any).addressStreet,
+                city: (practice as any).addressCity || '',
+                state: (practice as any).addressState || '',
+                zip: (practice as any).addressZip || '',
+              }
+            : stediService.parseOneLineAddress(practice.address);
 
           // Resolve payer ID via crosswalk for sub-plan routing
           const batchPayerRouting = await stediService.resolvePayerId(
@@ -1327,6 +1325,9 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
             provider: {
               npi: practice.npi || '',
               taxId: practice.taxId || '',
+              contactPhone: stediService.toStediPhone(
+                (practice as any).billingContactPhone || (practice as any).phone,
+              ) ?? undefined,
               organizationName: practice.name,
               address: practiceAddr,
               // Phase 6 — let build837P resolve from practice. Was hardcoded
@@ -1804,18 +1805,46 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           });
         }
 
-        // Simple address parser
-        const parseAddress = (addr: string | null) => {
-          const parts = (addr || '').split(',').map(p => p.trim());
-          return {
-            line1: parts[0] || '',
-            city: parts[1] || '',
-            state: parts[2]?.split(' ')[0] || '',
-            zip: parts[2]?.split(' ')[1] || parts[3] || '',
-          };
-        };
-        const patientAddr = parseAddress(patient.address);
-        const practiceAddr = parseAddress(practice.address);
+        const patientAddr = stediService.parseOneLineAddress(patient.address);
+        // The practice keeps a STRUCTURED address (street/city/state/zip) for
+        // enrollment; prefer it over re-parsing the legacy one-liner.
+        const practiceAddr = (practice as any).addressStreet
+          ? {
+              line1: (practice as any).addressStreet,
+              city: (practice as any).addressCity || '',
+              state: (practice as any).addressState || '',
+              zip: (practice as any).addressZip || '',
+            }
+          : stediService.parseOneLineAddress(practice.address);
+
+        // Refuse incomplete data rather than transmit it. The first validated
+        // claim went out with empty city/state and only the CLEARINGHOUSE said
+        // so — an hour later, in a server log. Say it here, name the fix.
+        if (!stediService.isCompleteAddress(patientAddr)) {
+          return res.status(400).json({
+            message:
+              `The patient's address ("${patient.address || 'not set'}") is missing city, state or ZIP. ` +
+              'Edit it on the patient\'s Details tab as "Street, City, ST 12345", then run the test again.',
+            code: 'patient_address_incomplete',
+          });
+        }
+        if (!stediService.isCompleteAddress(practiceAddr)) {
+          return res.status(400).json({
+            message:
+              'The practice address is missing city, state or ZIP — complete it in the provider profile before submitting.',
+            code: 'practice_address_incomplete',
+          });
+        }
+        const submitterPhone = stediService.toStediPhone(
+          (practice as any).billingContactPhone || (practice as any).phone,
+        );
+        if (!submitterPhone) {
+          return res.status(400).json({
+            message:
+              'The practice needs a valid billing contact phone (10 digits, not starting with 0 or 1) — set it in the provider profile before submitting.',
+            code: 'practice_phone_invalid',
+          });
+        }
 
         // Resolve payer ID via crosswalk for sub-plan routing
         const payerRouting = await stediService.resolvePayerId(
@@ -1857,6 +1886,8 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           provider: {
             npi: practice.npi || '',
             taxId: practice.taxId || '',
+            // Clearinghouse rejects placeholder phones; validated above.
+            contactPhone: submitterPhone,
             organizationName: practice.name,
             address: practiceAddr,
             // Phase 6 — resolver falls back to practice.taxonomyCode or a

@@ -583,6 +583,10 @@ export interface ClaimSubmission {
   provider: {
     npi: string;
     taxId: string;
+    /** Practice billing contact phone — goes on the submitter/billing blocks.
+     *  The clearinghouse rejects numbers starting 0 or 1, including the old
+     *  '0000000000' placeholder. */
+    contactPhone?: string;
     organizationName?: string;
     firstName?: string;
     lastName?: string;
@@ -1156,7 +1160,9 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       organizationName: claim.provider.organizationName,
       contactInformation: {
         name: claim.provider.organizationName || `${claim.provider.firstName} ${claim.provider.lastName}`,
-        phoneNumber: '0000000000', // Should be from practice settings
+        // Validated by the route before we get here; never a placeholder —
+        // Stedi rejected '0000000000' by name.
+        phoneNumber: claim.provider.contactPhone,
       },
     },
     receiver: {
@@ -1206,7 +1212,7 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       address: toStediAddress(claim.provider.address),
       contactInformation: {
         name: claim.provider.organizationName || `${claim.provider.firstName} ${claim.provider.lastName}`,
-        phoneNumber: '0000000000',
+        phoneNumber: claim.provider.contactPhone,
       },
     },
     rendering: {
@@ -1282,6 +1288,59 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       })),
     },
   };
+}
+
+/**
+ * Normalize a phone to the 10 digits the clearinghouse accepts.
+ * Rejected live: '0000000000' ("Area codes and phone numbers must not begin
+ * with 0 or 1"). Returns null when the input cannot be a valid NANP number —
+ * callers must treat that as missing data, never substitute a placeholder.
+ */
+/**
+ * Parse a one-line address into the structured form the 837P needs.
+ *
+ * The old route-local parser split on commas ONLY, so "70 VAN VALKENBURG AVE"
+ * (no commas) produced empty city/state/zip — which went on the wire and came
+ * back from the clearinghouse as "Missing Country Code / Invalid State" on
+ * the first validated claim. This one pulls a trailing "ST 08701" pair off
+ * the end regardless of commas, then treats what precedes it as street[, city].
+ */
+export function parseOneLineAddress(addr: string | null | undefined): {
+  line1: string; city: string; state: string; zip: string;
+} {
+  const raw = (addr || '').trim().replace(/\s+/g, ' ');
+  const m = raw.match(/^(.*?)[,\s]+([A-Za-z]{2})[,\s]+(\d{5})(?:-\d{4})?$/);
+  if (m) {
+    const head = m[1].replace(/,\s*$/, '');
+    const parts = head.split(',').map((p) => p.trim()).filter(Boolean);
+    return {
+      line1: parts[0] || '',
+      city: parts.length > 1 ? parts[parts.length - 1] : '',
+      state: m[2].toUpperCase(),
+      zip: m[3],
+    };
+  }
+  const parts = raw.split(',').map((p) => p.trim());
+  return {
+    line1: parts[0] || '',
+    city: parts[1] || '',
+    state: parts[2]?.split(' ')[0] || '',
+    zip: parts[2]?.split(' ')[1] || parts[3] || '',
+  };
+}
+
+/** True when every field the 837P needs is present and well-formed. */
+export function isCompleteAddress(a: { line1: string; city: string; state: string; zip: string }): boolean {
+  return !!a.line1 && !!a.city && /^[A-Za-z]{2}$/.test(a.state) && /^\d{5}$/.test(a.zip);
+}
+
+export function toStediPhone(value: string | null | undefined): string | null {
+  if (!value) return null;
+  let digits = String(value).replace(/[^0-9]/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+  if (digits.length !== 10) return null;
+  if (digits[0] === '0' || digits[0] === '1') return null;
+  return digits;
 }
 
 /** Dates in the claims schema are CCYYMMDD; internal dates are ISO. */
