@@ -136,7 +136,19 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   // date (the server defaults a dateless line to TODAY) could not be corrected
   // from the UI at all — only rebuilt from scratch.
   const [editDate, setEditDate] = useState("");
+  // Diagnosis per line. The API has always accepted icd10CodeId on the line
+  // PATCH; only the client never sent it, so a diagnosis could be set at
+  // creation and never corrected afterwards.
+  const [editIcd, setEditIcd] = useState("");
   const [busyItemId, setBusyItemId] = useState<number | null>(null);
+
+  const { data: icd10Options = [] } = useQuery<any[]>({
+    queryKey: ['/api/icd10-codes'],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/icd10-codes');
+      return res.json();
+    },
+  });
 
   const beginEdit = (item: any) => {
     setEditingItemId(item.id);
@@ -145,6 +157,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
     setEditModifier(item.modifier || "");
     setEditReason(item.rateOverrideReason || "");
     setEditDate(item.dateOfService ? String(item.dateOfService).slice(0, 10) : "");
+    setEditIcd(item.icd10CodeId ? String(item.icd10CodeId) : "");
   };
 
   const cancelEdit = () => setEditingItemId(null);
@@ -158,6 +171,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
         modifier: editModifier || null,
         rateOverrideReason: editReason || null,
         dateOfService: editDate || undefined,
+        icd10CodeId: editIcd || null,
       });
       toast({ title: "Line item updated" });
       setEditingItemId(null);
@@ -385,6 +399,38 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                         </td>
                         <td className="p-2 text-muted-foreground text-xs">
                           {item.cptCode?.description || 'N/A'}
+                          {/* Diagnosis. A line with none is denied by the payer,
+                              so its absence must be visible rather than blank. */}
+                          {editing ? (
+                            <Select value={editIcd} onValueChange={setEditIcd}>
+                              <SelectTrigger className="mt-1 h-7 text-xs" aria-label="Diagnosis">
+                                <SelectValue placeholder="ICD-10 diagnosis (required)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {icd10Options.map((icd: any) => (
+                                  <SelectItem key={icd.id} value={String(icd.id)}>
+                                    {icd.code} — {icd.description}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="mt-0.5">
+                              {item.icd10Code?.code ? (
+                                <span className="font-mono text-[11px] text-muted-foreground">
+                                  Dx {item.icd10Code.code}
+                                </span>
+                              ) : (
+                                <span
+                                  className="text-[11px] text-amber-700"
+                                  title="A claim line with no diagnosis is denied by the payer."
+                                  data-testid={`missing-dx-${item.id}`}
+                                >
+                                  No diagnosis — payer will deny this line
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {offSchedule && !editing && (
                             <span
                               className="ml-2 text-amber-700"
