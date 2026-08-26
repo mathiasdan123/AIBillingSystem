@@ -22,6 +22,7 @@ import {
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Link } from "wouter";
 import { exportToCsv } from "@/lib/exportUtils";
+import { QueryErrorState } from "@/components/QueryErrorState";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import PrintLayout from "@/components/PrintLayout";
 import SuperbillPrintView from "@/components/SuperbillPrintView";
@@ -1220,7 +1221,7 @@ export default function Claims() {
     (debouncedSearch ? `&search=${encodeURIComponent(debouncedSearch)}` : '') +
     (matchedPatientIds.length > 0 ? `&patientIds=${matchedPatientIds.join(',')}` : '');
 
-  const { data: claimsResp, isLoading: claimsLoading } = useQuery<{
+  const { data: claimsResp, isLoading: claimsLoading, error: claimsError, refetch: refetchClaims } = useQuery<{
     data: Claim[];
     pagination: { page: number; limit: number; total: number; totalPages: number; hasMore: boolean };
   }>({
@@ -3388,6 +3389,15 @@ export default function Claims() {
               </CardContent>
             </Card>
           ))
+        ) : claimsError ? (
+          // A failed load must NEVER render as "you have no claims". On
+          // 2026-08-26 an MFA-lapsed session showed "Create your first claim"
+          // over a practice full of them — the data looked deleted.
+          <Card>
+            <CardContent className="p-6">
+              <QueryErrorState error={claimsError} what="claims" onRetry={() => refetchClaims()} />
+            </CardContent>
+          </Card>
         ) : (
           <Card>
             <CardContent className="p-12">

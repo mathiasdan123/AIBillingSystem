@@ -205,10 +205,34 @@ export function isMfaGateError(msg: string): boolean {
  * either into the MFA challenge screen, which is the one thing that actually
  * unblocks them.
  */
-function refreshAuthForMfaGate(): void {
+let lastMfaRedirectAt = 0;
+async function refreshAuthForMfaGate(): Promise<void> {
   // Runs long after construction, so referencing queryClient here is safe.
   // /api/auth/user is not itself MFA-gated, so this cannot loop.
   void queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+
+  // Deterministic fallback. The invalidate above is SUPPOSED to make App's
+  // needsMfaChallenge gate re-render into the challenge screen — and on
+  // 2026-08-26 it observably did not: a deploy reset the MFA window and the
+  // user sat on a Patients page showing the raw 403 (and a Claims page
+  // showing "Create your first claim") with no route out. Rather than trust
+  // the render cascade, confirm the state with the server and navigate
+  // outright. Throttled so a burst of 403s from one page produces one
+  // navigation; skipped when already on the challenge.
+  const now = Date.now();
+  if (now - lastMfaRedirectAt < 10_000) return;
+  if (window.location.pathname.startsWith('/mfa-challenge')) return;
+  lastMfaRedirectAt = now;
+  try {
+    const res = await fetch('/api/auth/user', { credentials: 'include' });
+    if (!res.ok) return;
+    const user = await res.json();
+    if (user?.mfaChallengeRequired === true || user?.mfaRequired === true) {
+      window.location.assign('/mfa-challenge');
+    }
+  } catch {
+    // Network hiccup — the invalidate path is still in play; do nothing.
+  }
 }
 
 export const queryClient = new QueryClient({
