@@ -113,6 +113,49 @@ router.get('/icd10-codes', isAuthenticated, async (_req: any, res) => {
 });
 
 /**
+ * POST /api/icd10-codes — add a diagnosis code to the catalog on first use.
+ *
+ * The catalog seeds ~21 pediatric-therapy codes; the full ICD-10 set is
+ * ~70,000 and seeding it wholesale is wrong. But a therapist typing a
+ * legitimate code they use daily must never be stuck behind "not in the
+ * list" — that is the same dead end the empty catalog was. Format is
+ * validated (letter, two digits, optional dotted extension), stored dotted,
+ * case-normalized, idempotent on the code.
+ */
+router.post('/icd10-codes', isAuthenticated, async (req: any, res) => {
+  try {
+    const rawCode = String(req.body?.code ?? '').trim().toUpperCase();
+    const description = String(req.body?.description ?? '').trim();
+
+    // A12 / A12.3 / A12.34 ... — letter (not U), 2 digits, up to 4 more chars.
+    const normalized = rawCode.replace(/\s+/g, '');
+    if (!/^[A-TV-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$/.test(normalized)) {
+      return res.status(400).json({
+        message: `"${rawCode}" is not a valid ICD-10 code format (e.g. F84.0, R62.50).`,
+      });
+    }
+
+    const existingCodes = await storage.getIcd10Codes();
+    const existing = existingCodes.find((c: any) => String(c.code).toUpperCase() === normalized);
+    if (existing) return res.json(existing);
+
+    const created = await storage.createIcd10Code({
+      code: normalized,
+      description: description || `ICD-10 ${normalized}`,
+      category: 'custom',
+    });
+    logger.info('ICD-10 code added to catalog on first use', {
+      code: normalized,
+      userId: req.user?.claims?.sub,
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    logger.error('Error creating ICD-10 code', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to add ICD-10 code' });
+  }
+});
+
+/**
  * Parse a user-supplied dollar amount into a fixed-2 decimal string.
  *
  * Returns undefined when the field was omitted (leave unchanged) and null

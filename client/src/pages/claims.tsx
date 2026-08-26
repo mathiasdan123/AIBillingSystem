@@ -38,6 +38,7 @@ import { z } from "zod";
 import { DemoBadge } from "@/components/DemoBadge";
 import InsuranceEditDialog from "@/components/InsuranceEditDialog";
 import AddPayerDialog from "@/components/AddPayerDialog";
+import { Icd10Combobox } from "@/components/Icd10Combobox";
 
 const claimSchema = z.object({
   patientId: z.string().min(1, "Patient is required"),
@@ -403,18 +404,13 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                           {/* Diagnosis. A line with none is denied by the payer,
                               so its absence must be visible rather than blank. */}
                           {editing ? (
-                            <Select value={editIcd} onValueChange={setEditIcd}>
-                              <SelectTrigger className="mt-1 h-7 text-xs" aria-label="Diagnosis">
-                                <SelectValue placeholder="ICD-10 diagnosis (required)" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {icd10Options.map((icd: any) => (
-                                  <SelectItem key={icd.id} value={String(icd.id)}>
-                                    {icd.code} — {icd.description}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <Icd10Combobox
+                              codes={icd10Options}
+                              value={editIcd}
+                              onChange={setEditIcd}
+                              className="mt-1 h-7 text-xs"
+                              testId="edit-line-icd"
+                            />
                           ) : (
                             <div className="mt-0.5">
                               {item.icd10Code?.code ? (
@@ -1415,6 +1411,28 @@ export default function Claims() {
     .map((item) => cptCodes?.find((c: any) => c.id === parseInt(item.cptCodeId)))
     .filter((cpt: any) => cpt && !cpt.baseRate)
     .map((cpt: any) => cpt.code);
+
+  // Prefill each line's diagnosis from the patient's most recent claim.
+  // A weekly-therapy patient's diagnosis rarely changes; re-picking it per
+  // line was the most repetitive click in the flow. A default only — every
+  // line stays editable, and lines the biller already set are left alone.
+  const watchedPatientId = form.watch("patientId");
+  useEffect(() => {
+    if (!watchedPatientId) return;
+    let cancelled = false;
+    apiRequest("GET", `/api/patients/${watchedPatientId}/last-diagnosis`)
+      .then((r) => r.json())
+      .then((last: any) => {
+        if (cancelled || !last?.icd10CodeId) return;
+        setNewClaimLineItems((items) =>
+          items.map((item) =>
+            item.icd10CodeId ? item : { ...item, icd10CodeId: String(last.icd10CodeId) },
+          ),
+        );
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [watchedPatientId]);
 
   const createClaimMutation = useMutation({
     mutationFn: async (data: ClaimFormData) => {
@@ -2548,23 +2566,12 @@ export default function Claims() {
 
                         <div className="flex items-center gap-2">
                           <div className="flex-1 min-w-0">
-                            <Select
+                            <Icd10Combobox
+                              codes={icd10Codes ?? []}
                               value={item.icd10CodeId || ""}
-                              onValueChange={(value) =>
-                                updateClaimLineItem(index, 'icd10CodeId', value || undefined)
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="ICD-10 diagnosis (required)" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {icd10Codes?.map((icd) => (
-                                  <SelectItem key={icd.id} value={icd.id.toString()}>
-                                    {icd.code} - {icd.description}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              onChange={(id) => updateClaimLineItem(index, 'icd10CodeId', id || undefined)}
+                              testId={`select-claim-icd-${index}`}
+                            />
                           </div>
                           <span className="w-20 text-right text-sm font-medium shrink-0">
                             ${lineItemAmount(item.cptCodeId, item.units).toFixed(2)}

@@ -193,6 +193,7 @@ export const storage = {
   acceptPlatformDefaultRates: claimFns.acceptPlatformDefaultRates,
   deletePracticeCptRate: claimFns.deletePracticeCptRate,
   getIcd10Codes: claimFns.getIcd10Codes,
+  createIcd10Code: claimFns.createIcd10Code,
   getInsurances: claimFns.getInsurances,
   findOrCreateInsurance: claimFns.findOrCreateInsurance,
   getInsurance: claimFns.getInsurance,

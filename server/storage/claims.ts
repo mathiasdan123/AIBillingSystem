@@ -624,6 +624,19 @@ export async function getIcd10Codes(): Promise<Icd10Code[]> {
     .orderBy(icd10Codes.code);
 }
 
+export async function createIcd10Code(data: { code: string; description: string; category?: string }): Promise<Icd10Code> {
+  // Idempotent on the code column: two therapists adding F84.0 concurrently
+  // must converge on one row, not throw.
+  const [row] = await db
+    .insert(icd10Codes)
+    .values({ code: data.code, description: data.description, category: data.category ?? 'custom' })
+    .onConflictDoNothing({ target: icd10Codes.code })
+    .returning();
+  if (row) return row;
+  const [existing] = await db.select().from(icd10Codes).where(eq(icd10Codes.code, data.code));
+  return existing;
+}
+
 export async function getInsurances(): Promise<Insurance[]> {
   return await db
     .select()
