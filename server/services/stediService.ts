@@ -1128,18 +1128,19 @@ function toStediAddress(address: any): any {
 }
 
 export function build837P(claim: ClaimSubmission, testMode = false): any {
-  // Build the 837P claim payload for Stedi
-  // This is a simplified version - real implementation would be more comprehensive
+  // Stedi's professionalclaims/v3 endpoint is Change-Healthcare-compatible and
+  // its parser is STRICT: an unknown field is a hard rejection naming the
+  // field. The original payload was written against a guessed schema and the
+  // first dry runs ever executed rejected on it, one field per run
+  // (address.line1 -> billing.taxId -> ...). This shape follows the documented
+  // schema; the dry-run test asserts the known-bad names never reappear.
+  const subscriberIsPatient = !claim.subscriber;
 
   return {
     controlNumber: generateControlNumber(),
-    // ISA15. Stedi's rule: "all API claim submissions are sent as production
-    // claims unless you explicitly designate them as test data." This field
-    // did not exist anywhere in the codebase, which meant there was no way to
-    // rehearse a claim — the FIRST 837P a practice ever sent was a real one to
-    // a real payer, on a code path that had never once succeeded. 'T' routes
-    // to Stedi's test clearinghouse, which returns a 277CA and never forwards
-    // to the payer.
+    // ISA15. Stedi treats every API claim as production unless explicitly
+    // marked test data. 'T' routes to the test clearinghouse: a 277CA comes
+    // back and nothing reaches the payer.
     usageIndicator: testMode ? 'T' : 'P',
     tradingPartnerServiceId: claim.payer.id,
     submitter: {
@@ -1154,26 +1155,38 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
     },
     subscriber: {
       memberId: claim.subscriber?.memberId || claim.patient.memberId,
+      // The payer's own required field: who holds responsibility. 'P' = primary.
+      paymentResponsibilityLevelCode: 'P',
       firstName: claim.subscriber?.firstName || claim.patient.firstName,
       lastName: claim.subscriber?.lastName || claim.patient.lastName,
-      dateOfBirth: claim.subscriber?.dateOfBirth || claim.patient.dateOfBirth,
+      // Dates are CCYYMMDD in this schema, not ISO.
+      dateOfBirth: toStediDate(claim.subscriber?.dateOfBirth || claim.patient.dateOfBirth),
+      // We only know the patient's gender. When the subscriber is a parent or
+      // guardian, 'U' (unknown) is the honest value rather than copying the
+      // child's.
+      gender: subscriberIsPatient ? claim.patient.gender : 'U',
       address: toStediAddress(claim.patient.address),
     },
+    // The dependent block is named "dependent" in this schema. It was emitted
+    // as "patient", which the strict parser rejects as an unknown field.
     ...(claim.subscriber && {
-      patient: {
+      dependent: {
         firstName: claim.patient.firstName,
         lastName: claim.patient.lastName,
-        dateOfBirth: claim.patient.dateOfBirth,
+        dateOfBirth: toStediDate(claim.patient.dateOfBirth),
         gender: claim.patient.gender,
         address: toStediAddress(claim.patient.address),
         relationshipToSubscriberCode: getRelationshipCode(claim.subscriber.relationshipToPatient),
       },
     }),
     billing: {
+      providerType: 'BillingProvider',
       npi: claim.provider.npi,
-      // Phase 6 — per-claim override wins; otherwise resolve from user → practice.
-      // Was hardcoded to 101YM0800X (Mental Health Counselor) for every claim
-      // regardless of actual discipline — soft-deny risk on therapy CPTs.
+      // The tax id field is employerId (EIN) in this schema — 'taxId' is not a
+      // field and was rejected by name. Digits only; the hyphen in
+      // "12-3456789" is display formatting, not data.
+      employerId: (claim.provider.taxId || '').replace(/[^0-9]/g, ''),
+      // Phase 6 — per-claim override wins; otherwise resolve from user -> practice.
       // Billing block uses the practice-level default (not the rendering user)
       // because the billing entity IS the practice, not the provider.
       taxonomyCode: claim.provider.taxonomy || resolveTaxonomyCode({
@@ -1182,9 +1195,13 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       }),
       organizationName: claim.provider.organizationName,
       address: toStediAddress(claim.provider.address),
-      taxId: claim.provider.taxId,
+      contactInformation: {
+        name: claim.provider.organizationName || `${claim.provider.firstName} ${claim.provider.lastName}`,
+        phoneNumber: '0000000000',
+      },
     },
     rendering: {
+      providerType: 'RenderingProvider',
       npi: claim.provider.npi,
       // Rendering block is the actual therapist — their own taxonomy wins
       // if set (Slice 2), then practice-level, then specialty default.
@@ -1197,51 +1214,72 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       ),
       firstName: claim.provider.firstName,
       lastName: claim.provider.lastName,
+      organizationName: claim.provider.organizationName,
     },
     claimInformation: {
+      // Required by the schema: how this claim is being filed. 'CI' =
+      // commercial insurance, which is what this platform submits.
+      claimFilingCode: 'CI',
       patientControlNumber: claim.claimId,
       claimChargeAmount: claim.totalAmount.toString(),
       placeOfServiceCode: claim.placeOfService,
-      // 837P claim frequency per X12:
-      //   '1' = original (first submission of this claim)
-      //   '7' = replacement (payer should replace the prior claim with this one)
-      // After a reopen-and-fix cycle we bump to '7' so payers treat it as a
-      // correction, not a duplicate. Determined by the caller via
-      // `claim.isResubmission` (set from claims.resubmissionCount > 0 at the
-      // route layer). Default to '1' for original submissions.
+      // '1' = original, '7' = replacement after a reopen-and-fix cycle so the
+      // payer treats it as a correction, not a duplicate.
       claimFrequencyCode: claim.isResubmission ? '7' : '1',
       signatureIndicator: 'Y',
       planParticipationCode: 'A', // Assigned
-      releaseOfInformationCode: 'Y',
-      diagnosisCodes: claim.diagnosisCodes.map((code, index) => ({
-        code,
-        type: 'ABK', // ICD-10
-        pointer: index + 1,
+      // Schema name is releaseInformationCode — the payload said
+      // releaseOfInformationCode, which does not exist.
+      releaseInformationCode: 'Y',
+      benefitsAssignmentCertificationIndicator: 'Y',
+      // Diagnoses are healthCareCodeInformation entries; the first is ABK
+      // (principal, ICD-10), the rest ABF (additional, ICD-10).
+      healthCareCodeInformation: claim.diagnosisCodes.map((code, index) => ({
+        diagnosisTypeCode: index === 0 ? 'ABK' : 'ABF',
+        diagnosisCode: code.replace('.', ''),
       })),
       ...(claim.priorAuthNumber && {
-        priorAuthorizationNumber: claim.priorAuthNumber,
+        claimSupplementalInformation: {
+          priorAuthorizationNumber: claim.priorAuthNumber,
+        },
       }),
-      // Phase 3 — only include STCs on the envelope when the practice
-      // has explicitly opted into strict STC validation. Off by default
-      // so the payload shape stays unchanged for practices that haven't
-      // tested the envelope field yet.
-      ...(claim.strictStcValidation &&
-          Array.isArray(claim.serviceTypeCodes) &&
-          claim.serviceTypeCodes.length > 0 && {
-            serviceTypeCodes: claim.serviceTypeCodes,
-          }),
+      // Service lines live INSIDE claimInformation in this schema, each with
+      // a professionalService block. They were top-level flat objects, which
+      // the parser rejects wholesale.
+      serviceLines: claim.serviceLines.map((line) => ({
+        serviceDate: toStediDate(line.dateOfService),
+        professionalService: {
+          // 'HC' = HCPCS/CPT qualifier.
+          procedureIdentifier: 'HC',
+          procedureCode: line.procedureCode,
+          ...(line.modifiers && line.modifiers.length > 0
+            ? { procedureModifiers: line.modifiers }
+            : {}),
+          lineItemChargeAmount: line.amount.toString(),
+          measurementUnit: 'UN',
+          serviceUnitCount: line.units.toString(),
+          compositeDiagnosisCodePointers: {
+            // Pointers reference healthCareCodeInformation by 1-based position.
+            diagnosisCodePointers: line.diagnosisCodes.length > 0
+              ? line.diagnosisCodes.map((dx) => {
+                  const idx = claim.diagnosisCodes.indexOf(dx);
+                  return idx >= 0 ? idx + 1 : 1;
+                })
+              : [1],
+          },
+        },
+      })),
     },
-    serviceLines: claim.serviceLines.map((line, index) => ({
-      serviceLineNumber: index + 1,
-      procedureCode: line.procedureCode,
-      procedureModifiers: line.modifiers || [],
-      chargeAmount: line.amount.toString(),
-      unitCount: line.units.toString(),
-      serviceDate: line.dateOfService,
-      diagnosisCodePointers: line.diagnosisCodes.map((_, i) => i + 1),
-      description: line.description,
-    })),
   };
+}
+
+/** Dates in the claims schema are CCYYMMDD; internal dates are ISO. */
+function toStediDate(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const s = String(value).trim();
+  if (/^\d{8}$/.test(s)) return s;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}${m[2]}${m[3]}` : s;
 }
 
 /**

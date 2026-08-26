@@ -142,6 +142,85 @@ describe('submitClaim test mode', () => {
   });
 });
 
+describe('837P payload matches the documented schema', () => {
+  /**
+   * Stedi's parser is strict — an unknown field is a hard rejection naming
+   * it. The first dry runs ever executed rejected one guessed field per run:
+   *   Subscriber.address.line1  -> address1/postalCode (fixed first)
+   *   Billing.taxId             -> employerId
+   * and the builder contained four more the parser had not reached yet: the
+   * dependent block was named "patient", releaseOfInformationCode is spelled
+   * releaseInformationCode, diagnoses go in healthCareCodeInformation, and
+   * service lines live INSIDE claimInformation with a professionalService
+   * block. Each of those would have cost a full deploy cycle to discover.
+   * This suite pins the whole shape at once.
+   */
+  const KNOWN_BAD_FIELDS = [
+    '"line1"', '"zip"', '"taxId"', '"releaseOfInformationCode"',
+    '"diagnosisCodes"', '"patient"', '"chargeAmount"', '"unitCount"',
+  ];
+
+  it('never emits a field name the parser has rejected or would reject', () => {
+    const serialized = JSON.stringify(build837P({
+      ...CLAIM,
+      subscriber: {
+        firstName: 'Parent', lastName: 'Stein', dateOfBirth: '1985-01-01',
+        memberId: 'M1', relationshipToPatient: 'child',
+      },
+    }));
+
+    for (const bad of KNOWN_BAD_FIELDS) {
+      expect(serialized).not.toContain(bad);
+    }
+  });
+
+  it('expresses the tax id as employerId, digits only', () => {
+    const payload = build837P(CLAIM);
+    // "12-3456789" is display formatting; the schema wants the EIN digits.
+    expect(payload.billing.employerId).toBe('123456789');
+    expect('taxId' in payload.billing).toBe(false);
+  });
+
+  it('names the dependent block "dependent" and dates as CCYYMMDD', () => {
+    const payload = build837P({
+      ...CLAIM,
+      subscriber: {
+        firstName: 'Parent', lastName: 'Stein', dateOfBirth: '1985-01-01',
+        memberId: 'M1', relationshipToPatient: 'child',
+      },
+    });
+
+    expect(payload.dependent.firstName).toBe('Eliyahu');
+    expect(payload.dependent.dateOfBirth).toBe('20150402');
+    expect(payload.subscriber.dateOfBirth).toBe('19850101');
+    // The parent's gender is unknown — 'U' is honest; copying the child's is not.
+    expect(payload.subscriber.gender).toBe('U');
+  });
+
+  it('puts service lines inside claimInformation with a professionalService block', () => {
+    const payload = build837P(CLAIM);
+
+    expect(payload.serviceLines).toBeUndefined();
+    const [line] = payload.claimInformation.serviceLines;
+    expect(line.serviceDate).toBe('20260812');
+    expect(line.professionalService.procedureCode).toBe('97153');
+    expect(line.professionalService.lineItemChargeAmount).toBe('250');
+    expect(line.professionalService.serviceUnitCount).toBe('1');
+    expect(line.professionalService.compositeDiagnosisCodePointers.diagnosisCodePointers).toEqual([1]);
+  });
+
+  it('carries diagnoses as healthCareCodeInformation without the dot', () => {
+    const payload = build837P(CLAIM);
+
+    expect(payload.claimInformation.healthCareCodeInformation).toEqual([
+      { diagnosisTypeCode: 'ABK', diagnosisCode: 'F802' },
+    ]);
+    expect(payload.claimInformation.releaseInformationCode).toBe('Y');
+    expect(payload.claimInformation.claimFilingCode).toBe('CI');
+    expect(payload.claimInformation.benefitsAssignmentCertificationIndicator).toBe('Y');
+  });
+});
+
 describe('837P address field names', () => {
   /**
    * Stedi rejected the first-ever dry run with:
@@ -176,8 +255,8 @@ describe('837P address field names', () => {
       state: 'NJ',
       postalCode: '08701',
     });
-    // Dependent-patient block and billing block get the same mapping.
-    expect(payload.patient.address.address1).toBe('1 Main St');
+    // Dependent block and billing block get the same mapping.
+    expect(payload.dependent.address.address1).toBe('1 Main St');
     expect(payload.billing.address.address1).toBe('2 Clinic Way');
     expect(payload.billing.address.postalCode).toBe('08701');
   });
