@@ -187,10 +187,17 @@ describe('Webhook Service', () => {
       // sendWebhookEvent is fire-and-forget, so we call it and then wait a tick
       webhookService.sendWebhookEvent(42, 'claim.submitted', payload);
 
-      // Wait for the async delivery to complete
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // Wait for the async delivery to complete.
+      //
+      // NOT a fixed sleep. sendWebhookEvent is fire-and-forget, and "50ms is
+      // surely enough" is only true on a fast machine — this test failed on a
+      // loaded CI runner and blocked an unrelated hotfix from merging. Poll
+      // for the actual condition instead, so the test passes as soon as the
+      // delivery happens and fails only if it genuinely never does.
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), {
+        timeout: 2000,
+        interval: 10,
+      });
 
       const [calledUrl, calledOptions] = fetchMock.mock.calls[0];
       expect(calledUrl).toBe('https://example.com/webhook');
@@ -235,6 +242,8 @@ describe('Webhook Service', () => {
 
       webhookService.sendWebhookEvent(42, 'claim.submitted', { claimId: 1 });
 
+      // A fixed wait is correct here: this asserts an ABSENCE, so a slow
+      // runner can only make it pass later, never fail spuriously.
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(fetchMock).not.toHaveBeenCalled();
@@ -266,10 +275,11 @@ describe('Webhook Service', () => {
         webhookService.sendWebhookEvent(42, 'claim.denied', { claimId: 1 });
       }).not.toThrow();
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Fetch was attempted
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // Polled, not slept — see the note on the first delivery test.
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), {
+        timeout: 2000,
+        interval: 10,
+      });
 
       vi.unstubAllGlobals();
     });
