@@ -205,6 +205,18 @@ function ClearinghouseTab() {
             <div className="flex gap-2 mt-1">
               <Input
                 type="password"
+                // A bare type="password" field is a magnet for the browser's
+                // password manager, which happily autofills a personal login
+                // into it. Saving that replaces the managed clearinghouse
+                // credential with a user's password: every claim, eligibility
+                // check and enrollment then fails auth, and nothing on screen
+                // explains why. Observed in the wild.
+                name="clearinghouse-api-key"
+                id="clearinghouse-api-key"
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
                 placeholder={practice?.stediApiKeySet ? "Key saved (enter new to replace)" : "Leave blank to use our managed clearinghouse"}
                 value={stediKey}
                 onChange={(e) => setStediKey(e.target.value)}
@@ -214,6 +226,11 @@ function ClearinghouseTab() {
           <div>
             <Label>Clearinghouse Partner ID (optional)</Label>
             <Input
+              name="clearinghouse-partner-id"
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+              data-form-type="other"
               placeholder="Only needed if you're bringing your own credentials"
               value={partnerId}
               onChange={(e) => setPartnerId(e.target.value)}
@@ -222,6 +239,18 @@ function ClearinghouseTab() {
           <div className="flex gap-2">
             <Button
               onClick={() => {
+                // Last line of defence against an autofilled password reaching
+                // the clearinghouse credential. Stedi keys are long opaque
+                // tokens; a short value with spaces is somebody's password.
+                if (stediKey && (stediKey.length < 20 || /\s/.test(stediKey))) {
+                  toast({
+                    title: "That doesn't look like a clearinghouse key",
+                    description:
+                      "Clearinghouse API keys are long and have no spaces. If your browser autofilled a password here, clear the field — you're on the managed integration and it should stay blank.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
                 const data: any = {};
                 if (stediKey) data.stediApiKey = stediKey;
                 if (partnerId) data.stediPartnerId = partnerId;
