@@ -333,9 +333,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Daily Report routes: /api/daily-report/*
   app.use('/api/daily-report', dailyReportRouter);
   // Billing Tasks (Option C): /api/billing-tasks/*, /api/billing-documents/*, /api/claim-corrections/*
-  app.use('/api', billingTasksRouter);
-  app.use('/api', billingDocumentsRouter);
-  app.use('/api', claimCorrectionsRouter);
+  //
+  // These routers are written for subpath mounts — their internal paths are
+  // '/', '/summary', '/appeal-letter/:id/pdf' — but were mounted at bare
+  // /api, so every URL the comment above promises 404'd (the Billing Tasks
+  // page has rendered empty since the mount was written) while their '/' and
+  // '/:id' routes sat shadowing unrelated /api traffic. Found by the
+  // client-route-existence test the day it was written.
+  app.use('/api/billing-tasks', billingTasksRouter);
+  app.use('/api/billing-documents', billingDocumentsRouter);
+  app.use('/api/claim-corrections', claimCorrectionsRouter);
 
   // Credentialing routes: /api/credentialing/*
   app.use('/api/credentialing', credentialingRouter);
