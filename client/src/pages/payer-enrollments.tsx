@@ -113,6 +113,39 @@ export default function PayerEnrollmentsPage() {
     },
   });
 
+  // Stedi is the system of record for enrollments; this table is a mirror.
+  // They drift whenever an enrollment is created outside this app — during
+  // setup, from Stedi's own console, or by an earlier submission whose result
+  // never landed here. The drift is invisible and expensive: the grid says
+  // "Not enrolled", someone submits again, and Stedi refuses with "an
+  // enrollment already exists" — which reads as an error when it actually
+  // means the work is done. A daily cron reconciles this; this button is for
+  // not waiting until 4am.
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/admin/stedi-enrollment-sync/run', {});
+      return res.json();
+    },
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/payer-enrollments'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/payer-enrollments/plan'] });
+      const totals = r?.totals ?? {};
+      toast({
+        title: 'Synced with the clearinghouse',
+        description:
+          `${totals.updated ?? 0} updated, ${totals.created ?? 0} newly recorded. ` +
+          'Statuses below now reflect what the clearinghouse actually holds.',
+      });
+    },
+    onError: (e: any) => {
+      toast({
+        title: 'Sync failed',
+        description: String(e?.message ?? '').replace(/^\d{3}:\s*/, '') || 'Please try again.',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const approveMutation = useMutation({
     mutationFn: async (approvals: Array<{ payerId: string; transactionType: string }>) => {
       const res = await apiRequest('POST', '/api/payer-enrollments/plan/approve', { approvals });
@@ -239,6 +272,16 @@ export default function PayerEnrollmentsPage() {
         <Link href="/enrollment-overview">
           <Button variant="outline" size="sm">Cross-practice overview</Button>
         </Link>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => syncMutation.mutate()}
+          disabled={syncMutation.isPending}
+          title="Pull the real enrollment statuses from the clearinghouse into this table"
+          data-testid="button-sync-enrollments"
+        >
+          {syncMutation.isPending ? 'Syncing…' : 'Sync from clearinghouse'}
+        </Button>
       </div>
 
       {/* If the plan can't load, SAY so. Hiding the section on error is how a
