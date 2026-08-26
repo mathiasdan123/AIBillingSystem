@@ -1260,12 +1260,14 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
           serviceUnitCount: line.units.toString(),
           compositeDiagnosisCodePointers: {
             // Pointers reference healthCareCodeInformation by 1-based position.
+            // Strings, not integers — the parser rejects `1` with
+            // "invalid type: integer, expected a string".
             diagnosisCodePointers: line.diagnosisCodes.length > 0
               ? line.diagnosisCodes.map((dx) => {
                   const idx = claim.diagnosisCodes.indexOf(dx);
-                  return idx >= 0 ? idx + 1 : 1;
+                  return String(idx >= 0 ? idx + 1 : 1);
                 })
-              : [1],
+              : ['1'],
           },
         },
       })),
