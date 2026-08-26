@@ -206,7 +206,16 @@ describe('837P payload matches the documented schema', () => {
     expect(line.professionalService.procedureCode).toBe('97153');
     expect(line.professionalService.lineItemChargeAmount).toBe('250');
     expect(line.professionalService.serviceUnitCount).toBe('1');
-    expect(line.professionalService.compositeDiagnosisCodePointers.diagnosisCodePointers).toEqual([1]);
+    expect(line.professionalService.compositeDiagnosisCodePointers.diagnosisCodePointers).toEqual(['1']);
+  });
+
+  it('emits no bare integer anywhere — this schema wants strings', () => {
+    // The parser rejected diagnosisCodePointers: [1] with "invalid type:
+    // integer, expected a string". Rather than pin that one field, assert the
+    // whole payload: every numeric value is emitted as a string.
+    const serialized = JSON.stringify(build837P(CLAIM));
+    expect(serialized).not.toMatch(/:\s*\d+[,}\]]/);
+    expect(serialized).not.toMatch(/\[\d+[,\]]/);
   });
 
   it('carries diagnoses as healthCareCodeInformation without the dot', () => {
