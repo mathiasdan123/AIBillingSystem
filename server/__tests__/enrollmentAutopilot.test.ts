@@ -21,6 +21,8 @@ const H = vi.hoisted(() => ({
   claimPayers: [] as any[],
   patientPayers: [] as any[],
   enrollments: [] as any[],
+  patientRows: [] as any[],
+  whereCall: 0,
   search: vi.fn(),
 }));
 
@@ -35,9 +37,16 @@ vi.mock('../db', () => {
           where: () => ({ groupBy: () => Promise.resolve(H.claimPayers) }),
         }),
         where: () => {
+          // Two awaited .where() queries run in order: patient rows first
+          // (discovery), then the existing enrollments. Patient discovery no
+          // longer groups in SQL — the payer name is encrypted, so it cannot
+          // be grouped or compared there.
           const result: any = {
-            groupBy: () => Promise.resolve(H.patientPayers),
-            then: (resolve: any) => Promise.resolve(H.enrollments).then(resolve),
+            groupBy: () => Promise.resolve(H.claimPayers),
+            then: (resolve: any) => {
+              const rows = H.whereCall++ === 0 ? H.patientRows : H.enrollments;
+              return Promise.resolve(rows).then(resolve);
+            },
           };
           return result;
         },
@@ -50,6 +59,20 @@ vi.mock('../services/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../services/stediService', () => ({ searchPayers: H.search }));
+vi.mock('../services/phiEncryptionService', () => ({
+  // Mirrors the real thing: an encryption envelope decrypts to its plaintext,
+  // anything else passes through.
+  decryptField: (v: any) => {
+    if (typeof v === 'string' && v.startsWith('{"ciphertext"')) {
+      try {
+        return JSON.parse(v).__plain ?? null;
+      } catch {
+        return null;
+      }
+    }
+    return v;
+  },
+}));
 
 import { buildEnrollmentPlan } from '../services/enrollmentAutopilotService';
 
@@ -72,7 +95,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   H.claimPayers = [{ name: 'Horizon BCBS NJ', payerCode: '22099', usageCount: 3 }];
   H.patientPayers = [];
+  H.patientRows = [];
   H.enrollments = [];
+  H.whereCall = 0;
   H.search.mockResolvedValue([HORIZON]);
 });
 
@@ -159,7 +184,12 @@ describe('buildEnrollmentPlan', () => {
 
   it('includes payers from patients who have no claim yet', async () => {
     H.claimPayers = [];
-    H.patientPayers = [{ name: 'Horizon BCBS NJ', payerCode: '22099', usageCount: 2 }];
+    H.patientRows = [
+      {
+        insuranceProvider: '{"ciphertext":"x","__plain":"Horizon BCBS NJ"}',
+        insurancePayerId: '22099',
+      },
+    ];
 
     const plan = await buildEnrollmentPlan(1);
 
@@ -167,6 +197,41 @@ describe('buildEnrollmentPlan', () => {
     // the need is already too late.
     expect(plan.payers).toHaveLength(1);
     expect(plan.actionableCount).toBe(1);
+  });
+
+  it('NEVER surfaces an encryption envelope as a payer name', async () => {
+    H.claimPayers = [];
+    // patients.insuranceProvider is PHI-encrypted at rest. Reading it straight
+    // from the column and grouping in SQL produced one "payer" per patient,
+    // named with the raw {"ciphertext":...,"iv":...,"tag":...} envelope, and
+    // rendered it onto the page.
+    H.patientRows = [
+      { insuranceProvider: '{"ciphertext":"1fd43b","iv":"e0186d","tag":"3a52b7"}', insurancePayerId: null },
+    ];
+
+    const plan = await buildEnrollmentPlan(1);
+
+    const serialized = JSON.stringify(plan);
+    expect(serialized).not.toContain('ciphertext');
+    expect(serialized).not.toContain('iv"');
+    // Undecryptable is dropped, not displayed: an envelope is not a payer name
+    // and showing it is worse than showing nothing.
+    expect(plan.payers).toHaveLength(0);
+  });
+
+  it('groups patients on the DECRYPTED name, not the ciphertext', async () => {
+    H.claimPayers = [];
+    // Same payer, two patients. Each row carries its own IV, so the ciphertext
+    // differs — grouping in SQL would report two separate payers.
+    H.patientRows = [
+      { insuranceProvider: '{"ciphertext":"aaa","__plain":"Cigna"}', insurancePayerId: '62308' },
+      { insuranceProvider: '{"ciphertext":"bbb","__plain":"Cigna"}', insurancePayerId: '62308' },
+    ];
+
+    const plan = await buildEnrollmentPlan(1);
+
+    expect(plan.payers).toHaveLength(1);
+    expect(plan.payers[0].usageCount).toBe(2);
   });
 
   it('never marks a NOT_SUPPORTED transaction as needed', async () => {

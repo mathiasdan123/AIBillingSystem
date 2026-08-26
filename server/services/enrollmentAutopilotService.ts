@@ -28,6 +28,7 @@ import { claims, insurances, patients, payerEnrollments } from '@shared/schema';
 import { db } from '../db';
 import logger from './logger';
 import { searchPayers } from './stediService';
+import { decryptField } from './phiEncryptionService';
 
 export type LocalTransactionType = 'eligibility' | 'claims' | 'era';
 
@@ -98,20 +99,35 @@ export async function discoverPayers(
   // number, not a foreign key to insurances — joining it against that integer
   // primary key throws, which took the whole plan endpoint down with it. The
   // patient's payer is carried as free text plus an optional Stedi payer id.
-  const fromPatients = await db
+  // patients.insuranceProvider is PHI-ENCRYPTED at rest, so it can be neither
+  // grouped nor compared in SQL: every row carries its own IV, so two patients
+  // with the same payer produce completely different ciphertext. Grouping on
+  // it returned one "payer" per patient — with the raw
+  // {"ciphertext":...,"iv":...,"tag":...} envelope as the name, rendered
+  // straight onto the page. Read the rows, decrypt, then group in JS.
+  const patientRows = await db
     .select({
-      name: patients.insuranceProvider,
-      payerCode: patients.insurancePayerId,
-      usageCount: sql<number>`COUNT(*)::int`,
+      insuranceProvider: patients.insuranceProvider,
+      insurancePayerId: patients.insurancePayerId,
     })
     .from(patients)
-    .where(
-      and(
-        eq(patients.practiceId, practiceId),
-        sql`${patients.insuranceProvider} IS NOT NULL AND ${patients.insuranceProvider} <> ''`,
-      ),
-    )
-    .groupBy(patients.insuranceProvider, patients.insurancePayerId);
+    .where(eq(patients.practiceId, practiceId));
+
+  const fromPatients: Array<{ name: string; payerCode: string | null; usageCount: number }> = [];
+  const patientTally = new Map<string, { name: string; payerCode: string | null; usageCount: number }>();
+  for (const row of patientRows) {
+    const name = (decryptField(row.insuranceProvider) ?? '').trim();
+    // Never fall back to the raw column. If decryption fails the value is an
+    // encryption envelope, not a payer name, and showing it is worse than
+    // showing nothing.
+    if (!name || name.startsWith('{')) continue;
+    const payerCode = decryptField(row.insurancePayerId) ?? row.insurancePayerId ?? null;
+    const key = name.toLowerCase();
+    const existing = patientTally.get(key);
+    if (existing) existing.usageCount += 1;
+    else patientTally.set(key, { name, payerCode, usageCount: 1 });
+  }
+  fromPatients.push(...Array.from(patientTally.values()));
 
   const merged = new Map<string, { name: string; payerCode: string | null; usageCount: number }>();
   for (const row of [...rows, ...fromPatients]) {
