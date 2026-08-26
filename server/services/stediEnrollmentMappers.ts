@@ -7,6 +7,7 @@
  */
 
 import { mapStediEnrollmentStatus } from './stediEnrollmentService';
+import logger from './logger';
 
 // Our 4-value enum
 export type LocalEnrollmentStatus = 'not_enrolled' | 'pending' | 'enrolled' | 'rejected';
@@ -83,6 +84,9 @@ export function normalizeStediResponse(data: any): StediEnrollmentRow[] {
         : [];
 
   const rows: StediEnrollmentRow[] = [];
+  // Transactions whose status could not be read. Logged rather than silently
+  // dropped, because a shape change here looks exactly like "no enrollments".
+  const skippedUnknown: string[] = [];
   for (const item of list) {
     if (!item) continue;
     const payerName: string | undefined =
@@ -103,11 +107,28 @@ export function normalizeStediResponse(data: any): StediEnrollmentRow[] {
     const rejectionReason =
       item.rejectionReason || item.reason || item.denialReason || null;
     const pushRow = (transactionType: LocalTransactionType, rawStatus: any) => {
+      // Resolve the status from the transaction entry, falling back to the
+      // ENROLLMENT-level status. Stedi does not always repeat the status on
+      // each transaction, and reading only the per-transaction field yielded
+      // undefined.
+      const resolved =
+        typeof rawStatus === 'string' ? rawStatus : (rawStatus?.status ?? item.status);
+
+      // No status anywhere means WE DO NOT KNOW — not "not enrolled".
+      // mapStediEnrollmentStatus turns a missing value into 'not_enrolled',
+      // and writing that over a real 'pending' told a practice they had no
+      // enrollment when they had just filed one. A row we cannot read is a row
+      // we must not reconcile: skip it and leave local state untouched.
+      if (!resolved) {
+        skippedUnknown.push(`${payerName}/${transactionType}`);
+        return;
+      }
+
       rows.push({
         payerName: String(payerName),
         payerId: cleanPayerId,
         transactionType,
-        status: mapStediStatus(typeof rawStatus === 'string' ? rawStatus : rawStatus?.status),
+        status: mapStediStatus(resolved),
         rejectionReason,
         approvedAt: approvedAt && !isNaN(approvedAt.getTime()) ? approvedAt : null,
         rejectedAt: rejectedAt && !isNaN(rejectedAt.getTime()) ? rejectedAt : null,
@@ -143,5 +164,16 @@ export function normalizeStediResponse(data: any): StediEnrollmentRow[] {
     if (!transactionType) continue;
     pushRow(transactionType, item.status || item.enrollmentStatus || item.state);
   }
+
+  if (skippedUnknown.length > 0) {
+    // A shape change here is indistinguishable from "nothing to sync" unless
+    // it says so out loud — which is how the previous version wrote
+    // not_enrolled over live enrollments without anyone noticing.
+    logger.warn('Stedi enrollment rows skipped: no readable status', {
+      count: skippedUnknown.length,
+      entries: skippedUnknown.slice(0, 20),
+    });
+  }
+
   return rows;
 }
