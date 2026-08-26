@@ -1442,6 +1442,58 @@ export default function Claims() {
     },
   });
 
+  // Rehearse the claim: builds and sends the SAME 837P with usageIndicator
+  // 'T', which Stedi's test clearinghouse acknowledges and never forwards to
+  // the payer. Leaves no trace on the claim — no status change, no submitted
+  // date. Exists because the first claim a practice ever files was otherwise
+  // also the first real test of the submission path.
+  const dryRunMutation = useMutation({
+    mutationFn: async (claimId: number) => {
+      const res = await fetch(`/api/claims/${claimId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: true }),
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok && !data?.dryRun) {
+        throw new Error(data.message || "Test run failed");
+      }
+      return data;
+    },
+    onSuccess: (data: any) => {
+      if (data.inconclusive) {
+        toast({
+          title: "Test run couldn't reach the clearinghouse",
+          description: data.message,
+          variant: "destructive",
+        });
+        return;
+      }
+      if (data.success) {
+        toast({
+          title: "Test run passed — nothing was sent to the payer",
+          description:
+            "The clearinghouse accepted this claim. Submitting for real should work.",
+        });
+        return;
+      }
+      toast({
+        title: "Test run rejected — fix these before filing",
+        description:
+          (data.errors ?? []).join(' • ') || 'The clearinghouse did not accept this claim.',
+        variant: "destructive",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Test run failed",
+        description: String(error?.message ?? '').replace(/^\d{3}:\s*/, '') || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const submitClaimMutation = useMutation({
     mutationFn: async (claimId: number) => {
       const res = await fetch(`/api/claims/${claimId}/submit`, {
@@ -3090,6 +3142,21 @@ export default function Claims() {
                               <ShieldAlert className="w-4 h-4 mr-1" />
                             )}
                             Check Risk
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => dryRunMutation.mutate(claim.id)}
+                            disabled={dryRunMutation.isPending}
+                            title="Send this claim to the clearinghouse's TEST environment. Nothing reaches the payer and the claim is not marked submitted."
+                            data-testid={`button-dry-run-${claim.id}`}
+                          >
+                            {dryRunMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <ShieldCheck className="w-4 h-4 mr-1" />
+                            )}
+                            Test Run
                           </Button>
                           <Button
                             size="sm"
