@@ -3,6 +3,7 @@
  *
  * Handles:
  * - /api/cpt-codes - CPT codes lookup
+ * - /api/icd10-codes - ICD-10 diagnosis lookup
  * - /api/exercise-bank/* - Exercise bank CRUD
  * - /api/sessions - Treatment sessions
  * - /api/sessions/unbilled - Unbilled sessions
@@ -83,6 +84,31 @@ router.get('/cpt-codes', isAuthenticated, async (req: any, res) => {
   } catch (error) {
     logger.error('Error fetching CPT codes', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to fetch CPT codes' });
+  }
+});
+
+/**
+ * GET /api/icd10-codes — the diagnosis catalog.
+ *
+ * This route did not exist. The New Claim dialog has always queried
+ * /api/icd10-codes to populate its ICD-10 picker, and always got a 404, so the
+ * dropdown rendered with no options. That was survivable while a diagnosis was
+ * optional; it became a hard block the moment one was required, because there
+ * was no way to satisfy the requirement.
+ *
+ * Authenticated for consistency with /cpt-codes. Unlike CPT there is no
+ * per-practice pricing here — ICD-10 is a shared code set — so it is not
+ * practice-scoped.
+ */
+router.get('/icd10-codes', isAuthenticated, async (_req: any, res) => {
+  try {
+    const codes = await storage.getIcd10Codes();
+    res.json(codes);
+  } catch (error) {
+    logger.error('Error fetching ICD-10 codes', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to fetch ICD-10 codes' });
   }
 });
 

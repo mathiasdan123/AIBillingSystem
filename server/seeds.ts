@@ -306,6 +306,61 @@ async function seedAiLearningData(db: any, practiceId: number) {
  * charge is not something a boot-time backfill should ever do. Rate drift on
  * already-seeded rows is surfaced for a human instead.
  */
+
+/**
+ * Core ICD-10 diagnosis codes, ensured on every boot.
+ *
+ * The full seed only runs against a genuinely empty database, so production —
+ * seeded long ago — carried NO icd10_codes rows. Nothing surfaced that,
+ * because the New Claim dialog's diagnosis picker was fed by
+ * /api/icd10-codes, a route that did not exist: an empty dropdown looked the
+ * same either way. It became a hard block the moment a diagnosis was made
+ * mandatory, with no way to satisfy the requirement.
+ *
+ * Mirrors ensureCoreCptCodes: additive, conflict-safe, never updates an
+ * existing row. A practice may have edited a description; a boot-time backfill
+ * has no business rewriting it.
+ */
+const CORE_ICD10_CODES = [
+  // Pediatric therapy — the codes this platform's practices actually bill.
+  { code: 'F80.0', description: 'Phonological disorder', category: 'speech' },
+  { code: 'F80.1', description: 'Expressive language disorder', category: 'speech' },
+  { code: 'F80.2', description: 'Mixed receptive-expressive language disorder', category: 'speech' },
+  { code: 'F80.81', description: 'Childhood onset fluency disorder', category: 'speech' },
+  { code: 'F80.9', description: 'Developmental disorder of speech and language, unspecified', category: 'speech' },
+  { code: 'F82', description: 'Specific developmental disorder of motor function', category: 'developmental' },
+  { code: 'F84.0', description: 'Autistic disorder', category: 'developmental' },
+  { code: 'F88', description: 'Other disorders of psychological development', category: 'developmental' },
+  { code: 'F90.0', description: 'ADHD, predominantly inattentive type', category: 'behavioral' },
+  { code: 'F90.1', description: 'ADHD, predominantly hyperactive type', category: 'behavioral' },
+  { code: 'F90.2', description: 'ADHD, combined type', category: 'behavioral' },
+  { code: 'F90.9', description: 'ADHD, unspecified type', category: 'behavioral' },
+  { code: 'R62.50', description: 'Unspecified lack of expected normal physiological development', category: 'developmental' },
+  { code: 'R62.0', description: 'Delayed milestone in childhood', category: 'developmental' },
+  { code: 'R27.8', description: 'Other lack of coordination', category: 'neuromuscular' },
+  { code: 'R27.9', description: 'Unspecified lack of coordination', category: 'neuromuscular' },
+  { code: 'M62.81', description: 'Muscle weakness (generalized)', category: 'musculoskeletal' },
+  { code: 'M62.838', description: 'Other muscle spasm', category: 'musculoskeletal' },
+  { code: 'R26.9', description: 'Unspecified abnormalities of gait and mobility', category: 'neuromuscular' },
+  { code: 'R29.898', description: 'Other symptoms and signs involving the musculoskeletal system', category: 'neuromuscular' },
+  { code: 'Z51.89', description: 'Encounter for other specified aftercare', category: 'aftercare' },
+];
+
+async function ensureCoreIcd10Codes(db: any) {
+  const before = await db.execute(sql`SELECT COUNT(*)::int AS count FROM icd10_codes`);
+  const countBefore = Number(before.rows[0]?.count ?? 0);
+
+  await db.insert(icd10Codes).values(CORE_ICD10_CODES).onConflictDoNothing({
+    target: icd10Codes.code,
+  });
+
+  const after = await db.execute(sql`SELECT COUNT(*)::int AS count FROM icd10_codes`);
+  const inserted = Number(after.rows[0]?.count ?? 0) - countBefore;
+  if (inserted > 0) {
+    console.log(`  Added ${inserted} missing ICD-10 code(s) to the catalog`);
+  }
+}
+
 async function ensureCoreCptCodes(db: any) {
   const before = await db.execute(sql`SELECT COUNT(*)::int AS count FROM cpt_codes`);
   const countBefore = Number(before.rows[0]?.count ?? 0);
@@ -992,6 +1047,14 @@ export async function seedDatabase(options?: { force?: boolean }) {
       await ensureCoreCptCodes(db);
     } catch (err) {
       console.warn('  Core CPT code backfill skipped:', err instanceof Error ? err.message : err);
+    }
+
+    // Always run — the diagnosis catalog was empty in production, which made
+    // the now-mandatory ICD-10 field impossible to satisfy.
+    try {
+      await ensureCoreIcd10Codes(db);
+    } catch (err) {
+      console.warn('  Core ICD-10 code backfill skipped:', err instanceof Error ? err.message : err);
     }
 
     // Always run — corrects rows still holding a stale platform default.
