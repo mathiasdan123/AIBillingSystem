@@ -180,7 +180,7 @@ function shouldRetry(failureCount: number, error: unknown): boolean {
 /**
  * True for the three 403s that mean "re-verify MFA", not "you are logged out".
  */
-function isMfaGateError(msg: string): boolean {
+export function isMfaGateError(msg: string): boolean {
   return (
     msg.includes('MFA_SETUP_REQUIRED') ||
     msg.includes('MFA_NOT_ENABLED') ||
