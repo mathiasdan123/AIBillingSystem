@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { apiRequest } from '@/lib/queryClient';
+import { apiRequest, isMfaGateError } from '@/lib/queryClient';
 import {
   CheckCircle2,
   Clock,
@@ -138,9 +138,22 @@ export default function PayerEnrollmentsPage() {
       });
     },
     onError: (e: any) => {
+      const raw = String(e?.message ?? '');
+      // The MFA gate is not a failure of the sync — the session simply needs
+      // re-verifying before an admin route will run. Dumping the raw 403 body
+      // into a toast tells the user nothing they can act on; the global
+      // handler is already refreshing auth so the app routes to the challenge.
+      if (isMfaGateError(raw)) {
+        toast({
+          title: 'Verify your identity to continue',
+          description:
+            'Admin actions need a fresh MFA check. Complete the prompt, then press Sync again.',
+        });
+        return;
+      }
       toast({
         title: 'Sync failed',
-        description: String(e?.message ?? '').replace(/^\d{3}:\s*/, '') || 'Please try again.',
+        description: raw.replace(/^\d{3}:\s*/, '') || 'Please try again.',
         variant: 'destructive',
       });
     },
