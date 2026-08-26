@@ -107,7 +107,53 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
       }),
     }));
 
-    res.json(payload);
+    // Anything the clearinghouse knows about that is NOT in the seeded list
+    // must still be shown. The seed carries invented ids (HORIZON_NJ) and
+    // short names, while Stedi returns its own ("Horizon Blue Cross and Blue
+    // Shield of New Jersey", 22099). A synced enrollment landed on a row this
+    // grid never rendered, so a LIVE enrollment displayed as "Not enrolled" —
+    // and the obvious response, filing again, cannot work because Stedi
+    // rejects the duplicate.
+    const seededKeys = new Set<string>();
+    for (const p of KNOWN_PAYERS) {
+      for (const tx of TRANSACTION_TYPES) seededKeys.add(`${p.name}::${tx}`);
+    }
+
+    const extraByPayer = new Map<string, any>();
+    for (const r of rows) {
+      const key = `${r.payerName}::${r.transactionType}`;
+      if (seededKeys.has(key)) continue;
+      const bucket = extraByPayer.get(r.payerName) ?? {
+        name: r.payerName,
+        payerId: r.payerId ?? null,
+        fromClearinghouse: true,
+        enrollments: TRANSACTION_TYPES.map((tx) => ({
+          transactionType: tx,
+          status: 'not_enrolled' as const,
+          requiresEnrollment: tx === 'era',
+          requestedAt: null,
+          approvedAt: null,
+          rejectedAt: null,
+          rejectionReason: null,
+          notes: null,
+          id: null,
+        })),
+      };
+      const cell = bucket.enrollments.find((c: any) => c.transactionType === r.transactionType);
+      if (cell) {
+        cell.status = r.status ?? 'not_enrolled';
+        cell.requestedAt = r.requestedAt ?? null;
+        cell.approvedAt = r.approvedAt ?? null;
+        cell.rejectedAt = r.rejectedAt ?? null;
+        cell.rejectionReason = r.rejectionReason ?? null;
+        cell.notes = r.notes ?? null;
+        cell.id = r.id ?? null;
+      }
+      if (!bucket.payerId && r.payerId) bucket.payerId = r.payerId;
+      extraByPayer.set(r.payerName, bucket);
+    }
+
+    res.json([...payload, ...Array.from(extraByPayer.values())]);
   } catch (error) {
     logger.error('Failed to fetch payer enrollments', {
       error: error instanceof Error ? error.message : String(error),

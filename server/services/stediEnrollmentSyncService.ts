@@ -208,17 +208,46 @@ async function syncPractice(
   const now = new Date();
   for (const row of incoming) {
     try {
-      const [existing] = await deps.db
-        .select()
-        .from(payerEnrollments)
-        .where(
-          and(
-            eq(payerEnrollments.practiceId, practiceId),
-            eq(payerEnrollments.payerName, row.payerName),
-            eq(payerEnrollments.transactionType, row.transactionType),
-          ),
-        )
-        .limit(1);
+      // Match on payer ID first, name only as a fallback.
+      //
+      // Names differ between systems; ids do not. The local row seeded as
+      // "Horizon BCBS NJ" never matched Stedi's "Horizon Blue Cross and Blue
+      // Shield of New Jersey", so a live enrollment was written to a SECOND
+      // row under Stedi's name — invisible on a grid that renders the seeded
+      // names — while the row the user actually looks at kept saying "Not
+      // enrolled". The practice then believes it has no enrollment when it
+      // has one, and re-filing cannot work because Stedi rejects duplicates.
+      let existing: any = null;
+
+      if (row.payerId) {
+        const [byId] = await deps.db
+          .select()
+          .from(payerEnrollments)
+          .where(
+            and(
+              eq(payerEnrollments.practiceId, practiceId),
+              eq(payerEnrollments.payerId, row.payerId),
+              eq(payerEnrollments.transactionType, row.transactionType),
+            ),
+          )
+          .limit(1);
+        existing = byId ?? null;
+      }
+
+      if (!existing) {
+        const [byName] = await deps.db
+          .select()
+          .from(payerEnrollments)
+          .where(
+            and(
+              eq(payerEnrollments.practiceId, practiceId),
+              eq(payerEnrollments.payerName, row.payerName),
+              eq(payerEnrollments.transactionType, row.transactionType),
+            ),
+          )
+          .limit(1);
+        existing = byName ?? null;
+      }
 
       if (!existing) {
         await deps.db.insert(payerEnrollments).values({
