@@ -22,6 +22,12 @@ const STEDI_API_BASE = 'https://healthcare.us.stedi.com/2024-04-01';
 // everything routed through this file silently failed.
 const STEDI_ELIGIBILITY_PATH = '/change/medicalnetwork/eligibility/v3';
 const STEDI_CLAIMS_PATH = '/change/medicalnetwork/professionalclaims/v3/submission';
+// Validation runs the full clearinghouse edit set WITHOUT transmitting —
+// probed 2026-08-25 (401 unauthenticated, i.e. the route exists). This is the
+// dry-run path: Stedi rejects usageIndicator 'T' on a production key outright
+// (TA1 error 33, "Production API Key is not permitted to submit test
+// transactions"), so rehearsal has to be endpoint-based, not flag-based.
+const STEDI_CLAIMS_VALIDATION_PATH = '/change/medicalnetwork/professionalclaims/v3/validation';
 const STEDI_CLAIM_STATUS_PATH = '/change/medicalnetwork/claimstatus/v2';
 
 // Check if Stedi is configured (globally or for a practice)
@@ -690,7 +696,10 @@ export async function submitClaim(
   const payload = build837P(claim, testMode);
 
   try {
-    const response = await fetch(`${STEDI_API_BASE}${STEDI_CLAIMS_PATH}`, {
+    // testMode -> validation endpoint: full clearinghouse edits, no
+    // transmission. Real submission is the only path that reaches a payer.
+    const claimsPath = testMode ? STEDI_CLAIMS_VALIDATION_PATH : STEDI_CLAIMS_PATH;
+    const response = await fetch(`${STEDI_API_BASE}${claimsPath}`, {
       method: 'POST',
       headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
@@ -1138,10 +1147,10 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
 
   return {
     controlNumber: generateControlNumber(),
-    // ISA15. Stedi treats every API claim as production unless explicitly
-    // marked test data. 'T' routes to the test clearinghouse: a 277CA comes
-    // back and nothing reaches the payer.
-    usageIndicator: testMode ? 'T' : 'P',
+    // ISA15 stays 'P' even on a dry run: the production key refuses 'T'
+    // (TA1 error 33). Rehearsal safety comes from POSTing to the VALIDATION
+    // endpoint instead of submission — same edits, nothing transmitted.
+    usageIndicator: 'P',
     tradingPartnerServiceId: claim.payer.id,
     submitter: {
       organizationName: claim.provider.organizationName,
