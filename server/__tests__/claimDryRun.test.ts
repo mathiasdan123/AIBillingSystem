@@ -141,3 +141,49 @@ describe('submitClaim test mode', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('837P address field names', () => {
+  /**
+   * Stedi rejected the first-ever dry run with:
+   *   Subscriber.address.line1: unknown field 'line1', expected one of
+   *   'address1', 'address2', 'city', 'state', 'postalCode', ...
+   *
+   * Internal addresses are { line1, zip }; Stedi wants { address1, postalCode }.
+   * The payload passed our objects through verbatim, so every submission
+   * carrying an address — meaning every submission — would have been rejected.
+   * This is the concrete proof the claims path had never once succeeded.
+   */
+  it('emits address1/postalCode, never line1/zip, on every address block', () => {
+    const payload = build837P({
+      ...CLAIM,
+      subscriber: {
+        firstName: 'Parent',
+        lastName: 'Stein',
+        dateOfBirth: '1985-01-01',
+        memberId: 'M1',
+        relationshipToPatient: 'child',
+      },
+    });
+
+    const serialized = JSON.stringify(payload);
+    // The exact fields Stedi rejected.
+    expect(serialized).not.toContain('"line1"');
+    expect(serialized).not.toContain('"zip"');
+
+    expect(payload.subscriber.address).toEqual({
+      address1: '1 Main St',
+      city: 'Lakewood',
+      state: 'NJ',
+      postalCode: '08701',
+    });
+    // Dependent-patient block and billing block get the same mapping.
+    expect(payload.patient.address.address1).toBe('1 Main St');
+    expect(payload.billing.address.address1).toBe('2 Clinic Way');
+    expect(payload.billing.address.postalCode).toBe('08701');
+  });
+
+  it('omits address2 rather than sending an empty field', () => {
+    const payload = build837P(CLAIM);
+    expect('address2' in payload.subscriber.address).toBe(false);
+  });
+});
