@@ -356,6 +356,19 @@ export async function deleteClaimLineItems(claimId: number): Promise<void> {
     .where(eq(claimLineItems.claimId, claimId));
 }
 
+/**
+ * Permanently remove a claim and its line items.
+ *
+ * DRAFT ONLY — enforced by the caller. A claim that has been transmitted is a
+ * record of something we told a payer, and deleting it would leave our history
+ * disagreeing with theirs. A draft has been sent nowhere and is just working
+ * data.
+ */
+export async function deleteDraftClaim(claimId: number): Promise<void> {
+  await db.delete(claimLineItems).where(eq(claimLineItems.claimId, claimId));
+  await db.delete(claims).where(eq(claims.id, claimId));
+}
+
 // ==================== EXPENSES ====================
 
 export async function createExpense(expense: InsertExpense): Promise<Expense> {

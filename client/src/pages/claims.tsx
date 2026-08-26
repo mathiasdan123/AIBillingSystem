@@ -1494,6 +1494,24 @@ export default function Claims() {
     },
   });
 
+  const deleteClaimMutation = useMutation({
+    mutationFn: async (claimId: number) => {
+      const res = await apiRequest("DELETE", `/api/claims/${claimId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateClaims();
+      toast({ title: "Draft claim deleted" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Couldn't delete this claim",
+        description: String(error?.message ?? '').replace(/^\d{3}:\s*/, '') || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const submitClaimMutation = useMutation({
     mutationFn: async (claimId: number) => {
       const res = await fetch(`/api/claims/${claimId}/submit`, {
@@ -3208,6 +3226,27 @@ export default function Claims() {
                             <Printer className="w-4 h-4 mr-2" />
                             Print Superbill
                           </DropdownMenuItem>
+                          {claim.status === 'draft' && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      `Delete draft claim ${claim.claimNumber}? It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.`,
+                                    )
+                                  ) {
+                                    deleteClaimMutation.mutate(claim.id);
+                                  }
+                                }}
+                                data-testid={`menu-delete-claim-${claim.id}`}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Delete draft
+                              </DropdownMenuItem>
+                            </>
+                          )}
                           {claim.status === 'submitted' && (
                             <>
                               <DropdownMenuSeparator />
