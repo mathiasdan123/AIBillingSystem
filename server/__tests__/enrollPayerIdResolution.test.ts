@@ -116,6 +116,41 @@ describe('payer id resolution before enrolling', () => {
     expect(H.createEnrollment.mock.calls[0][1].payerId).toBe('22099');
   });
 
+  it('explains a DUPLICATE as already-enrolled, not as a failure', async () => {
+    H.search.mockResolvedValue([HORIZON]);
+    H.createEnrollment.mockResolvedValue({
+      ok: false,
+      error:
+        "A Claim Payment enrollment already exists for provider with both NPI and Tax ID 'NPI 123 and Tax ID 456' in your Stedi account. The existing enrollment ID is 019f2275-c21e-7222-b58a-000000000000",
+    });
+
+    await expect(
+      submitEnrollmentForPractice(1, {
+        payerName: 'Horizon BCBS NJ',
+        payerId: 'HORIZON_NJ',
+        transactionType: 'era',
+      }),
+    ).rejects.toThrow(/already enrolled/i);
+  });
+
+  it('quotes the existing enrollment id and points at the fix', async () => {
+    H.search.mockResolvedValue([HORIZON]);
+    H.createEnrollment.mockResolvedValue({
+      ok: false,
+      error: 'A Claim Payment enrollment already exists. The existing enrollment ID is 019f2275-c21e-7222-b58a-000000000000',
+    });
+
+    // Read as a raw 502 this looks broken, and the natural response is to
+    // retry — which can never succeed.
+    await expect(
+      submitEnrollmentForPractice(1, {
+        payerName: 'Horizon BCBS NJ',
+        payerId: 'HORIZON_NJ',
+        transactionType: 'era',
+      }),
+    ).rejects.toThrow(/019f2275-c21e-7222-b58a-000000000000[\s\S]*Sync from clearinghouse/i);
+  });
+
   it('refuses when the payer cannot be matched at all', async () => {
     H.search.mockResolvedValue([]);
 

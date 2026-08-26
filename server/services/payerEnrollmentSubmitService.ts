@@ -176,6 +176,21 @@ export async function submitEnrollmentForPractice(
       error: result.error,
       raw: result.raw,
     });
+    // Stedi refusing a DUPLICATE is not a failure — it means the enrollment
+    // already exists on their side and this table simply never recorded it
+    // (created during setup, from Stedi's console, or by an earlier submission
+    // whose result never landed). Surfaced as a raw 502 it reads as "broken",
+    // and the natural response is to try again, which cannot ever work.
+    const rawError = typeof result.error === 'string' ? result.error : JSON.stringify(result.error ?? '');
+    if (/already exists/i.test(rawError)) {
+      const existingId = rawError.match(/enrollment ID is ([0-9a-f-]{8,})/i)?.[1];
+      throw precondition(
+        `${payerName} is already enrolled for this transaction with the clearinghouse` +
+          (existingId ? ` (enrollment ${existingId})` : '') +
+          '. Nothing further to submit — press "Sync from clearinghouse" to pull the real status into this page.',
+      );
+    }
+
     throw upstream(sanitizeExternalError(result.error));
   }
 
