@@ -77,34 +77,29 @@ beforeEach(() => {
 });
 
 describe('build837P usageIndicator', () => {
-  it("marks a real submission as production ('P')", () => {
+  it("is always 'P' — the production key refuses 'T' outright", () => {
+    // Learned live: Stedi answered usageIndicator 'T' on the production key
+    // with TA1 error 33, "The Production API Key is not permitted to submit
+    // test transactions". Rehearsal safety is the VALIDATION endpoint, not
+    // this flag.
     expect(build837P(CLAIM).usageIndicator).toBe('P');
-  });
-
-  it("marks a dry run as test data ('T')", () => {
-    // Without this the "test" would be transmitted to the payer as a genuine
-    // claim — the exact opposite of what the caller asked for.
-    expect(build837P(CLAIM, true).usageIndicator).toBe('T');
-  });
-
-  it('defaults to production when the flag is omitted', () => {
-    // Stedi's own default. Being explicit means a future caller cannot get a
-    // real submission by forgetting an argument.
-    expect(build837P(CLAIM).usageIndicator).toBe('P');
+    expect(build837P(CLAIM, true).usageIndicator).toBe('P');
   });
 });
 
 describe('submitClaim test mode', () => {
-  it('sends usageIndicator T on the wire for a dry run', async () => {
+  it('POSTs a dry run to the VALIDATION endpoint — the path that cannot transmit', async () => {
     await submitClaim(CLAIM, 1, { testMode: true });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(bodyOf(fetchMock.mock.calls[0]).usageIndicator).toBe('T');
+    expect(fetchMock.mock.calls[0][0]).toContain('/professionalclaims/v3/validation');
+    expect(fetchMock.mock.calls[0][0]).not.toContain('/submission');
   });
 
-  it('sends usageIndicator P for a real submission', async () => {
+  it('POSTs a real submission to the SUBMISSION endpoint', async () => {
     await submitClaim(CLAIM, 1);
 
+    expect(fetchMock.mock.calls[0][0]).toContain('/professionalclaims/v3/submission');
     expect(bodyOf(fetchMock.mock.calls[0]).usageIndicator).toBe('P');
   });
 
@@ -120,7 +115,8 @@ describe('submitClaim test mode', () => {
     // accepted the body is a different question and not what this pins.
     expect(result.errors?.join(' ') ?? '').not.toMatch(/sandbox mode/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(bodyOf(fetchMock.mock.calls[0]).usageIndicator).toBe('T');
+    // Sandbox rehearsals go to validation too — that endpoint cannot transmit.
+    expect(fetchMock.mock.calls[0][0]).toContain('/validation');
   });
 
   it('still refuses a REAL submission from a sandbox practice', async () => {
