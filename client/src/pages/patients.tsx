@@ -10,7 +10,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { openBlanche } from "@/lib/blancheControl";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink, CreditCard } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink, CreditCard, Pencil } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -573,6 +573,32 @@ export default function Patients() {
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [insuranceEditOpen, setInsuranceEditOpen] = useState(false);
   const [recordConsentOpen, setRecordConsentOpen] = useState(false);
+  // Inline demographics editing on the Details tab.
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [detailsForm, setDetailsForm] = useState({ email: "", phone: "", address: "" });
+
+  const updateDetailsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedPatient) throw new Error("No patient selected");
+      const res = await apiRequest("PATCH", `/api/patients/${selectedPatient.id}/details`, detailsForm);
+      return res.json();
+    },
+    onSuccess: (updated: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      // Keep the open dialog in sync rather than showing stale values under
+      // the form the user just saved.
+      setSelectedPatient((prev: any) => (prev ? { ...prev, ...updated } : prev));
+      setEditingDetails(false);
+      toast({ title: "Patient details updated" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Couldn't save details",
+        description: String(error?.message ?? "").replace(/^\d{3}:\s*/, "") || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [eligibilityResults, setEligibilityResults] = useState<Record<number, EligibilityCheck>>({});
   const [checkingEligibility, setCheckingEligibility] = useState<number | null>(null);
@@ -1460,6 +1486,81 @@ export default function Patients() {
 
               <TabsContent value="details" className="mt-4">
             <div className="space-y-4">
+              {/* Demographics were display-only everywhere — the intake wizard
+                  creates a NEW record rather than editing, so a typo (or the
+                  practice's own address entered as the patient's) was
+                  permanent. The subscriber address goes on the 837P, so this
+                  must be correctable by the biller. */}
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setDetailsForm({
+                      email: selectedPatient.email || "",
+                      phone: selectedPatient.phone || "",
+                      address: selectedPatient.address || "",
+                    });
+                    setEditingDetails(true);
+                  }}
+                  data-testid="button-edit-patient-details"
+                >
+                  <Pencil className="w-4 h-4 mr-1" />
+                  Edit details
+                </Button>
+              </div>
+              {editingDetails ? (
+                <div className="space-y-3 border rounded-md p-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="edit-patient-email">Email</Label>
+                      <Input
+                        id="edit-patient-email"
+                        value={detailsForm.email}
+                        onChange={(e) => setDetailsForm({ ...detailsForm, email: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-patient-phone">Phone</Label>
+                      <Input
+                        id="edit-patient-phone"
+                        value={detailsForm.phone}
+                        onChange={(e) => setDetailsForm({ ...detailsForm, phone: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-patient-address">Address</Label>
+                    <Input
+                      id="edit-patient-address"
+                      value={detailsForm.address}
+                      onChange={(e) => setDetailsForm({ ...detailsForm, address: e.target.value })}
+                      placeholder="Street, City, State ZIP"
+                      data-testid="input-edit-patient-address"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The patient's home address as their insurer has it on file — this goes on
+                      claims, and the payer matches it against their member record.
+                    </p>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setEditingDetails(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={updateDetailsMutation.isPending}
+                      onClick={() => updateDetailsMutation.mutate()}
+                      data-testid="button-save-patient-details"
+                    >
+                      {updateDetailsMutation.isPending ? "Saving…" : "Save"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+              <>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-foreground">Email</label>
@@ -1485,6 +1586,8 @@ export default function Patients() {
                 <label className="text-sm font-medium text-foreground">Address</label>
                 <p className="text-sm text-muted-foreground">{selectedPatient.address || "Not provided"}</p>
               </div>
+              </>
+              )}
               
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-2">

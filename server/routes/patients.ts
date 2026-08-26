@@ -458,6 +458,73 @@ router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFu
   }
 });
 
+/**
+ * PATCH /:id/details — edit a patient's demographics.
+ *
+ * There was NO way to edit these anywhere. The Details tab is display-only,
+ * "Edit insurance" covers only insurance fields, and the intake wizard
+ * explicitly creates a new record (its own comment marks PATCH-editing as a
+ * future slice). So whatever was typed at intake was permanent — discovered
+ * when a patient's address turned out to be the PRACTICE'S address and the
+ * biller preparing a real claim had no way to correct it. The subscriber
+ * address goes on the 837P; the payer matches it against their member record,
+ * so "frozen at intake" is not acceptable for claim data.
+ *
+ * Mirrors the /:id/insurance PATCH: allowlisted fields, same tenant scoping,
+ * empty string clears. storage.updatePatient handles PHI encryption — these
+ * columns are encrypted at rest and must never be written raw.
+ */
+const DETAIL_FIELDS = new Set([
+  'firstName', 'lastName', 'email', 'phone', 'address', 'gender',
+]);
+
+router.patch('/:id/details', isAuthenticated, async (req: any, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid patient id' });
+
+    const existing = await storage.getPatient(id);
+    if (!existing) return res.status(404).json({ error: 'Patient not found' });
+
+    const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
+    if (!userPracticeId || existing.practiceId !== userPracticeId) {
+      return res.status(403).json({ error: 'Patient is not in your practice' });
+    }
+
+    const patch: Record<string, any> = {};
+    for (const [k, v] of Object.entries(req.body ?? {})) {
+      if (!DETAIL_FIELDS.has(k)) continue;
+      patch[k] = v === '' ? null : v;
+    }
+
+    // Names are claim-matching identity: the payer matches on them, so a
+    // clear gesture that nulls one would break every future claim. Refuse.
+    if ('firstName' in patch && !patch.firstName) {
+      return res.status(400).json({ error: 'First name cannot be empty' });
+    }
+    if ('lastName' in patch && !patch.lastName) {
+      return res.status(400).json({ error: 'Last name cannot be empty' });
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'No editable fields supplied' });
+    }
+
+    const updated = await storage.updatePatient(id, patch as any);
+
+    logger.info('Patient details updated', {
+      patientId: id,
+      fields: Object.keys(patch),
+      userId: req.user?.claims?.sub,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error updating patient details', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to update patient details' });
+  }
+});
+
 router.patch('/:id/insurance', isAuthenticated, async (req: any, res) => {
   try {
     const id = parseInt(req.params.id);
