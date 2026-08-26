@@ -93,16 +93,25 @@ export async function discoverPayers(
   // Patients with insurance but no claim yet still represent payers the
   // practice intends to bill — and enrollment lead time is measured in weeks,
   // so waiting for the first claim to discover the need is already too late.
+  //
+  // NOT a join. patients.insuranceId is a VARCHAR holding the member/policy
+  // number, not a foreign key to insurances — joining it against that integer
+  // primary key throws, which took the whole plan endpoint down with it. The
+  // patient's payer is carried as free text plus an optional Stedi payer id.
   const fromPatients = await db
     .select({
-      name: insurances.name,
-      payerCode: insurances.payerCode,
+      name: patients.insuranceProvider,
+      payerCode: patients.insurancePayerId,
       usageCount: sql<number>`COUNT(*)::int`,
     })
     .from(patients)
-    .innerJoin(insurances, eq(patients.insuranceId, insurances.id))
-    .where(eq(patients.practiceId, practiceId))
-    .groupBy(insurances.name, insurances.payerCode);
+    .where(
+      and(
+        eq(patients.practiceId, practiceId),
+        sql`${patients.insuranceProvider} IS NOT NULL AND ${patients.insuranceProvider} <> ''`,
+      ),
+    )
+    .groupBy(patients.insuranceProvider, patients.insurancePayerId);
 
   const merged = new Map<string, { name: string; payerCode: string | null; usageCount: number }>();
   for (const row of [...rows, ...fromPatients]) {

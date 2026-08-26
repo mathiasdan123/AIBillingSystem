@@ -105,7 +105,7 @@ export default function PayerEnrollmentsPage() {
   // hardcoded payer list, which cannot show a payer it was never seeded with —
   // Horizon BCBS NJ among them. This section is what makes onboarding a
   // practice with unfamiliar payers need no code change.
-  const { data: plan } = useQuery<any>({
+  const { data: plan, error: planError } = useQuery<any>({
     queryKey: ['/api/payer-enrollments/plan'],
     queryFn: async () => {
       const res = await apiRequest('GET', '/api/payer-enrollments/plan');
@@ -240,6 +240,17 @@ export default function PayerEnrollmentsPage() {
           <Button variant="outline" size="sm">Cross-practice overview</Button>
         </Link>
       </div>
+
+      {/* If the plan can't load, SAY so. Hiding the section on error is how a
+          broken payer-discovery query stayed invisible: the page looked
+          normal, just without the payers this practice actually bills. */}
+      {planError && (
+        <div className="mb-4 p-3 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 text-sm">
+          Couldn't work out which enrollments this practice needs. The grid below still
+          works, but it only covers a fixed list of payers — anything outside it won't
+          appear. {String((planError as any)?.message ?? '').replace(/^\d{3}:\s*/, '')}
+        </div>
+      )}
 
       {/* Derived plan — what this practice actually needs */}
       {plan && (plan.actionableCount > 0 || plan.unresolvedCount > 0) && (

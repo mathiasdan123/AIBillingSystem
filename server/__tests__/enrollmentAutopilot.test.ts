@@ -22,19 +22,25 @@ const H = vi.hoisted(() => ({
   patientPayers: [] as any[],
   enrollments: [] as any[],
   search: vi.fn(),
-  // Must live in the resettable state: a module-scoped counter keeps counting
-  // across tests, so every test after the first reads the wrong fixture.
-  joinCall: 0,
 }));
 
 vi.mock('../db', () => {
   const db: any = {
-    select: (cols: any) => ({
+    select: () => ({
       from: () => ({
+        // Claims discovery joins insurances; patient discovery does NOT (its
+        // insuranceId is a member number, not a foreign key). The mock has to
+        // serve both shapes or it stops resembling the code under test.
         innerJoin: () => ({
-          where: () => ({ groupBy: () => Promise.resolve(H.joinCall++ === 0 ? H.claimPayers : H.patientPayers) }),
+          where: () => ({ groupBy: () => Promise.resolve(H.claimPayers) }),
         }),
-        where: () => Promise.resolve(H.enrollments),
+        where: () => {
+          const result: any = {
+            groupBy: () => Promise.resolve(H.patientPayers),
+            then: (resolve: any) => Promise.resolve(H.enrollments).then(resolve),
+          };
+          return result;
+        },
       }),
     }),
   };
@@ -64,7 +70,6 @@ const proposalFor = (plan: any, tx: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  H.joinCall = 0;
   H.claimPayers = [{ name: 'Horizon BCBS NJ', payerCode: '22099', usageCount: 3 }];
   H.patientPayers = [];
   H.enrollments = [];
