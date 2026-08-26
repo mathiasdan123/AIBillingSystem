@@ -575,12 +575,56 @@ export default function Patients() {
   const [recordConsentOpen, setRecordConsentOpen] = useState(false);
   // Inline demographics editing on the Details tab.
   const [editingDetails, setEditingDetails] = useState(false);
-  const [detailsForm, setDetailsForm] = useState({ email: "", phone: "", address: "" });
+  const [detailsForm, setDetailsForm] = useState({
+    email: "",
+    phone: "",
+    addressStreet: "",
+    addressCity: "",
+    addressState: "",
+    addressZip: "",
+  });
+
+  // The stored column is one line; the FORM is structured. One free-text line
+  // asked the user to place commas exactly right — "Street, City, ST 12345" —
+  // and getting it wrong put an unparseable address on a real claim. Separate
+  // fields make the only possible input a valid one; composing on save keeps
+  // the storage format parseable without a schema change.
+  const parseAddressForForm = (addr: string) => {
+    const raw = (addr || "").trim().replace(/\s+/g, " ");
+    const m = raw.match(/^(.*?)[,\s]+([A-Za-z]{2})[,\s]+(\d{5})(?:-\d{4})?$/);
+    if (m) {
+      const head = m[1].replace(/,\s*$/, "");
+      const parts = head.split(",").map((p) => p.trim()).filter(Boolean);
+      return {
+        street: parts[0] || "",
+        city: parts.length > 1 ? parts[parts.length - 1] : "",
+        state: m[2].toUpperCase(),
+        zip: m[3],
+      };
+    }
+    const parts = raw.split(",").map((p) => p.trim());
+    return { street: parts[0] || "", city: parts[1] || "", state: "", zip: "" };
+  };
 
   const updateDetailsMutation = useMutation({
     mutationFn: async () => {
       if (!selectedPatient) throw new Error("No patient selected");
-      const res = await apiRequest("PATCH", `/api/patients/${selectedPatient.id}/details`, detailsForm);
+      const street = detailsForm.addressStreet.trim();
+      const city = detailsForm.addressCity.trim();
+      const state = detailsForm.addressState.trim().toUpperCase();
+      const zip = detailsForm.addressZip.trim();
+      // All four or none: a partial address on a claim is a payer rejection.
+      const anyAddress = street || city || state || zip;
+      if (anyAddress && !(street && city && /^[A-Z]{2}$/.test(state) && /^\d{5}$/.test(zip))) {
+        throw new Error(
+          "Address needs all four parts: street, city, 2-letter state, 5-digit ZIP.",
+        );
+      }
+      const res = await apiRequest("PATCH", `/api/patients/${selectedPatient.id}/details`, {
+        email: detailsForm.email,
+        phone: detailsForm.phone,
+        address: anyAddress ? `${street}, ${city}, ${state} ${zip}` : "",
+      });
       return res.json();
     },
     onSuccess: (updated: any) => {
@@ -1497,11 +1541,17 @@ export default function Patients() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setDetailsForm({
-                      email: selectedPatient.email || "",
-                      phone: selectedPatient.phone || "",
-                      address: selectedPatient.address || "",
-                    });
+                    {
+                      const parsed = parseAddressForForm(selectedPatient.address || "");
+                      setDetailsForm({
+                        email: selectedPatient.email || "",
+                        phone: selectedPatient.phone || "",
+                        addressStreet: parsed.street,
+                        addressCity: parsed.city,
+                        addressState: parsed.state,
+                        addressZip: parsed.zip,
+                      });
+                    }
                     setEditingDetails(true);
                   }}
                   data-testid="button-edit-patient-details"
@@ -1530,16 +1580,55 @@ export default function Patients() {
                       />
                     </div>
                   </div>
-                  <div>
-                    <Label htmlFor="edit-patient-address">Address</Label>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-patient-street">Street address</Label>
                     <Input
-                      id="edit-patient-address"
-                      value={detailsForm.address}
-                      onChange={(e) => setDetailsForm({ ...detailsForm, address: e.target.value })}
-                      placeholder="Street, City, State ZIP"
-                      data-testid="input-edit-patient-address"
+                      id="edit-patient-street"
+                      value={detailsForm.addressStreet}
+                      onChange={(e) => setDetailsForm({ ...detailsForm, addressStreet: e.target.value })}
+                      placeholder="70 Van Valkenburg Ave"
+                      data-testid="input-edit-patient-street"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="col-span-2">
+                        <Label htmlFor="edit-patient-city">City</Label>
+                        <Input
+                          id="edit-patient-city"
+                          value={detailsForm.addressCity}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, addressCity: e.target.value })}
+                          placeholder="Lakewood"
+                          data-testid="input-edit-patient-city"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="edit-patient-state">State</Label>
+                        <Input
+                          id="edit-patient-state"
+                          value={detailsForm.addressState}
+                          maxLength={2}
+                          onChange={(e) =>
+                            setDetailsForm({ ...detailsForm, addressState: e.target.value.toUpperCase() })
+                          }
+                          placeholder="NJ"
+                          data-testid="input-edit-patient-state"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="edit-patient-zip">ZIP</Label>
+                        <Input
+                          id="edit-patient-zip"
+                          value={detailsForm.addressZip}
+                          maxLength={5}
+                          inputMode="numeric"
+                          onChange={(e) =>
+                            setDetailsForm({ ...detailsForm, addressZip: e.target.value.replace(/[^0-9]/g, "") })
+                          }
+                          placeholder="08701"
+                          data-testid="input-edit-patient-zip"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
                       The patient's home address as their insurer has it on file — this goes on
                       claims, and the payer matches it against their member record.
                     </p>
