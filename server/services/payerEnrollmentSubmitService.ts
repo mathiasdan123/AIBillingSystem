@@ -43,6 +43,58 @@ function upstream(detail: unknown): CodedError {
   return err;
 }
 
+/**
+ * Resolve a payer id against Stedi's live directory before enrolling.
+ *
+ * The enrollment grid is seeded from a hardcoded list that carries INVENTED
+ * identifiers for several payers — 'HORIZON_NJ', 'BCBS_FED', 'MEDICAID',
+ * 'ANTHEM', 'TRICARE'. Stedi has never heard of any of them; Horizon BCBS NJ
+ * is 22099. Submitting one files an enrollment against a payer that does not
+ * exist, and the practice then waits weeks for an approval that cannot arrive.
+ *
+ * So the id the caller supplies is treated as a HINT, never as truth. If it
+ * matches a real payer (directly or as an alias) it is used; otherwise we look
+ * the payer up by name. If neither resolves, refuse — an enrollment aimed at
+ * nothing is worse than no enrollment, because it looks like progress.
+ */
+async function resolveRealPayerId(
+  practiceId: number,
+  payerName: string,
+  suppliedId: string,
+): Promise<string> {
+  const { searchPayers } = await import('./stediService');
+
+  const looksResolved = async (query: string) => {
+    const results = await searchPayers(query, { practiceId });
+    return (
+      results.find(
+        (r: any) => r.payerId === suppliedId || (r.aliases ?? []).includes(suppliedId),
+      ) ?? null
+    );
+  };
+
+  try {
+    const byId = await looksResolved(suppliedId);
+    if (byId) return byId.payerId;
+
+    const byName = await searchPayers(payerName, { practiceId });
+    if (byName.length > 0) return byName[0].payerId;
+  } catch (err: any) {
+    logger.warn('Payer lookup failed while resolving an enrollment', {
+      practiceId,
+      payerName,
+      error: err?.message,
+    });
+    throw precondition(
+      `Could not reach the clearinghouse to confirm the payer id for ${payerName}. Try again shortly.`,
+    );
+  }
+
+  throw precondition(
+    `"${payerName}" could not be matched to a payer in the clearinghouse directory (the id on file, "${suppliedId}", is not one it recognises). Search for the payer to get its real id before enrolling.`,
+  );
+}
+
 export async function submitEnrollmentForPractice(
   practiceId: number,
   input: {
@@ -51,7 +103,9 @@ export async function submitEnrollmentForPractice(
     transactionType: LocalTransactionType;
   },
 ): Promise<{ row: any; stediStatus: unknown }> {
-  const { payerName, payerId, transactionType } = input;
+  const { payerName, transactionType } = input;
+  // Never enroll against a caller-supplied id — see resolveRealPayerId.
+  const payerId = await resolveRealPayerId(practiceId, payerName, input.payerId);
 
   const stediTransaction = mapTransactionTypeToStedi(transactionType);
   if (!stediTransaction) {
