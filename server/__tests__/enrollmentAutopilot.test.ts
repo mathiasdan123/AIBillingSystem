@@ -162,6 +162,34 @@ describe('buildEnrollmentPlan', () => {
     expect(proposalFor(plan, 'era').reason).toMatch(/rejected/i);
   });
 
+  it('falls back to the payer NAME when the stored code is unknown', async () => {
+    // The stored insurances.payerCode is not something Stedi recognises.
+    H.claimPayers = [{ name: 'Cigna', payerCode: 'CIGNA_LEGACY', usageCount: 5 }];
+    H.search.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { payerId: '62308', displayName: 'Cigna', aliases: ['62308'], transactionSupport: HORIZON.transactionSupport },
+    ]);
+
+    const plan = await buildEnrollmentPlan(1);
+
+    // Without the fallback this reported "could not match this payer" — which
+    // reads as "unsupported" when the payer is sitting in the directory under
+    // a different id.
+    expect(plan.payers[0].unresolved).toBe(false);
+    expect(plan.payers[0].payerId).toBe('62308');
+    expect(H.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not waste a second lookup when the code already resolved', async () => {
+    H.claimPayers = [{ name: 'Cigna', payerCode: '62308', usageCount: 5 }];
+    H.search.mockResolvedValue([
+      { payerId: '62308', displayName: 'Cigna', aliases: ['62308'], transactionSupport: HORIZON.transactionSupport },
+    ]);
+
+    await buildEnrollmentPlan(1);
+
+    expect(H.search).toHaveBeenCalledTimes(1);
+  });
+
   it('reports an unresolvable payer instead of dropping it', async () => {
     H.search.mockResolvedValue([]);
 
