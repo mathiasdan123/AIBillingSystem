@@ -221,13 +221,28 @@ export async function buildEnrollmentPlan(practiceId: number): Promise<Enrollmen
   for (const payer of discovered) {
     let match: any = null;
     try {
-      const results = await searchPayers(payer.payerCode || payer.name, { practiceId });
-      match =
-        results.find(
-          (r: any) =>
-            r.payerId === payer.payerCode ||
-            (r.aliases ?? []).includes(payer.payerCode ?? '__none__'),
-        ) ?? results[0] ?? null;
+      // Try the stored code first, then FALL BACK TO THE NAME. Without the
+      // fallback a payer whose stored payerCode is not one Stedi recognises
+      // returned an empty search and was reported "could not match" — which is
+      // false, and reads as "this payer is unsupported" when the real payer is
+      // sitting in the directory under a different id. Cigna surfaced this: a
+      // stored code Stedi does not know, and no second attempt by name.
+      const attempts = [payer.payerCode, payer.name].filter(
+        (q): q is string => !!q && q.trim().length > 0,
+      );
+
+      for (const query of attempts) {
+        const results = await searchPayers(query, { practiceId });
+        if (results.length === 0) continue;
+
+        match =
+          results.find(
+            (r: any) =>
+              r.payerId === payer.payerCode ||
+              (r.aliases ?? []).includes(payer.payerCode ?? '__none__'),
+          ) ?? results[0];
+        if (match) break;
+      }
     } catch (err: any) {
       logger.warn('Payer lookup failed while building enrollment plan', {
         practiceId,
