@@ -99,6 +99,21 @@ else
   echo "${YELLOW}…${RESET} Main JS bundle — could not extract from index.html, skipping"
 fi
 
+# 6. DATA presence — the check the 2026-08-26 incident was missing.
+#    /api/health/data asserts the catalogs the UI cannot function without
+#    (ICD-10, CPT) actually contain rows, and that the clearinghouse key is
+#    configured. A 200 with an empty table passed every check above; this one
+#    fails it. The endpoint returns 503 with per-check detail when anything
+#    is empty, so the deploy goes red naming the missing data.
+DATA_HEALTH=$(curl -sS --max-time $TIMEOUT "$BASE_URL/api/health/data" 2>/dev/null || echo "")
+if echo "$DATA_HEALTH" | grep -q '"ok":true'; then
+  echo "${GREEN}✓${RESET} Data presence (ICD-10 + CPT catalogs, clearinghouse config)"
+  PASS=$((PASS+1))
+else
+  echo "${RED}✗${RESET} Data presence FAILED: $DATA_HEALTH"
+  FAIL=$((FAIL+1))
+fi
+
 echo
 echo "=== Result: $PASS passed, $FAIL failed ==="
 

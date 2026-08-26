@@ -75,6 +75,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ release: process.env.RELEASE_SHA || 'unknown' });
   });
 
+  // Data-presence health: catches "the route works but the table is empty".
+  //
+  // 2026-08-26: the ICD-10 catalog was empty in production (full seeding only
+  // ever ran against a virgin database), so the diagnosis picker rendered
+  // empty during a live billing session — and every prior smoke check passed,
+  // because a 200 with [] looks healthy. This endpoint asserts the DATA the
+  // UI cannot function without. Unauthenticated by design so the deploy
+  // pipeline can call it: it exposes catalog COUNTS and config booleans only —
+  // never practice or patient data.
+  app.get('/api/health/data', async (_req, res) => {
+    const checks: Record<string, { ok: boolean; count?: number; error?: string }> = {};
+
+    const countCheck = async (name: string, fn: () => Promise<number>, min: number) => {
+      try {
+        const count = await fn();
+        checks[name] = { ok: count >= min, count };
+      } catch (err: any) {
+        checks[name] = { ok: false, error: 'query_failed' };
+      }
+    };
+
+    await countCheck('icd10Catalog', async () => (await storage.getIcd10Codes()).length, 1);
+    await countCheck('cptCatalog', async () => (await storage.getCptCodes()).length, 1);
+
+    // Claim submission needs a clearinghouse key; a booted app without one
+    // submits nothing and says so nowhere else.
+    const { isStediConfigured } = await import('./services/stediService');
+    checks.stediConfigured = { ok: isStediConfigured() };
+
+    const ok = Object.values(checks).every((c) => c.ok);
+    res.status(ok ? 200 : 503).json({ ok, checks });
+  });
+
   app.get('/api/health', async (req, res) => {
     const startTime = Date.now();
     const checks: Record<string, { status: string; latency?: number }> = {};
