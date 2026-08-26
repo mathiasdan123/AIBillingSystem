@@ -172,6 +172,7 @@ export const storage = {
   getClaimLineItems: claimFns.getClaimLineItems,
   getClaimLineItemsForClaims: claimFns.getClaimLineItemsForClaims,
   deleteClaimLineItems: claimFns.deleteClaimLineItems,
+  deleteDraftClaim: claimFns.deleteDraftClaim,
   getClaimLineItem: claimFns.getClaimLineItem,
   updateClaimLineItem: claimFns.updateClaimLineItem,
   deleteClaimLineItem: claimFns.deleteClaimLineItem,

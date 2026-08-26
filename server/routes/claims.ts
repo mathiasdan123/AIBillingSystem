@@ -820,6 +820,63 @@ router.patch('/:id/line-items/:lineItemId', isAuthenticated, async (req: any, re
 });
 
 /** DELETE /api/claims/:id/line-items/:lineItemId — remove a line item. */
+// DELETE /:id — remove a DRAFT claim entirely.
+//
+// There was no way to remove a claim at all. A claim created in error — and
+// this system created several, from a bug that made the New Claim dialog
+// report failure while the claim was in fact saved — sat in the list forever
+// with no codes and a $0 total, inflating "claims this month" and the
+// unsubmitted-review count.
+//
+// Draft only, deliberately. A transmitted claim is a record of something we
+// told a payer; deleting it would leave our history disagreeing with theirs.
+// A draft has been sent nowhere.
+router.delete('/:id', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id, 10);
+    if (isNaN(claimId)) {
+      return res.status(400).json({ message: 'Invalid claim ID' });
+    }
+
+    const claim = await storage.getClaim(claimId);
+    if (!claim) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+    if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const status = (claim.status || '').toLowerCase();
+    if (status !== 'draft') {
+      return res.status(400).json({
+        message: `This claim is ${status}, so it can't be deleted. Only drafts — which have never been sent anywhere — can be removed.`,
+        code: 'not_a_draft',
+      });
+    }
+    // A draft that reached the clearinghouse is not really a draft. Refuse
+    // rather than erase evidence of a transmission.
+    if ((claim as any).clearinghouseClaimId) {
+      return res.status(400).json({
+        message: 'This claim has a clearinghouse reference, so it cannot be deleted.',
+        code: 'transmitted',
+      });
+    }
+
+    await storage.deleteDraftClaim(claimId);
+
+    logger.info('Draft claim deleted', {
+      claimId,
+      claimNumber: claim.claimNumber,
+      practiceId: claim.practiceId,
+      userId: req.user?.claims?.sub,
+    });
+
+    res.json({ message: 'Draft claim deleted', claimId });
+  } catch (error: any) {
+    return safeErrorResponse(res, 500, 'Failed to delete claim', error);
+  }
+});
+
 router.delete('/:id/line-items/:lineItemId', isAuthenticated, async (req: any, res) => {
   try {
     const claimId = validatePositiveInt(req.params.id);
