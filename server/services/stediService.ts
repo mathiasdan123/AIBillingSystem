@@ -1103,6 +1103,30 @@ function parseClaimStatusResponse(claimId: string, data: any): ClaimStatusRespon
   return response;
 }
 
+/**
+ * Map an internal address onto Stedi's field names.
+ *
+ * Internally addresses are { line1, line2?, city, state, zip }. Stedi's claim
+ * API rejects that wholesale: "unknown field 'line1', expected one of
+ * 'address1', 'address2', 'city', 'state', 'postalCode', ...". The payload
+ * passed our objects straight through, so EVERY submission with an address —
+ * i.e. every submission — would have been rejected. Caught by the first dry
+ * run ever executed against the real validation path (2026-08-26), which is
+ * precisely what the dry run exists for.
+ */
+function toStediAddress(address: any): any {
+  if (!address) return undefined;
+  return {
+    address1: address.line1 ?? address.address1,
+    ...(address.line2 || address.address2
+      ? { address2: address.line2 ?? address.address2 }
+      : {}),
+    city: address.city,
+    state: address.state,
+    postalCode: address.zip ?? address.postalCode,
+  };
+}
+
 export function build837P(claim: ClaimSubmission, testMode = false): any {
   // Build the 837P claim payload for Stedi
   // This is a simplified version - real implementation would be more comprehensive
@@ -1133,7 +1157,7 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       firstName: claim.subscriber?.firstName || claim.patient.firstName,
       lastName: claim.subscriber?.lastName || claim.patient.lastName,
       dateOfBirth: claim.subscriber?.dateOfBirth || claim.patient.dateOfBirth,
-      address: claim.patient.address,
+      address: toStediAddress(claim.patient.address),
     },
     ...(claim.subscriber && {
       patient: {
@@ -1141,7 +1165,7 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
         lastName: claim.patient.lastName,
         dateOfBirth: claim.patient.dateOfBirth,
         gender: claim.patient.gender,
-        address: claim.patient.address,
+        address: toStediAddress(claim.patient.address),
         relationshipToSubscriberCode: getRelationshipCode(claim.subscriber.relationshipToPatient),
       },
     }),
@@ -1157,7 +1181,7 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
         specialty: claim.provider.practiceSpecialty,
       }),
       organizationName: claim.provider.organizationName,
-      address: claim.provider.address,
+      address: toStediAddress(claim.provider.address),
       taxId: claim.provider.taxId,
     },
     rendering: {
