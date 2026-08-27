@@ -2053,8 +2053,11 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       return res.status(502).json({
         success: false,
         message:
+          // 'pending' means we could not read an identifier out of the
+          // response — NOT that nothing was sent. Inviting a retry here is how
+          // one claim became four. Say stop, and say why.
           clearinghouseResult?.status === 'pending'
-            ? 'Submission could not be confirmed — the claim is on hold. Check the clearinghouse before resubmitting.'
+            ? 'The claim was sent but could not be confirmed, so it is on hold. DO NOT RESUBMIT — check the clearinghouse portal first; a retry may file a duplicate.'
             : 'The clearinghouse did not accept this claim. It is on hold — fix the errors and resubmit.',
         claim: heldClaim,
         clearinghouse: clearinghouseResult,

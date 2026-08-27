@@ -741,7 +741,25 @@ export async function submitClaim(
 
     const statusText = String(data?.status ?? data?.claimStatus ?? '').toLowerCase();
     const statusRejected = /reject|denied|error|fail/.test(statusText);
-    const stediClaimId = data?.claimId || data?.id;
+
+    // Stedi's real submission response carries NEITHER `claimId` nor `id`. Its
+    // observed top-level keys (2026-08-27, production, Cigna 837P) are:
+    //   status, controlNumber, tradingPartnerServiceId, claimReference,
+    //   meta, payer, x12, httpStatusCode
+    // Reading only claimId/id meant every real submission looked unconfirmable,
+    // so the UI reported success as failure and the biller retried — four times
+    // on the practice's first claim, each one very likely a real transmission.
+    // controlNumber is the X12 control number: always present, and a legitimate
+    // handle for tracking the submission.
+    const ref = data?.claimReference;
+    const stediClaimId =
+      data?.claimId ||
+      data?.id ||
+      (typeof ref === 'string' ? ref : undefined) ||
+      ref?.correlationId ||
+      ref?.claimId ||
+      ref?.id ||
+      data?.controlNumber;
 
     if (bodyErrors.length > 0 || statusRejected || data?.success === false) {
       return {
@@ -781,8 +799,9 @@ export async function submitClaim(
         status: 'pending',
         raw: data,
         errors: [
-          'Clearinghouse returned no claim identifier — submission could not be confirmed. ' +
-            'Check the clearinghouse portal before resubmitting to avoid a duplicate.',
+          'The claim was sent, but the clearinghouse response carried no identifier we ' +
+            'recognise, so it could not be recorded. DO NOT RESUBMIT — it may well have ' +
+            'gone through. Check the clearinghouse portal to confirm before doing anything else.',
         ],
       };
     }
