@@ -30,7 +30,7 @@ vi.mock('../services/phiEncryptionService', () => ({
   encryptField: (v: any) => v,
 }));
 
-import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone } from '../services/stediService';
+import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone, describeIncompleteAddress } from '../services/stediService';
 
 // Shaped to the real ClaimSubmission interface, so build837P exercises the
 // same code path a genuine submission takes.
@@ -317,6 +317,26 @@ describe('one-line address parsing and phone normalization', () => {
     // Empty city/state/zip — exactly what went on the wire live.
     expect(isCompleteAddress(parseOneLineAddress('70 VAN VALKENBURG AVE'))).toBe(false);
     expect(isCompleteAddress(parseOneLineAddress('70 Van Valkenburg Ave, Lakewood, NJ 08701'))).toBe(true);
+  });
+
+  /**
+   * The submit route used to return the patient-address, practice-address and
+   * submitter-phone blockers as three sequential early-returns, so a practice
+   * missing all three learned about them one test run at a time. The error now
+   * names the specific parts, and the route reports every blocker at once.
+   */
+  it('names the parts an address is actually missing, not all four', () => {
+    expect(describeIncompleteAddress({ line1: '1 Main St', city: '', state: 'NJ', zip: '08701' }))
+      .toBe('city');
+    expect(describeIncompleteAddress({ line1: '1 Main St', city: '', state: '', zip: '08701' }))
+      .toBe('city and state');
+    expect(describeIncompleteAddress({ line1: '', city: '', state: '', zip: '' }))
+      .toBe('street, city, state and ZIP');
+    // A bad state/ZIP counts as missing, matching isCompleteAddress.
+    expect(describeIncompleteAddress({ line1: '1 Main St', city: 'Lakewood', state: 'New Jersey', zip: '087' }))
+      .toBe('state and ZIP');
+    expect(describeIncompleteAddress(parseOneLineAddress('70 Van Valkenburg Ave, Lakewood, NJ 08701')))
+      .toBe('');
   });
 
   it('normalizes phones and refuses the placeholder the clearinghouse named', () => {
