@@ -100,7 +100,43 @@ describe('submitClaim — a 2xx is not proof of acceptance', () => {
 
     expect(result.success).toBe(false);
     expect(result.status).toBe('pending');
-    expect(result.errors?.join(' ')).toMatch(/could not be confirmed/i);
+    expect(result.errors?.join(' ')).toMatch(/could not be recorded/i);
+    // Must never invite a retry on what was probably a real transmission.
+    expect(result.errors?.join(' ')).toMatch(/do not resubmit/i);
+  });
+
+  /**
+   * The real Stedi submission response carries NEITHER claimId nor id. Observed
+   * top-level keys in production (2026-08-27, Cigna 837P):
+   *   status, controlNumber, tradingPartnerServiceId, claimReference,
+   *   meta, payer, x12, httpStatusCode
+   * Reading only claimId/id made every real submission look unconfirmable, so
+   * the UI reported success as failure and the biller resubmitted four times.
+   */
+  it('reads the identifier from the shape Stedi actually returns', async () => {
+    mockFetchJson(true, {
+      status: 'ACCEPTED',
+      controlNumber: '000000123',
+      tradingPartnerServiceId: '62308',
+      claimReference: { correlationId: 'corr-abc' },
+      meta: {},
+    });
+    const { submitClaim } = await import('../services/stediService');
+
+    const result = await submitClaim(sampleClaim, 1);
+
+    expect(result.success).toBe(true);
+    expect(result.stediClaimId).toBe('corr-abc');
+  });
+
+  it('falls back to the X12 control number when claimReference has no id', async () => {
+    mockFetchJson(true, { status: 'ACCEPTED', controlNumber: '000000123', claimReference: {} });
+    const { submitClaim } = await import('../services/stediService');
+
+    const result = await submitClaim(sampleClaim, 1);
+
+    expect(result.success).toBe(true);
+    expect(result.stediClaimId).toBe('000000123');
   });
 
   /**
