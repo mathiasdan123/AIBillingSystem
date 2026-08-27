@@ -103,6 +103,33 @@ describe('submitClaim — a 2xx is not proof of acceptance', () => {
     expect(result.errors?.join(' ')).toMatch(/could not be confirmed/i);
   });
 
+  /**
+   * The validation endpoint deliberately creates nothing, so it has no
+   * identifier to return. Applying the guard above to a dry run reported a
+   * clean validation as a failed submission and told the biller to check the
+   * portal for a duplicate — of a claim that was never transmitted.
+   */
+  it('treats a clean dry run with no identifier as a PASS, not an unconfirmed submission', async () => {
+    mockFetchJson(true, {});
+    const { submitClaim } = await import('../services/stediService');
+
+    const result = await submitClaim(sampleClaim, 1, { testMode: true });
+
+    expect(result.success).toBe(true);
+    expect(result.errors ?? []).toEqual([]);
+    expect(JSON.stringify(result)).not.toMatch(/duplicate/i);
+  });
+
+  it('still reports a dry run that the clearinghouse actually rejected', async () => {
+    mockFetchJson(true, { errors: ['Missing subscriber ID'] });
+    const { submitClaim } = await import('../services/stediService');
+
+    const result = await submitClaim(sampleClaim, 1, { testMode: true });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain('Missing subscriber ID');
+  });
+
   it('still accepts a clean success response', async () => {
     mockFetchJson(true, { claimId: 'STEDI-001' });
     const { submitClaim } = await import('../services/stediService');
