@@ -299,6 +299,25 @@ function getRiskLevel(score: number): "low" | "medium" | "high" {
 }
 
 /**
+ * Date handling rules for the analysis prompt.
+ *
+ * The model has no clock. Given a bare date of service it reasoned from its
+ * training cutoff and called a date three months PAST "in the future, which is
+ * invalid" — raising it as a CRITICAL data-entry error on a real claim, and
+ * burying the genuine timely-filing risk the rule-based check had already
+ * found correctly. Worse, it told the biller to "correct the date of service",
+ * which on a real claim is an instruction to falsify a treatment record.
+ *
+ * Exported so the guarantee is testable without a live model call.
+ */
+export function buildDateGuidance(now: Date = new Date()): string {
+  const today = now.toISOString().split("T")[0];
+  return `TODAY'S DATE IS ${today}. Judge every date against it — a date of service before today is in the PAST, however far ahead it may seem. Never describe a past date as a future date.
+
+NEVER suggest changing, correcting, or adjusting a date of service to improve a claim's chances. The date of service records when care actually happened; altering it to get a claim paid is fraud. If a date looks wrong, say to verify it against the clinical record — nothing more.`;
+}
+
+/**
  * Predict whether a claim will be denied before submission.
  * Uses rule-based checks plus Claude analysis when available.
  */
@@ -371,6 +390,8 @@ export async function predictDenial(
     : "";
 
   const prompt = `You are an expert medical billing analyst specializing in therapy claims (OT, PT, SLP). Analyze this claim for denial risk.
+
+${buildDateGuidance()}
 
 CLAIM DETAILS:
 - Total Amount: $${claim.totalAmount}
