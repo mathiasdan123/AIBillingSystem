@@ -468,7 +468,28 @@ router.post('/invites', isAuthenticated, isAdmin, async (req: any, res) => {
 
     const existingInvite = await storage.getInviteByEmail(email);
     if (existingInvite) {
-      return res.status(400).json({ message: "An invite has already been sent to this email" });
+      // A pending invite past its expiry is dead weight. `status` only flips to
+      // 'expired' inside the accept route, which needs the invitee to click a
+      // link that route then refuses — so nothing ever sweeps the row and it
+      // stays 'pending' forever. Since getInviteByEmail matches on 'pending'
+      // and there is no revoke or resend route anywhere, a lapsed invite used
+      // to permanently block re-inviting that person. Supersede it instead.
+      if (new Date() > existingInvite.expiresAt) {
+        await storage.updateInviteStatus(existingInvite.id, 'expired');
+        logger.info('Superseding an expired invite', {
+          email,
+          previousInviteId: existingInvite.id,
+        });
+      } else {
+        return res.status(400).json({
+          message:
+            `${email} already has an active invite, valid until ` +
+            `${new Date(existingInvite.expiresAt).toISOString().split('T')[0]}. ` +
+            'Copy their existing link from the invite list rather than creating a second one.',
+          code: 'invite_already_pending',
+          expiresAt: existingInvite.expiresAt,
+        });
+      }
     }
 
     const token = crypto.randomBytes(32).toString("hex");
