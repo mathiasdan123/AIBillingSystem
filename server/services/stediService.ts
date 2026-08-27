@@ -9,6 +9,7 @@
  */
 
 import type { BenefitTier, NetworkTiers } from '@shared/schema';
+import logger from './logger';
 
 // Stedi API base URL (same for test and production — the API key determines the environment)
 const STEDI_API_BASE = 'https://healthcare.us.stedi.com/2024-04-01';
@@ -758,7 +759,22 @@ export async function submitClaim(
     // Accepted responses carry an identifier we can track the claim by. No
     // identifier and no error means we cannot confirm it was accepted — say
     // so rather than assert success we can't back up.
-    if (!stediClaimId) {
+    //
+    // A DRY RUN is the exception. The validation endpoint deliberately creates
+    // nothing, so it has no identifier to hand back; a clean response there IS
+    // the pass. Applying this guard to test mode reported a successful
+    // validation as a failed submission and told the biller to go hunt for a
+    // duplicate that cannot exist — nothing was transmitted.
+    if (!stediClaimId && !testMode) {
+      // Record the SHAPE of what came back — field names only, never values,
+      // so this stays PHI-free. The identifier is read as `claimId` || `id`;
+      // if Stedi nests it somewhere else, a real submission fails here and
+      // this line is what tells us where to look instead of guessing at the
+      // API a second time.
+      logger.error('Stedi submission returned no claim identifier', {
+        claimId: claim.claimId,
+        responseKeys: Object.keys(data ?? {}),
+      });
       return {
         success: false,
         claimId: claim.claimId,
