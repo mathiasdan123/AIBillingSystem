@@ -247,6 +247,12 @@ export const patients = pgTable("patients", {
   // Expand→contract: dual-written alongside dateOfBirth; reads prefer this.
   // The plaintext `date_of_birth` column is dropped in a follow-up release.
   dateOfBirthEnc: text("date_of_birth_enc"),
+  // ADMINISTRATIVE sex, as the payer holds it — CMS-1500 Box 3 / 837P DMG02.
+  // 'M' | 'F' | 'U'. Deliberately distinct from the clinical gender captured in
+  // intakeData: payers match eligibility and claims on name + DOB + sex, and
+  // they mean sex-on-the-policy. Every claim hardcoded 'U' before this existed.
+  // Nullable, expand-only; null still transmits as 'U'.
+  sex: varchar("sex", { length: 1 }),
   email: varchar("email"),
   phone: varchar("phone"),
   address: text("address"),
@@ -267,6 +273,25 @@ export const patients = pgTable("patients", {
   // these two are the user-editable basics.
   effectiveDate: date("effective_date"),
   terminationDate: date("termination_date"),
+  /**
+   * Primary-insurance SUBSCRIBER — CMS-1500 Boxes 4, 6 and 11a.
+   *
+   * Secondary insurance has had these fields all along; primary never did, so
+   * every claim was built as though the patient were the policyholder. A child
+   * on a parent's plan filed under the child's own name and denied. Nullable
+   * and expand-only: null relationship means 'self', which is what the claim
+   * builder already assumed, so existing rows keep their current behaviour.
+   */
+  insuranceRelationship: varchar("insurance_relationship"), // self, spouse, child, other
+  // First/last kept separate rather than one name string: the 837P subscriber
+  // loop takes them separately and payers match on exact name, so splitting a
+  // combined string heuristically would introduce denials.
+  insuranceSubscriberFirstName: varchar("insurance_subscriber_first_name"),
+  insuranceSubscriberLastName: varchar("insurance_subscriber_last_name"),
+  insuranceSubscriberDob: date("insurance_subscriber_dob"),
+  // Encrypted-at-rest copy (see dateOfBirthEnc note). Dual-written; reads prefer it.
+  insuranceSubscriberDobEnc: text("insurance_subscriber_dob_enc"),
+  insuranceSubscriberSex: varchar("insurance_subscriber_sex", { length: 1 }),
   /**
    * The patient's copay, as the practice knows it.
    *

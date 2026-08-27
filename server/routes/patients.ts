@@ -411,6 +411,13 @@ const INSURANCE_FIELDS = new Set([
   'groupNumber',
   'effectiveDate',
   'terminationDate',
+  // Primary-insurance subscriber — CMS-1500 Boxes 4, 6, 11a. Needed whenever
+  // the patient is not the policyholder.
+  'insuranceRelationship',
+  'insuranceSubscriberFirstName',
+  'insuranceSubscriberLastName',
+  'insuranceSubscriberDob',
+  'insuranceSubscriberSex',
   // The practice's own copay figure. Editable here so it can be corrected
   // when the payer's eligibility response is wrong or absent.
   'copayAmount',
@@ -475,7 +482,10 @@ router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFu
  * columns are encrypted at rest and must never be written raw.
  */
 const DETAIL_FIELDS = new Set([
-  'firstName', 'lastName', 'email', 'phone', 'address', 'gender',
+  'firstName', 'lastName', 'email', 'phone', 'address',
+  // Administrative sex for CMS-1500 Box 3. 'gender' was listed here for a
+  // column that has never existed, so it silently went nowhere.
+  'sex',
 ]);
 
 router.patch('/:id/details', isAuthenticated, async (req: any, res) => {

@@ -30,7 +30,7 @@ vi.mock('../services/phiEncryptionService', () => ({
   encryptField: (v: any) => v,
 }));
 
-import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone, describeIncompleteAddress, normalizeZip } from '../services/stediService';
+import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone, describeIncompleteAddress, normalizeZip, toStediSex, buildSubscriberFromPatient } from '../services/stediService';
 
 // Shaped to the real ClaimSubmission interface, so build837P exercises the
 // same code path a genuine submission takes.
@@ -365,6 +365,99 @@ describe('one-line address parsing and phone normalization', () => {
     const zipPlus4 = { line1: '1 Main St', city: 'Lakewood', state: 'NJ', zip: '08701-1234' };
     expect(isCompleteAddress(zipPlus4)).toBe(true);
     expect(describeIncompleteAddress(zipPlus4)).toBe('');
+  });
+
+  /**
+   * CMS-1500 Boxes 4, 6 and 11a. Primary insurance had no subscriber fields, so
+   * every claim was built as though the patient held the policy — a child on a
+   * parent's plan filed under the child's name and denied.
+   */
+  describe('subscriber vs dependent (CMS-1500 Boxes 4, 6, 11a)', () => {
+    it('treats a self / blank relationship as the patient being the policyholder', () => {
+      expect(buildSubscriberFromPatient({ insuranceRelationship: 'self' })).toBeUndefined();
+      expect(buildSubscriberFromPatient({ insuranceRelationship: '' })).toBeUndefined();
+      // Legacy rows have no relationship at all and must keep their behaviour.
+      expect(buildSubscriberFromPatient({})).toBeUndefined();
+    });
+
+    it('builds the subscriber when someone else holds the policy', () => {
+      expect(
+        buildSubscriberFromPatient({
+          insuranceRelationship: 'child',
+          insuranceSubscriberFirstName: 'Miriam',
+          insuranceSubscriberLastName: 'Spero',
+          insuranceSubscriberDob: '1985-03-11',
+          insuranceSubscriberSex: 'F',
+          insuranceId: 'W123456789',
+        }),
+      ).toEqual({
+        firstName: 'Miriam',
+        lastName: 'Spero',
+        dateOfBirth: '1985-03-11',
+        // Dependents share the policyholder's member ID — same card.
+        memberId: 'W123456789',
+        relationshipToPatient: 'child',
+        gender: 'F',
+      });
+    });
+
+    it('falls back to self when the subscriber name is half-entered', () => {
+      // Filing a claim naming an incomplete policyholder is worse than the old
+      // behaviour; the route blocks on this separately rather than guessing.
+      expect(
+        buildSubscriberFromPatient({
+          insuranceRelationship: 'child',
+          insuranceSubscriberFirstName: 'Miriam',
+        }),
+      ).toBeUndefined();
+    });
+
+    it('emits a dependent block with the relationship code, patient in it', () => {
+      const claim = {
+        ...CLAIM,
+        patient: { ...CLAIM.patient, gender: 'M' },
+        subscriber: {
+          firstName: 'Miriam',
+          lastName: 'Spero',
+          dateOfBirth: '1985-03-11',
+          memberId: 'W123456789',
+          relationshipToPatient: 'child',
+          gender: 'F' as const,
+        },
+      };
+      const payload = build837P(claim);
+      // The policyholder is the subscriber; the patient becomes the dependent.
+      expect(payload.subscriber.firstName).toBe('Miriam');
+      expect(payload.subscriber.gender).toBe('F');
+      expect(payload.dependent.firstName).toBe('Eliyahu');
+      expect(payload.dependent.gender).toBe('M');
+      expect(payload.dependent.relationshipToSubscriberCode).toBe('19'); // child
+    });
+
+    it("never copies the patient's sex onto an unknown policyholder", () => {
+      const claim = {
+        ...CLAIM,
+        patient: { ...CLAIM.patient, gender: 'M' },
+        subscriber: {
+          firstName: 'Miriam',
+          lastName: 'Spero',
+          dateOfBirth: '1985-03-11',
+          memberId: 'W1',
+          relationshipToPatient: 'child',
+          // sex not recorded
+        },
+      };
+      expect(build837P(claim).subscriber.gender).toBe('U');
+    });
+
+    it('maps sex to the codes the 837P accepts, defaulting to U', () => {
+      expect(toStediSex('M')).toBe('M');
+      expect(toStediSex('f')).toBe('F');
+      // Never guess: anything unrecorded or unrecognized is honestly unknown.
+      expect(toStediSex(null)).toBe('U');
+      expect(toStediSex('')).toBe('U');
+      expect(toStediSex('female')).toBe('U');
+    });
   });
 
   it('sends the postal code as digits — a hyphen must not reach the payer', () => {

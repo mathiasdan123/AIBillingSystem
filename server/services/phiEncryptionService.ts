@@ -158,6 +158,7 @@ const PATIENT_PHI_JSONB_FIELDS = [
 const PATIENT_DATE_ENC_MAP: Record<string, string> = {
   dateOfBirth: 'dateOfBirthEnc',
   secondaryInsuranceSubscriberDob: 'secondaryInsuranceSubscriberDobEnc',
+  insuranceSubscriberDob: 'insuranceSubscriberDobEnc',
 };
 
 const SOAP_NOTE_PHI_FIELDS = [
@@ -211,6 +212,10 @@ const PATIENT_INSURANCE_EXTRA_FIELDS = [
   'secondaryInsuranceMemberId',
   'secondaryInsuranceGroupNumber',
   'secondaryInsuranceSubscriberName',
+  // Primary-insurance subscriber names are the same class of PHI as the
+  // patient's own firstName/lastName, which are encrypted.
+  'insuranceSubscriberFirstName',
+  'insuranceSubscriberLastName',
 ] as const;
 
 // Data capture events may contain PHI in original/extracted data

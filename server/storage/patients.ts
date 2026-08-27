@@ -126,7 +126,11 @@ export async function updatePatient(id: number, patient: Partial<InsertPatient>)
   // from dateOfBirth by encryptPatientRecord; accepting them from the caller would
   // let a mass-assigned blob plant a false DOB (decrypt prefers the *_enc copy).
   const encrypted = encryptPatientRecord(
-    stripImmutable(patient, ['dateOfBirthEnc', 'secondaryInsuranceSubscriberDobEnc']) as any,
+    stripImmutable(patient, [
+      'dateOfBirthEnc',
+      'secondaryInsuranceSubscriberDobEnc',
+      'insuranceSubscriberDobEnc',
+    ]) as any,
   );
   const [updatedPatient] = await db
     .update(patients)
@@ -155,12 +159,21 @@ export async function softDeletePatient(id: number): Promise<void> {
       address: null,
       dateOfBirth: null,
       dateOfBirthEnc: null,
+      sex: null,
       // Primary insurance
       insuranceProvider: null,
       insuranceId: null,
       policyNumber: null,
       groupNumber: null,
       insuranceEmployerName: null,
+      // Primary-insurance subscriber (a THIRD party's PHI when the patient is
+      // a dependent — erasing the patient must not leave their parent behind).
+      insuranceRelationship: null,
+      insuranceSubscriberFirstName: null,
+      insuranceSubscriberLastName: null,
+      insuranceSubscriberDob: null,
+      insuranceSubscriberDobEnc: null,
+      insuranceSubscriberSex: null,
       // Secondary insurance
       secondaryInsuranceProvider: null,
       secondaryInsurancePolicyNumber: null,

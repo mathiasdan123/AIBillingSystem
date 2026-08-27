@@ -35,6 +35,12 @@ export interface InsuranceFields {
   terminationDate?: string | null;
   copayAmount?: string | null;
   coinsurancePercent?: string | null;
+  // CMS-1500 Boxes 4, 6, 11a — who actually holds the primary policy.
+  insuranceRelationship?: string | null;
+  insuranceSubscriberFirstName?: string | null;
+  insuranceSubscriberLastName?: string | null;
+  insuranceSubscriberDob?: string | null;
+  insuranceSubscriberSex?: string | null;
   secondaryInsuranceProvider?: string | null;
   secondaryInsurancePayerId?: string | null;
   secondaryInsuranceMemberId?: string | null;
@@ -65,6 +71,11 @@ const EMPTY: InsuranceFields = {
   terminationDate: '',
   copayAmount: '',
   coinsurancePercent: '',
+  insuranceRelationship: '',
+  insuranceSubscriberFirstName: '',
+  insuranceSubscriberLastName: '',
+  insuranceSubscriberDob: '',
+  insuranceSubscriberSex: '',
   secondaryInsuranceProvider: '',
   secondaryInsurancePayerId: '',
   secondaryInsuranceMemberId: '',
@@ -197,6 +208,88 @@ export default function InsuranceEditDialog({
                 />
               </Field>
             </div>
+          </section>
+
+          {/*
+            CMS-1500 Boxes 4, 6 and 11a. Before these fields existed every claim
+            was filed as though the patient held the policy, so a child on a
+            parent's plan went out under the child's name and denied.
+          */}
+          <section className="space-y-3">
+            <h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Policyholder
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Patient's relationship to policyholder"
+                id="irel"
+                hint="Who the plan belongs to. Choose Self if the patient is the policyholder."
+              >
+                <Select
+                  value={form.insuranceRelationship || 'self'}
+                  onValueChange={(v) => setForm((f) => ({ ...f, insuranceRelationship: v }))}
+                >
+                  <SelectTrigger id="irel" data-testid="select-insurance-relationship">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="self">Self — the patient holds the policy</SelectItem>
+                    <SelectItem value="spouse">Spouse</SelectItem>
+                    <SelectItem value="child">Child</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+
+            {form.insuranceRelationship && form.insuranceRelationship !== 'self' && (
+              <div className="grid grid-cols-2 gap-3 rounded-md border p-3">
+                <p className="col-span-2 text-xs text-muted-foreground">
+                  Enter the policyholder exactly as the insurer has them. The payer matches
+                  on name and date of birth — a nickname or a guessed spelling will deny.
+                  The member ID above is the policyholder's; dependents share it.
+                </p>
+                <Field label="Policyholder first name" id="isfn">
+                  <Input
+                    id="isfn"
+                    value={form.insuranceSubscriberFirstName ?? ''}
+                    onChange={set('insuranceSubscriberFirstName')}
+                    data-testid="input-subscriber-first-name"
+                  />
+                </Field>
+                <Field label="Policyholder last name" id="isln">
+                  <Input
+                    id="isln"
+                    value={form.insuranceSubscriberLastName ?? ''}
+                    onChange={set('insuranceSubscriberLastName')}
+                    data-testid="input-subscriber-last-name"
+                  />
+                </Field>
+                <Field label="Policyholder date of birth" id="isdob">
+                  <Input
+                    id="isdob"
+                    type="date"
+                    value={form.insuranceSubscriberDob ?? ''}
+                    onChange={set('insuranceSubscriberDob')}
+                    data-testid="input-subscriber-dob"
+                  />
+                </Field>
+                <Field label="Policyholder sex" id="issex" hint="As the insurer has it on the policy.">
+                  <Select
+                    value={form.insuranceSubscriberSex || ''}
+                    onValueChange={(v) => setForm((f) => ({ ...f, insuranceSubscriberSex: v }))}
+                  >
+                    <SelectTrigger id="issex" data-testid="select-subscriber-sex">
+                      <SelectValue placeholder="Not recorded" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="M">Male</SelectItem>
+                      <SelectItem value="F">Female</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            )}
           </section>
 
           {!showSecondary && (
