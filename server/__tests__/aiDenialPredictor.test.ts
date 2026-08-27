@@ -350,3 +350,36 @@ describe('aiDenialPredictor', () => {
     expect(issue).toBeDefined();
   });
 });
+
+/**
+ * A real claim's date of service (2026-05-12, 107 days past) was reported to
+ * the biller as "in the future, which is invalid" and marked CRITICAL — the
+ * model has no clock and reasoned from its training cutoff. It also advised
+ * "correct the date of service", which on a real claim means falsifying when
+ * treatment happened.
+ */
+describe('denial-prediction date guidance', () => {
+  it("states today's date so a past service date is not called a future one", async () => {
+    const { buildDateGuidance } = await import('../services/aiDenialPredictor');
+    const guidance = buildDateGuidance(new Date('2026-08-27T12:00:00Z'));
+
+    expect(guidance).toContain('2026-08-27');
+    expect(guidance).toMatch(/past/i);
+    expect(guidance).toMatch(/never describe a past date as a future date/i);
+  });
+
+  it('forbids suggesting a date-of-service change', async () => {
+    const { buildDateGuidance } = await import('../services/aiDenialPredictor');
+    const guidance = buildDateGuidance();
+
+    expect(guidance).toMatch(/never suggest changing, correcting, or adjusting a date of service/i);
+    expect(guidance).toMatch(/fraud/i);
+    // The safe instruction is to verify against the record, not to edit.
+    expect(guidance).toMatch(/verify it against the clinical record/i);
+  });
+
+  it('tracks the real clock rather than a baked-in date', async () => {
+    const { buildDateGuidance } = await import('../services/aiDenialPredictor');
+    expect(buildDateGuidance(new Date('2027-01-15T00:00:00Z'))).toContain('2027-01-15');
+  });
+});
