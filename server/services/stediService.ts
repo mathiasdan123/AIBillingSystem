@@ -1334,6 +1334,24 @@ export function isCompleteAddress(a: { line1: string; city: string; state: strin
   return !!a.line1 && !!a.city && /^[A-Za-z]{2}$/.test(a.state) && /^\d{5}$/.test(a.zip);
 }
 
+/**
+ * Name the parts an address is actually missing, so an error can say
+ * "missing city and ZIP" rather than "missing city, state or ZIP" and leave
+ * the user to diff four boxes against a payer record by eye.
+ */
+export function describeIncompleteAddress(a: {
+  line1: string; city: string; state: string; zip: string;
+}): string {
+  const missing: string[] = [];
+  if (!a.line1) missing.push('street');
+  if (!a.city) missing.push('city');
+  if (!/^[A-Za-z]{2}$/.test(a.state)) missing.push('state');
+  if (!/^\d{5}$/.test(a.zip)) missing.push('ZIP');
+  if (missing.length === 0) return '';
+  if (missing.length === 1) return missing[0];
+  return `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+}
+
 export function toStediPhone(value: string | null | undefined): string | null {
   if (!value) return null;
   let digits = String(value).replace(/[^0-9]/g, '');

@@ -1820,29 +1820,51 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
         // Refuse incomplete data rather than transmit it. The first validated
         // claim went out with empty city/state and only the CLEARINGHOUSE said
         // so — an hour later, in a server log. Say it here, name the fix.
+        //
+        // Collect EVERY blocker before returning. These used to be three
+        // sequential early-returns, so a practice missing all three learned
+        // about them one test run at a time — fix a field, re-run, discover
+        // the next one. Same guards, one round trip.
+        const blockers: Array<{ code: string; message: string }> = [];
+
         if (!stediService.isCompleteAddress(patientAddr)) {
-          return res.status(400).json({
-            message:
-              `The patient's address ("${patient.address || 'not set'}") is missing city, state or ZIP. ` +
-              'Edit it on the patient\'s Details tab as "Street, City, ST 12345", then run the test again.',
+          blockers.push({
             code: 'patient_address_incomplete',
-          });
-        }
-        if (!stediService.isCompleteAddress(practiceAddr)) {
-          return res.status(400).json({
             message:
-              'The practice address is missing city, state or ZIP — complete it in the provider profile before submitting.',
-            code: 'practice_address_incomplete',
+              `The patient's address ("${patient.address || 'not set'}") is missing ` +
+              `${stediService.describeIncompleteAddress(patientAddr)}. ` +
+              'Edit it on the patient\'s Details tab.',
           });
         }
+
+        if (!stediService.isCompleteAddress(practiceAddr)) {
+          blockers.push({
+            code: 'practice_address_incomplete',
+            message:
+              `The practice address is missing ${stediService.describeIncompleteAddress(practiceAddr)} — ` +
+              'fill in the billing address on the Provider Profile page.',
+          });
+        }
+
         const submitterPhone = stediService.toStediPhone(
           (practice as any).billingContactPhone || (practice as any).phone,
         );
         if (!submitterPhone) {
-          return res.status(400).json({
-            message:
-              'The practice needs a valid billing contact phone (10 digits, not starting with 0 or 1) — set it in the provider profile before submitting.',
+          blockers.push({
             code: 'practice_phone_invalid',
+            message:
+              'The practice needs a valid billing contact phone (10 digits, not starting ' +
+              'with 0 or 1) — set it on the Provider Profile page.',
+          });
+        }
+
+        if (blockers.length > 0) {
+          return res.status(400).json({
+            message: blockers.map((b) => b.message).join(' '),
+            // Keep the single-blocker code stable for existing callers/tests;
+            // only the multi-blocker case needs the new umbrella code.
+            code: blockers.length === 1 ? blockers[0].code : 'submission_data_incomplete',
+            problems: blockers,
           });
         }
 
@@ -1886,8 +1908,9 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           provider: {
             npi: practice.npi || '',
             taxId: practice.taxId || '',
-            // Clearinghouse rejects placeholder phones; validated above.
-            contactPhone: submitterPhone,
+            // Clearinghouse rejects placeholder phones; the blocker list above
+            // returns unless this parsed, so it is non-null here.
+            contactPhone: submitterPhone!,
             organizationName: practice.name,
             address: practiceAddr,
             // Phase 6 — resolver falls back to practice.taxonomyCode or a
