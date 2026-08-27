@@ -582,6 +582,8 @@ export default function Patients() {
     addressCity: "",
     addressState: "",
     addressZip: "",
+    // CMS-1500 Box 3 — administrative sex, as the payer holds it.
+    sex: "",
   });
 
   // The stored column is one line; the FORM is structured. One free-text line
@@ -614,15 +616,21 @@ export default function Patients() {
       const state = detailsForm.addressState.trim().toUpperCase();
       const zip = detailsForm.addressZip.trim();
       // All four or none: a partial address on a claim is a payer rejection.
+      // ZIP+4 is accepted — rejecting it here told the user their valid ZIP was
+      // missing, which is exactly the trap the practice-side form set.
       const anyAddress = street || city || state || zip;
-      if (anyAddress && !(street && city && /^[A-Z]{2}$/.test(state) && /^\d{5}$/.test(zip))) {
+      if (
+        anyAddress &&
+        !(street && city && /^[A-Z]{2}$/.test(state) && /^\d{5}(-?\d{4})?$/.test(zip))
+      ) {
         throw new Error(
-          "Address needs all four parts: street, city, 2-letter state, 5-digit ZIP.",
+          "Address needs all four parts: street, city, 2-letter state, and a 5-digit or ZIP+4 ZIP.",
         );
       }
       const res = await apiRequest("PATCH", `/api/patients/${selectedPatient.id}/details`, {
         email: detailsForm.email,
         phone: detailsForm.phone,
+        sex: detailsForm.sex,
         address: anyAddress ? `${street}, ${city}, ${state} ${zip}` : "",
       });
       return res.json();
@@ -1550,6 +1558,7 @@ export default function Patients() {
                         addressCity: parsed.city,
                         addressState: parsed.state,
                         addressZip: parsed.zip,
+                        sex: (selectedPatient as any).sex || "",
                       });
                     }
                     setEditingDetails(true);
@@ -1578,6 +1587,29 @@ export default function Patients() {
                         value={detailsForm.phone}
                         onChange={(e) => setDetailsForm({ ...detailsForm, phone: e.target.value })}
                       />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-patient-sex">Sex</Label>
+                      <Select
+                        value={detailsForm.sex}
+                        onValueChange={(v) => setDetailsForm({ ...detailsForm, sex: v })}
+                      >
+                        <SelectTrigger id="edit-patient-sex" data-testid="select-patient-sex">
+                          <SelectValue placeholder="Not recorded" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="M">Male</SelectItem>
+                          <SelectItem value="F">Female</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {/*
+                        Administrative sex as the INSURER holds it — payers match
+                        eligibility and claims on name + DOB + sex. Kept separate
+                        from the gender recorded at intake, which is clinical.
+                      */}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        As the insurer has it. Used for claim matching.
+                      </p>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -2071,6 +2103,11 @@ export default function Patients() {
             terminationDate: (selectedPatient as any).terminationDate,
             copayAmount: (selectedPatient as any).copayAmount,
             coinsurancePercent: (selectedPatient as any).coinsurancePercent,
+            insuranceRelationship: (selectedPatient as any).insuranceRelationship,
+            insuranceSubscriberFirstName: (selectedPatient as any).insuranceSubscriberFirstName,
+            insuranceSubscriberLastName: (selectedPatient as any).insuranceSubscriberLastName,
+            insuranceSubscriberDob: (selectedPatient as any).insuranceSubscriberDob,
+            insuranceSubscriberSex: (selectedPatient as any).insuranceSubscriberSex,
             secondaryInsuranceProvider: selectedPatient.secondaryInsuranceProvider,
             secondaryInsuranceMemberId: selectedPatient.secondaryInsuranceMemberId,
             secondaryInsurancePolicyNumber: selectedPatient.secondaryInsurancePolicyNumber,

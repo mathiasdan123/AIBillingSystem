@@ -1318,10 +1318,13 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
               firstName: patient.firstName,
               lastName: patient.lastName,
               dateOfBirth: patient.dateOfBirth || '',
-              gender: 'U',
+              gender: stediService.toStediSex((patient as any).sex),
               address: patientAddr,
               memberId: patient.insuranceId || '',
             },
+            // Undefined when the patient is the policyholder — the builder
+            // then files them as the subscriber, as it always has.
+            subscriber: stediService.buildSubscriberFromPatient(patient),
             provider: {
               npi: practice.npi || '',
               taxId: practice.taxId || '',
@@ -1495,18 +1498,21 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
     const cptCodes = await storage.getCptCodes();
     const icd10Codes = await storage.getIcd10Codes();
 
-    const patientAddr = {
-      line1: patient.address || '',
-      city: (patient as any).city || '',
-      state: (patient as any).state || '',
-      zip: (patient as any).zipCode || '',
-    };
-    const practiceAddr = {
-      line1: practice.address || '',
-      city: (practice as any).city || '',
-      state: (practice as any).state || '',
-      zip: (practice as any).zipCode || '',
-    };
+    const stediService = await import('../services/stediService');
+
+    // These used to read patient.city / patient.zipCode / practice.city —
+    // columns that do not exist — so the preview always rendered a blank
+    // city/state/ZIP while the real submit path parsed the address properly.
+    // A preview that disagrees with what gets filed is worse than no preview.
+    const patientAddr = stediService.parseOneLineAddress(patient.address);
+    const practiceAddr = (practice as any).addressStreet
+      ? {
+          line1: (practice as any).addressStreet,
+          city: (practice as any).addressCity || '',
+          state: (practice as any).addressState || '',
+          zip: (practice as any).addressZip || '',
+        }
+      : stediService.parseOneLineAddress(practice.address);
 
     const serviceLines = lineItems.map((item: any) => {
       const cpt = cptCodes.find((c: any) => c.id === item.cptCodeId);
@@ -1544,10 +1550,12 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
         firstName: patient.firstName,
         lastName: patient.lastName,
         dateOfBirth: patient.dateOfBirth || '',
-        gender: 'U' as const,
+        gender: stediService.toStediSex((patient as any).sex),
         address: patientAddr,
         memberId: patient.insuranceId || '',
       },
+      // The preview must show what would actually be filed, subscriber included.
+      subscriber: stediService.buildSubscriberFromPatient(patient),
       provider: {
         npi: practice.npi || '',
         taxId: practice.taxId || '',
@@ -1846,6 +1854,27 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
           });
         }
 
+        // A relationship of anything but 'self' asserts someone else holds the
+        // policy. Half-entered subscriber data would silently fall back to
+        // filing the patient as their own policyholder — the exact false
+        // statement these fields exist to prevent. Refuse instead.
+        const rel = String((patient as any).insuranceRelationship ?? '').trim().toLowerCase();
+        if (rel && rel !== 'self') {
+          const missingSubscriber: string[] = [];
+          if (!(patient as any).insuranceSubscriberFirstName) missingSubscriber.push('first name');
+          if (!(patient as any).insuranceSubscriberLastName) missingSubscriber.push('last name');
+          if (!(patient as any).insuranceSubscriberDob) missingSubscriber.push('date of birth');
+          if (missingSubscriber.length > 0) {
+            blockers.push({
+              code: 'subscriber_incomplete',
+              message:
+                `${patient.firstName} is listed as "${rel}" on this policy, so the claim needs the ` +
+                `policyholder's ${missingSubscriber.join(', ')}. ` +
+                "Add it on the patient's Insurance tab.",
+            });
+          }
+        }
+
         const submitterPhone = stediService.toStediPhone(
           (practice as any).billingContactPhone || (practice as any).phone,
         );
@@ -1901,10 +1930,13 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
             firstName: patient.firstName,
             lastName: patient.lastName,
             dateOfBirth: patient.dateOfBirth || '',
-            gender: 'U',
+            gender: stediService.toStediSex((patient as any).sex),
             address: patientAddr,
             memberId: patient.insuranceId || '',
           },
+          // Undefined when the patient is the policyholder — the builder
+          // then files them as the subscriber, as it always has.
+          subscriber: stediService.buildSubscriberFromPatient(patient),
           provider: {
             npi: practice.npi || '',
             taxId: practice.taxId || '',

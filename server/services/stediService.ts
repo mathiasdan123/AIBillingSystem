@@ -577,6 +577,8 @@ export interface ClaimSubmission {
     dateOfBirth: string;
     memberId: string;
     relationshipToPatient: string;
+    /** CMS-1500 Box 11a. 'U' when the practice hasn't recorded it. */
+    gender?: 'M' | 'F' | 'U';
   };
 
   // Provider info
@@ -1181,10 +1183,13 @@ export function build837P(claim: ClaimSubmission, testMode = false): any {
       lastName: claim.subscriber?.lastName || claim.patient.lastName,
       // Dates are CCYYMMDD in this schema, not ISO.
       dateOfBirth: toStediDate(claim.subscriber?.dateOfBirth || claim.patient.dateOfBirth),
-      // We only know the patient's gender. When the subscriber is a parent or
-      // guardian, 'U' (unknown) is the honest value rather than copying the
-      // child's.
-      gender: subscriberIsPatient ? claim.patient.gender : 'U',
+      // When the subscriber IS the patient, their sex is the patient's. When
+      // it's a parent or guardian, use the sex the practice recorded for that
+      // person and fall back to 'U' — never copy the child's, which would be
+      // a guess presented to the payer as fact.
+      gender: subscriberIsPatient
+        ? claim.patient.gender
+        : claim.subscriber?.gender || 'U',
       address: toStediAddress(claim.patient.address),
     },
     // The dependent block is named "dependent" in this schema. It was emitted
@@ -1374,6 +1379,51 @@ export function describeIncompleteAddress(a: {
   if (missing.length === 0) return '';
   if (missing.length === 1) return missing[0];
   return `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+}
+
+/**
+ * Administrative sex for the 837P. Anything unrecorded or unrecognized is 'U'
+ * — the honest value. Never guess a patient's sex to satisfy a payer edit.
+ */
+export function toStediSex(value: string | null | undefined): 'M' | 'F' | 'U' {
+  const s = String(value ?? '').trim().toUpperCase();
+  return s === 'M' || s === 'F' ? s : 'U';
+}
+
+/**
+ * Build the claim's subscriber block from a patient record — CMS-1500 Boxes 4,
+ * 6 and 11a.
+ *
+ * Returns undefined when the patient IS the policyholder, which is what the
+ * claim builder treats as "subscriber is the patient". Every claim behaved that
+ * way unconditionally before these fields existed, so a patient with no
+ * relationship recorded keeps exactly its old behaviour.
+ *
+ * Shared by all three claim paths (single submit, batch submit, payload
+ * preview) so the preview cannot disagree with what gets filed.
+ */
+export function buildSubscriberFromPatient(patient: any):
+  | { firstName: string; lastName: string; dateOfBirth: string; memberId: string; relationshipToPatient: string; gender: 'M' | 'F' | 'U' }
+  | undefined {
+  const relationship = String(patient?.insuranceRelationship ?? '').trim().toLowerCase();
+  if (!relationship || relationship === 'self') return undefined;
+
+  const firstName = patient?.insuranceSubscriberFirstName || '';
+  const lastName = patient?.insuranceSubscriberLastName || '';
+  // Half-entered subscriber data is worse than none: it would file a claim
+  // naming an incomplete policyholder. Fall back to self and let the route's
+  // validation surface the gap instead.
+  if (!firstName || !lastName) return undefined;
+
+  return {
+    firstName,
+    lastName,
+    dateOfBirth: patient?.insuranceSubscriberDob || '',
+    // Dependents share the policyholder's member ID; it is the same card.
+    memberId: patient?.insuranceId || '',
+    relationshipToPatient: relationship,
+    gender: toStediSex(patient?.insuranceSubscriberSex),
+  };
 }
 
 export function toStediPhone(value: string | null | undefined): string | null {
