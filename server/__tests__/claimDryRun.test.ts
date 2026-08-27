@@ -30,7 +30,7 @@ vi.mock('../services/phiEncryptionService', () => ({
   encryptField: (v: any) => v,
 }));
 
-import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone, describeIncompleteAddress } from '../services/stediService';
+import { build837P, submitClaim, parseOneLineAddress, isCompleteAddress, toStediPhone, describeIncompleteAddress, normalizeZip } from '../services/stediService';
 
 // Shaped to the real ClaimSubmission interface, so build837P exercises the
 // same code path a genuine submission takes.
@@ -332,11 +332,52 @@ describe('one-line address parsing and phone normalization', () => {
       .toBe('city and state');
     expect(describeIncompleteAddress({ line1: '', city: '', state: '', zip: '' }))
       .toBe('street, city, state and ZIP');
-    // A bad state/ZIP counts as missing, matching isCompleteAddress.
-    expect(describeIncompleteAddress({ line1: '1 Main St', city: 'Lakewood', state: 'New Jersey', zip: '087' }))
-      .toBe('state and ZIP');
     expect(describeIncompleteAddress(parseOneLineAddress('70 Van Valkenburg Ave, Lakewood, NJ 08701')))
       .toBe('');
+  });
+
+  it('quotes a present-but-malformed value instead of calling it missing', () => {
+    // "missing ZIP" when you just typed a ZIP sends you back to stare at a
+    // filled-in box. Name the value that was rejected.
+    expect(describeIncompleteAddress({ line1: '1 Main St', city: 'Lakewood', state: 'NJ', zip: '087' }))
+      .toBe('ZIP ("087" is not a 5-digit or ZIP+4 code)');
+    expect(describeIncompleteAddress({ line1: '1 Main St', city: 'Lakewood', state: 'New Jersey', zip: '08701' }))
+      .toBe('state ("New Jersey" is not a 2-letter code)');
+    // Genuinely blank still reads as missing, not as a quoted empty string.
+    expect(describeIncompleteAddress({ line1: '1 Main St', city: 'Lakewood', state: 'NJ', zip: '' }))
+      .toBe('ZIP');
+  });
+
+  /**
+   * The column is varchar(10) — sized for "12345-6789" — but the check was
+   * /^\d{5}$/, so a typed ZIP+4 was reported to the user as a MISSING ZIP.
+   */
+  it('accepts ZIP+4, which the form has always invited', () => {
+    expect(normalizeZip('08701')).toBe('08701');
+    expect(normalizeZip('08701-1234')).toBe('087011234');
+    expect(normalizeZip('08701 1234')).toBe('087011234');
+    // Not a ZIP: too short (a spreadsheet eating the leading zero), too long.
+    expect(normalizeZip('8701')).toBeNull();
+    expect(normalizeZip('0870112345')).toBeNull();
+    expect(normalizeZip('')).toBeNull();
+    expect(normalizeZip(null)).toBeNull();
+
+    const zipPlus4 = { line1: '1 Main St', city: 'Lakewood', state: 'NJ', zip: '08701-1234' };
+    expect(isCompleteAddress(zipPlus4)).toBe(true);
+    expect(describeIncompleteAddress(zipPlus4)).toBe('');
+  });
+
+  it('sends the postal code as digits — a hyphen must not reach the payer', () => {
+    const claim = {
+      ...CLAIM,
+      provider: {
+        ...CLAIM.provider,
+        address: { line1: '2 Clinic Way', city: 'Lakewood', state: 'NJ', zip: '08701-1234' },
+      },
+    };
+    const json = JSON.stringify(build837P(claim));
+    expect(json).not.toContain('08701-1234');
+    expect(json).toContain('087011234');
   });
 
   it('normalizes phones and refuses the placeholder the clearinghouse named', () => {
