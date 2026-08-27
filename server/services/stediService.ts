@@ -1136,7 +1136,12 @@ function toStediAddress(address: any): any {
       : {}),
     city: address.city,
     state: address.state,
-    postalCode: address.zip ?? address.postalCode,
+    // N403 is digits only — a typed "08701-1234" must not reach the payer with
+    // its hyphen. Falls back to the raw value so a code path that skipped
+    // validation still sends something rather than dropping the field.
+    postalCode:
+      normalizeZip(address.zip ?? address.postalCode) ??
+      (address.zip ?? address.postalCode),
   };
 }
 
@@ -1329,15 +1334,32 @@ export function parseOneLineAddress(addr: string | null | undefined): {
   };
 }
 
+/**
+ * Normalize a postal code to the digits the 837P wants, or null if it isn't
+ * one. N403 takes 5 or 9 digits and NO hyphen.
+ *
+ * ZIP+4 is a legitimate thing to type — `practices.address_zip` is varchar(10)
+ * precisely so "12345-6789" fits — but the old check was /^\d{5}$/, so the
+ * form invited a value the validator then reported as a MISSING ZIP. Accept
+ * both widths here and strip the punctuation on the way to the wire.
+ */
+export function normalizeZip(value: string | null | undefined): string | null {
+  const digits = String(value ?? '').replace(/[^0-9]/g, '');
+  return digits.length === 5 || digits.length === 9 ? digits : null;
+}
+
 /** True when every field the 837P needs is present and well-formed. */
 export function isCompleteAddress(a: { line1: string; city: string; state: string; zip: string }): boolean {
-  return !!a.line1 && !!a.city && /^[A-Za-z]{2}$/.test(a.state) && /^\d{5}$/.test(a.zip);
+  return !!a.line1 && !!a.city && /^[A-Za-z]{2}$/.test(a.state) && !!normalizeZip(a.zip);
 }
 
 /**
  * Name the parts an address is actually missing, so an error can say
  * "missing city and ZIP" rather than "missing city, state or ZIP" and leave
  * the user to diff four boxes against a payer record by eye.
+ *
+ * When a field is present but malformed, QUOTE IT. "missing ZIP" is maddening
+ * when you just typed a ZIP — the useful message names the value it rejected.
  */
 export function describeIncompleteAddress(a: {
   line1: string; city: string; state: string; zip: string;
@@ -1345,8 +1367,10 @@ export function describeIncompleteAddress(a: {
   const missing: string[] = [];
   if (!a.line1) missing.push('street');
   if (!a.city) missing.push('city');
-  if (!/^[A-Za-z]{2}$/.test(a.state)) missing.push('state');
-  if (!/^\d{5}$/.test(a.zip)) missing.push('ZIP');
+  if (!a.state) missing.push('state');
+  else if (!/^[A-Za-z]{2}$/.test(a.state)) missing.push(`state ("${a.state}" is not a 2-letter code)`);
+  if (!a.zip) missing.push('ZIP');
+  else if (!normalizeZip(a.zip)) missing.push(`ZIP ("${a.zip}" is not a 5-digit or ZIP+4 code)`);
   if (missing.length === 0) return '';
   if (missing.length === 1) return missing[0];
   return `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
