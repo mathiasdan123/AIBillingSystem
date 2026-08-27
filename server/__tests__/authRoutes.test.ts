@@ -327,6 +327,7 @@ describe('auth routes (server/routes/auth.ts)', () => {
         id: 99,
         email: 'pending@example.com',
         status: 'pending',
+        expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
       });
 
       const res = await request(app)
@@ -334,7 +335,45 @@ describe('auth routes (server/routes/auth.ts)', () => {
         .send({ email: 'pending@example.com', practiceId: 1 })
         .expect(400);
 
-      expect(res.body.message).toBe('An invite has already been sent to this email');
+      expect(res.body.code).toBe('invite_already_pending');
+      // Names the expiry and points at the existing link instead of dead-ending.
+      expect(res.body.message).toMatch(/already has an active invite/);
+      expect(mockStorage.createInvite).not.toHaveBeenCalled();
+    });
+
+    /**
+     * `status` only flips to 'expired' inside the accept route, which needs the
+     * invitee to click a link that route then refuses — so a lapsed invite sits
+     * at 'pending' forever. getInviteByEmail matches on 'pending' and there is
+     * no revoke or resend route, so this used to block re-inviting that person
+     * permanently. Jessann's invite lapsed 2026-08-05 and hit exactly this.
+     */
+    it('supersedes a LAPSED invite instead of dead-ending the re-invite', async () => {
+      mockStorage.getAllUsers.mockResolvedValue([]);
+      mockStorage.getInviteByEmail.mockResolvedValue({
+        id: 99,
+        email: 'lapsed@example.com',
+        status: 'pending',
+        expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      });
+      mockStorage.createInvite.mockResolvedValue({
+        id: 100,
+        email: 'lapsed@example.com',
+        role: 'billing',
+        token: 'fresh-token',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        practiceId: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/invites')
+        .send({ email: 'lapsed@example.com', role: 'billing', practiceId: 1 })
+        .expect(200);
+
+      expect(res.body.invite.token).toBe('fresh-token');
+      // The stale row is retired rather than left to block the next attempt.
+      expect(mockStorage.updateInviteStatus).toHaveBeenCalledWith(99, 'expired');
+      expect(mockStorage.createInvite).toHaveBeenCalledOnce();
     });
 
     it('should return 400 for invalid role value', async () => {
