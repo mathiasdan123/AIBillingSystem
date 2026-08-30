@@ -780,6 +780,43 @@ router.post('/:id/send-intake-invite', isAuthenticated, async (req: any, res) =>
 // ==================== PATIENT CONSENTS ====================
 
 // Get patient consents
+/**
+ * GET /:id/last-diagnosis — the diagnosis used on this patient's most recent
+ * claim line.
+ *
+ * A therapy patient's diagnosis rarely changes between weekly sessions, yet
+ * every New Claim asked the biller to re-pick it per line from a dropdown —
+ * the single most repetitive click in the claim flow. The client prefills
+ * from this; it is a default, always editable. Tenant scoping comes from the
+ * router-level '/:id' guard (cross-tenant answers 404).
+ */
+router.get('/:id/last-diagnosis', isAuthenticated, async (req: any, res) => {
+  try {
+    const patientId = parseInt(req.params.id, 10);
+    const { db } = await import('../db');
+    const { claims, claimLineItems, icd10Codes } = await import('@shared/schema');
+    const { eq, and, desc, isNotNull } = await import('drizzle-orm');
+
+    const [row] = await db
+      .select({
+        icd10CodeId: claimLineItems.icd10CodeId,
+        code: icd10Codes.code,
+        description: icd10Codes.description,
+      })
+      .from(claimLineItems)
+      .innerJoin(claims, eq(claimLineItems.claimId, claims.id))
+      .leftJoin(icd10Codes, eq(claimLineItems.icd10CodeId, icd10Codes.id))
+      .where(and(eq(claims.patientId, patientId), isNotNull(claimLineItems.icd10CodeId)))
+      .orderBy(desc(claimLineItems.id))
+      .limit(1);
+
+    res.json(row ?? {});
+  } catch (error) {
+    logger.error('Error fetching last diagnosis', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to fetch last diagnosis' });
+  }
+});
+
 router.get('/:id/consents', isAuthenticated, async (req: any, res) => {
   try {
     const consents = await storage.getPatientConsents(parseInt(req.params.id));
