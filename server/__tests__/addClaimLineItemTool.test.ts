@@ -73,7 +73,7 @@ describe('add_claim_line_item tool', () => {
       await executeTool(
         'add_claim_line_item',
         { claimId: CLAIM_ID, cptCodeId: CPT_ID, units: 4, dateOfService: '2026-05-29' },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.success).toBe(true);
@@ -95,7 +95,7 @@ describe('add_claim_line_item tool', () => {
       await executeTool(
         'add_claim_line_item',
         { claimId: CLAIM_ID, cptCodeId: CPT_ID },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/cannot add line items.*submitted/i);
@@ -109,7 +109,7 @@ describe('add_claim_line_item tool', () => {
       await executeTool(
         'add_claim_line_item',
         { claimId: CLAIM_ID, cptCodeId: CPT_ID },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/not in this practice/i);
@@ -122,7 +122,7 @@ describe('add_claim_line_item tool', () => {
       await executeTool(
         'add_claim_line_item',
         { claimId: 999999, cptCodeId: CPT_ID },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/not found/i);
@@ -135,7 +135,7 @@ describe('add_claim_line_item tool', () => {
       await executeTool(
         'add_claim_line_item',
         { claimId: CLAIM_ID, cptCodeId: 99999 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/cpt code id.*not found/i);
@@ -148,7 +148,7 @@ describe('add_claim_line_item tool', () => {
     await executeTool(
       'add_claim_line_item',
       { claimId: CLAIM_ID, cptCodeId: CPT_ID },
-      PRACTICE_ID, USER_ID,
+      PRACTICE_ID, USER_ID, 'billing',
     );
     const created = mockStorage.createClaimLineItem.mock.calls[0][0];
     expect(created.units).toBe(1);
@@ -170,7 +170,7 @@ describe('add_claim_line_item tool', () => {
       await executeTool(
         'add_claim_line_item',
         { claimId: CLAIM_ID, cptCodeId: 7 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/no charge is set for cpt 92507/i);
@@ -187,7 +187,7 @@ describe('add_claim_line_item tool', () => {
     await executeTool(
       'add_claim_line_item',
       { claimId: CLAIM_ID, cptCodeId: CPT_ID, units: 2 },
-      PRACTICE_ID, USER_ID,
+      PRACTICE_ID, USER_ID, 'billing',
     );
     const created = mockStorage.createClaimLineItem.mock.calls[0][0];
     expect(created.rate).toBe('75.00');
@@ -195,9 +195,9 @@ describe('add_claim_line_item tool', () => {
   });
 
   it('rejects missing or non-numeric claimId / cptCodeId', async () => {
-    const a = JSON.parse(await executeTool('add_claim_line_item', { cptCodeId: CPT_ID }, PRACTICE_ID, USER_ID));
+    const a = JSON.parse(await executeTool('add_claim_line_item', { cptCodeId: CPT_ID }, PRACTICE_ID, USER_ID, 'billing'));
     expect(a.error).toMatch(/claimId is required/i);
-    const b = JSON.parse(await executeTool('add_claim_line_item', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID));
+    const b = JSON.parse(await executeTool('add_claim_line_item', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID, 'billing'));
     expect(b.error).toMatch(/cptCodeId is required/i);
     expect(mockStorage.getClaim).not.toHaveBeenCalled();
   });

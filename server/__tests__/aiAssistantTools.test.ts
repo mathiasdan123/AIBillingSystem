@@ -101,7 +101,7 @@ describe('get_claim_status', () => {
       totalAmount: '150.00',
     });
 
-    const out = await executeTool('get_claim_status', { claimId: 42 }, PRACTICE_ID, 'user1');
+    const out = await executeTool('get_claim_status', { claimId: 42 }, PRACTICE_ID, 'user1', 'billing');
     const parsed = JSON.parse(out);
 
     expect(parsed.error).toBeDefined();
@@ -112,7 +112,7 @@ describe('get_claim_status', () => {
 
   it('rejects when the claim id is unknown', async () => {
     mockStorage.getClaim.mockResolvedValue(undefined);
-    const out = await executeTool('get_claim_status', { claimId: 99999 }, PRACTICE_ID, 'user1');
+    const out = await executeTool('get_claim_status', { claimId: 99999 }, PRACTICE_ID, 'user1', 'billing');
     expect(JSON.parse(out).error).toMatch(/not found/i);
   });
 });
@@ -125,7 +125,7 @@ describe('create_invoice', () => {
       'create_invoice',
       { patientId: 1, amount: 10001, description: 'oversized invoice' },
       PRACTICE_ID,
-      'user1',
+      'user1', 'billing',
     );
     const parsed = JSON.parse(out);
 
@@ -152,7 +152,7 @@ describe('create_invoice', () => {
       'create_invoice',
       { patientId: 1, amount: 10000, description: 'at cap' },
       PRACTICE_ID,
-      'user1',
+      'user1', 'billing',
     );
     const parsed = JSON.parse(out);
 
@@ -188,7 +188,7 @@ describe('send_patient_payment_link', () => {
       'send_patient_payment_link',
       { patientId: 1, invoiceId: 'pi_outsider' },
       PRACTICE_ID,
-      'user1',
+      'user1', 'billing',
     );
     expect(JSON.parse(out).error).toMatch(/not found for this practice/i);
     expect(mockStripe.createPatientPaymentLink).not.toHaveBeenCalled();
@@ -205,7 +205,7 @@ describe('send_patient_payment_link', () => {
       'send_patient_payment_link',
       { patientId: 1, invoiceId: 'pi_other' },
       PRACTICE_ID,
-      'user1',
+      'user1', 'billing',
     );
     expect(JSON.parse(out).error).toMatch(/not found for this practice/i);
   });
@@ -221,7 +221,7 @@ describe('send_patient_payment_link', () => {
       'send_patient_payment_link',
       { patientId: 1, invoiceId: 'pi_wrongpatient' },
       PRACTICE_ID,
-      'user1',
+      'user1', 'billing',
     );
     expect(JSON.parse(out).error).toMatch(/different patient/i);
   });
@@ -242,7 +242,7 @@ describe('send_patient_payment_link', () => {
       'send_patient_payment_link',
       { patientId: 1, invoiceId: 'pi_ours' },
       PRACTICE_ID,
-      'user1',
+      'user1', 'billing',
     );
     const parsed = JSON.parse(out);
     expect(parsed.success).toBe(true);
