@@ -267,6 +267,13 @@ function runRuleBasedChecks(
   return issues;
 }
 
+const SEVERITY_WEIGHT: Record<DenialPredictionIssue["severity"], number> = {
+  critical: 30,
+  high: 20,
+  medium: 10,
+  low: 5,
+};
+
 /**
  * Calculate a risk score from rule-based issues.
  * Used as a fallback when Claude is not available.
@@ -274,20 +281,7 @@ function runRuleBasedChecks(
 function calculateRuleBasedScore(issues: DenialPredictionIssue[]): number {
   let score = 0;
   for (const issue of issues) {
-    switch (issue.severity) {
-      case "critical":
-        score += 30;
-        break;
-      case "high":
-        score += 20;
-        break;
-      case "medium":
-        score += 10;
-        break;
-      case "low":
-        score += 5;
-        break;
-    }
+    score += SEVERITY_WEIGHT[issue.severity] ?? 0;
   }
   return Math.min(100, score);
 }
@@ -317,6 +311,169 @@ export function buildDateGuidance(now: Date = new Date()): string {
 NEVER suggest changing, correcting, or adjusting a date of service to improve a claim's chances. The date of service records when care actually happened; altering it to get a claim paid is fraud. If a date looks wrong, say to verify it against the clinical record — nothing more.`;
 }
 
+/** The only thing we will ever say about a date that looks wrong. */
+const SAFE_DATE_ADVICE =
+  "Verify the date of service against the clinical record. Do not alter it — the date records when care actually happened.";
+
+/** Text asserting the service date is in the future. */
+const FUTURE_CLAIM = /\b(future[- ]dated|in the future|future date|not yet occurred|has not occurred)\b/i;
+
+/** Text referring to the date of service. */
+const SERVICE_DATE = /\b(date[s]? of service|service date[s]?|DOS)\b/i;
+
+/** "correct the date of service" and its many phrasings, in either word order. */
+const CHANGE_VERB = /\b(correct|change|changing|adjust|adjusting|updat(?:e|ing)|fix(?:ing)?|amend(?:ing)?|modif(?:y|ying)|revis(?:e|ing)|backdat(?:e|ing))\b/i;
+
+/** True if one sentence advises editing the date of service. */
+function advisesDateChange(sentence: string): boolean {
+  if (!SERVICE_DATE.test(sentence)) return false;
+  if (!CHANGE_VERB.test(sentence)) return false;
+  // Both orders occur: "correct the date of service" and "the date of service
+  // should be corrected". Requiring only co-occurrence within one sentence is
+  // deliberately broad — a false positive costs one stripped sentence, a false
+  // negative tells a biller to falsify a treatment record.
+  return true;
+}
+
+/**
+ * Remove the offending clause from one sentence, keeping the rest.
+ *
+ * Granularity matters here. The real recommendation was a single sentence —
+ * "Immediately correct the date of service, add appropriate therapy modifiers
+ * (GP/GO/GN), and obtain comprehensive SOAP documentation" — so dropping the
+ * whole sentence would have thrown away the legitimate advice along with the
+ * unsafe clause. Returns "" when nothing separable survives.
+ */
+function stripDateChangeClauses(sentence: string): string {
+  const clauses = sentence.split(/\s*[,;]\s*/);
+  if (clauses.length < 2) return "";
+  const kept = clauses.filter((c) => !advisesDateChange(c));
+  if (kept.length === 0) return "";
+  let rebuilt = kept.join(", ").replace(/^(and|then|also)\s+/i, "").trim();
+  rebuilt = rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1);
+  return /[.!?]$/.test(rebuilt) ? rebuilt : `${rebuilt}.`;
+}
+
+/** Remove advice to edit the date of service; keep everything else it said. */
+function stripDateChangeAdvice(text: string): { text: string; changed: boolean } {
+  if (!text) return { text, changed: false };
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const kept: string[] = [];
+  let changed = false;
+
+  for (const sentence of sentences) {
+    if (!advisesDateChange(sentence)) {
+      kept.push(sentence);
+      continue;
+    }
+    changed = true;
+    const salvaged = stripDateChangeClauses(sentence);
+    if (salvaged) kept.push(salvaged);
+  }
+
+  if (!changed) return { text, changed: false };
+  const remainder = kept.join(" ").trim();
+  return {
+    text: remainder ? `${remainder} ${SAFE_DATE_ADVICE}` : SAFE_DATE_ADVICE,
+    changed: true,
+  };
+}
+
+/** A date-ish value reduced to YYYY-MM-DD, or null if unparseable. */
+function toIsoDay(value: string): string | null {
+  const direct = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (direct) return direct[1];
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().split("T")[0];
+}
+
+/**
+ * Deterministic guard over the model's output.
+ *
+ * #321 told the model today's date and forbade date-change advice, but that is
+ * a prompt — nothing checked what came back. Two guarantees are too important
+ * to leave to instruction-following, so they are enforced here on the result:
+ *
+ *  1. A date of service that is NOT in the future is never reported as one.
+ *     The model, reasoning from its training cutoff, called a date 107 days
+ *     past "in the future, which is invalid" and marked it CRITICAL — burying
+ *     the real timely-filing risk underneath it.
+ *  2. Nothing ever advises changing, correcting, or adjusting a date of
+ *     service. On a real claim that is an instruction to falsify when
+ *     treatment happened. This one is unconditional: it holds even when the
+ *     date genuinely IS in the future.
+ *
+ * Dropping a fabricated issue also removes its contribution to the score, so
+ * the risk level reflects what is actually left. The surviving rule-based
+ * score is a floor — sanitizing must not talk a genuinely risky claim down.
+ *
+ * Exported for testing: this asserts on the OUTPUT, which is what the prompt
+ * fix could not.
+ */
+export function sanitizeDateAdvice(
+  result: DenialPredictionResult,
+  lineItems: Pick<LineItemInput, "dateOfService">[],
+  now: Date = new Date()
+): DenialPredictionResult {
+  const today = now.toISOString().split("T")[0];
+  const serviceDays = (lineItems || [])
+    .map((li) => (li.dateOfService ? toIsoDay(li.dateOfService) : null))
+    .filter((d): d is string => !!d);
+  // String comparison is safe on YYYY-MM-DD and sidesteps timezone drift.
+  const hasFutureService = serviceDays.some((d) => d > today);
+
+  const dropped: DenialPredictionIssue[] = [];
+  const issues: DenialPredictionIssue[] = [];
+  let strippedSuggestions = 0;
+
+  for (const issue of result.issues || []) {
+    const claimsFuture =
+      FUTURE_CLAIM.test(`${issue.category} ${issue.description}`) &&
+      SERVICE_DATE.test(`${issue.category} ${issue.description}`);
+
+    // Only a fabrication if no service date is actually in the future. When a
+    // date really is future-dated the finding is legitimate and stays.
+    if (claimsFuture && !hasFutureService && serviceDays.length > 0) {
+      dropped.push(issue);
+      continue;
+    }
+
+    const suggestion = stripDateChangeAdvice(issue.suggestion || "");
+    if (suggestion.changed) strippedSuggestions++;
+    issues.push(suggestion.changed ? { ...issue, suggestion: suggestion.text } : issue);
+  }
+
+  const recommendation = stripDateChangeAdvice(result.overallRecommendation || "");
+
+  if (dropped.length === 0 && strippedSuggestions === 0 && !recommendation.changed) {
+    return result;
+  }
+
+  // Re-score: remove what the dropped issues contributed, but never fall below
+  // the risk the surviving rule-based findings justify on their own.
+  const droppedWeight = dropped.reduce((sum, i) => sum + (SEVERITY_WEIGHT[i.severity] ?? 0), 0);
+  const floor = Math.min(calculateRuleBasedScore(issues), result.riskScore);
+  const riskScore = Math.max(0, Math.min(100, Math.max(result.riskScore - droppedWeight, floor)));
+
+  // A signal that the model regressed against its own instructions. Counts
+  // only — issue text can quote claim data.
+  logger.warn("Denial prediction output failed date guardrails; sanitized", {
+    droppedFutureDateIssues: dropped.length,
+    strippedSuggestions,
+    strippedOverallRecommendation: recommendation.changed,
+    riskScoreBefore: result.riskScore,
+    riskScoreAfter: riskScore,
+  });
+
+  return {
+    ...result,
+    riskScore,
+    riskLevel: getRiskLevel(riskScore),
+    issues,
+    overallRecommendation: recommendation.text,
+  };
+}
+
 /**
  * Predict whether a claim will be denied before submission.
  * Uses rule-based checks plus Claude analysis when available.
@@ -337,16 +494,19 @@ export async function predictDenial(
     // Fallback to rule-based only
     const riskScore = calculateRuleBasedScore(ruleIssues);
     const riskLevel = getRiskLevel(riskScore);
-    return {
-      riskScore,
-      riskLevel,
-      issues: ruleIssues,
-      overallRecommendation:
-        ruleIssues.length === 0
-          ? "No obvious denial risks detected based on rule checks. AI analysis unavailable."
-          : `Found ${ruleIssues.length} potential issue(s) through rule-based analysis. Configure OPENAI_API_KEY for deeper AI analysis.`,
-      analyzedAt: new Date().toISOString(),
-    };
+    return sanitizeDateAdvice(
+      {
+        riskScore,
+        riskLevel,
+        issues: ruleIssues,
+        overallRecommendation:
+          ruleIssues.length === 0
+            ? "No obvious denial risks detected based on rule checks. AI analysis unavailable."
+            : `Found ${ruleIssues.length} potential issue(s) through rule-based analysis. Configure OPENAI_API_KEY for deeper AI analysis.`,
+        analyzedAt: new Date().toISOString(),
+      },
+      lineItems
+    );
   }
 
   // Build context for AI
@@ -485,15 +645,18 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
     );
     const riskLevel = getRiskLevel(riskScore);
 
-    return {
-      riskScore,
-      riskLevel,
-      issues: allIssues,
-      overallRecommendation:
-        String(aiResult.overallRecommendation || "") ||
-        `Claim analyzed with ${allIssues.length} issue(s) found.`,
-      analyzedAt: new Date().toISOString(),
-    };
+    return sanitizeDateAdvice(
+      {
+        riskScore,
+        riskLevel,
+        issues: allIssues,
+        overallRecommendation:
+          String(aiResult.overallRecommendation || "") ||
+          `Claim analyzed with ${allIssues.length} issue(s) found.`,
+        analyzedAt: new Date().toISOString(),
+      },
+      lineItems
+    );
   } catch (error) {
     logger.error("AI denial prediction failed, using rule-based fallback", {
       error: error instanceof Error ? error.message : String(error),
@@ -502,15 +665,18 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
     // Fallback to rule-based
     const riskScore = calculateRuleBasedScore(ruleIssues);
     const riskLevel = getRiskLevel(riskScore);
-    return {
-      riskScore,
-      riskLevel,
-      issues: ruleIssues,
-      overallRecommendation:
-        ruleIssues.length === 0
-          ? "No obvious denial risks detected. AI-enhanced analysis was unavailable."
-          : `Found ${ruleIssues.length} potential issue(s). AI-enhanced analysis was unavailable due to an error.`,
-      analyzedAt: new Date().toISOString(),
-    };
+    return sanitizeDateAdvice(
+      {
+        riskScore,
+        riskLevel,
+        issues: ruleIssues,
+        overallRecommendation:
+          ruleIssues.length === 0
+            ? "No obvious denial risks detected. AI-enhanced analysis was unavailable."
+            : `Found ${ruleIssues.length} potential issue(s). AI-enhanced analysis was unavailable due to an error.`,
+        analyzedAt: new Date().toISOString(),
+      },
+      lineItems
+    );
   }
 }

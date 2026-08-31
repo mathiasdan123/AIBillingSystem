@@ -383,3 +383,135 @@ describe('denial-prediction date guidance', () => {
     expect(buildDateGuidance(new Date('2027-01-15T00:00:00Z'))).toContain('2027-01-15');
   });
 });
+
+/**
+ * The prompt guidance above is an instruction, and nothing checked whether the
+ * model followed it. These assert on the OUTPUT — the claim 46 prediction,
+ * reproduced as it was shown to the biller, must not survive the guard.
+ */
+describe('denial-prediction date guardrails (output)', () => {
+  const NOW = new Date('2026-08-27T12:00:00Z');
+  const PAST_DOS = [{ dateOfService: '2026-05-12' }]; // 107 days before NOW
+
+  function claim46Result() {
+    return {
+      riskScore: 72,
+      riskLevel: 'high' as const,
+      issues: [
+        {
+          category: 'Future Date of Service',
+          description:
+            'The date of service (2026-05-12) is in the future, which is invalid. This appears to be a data entry error and will cause automatic claim rejection.',
+          suggestion: 'Correct the date of service to a valid past date and resubmit immediately.',
+          severity: 'critical' as const,
+        },
+        {
+          category: 'Missing Modifier',
+          description: 'CPT 97110 may require a discipline modifier (GP/GO/GN)',
+          suggestion: 'Add the appropriate therapy modifier.',
+          severity: 'medium' as const,
+        },
+        {
+          category: 'Documentation',
+          description: "No SOAP note found for this claim's session",
+          suggestion: 'Attach a detailed SOAP note before submitting.',
+          severity: 'high' as const,
+        },
+      ],
+      overallRecommendation:
+        'This claim has critical issues that will result in denial if submitted as-is. Immediately correct the date of service, add appropriate therapy modifiers (GP/GO/GN), and obtain comprehensive SOAP documentation before resubmission.',
+      analyzedAt: '2026-08-27T15:00:00.000Z',
+    };
+  }
+
+  it('drops a future-date finding when the date of service is actually past', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    const result = sanitizeDateAdvice(claim46Result(), PAST_DOS, NOW);
+
+    expect(result.issues.find((i) => /future/i.test(i.category))).toBeUndefined();
+    expect(JSON.stringify(result)).not.toMatch(/in the future/i);
+    // The genuine findings survive.
+    expect(result.issues.map((i) => i.category)).toEqual(['Missing Modifier', 'Documentation']);
+  });
+
+  it('never tells a biller to change a date of service', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    const result = sanitizeDateAdvice(claim46Result(), PAST_DOS, NOW);
+
+    const allText = [result.overallRecommendation, ...result.issues.map((i) => i.suggestion)].join(' ');
+    expect(allText).not.toMatch(/correct the date of service/i);
+    expect(result.overallRecommendation).toMatch(/add appropriate therapy modifiers/i);
+  });
+
+  it('strips date-change advice even when the date really is in the future', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    const future = [{ dateOfService: '2026-12-01' }];
+    const result = sanitizeDateAdvice(claim46Result(), future, NOW);
+
+    // A genuinely future-dated service is a real finding — it stays.
+    expect(result.issues.find((i) => /future/i.test(i.category))).toBeDefined();
+    // But the fraud-shaped instruction does not.
+    const allText = [result.overallRecommendation, ...result.issues.map((i) => i.suggestion)].join(' ');
+    expect(allText).not.toMatch(/correct the date of service/i);
+    expect(allText).toMatch(/verify the date of service against the clinical record/i);
+    expect(allText).toMatch(/do not alter it/i);
+  });
+
+  it('re-scores once the fabricated issue is gone, without dropping below real risk', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    const result = sanitizeDateAdvice(claim46Result(), PAST_DOS, NOW);
+
+    // 72 minus the critical's 30-point contribution.
+    expect(result.riskScore).toBe(42);
+    expect(result.riskLevel).toBe('medium');
+  });
+
+  it('holds the floor when the surviving findings outweigh the deduction', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    const base = claim46Result();
+    base.riskScore = 55; // model under-scored relative to its own issue list
+    const result = sanitizeDateAdvice(base, PAST_DOS, NOW);
+
+    // 55 - 30 = 25, but the surviving issues are worth 30 on the rule scale.
+    expect(result.riskScore).toBe(30);
+  });
+
+  it('leaves a clean prediction untouched', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    const clean = {
+      riskScore: 20,
+      riskLevel: 'low' as const,
+      issues: [
+        {
+          category: 'Missing Modifier',
+          description: 'CPT 97110 may require a discipline modifier',
+          suggestion: 'Add the appropriate therapy modifier.',
+          severity: 'medium' as const,
+        },
+      ],
+      overallRecommendation: 'Low risk. Add the modifier and submit.',
+      analyzedAt: '2026-08-27T15:00:00.000Z',
+    };
+    expect(sanitizeDateAdvice(clean, PAST_DOS, NOW)).toBe(clean);
+  });
+
+  it('does not judge a future-date claim when no date of service is recorded', async () => {
+    const { sanitizeDateAdvice } = await import('../services/aiDenialPredictor');
+    // With no date to check against, the finding is not demonstrably false —
+    // keep it rather than hide a possible real error.
+    const result = sanitizeDateAdvice(claim46Result(), [], NOW);
+    expect(result.issues.find((i) => /future/i.test(i.category))).toBeDefined();
+  });
+
+  it('runs on the full prediction path, not just in isolation', async () => {
+    // No API key in tests, so this exercises the rule-based fallback return —
+    // proving the guard is wired into predictDenial, not merely exported.
+    const result = await predictDenial(
+      makeClaim(),
+      [makeLineItem({ dateOfService: '2026-05-12' })],
+      makeSoapNote(),
+      makePatient()
+    );
+    expect(JSON.stringify(result)).not.toMatch(/correct the date of service/i);
+  });
+});
