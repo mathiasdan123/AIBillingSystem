@@ -66,7 +66,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
     mockStorage.getPatient.mockResolvedValue({ id: PATIENT_ID, firstName: 'Sarah', lastName: 'Chen' });
     mockStorage.getAppointmentType.mockResolvedValue({ id: APPT_TYPE_ID, price: '175.00', name: 'OT Eval' });
     const out = JSON.parse(
-      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.success).toBe(true);
     expect(out.invoice.amount).toBe('175.00');
@@ -86,7 +86,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
     await executeTool(
       'create_appointment_self_pay_invoice',
       { appointmentId: APPT_ID, amount: 200, description: 'Custom desc' },
-      PRACTICE_ID, USER_ID,
+      PRACTICE_ID, USER_ID, 'billing',
     );
     const call = mockCreatePatientPaymentLink.mock.calls[0][0];
     expect(call.amount).toBe(20000); // cents
@@ -99,7 +99,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
     mockStorage.getPatient.mockResolvedValue({ id: PATIENT_ID, firstName: 'S', lastName: 'C' });
     mockStorage.getAppointmentType.mockResolvedValue({ id: APPT_TYPE_ID, price: null });
     const out = JSON.parse(
-      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.error).toMatch(/could not determine.*amount/i);
     expect(mockCreatePatientPaymentLink).not.toHaveBeenCalled();
@@ -112,7 +112,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
       await executeTool(
         'create_appointment_self_pay_invoice',
         { appointmentId: APPT_ID, amount: 15000 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/10,000/);
@@ -122,7 +122,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
   it('rejects cross-practice appointment (tenant guard)', async () => {
     mockStorage.getAppointment.mockResolvedValue(goodAppointment({ practiceId: OTHER_PRACTICE }));
     const out = JSON.parse(
-      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID, amount: 100 }, PRACTICE_ID, USER_ID),
+      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID, amount: 100 }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.error).toMatch(/not in this practice/i);
     expect(mockCreatePatientPaymentLink).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
   it('rejects unknown appointment id', async () => {
     mockStorage.getAppointment.mockResolvedValue(undefined);
     const out = JSON.parse(
-      await executeTool('create_appointment_self_pay_invoice', { appointmentId: 999999, amount: 100 }, PRACTICE_ID, USER_ID),
+      await executeTool('create_appointment_self_pay_invoice', { appointmentId: 999999, amount: 100 }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.error).toMatch(/not found/i);
     expect(mockCreatePatientPaymentLink).not.toHaveBeenCalled();
@@ -140,7 +140,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
   it('rejects appointment with no associated patient', async () => {
     mockStorage.getAppointment.mockResolvedValue(goodAppointment({ patientId: null }));
     const out = JSON.parse(
-      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID, amount: 100 }, PRACTICE_ID, USER_ID),
+      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID, amount: 100 }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.error).toMatch(/no associated patient/i);
     expect(mockCreatePatientPaymentLink).not.toHaveBeenCalled();
@@ -149,7 +149,7 @@ describe('create_appointment_self_pay_invoice tool', () => {
   it('returns a clear error when Stripe is not configured', async () => {
     mockStripe.isStripeConfigured.mockReturnValue(false);
     const out = JSON.parse(
-      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('create_appointment_self_pay_invoice', { appointmentId: APPT_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.error).toMatch(/stripe is not configured/i);
     expect(mockStorage.getAppointment).not.toHaveBeenCalled();

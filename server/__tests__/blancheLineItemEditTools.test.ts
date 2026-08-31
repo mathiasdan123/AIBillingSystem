@@ -69,7 +69,7 @@ describe('get_claim_line_items', () => {
   it('returns each line with its id so it can be targeted', async () => {
     mockStorage.getClaimLineItems.mockResolvedValue([lineRow()]);
     const out = JSON.parse(
-      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.lineItems).toHaveLength(1);
     expect(out.lineItems[0]).toMatchObject({ lineItemId: LINE_ID, cptCode: '97530', units: 2 });
@@ -81,7 +81,7 @@ describe('get_claim_line_items', () => {
       lineRow({ rate: '325.00', standardRate: '289.00', rateOverrideReason: 'Extended' }),
     ]);
     const out = JSON.parse(
-      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.lineItems[0].billedOffFeeSchedule).toBe(true);
     expect(out.lineItems[0].standardRate).toBe('289.00');
@@ -91,7 +91,7 @@ describe('get_claim_line_items', () => {
     mockStorage.getClaim.mockResolvedValue(draftClaim({ status: 'submitted' }));
     mockStorage.getClaimLineItems.mockResolvedValue([lineRow()]);
     const out = JSON.parse(
-      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.editable).toBe(false);
   });
@@ -99,7 +99,7 @@ describe('get_claim_line_items', () => {
   it('refuses a cross-practice claim', async () => {
     mockStorage.getClaim.mockResolvedValue(draftClaim({ practiceId: 99 }));
     const out = JSON.parse(
-      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID),
+      await executeTool('get_claim_line_items', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID, 'billing'),
     );
     expect(out.error).toMatch(/not in this practice/i);
   });
@@ -111,7 +111,7 @@ describe('update_claim_line_item', () => {
       await executeTool(
         'update_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, cptCode: '97530', units: 3 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.success).toBe(true);
@@ -126,7 +126,7 @@ describe('update_claim_line_item', () => {
       await executeTool(
         'update_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, cptCode: '97110', units: 3 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/is CPT 97530, but you said 97110/i);
@@ -138,7 +138,7 @@ describe('update_claim_line_item', () => {
     await executeTool(
       'update_claim_line_item',
       { claimId: CLAIM_ID, lineItemId: LINE_ID, rate: 325.5, rateOverrideReason: 'Extended session' },
-      PRACTICE_ID, USER_ID,
+      PRACTICE_ID, USER_ID, 'billing',
     );
     expect(mockStorage.updateClaimLineItem).toHaveBeenCalledWith(
       LINE_ID,
@@ -153,7 +153,7 @@ describe('update_claim_line_item', () => {
     await executeTool(
       'update_claim_line_item',
       { claimId: CLAIM_ID, lineItemId: LINE_ID, rate: null },
-      PRACTICE_ID, USER_ID,
+      PRACTICE_ID, USER_ID, 'billing',
     );
     expect(mockStorage.updateClaimLineItem).toHaveBeenCalledWith(
       LINE_ID,
@@ -170,7 +170,7 @@ describe('update_claim_line_item', () => {
       await executeTool(
         'update_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, units },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/whole number/i);
@@ -183,7 +183,7 @@ describe('update_claim_line_item', () => {
       await executeTool(
         'update_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, units: 3 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/only draft claims/i);
@@ -197,7 +197,7 @@ describe('update_claim_line_item', () => {
       await executeTool(
         'update_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, units: 3 },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/is not on claim/i);
@@ -206,7 +206,7 @@ describe('update_claim_line_item', () => {
   it('requires a numeric lineItemId and says where to get one', async () => {
     const out = JSON.parse(
       await executeTool(
-        'update_claim_line_item', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID,
+        'update_claim_line_item', { claimId: CLAIM_ID }, PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/get_claim_line_items/);
@@ -221,7 +221,7 @@ describe('delete_claim_line_item', () => {
       await executeTool(
         'delete_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, cptCode: '97530' },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.success).toBe(true);
@@ -234,7 +234,7 @@ describe('delete_claim_line_item', () => {
       await executeTool(
         'delete_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID, cptCode: '97110' },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/is CPT 97530, but you said 97110/i);
@@ -247,7 +247,7 @@ describe('delete_claim_line_item', () => {
       await executeTool(
         'delete_claim_line_item',
         { claimId: CLAIM_ID, lineItemId: LINE_ID },
-        PRACTICE_ID, USER_ID,
+        PRACTICE_ID, USER_ID, 'billing',
       ),
     );
     expect(out.error).toMatch(/only draft claims/i);

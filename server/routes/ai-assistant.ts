@@ -1946,9 +1946,42 @@ const assistantTools: Anthropic.Tool[] = [
 export { sanitizeExternalError, sanitizeExternalErrors } from '../services/errorSanitizer';
 import { sanitizeExternalError, sanitizeExternalErrors } from '../services/errorSanitizer';
 import { runBulkEligibility } from '../services/bulkEligibilityService';
+import {
+  canUseTool,
+  financialToolDenial,
+  redactRateFields,
+  toolsForRole,
+} from '../services/assistantToolAccess';
 
-// Execute tool calls against the database
+/**
+ * Execute a tool call, enforcing the caller's role.
+ *
+ * The check lives here rather than only at the call sites so a future caller
+ * cannot reach a money tool by forgetting the filter, and it fails closed: an
+ * absent role gets the clinical tool set, not the financial one.
+ */
 export async function executeTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  practiceId: number,
+  userId?: string,
+  userRole?: string | null,
+): Promise<string> {
+  if (!canUseTool(toolName, userRole)) {
+    logger.warn('Blanche financial tool blocked for role', {
+      toolName,
+      userRole: userRole ?? 'unknown',
+    });
+    return financialToolDenial(toolName);
+  }
+  const result = await executeToolForPractice(toolName, args, practiceId, userId);
+  // Tools a therapist still needs, whose output carries a price (list_cpt_codes).
+  return redactRateFields(toolName, result, userRole);
+}
+
+// Execute tool calls against the database. Role enforcement happens in
+// executeTool above — do not call this directly from a request path.
+async function executeToolForPractice(
   toolName: string,
   args: Record<string, unknown>,
   practiceId: number,
@@ -5455,7 +5488,10 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
         model,
         system: systemPrompt,
         messages,
-        tools: assistantTools,
+        // Filtered by role: a tool Blanche can see is a tool she will offer,
+        // and "I can pull that up" followed by a refusal is worse than never
+        // offering. Enforcement still happens in executeTool.
+        tools: toolsForRole(assistantTools, userRole),
         max_tokens: 1500,
         temperature: 0.4,
       };
@@ -5573,7 +5609,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
             continue;
           }
 
-          const toolResult = await executeTool(block.name, args, practiceId, userId);
+          const toolResult = await executeTool(block.name, args, practiceId, userId, userRole);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -5886,6 +5922,7 @@ router.post('/confirm-tool', isAuthenticated, async (req: any, res: Response) =>
       proposal.args,
       context.practiceId,
       context.userId,
+      context.role,
     );
 
     let parsedResult: unknown = toolResultJson;
