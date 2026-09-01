@@ -1,0 +1,165 @@
+name: Deploy Drift Check
+
+# Catches the failure mode where a fix is merged, everyone assumes it shipped,
+# and it silently never reached production. PR #314 sat green-but-unmerged for
+# four days and was only noticed by a monitor, not by a person.
+#
+# This lives in Actions rather than a Claude routine because the check needs
+# BOTH sides at once: the deployed SHA from the production health endpoint and
+# main's HEAD from the GitHub API. A cloud routine sandbox cannot reach
+# app.therapybillai.com (egress policy), so it can only ever guess at one half.
+
+on:
+  schedule:
+    # 13:00 UTC = 9 AM ET. Late enough that an overnight merge has had time to
+    # deploy (~14 min), early enough to matter before the working day.
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-drift.yml'
+
+env:
+  PROD_URL: https://app.therapybillai.com
+  # A merge is not "drift" until it has had time to deploy. Deploys take
+  # ~13-14 min (MEDIUM CodeBuild) plus the migration task, so anything younger
+  # than this is probably just in flight.
+  GRACE_MINUTES: 60
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare deployed SHA against main
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          deployed=$(curl -s --max-time 30 "$PROD_URL/api/health" | jq -r '.release // "unknown"')
+          main_head=$(gh api repos/${{ github.repository }}/commits/main --jq .sha)
+          echo "deployed=$deployed"
+          echo "main_head=$main_head"
+
+          # Legacy builds from before SHA plumbing landed report "unknown".
+          # Note it, do not alarm — the next SHA-tagged deploy fixes it.
+          if [ "$deployed" = "unknown" ] || [ -z "$deployed" ]; then
+            echo "::notice::Deployed SHA is \"unknown\" (legacy build). Cannot compare; not alarming."
+            echo "drift=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$deployed" = "$main_head" ]; then
+            echo "✅ In sync at ${deployed:0:7}"
+            echo "drift=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Ask GitHub how far main is ahead of what is deployed.
+          comparison=$(gh api "repos/${{ github.repository }}/compare/${deployed}...${main_head}")
+          ahead=$(printf '%s' "$comparison" | jq -r '.ahead_by')
+          behind=$(printf '%s' "$comparison" | jq -r '.behind_by')
+
+          if [ "$behind" -gt 0 ]; then
+            echo "::warning::Production is serving ${deployed:0:7}, which is $behind commit(s) AHEAD of main. That should not happen — a force-push or a deploy from a non-main ref."
+          fi
+
+          if [ "$ahead" -eq 0 ]; then
+            echo "✅ No undeployed commits on main"
+            echo "drift=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Age of the OLDEST undeployed commit is the real signal: one commit
+          # from four minutes ago is a deploy in flight, one from four days ago
+          # is a problem.
+          oldest_iso=$(printf '%s' "$comparison" | jq -r '.commits[0].commit.author.date')
+          oldest_epoch=$(date -u -d "$oldest_iso" +%s)
+          now_epoch=$(date -u +%s)
+          age_min=$(( (now_epoch - oldest_epoch) / 60 ))
+          echo "oldest undeployed commit is ${age_min}m old (grace ${GRACE_MINUTES}m)"
+
+          {
+            echo "ahead=$ahead"
+            echo "age_min=$age_min"
+            echo "deployed_short=${deployed:0:7}"
+            echo "main_short=${main_head:0:7}"
+          } >> "$GITHUB_OUTPUT"
+
+          printf '%s' "$comparison" | jq -r '.commits[] | "- `\(.sha[0:7])` \(.commit.message | split("\n")[0]) — \(.commit.author.date)"' > undeployed.md
+          cat undeployed.md
+
+          if [ "$age_min" -lt "$GRACE_MINUTES" ]; then
+            echo "::notice::$ahead commit(s) undeployed but the oldest is only ${age_min}m old — likely a deploy in flight. Not alarming."
+            echo "drift=grace" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report drift
+        if: steps.compare.outputs.drift == 'yes'
+        uses: actions/github-script@v7
+        env:
+          AHEAD: ${{ steps.compare.outputs.ahead }}
+          AGE_MIN: ${{ steps.compare.outputs.age_min }}
+          DEPLOYED: ${{ steps.compare.outputs.deployed_short }}
+          MAIN: ${{ steps.compare.outputs.main_short }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { AHEAD, AGE_MIN, DEPLOYED, MAIN } = process.env;
+            const ageHours = Math.floor(Number(AGE_MIN) / 60);
+            const commits = fs.readFileSync('undeployed.md', 'utf8');
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const body = [
+              `**Production is serving \`${DEPLOYED}\`. Main is at \`${MAIN}\`.**`,
+              ``,
+              `${AHEAD} commit(s) merged but never deployed. The oldest is **${ageHours}h old**.`,
+              ``,
+              `### Undeployed commits`,
+              commits,
+              ``,
+              `### What to check`,
+              `- Did the **Deploy to Production** workflow fail or never fire?`,
+              `- Did the migration task exit non-zero? That halts the workflow and leaves old tasks serving.`,
+              `- Is a PR stuck with auto-merge cleared (unresolved review thread, or a force-push)?`,
+              ``,
+              `[Workflow run](${runUrl})`,
+            ].join('\n');
+
+            const label = 'deploy-drift';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+
+            // Never go silent because an old issue is still open: comment on it
+            // instead. A stale open issue must not suppress today's signal.
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `### Still drifting — ${new Date().toISOString()}\n\n${body}`,
+              });
+              core.setFailed(`Deploy drift: ${AHEAD} commit(s) undeployed, oldest ${ageHours}h. Commented on #${existing.data[0].number}.`);
+              return;
+            }
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚚 Deploy drift: ${AHEAD} commit(s) merged but not deployed`,
+              body,
+              labels: [label],
+            });
+            core.setFailed(`Deploy drift: ${AHEAD} commit(s) undeployed, oldest ${ageHours}h. Opened #${issue.data.number}.`);

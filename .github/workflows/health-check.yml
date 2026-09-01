@@ -127,7 +127,19 @@ jobs:
               labels: 'production-alert'
             });
 
-            if (issues.data.length === 0) {
+            // A stale open issue must never suppress today's alert. This
+            // previously did nothing at all when any production-alert issue
+            // was open — #138 sat open from 2026-05-20, so every failure
+            // after that date would have created no issue and told no one.
+            // Comment on the existing one instead of going silent.
+            if (issues.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: `### Health check failed again — ${new Date().toISOString()}\n\n${body}`
+              });
+            } else {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
