@@ -16,6 +16,10 @@
  *     practice's dashboard — and keeping the rows non-demo means the demo
  *     practice's OWN dashboard shows realistic numbers (row-level isDemo would
  *     be filtered out of every analytics query, leaving the demo empty).
+ *     This is an invariant, not a default: no row inside a demo practice may
+ *     carry isDemo=true. Blanche's demo-tagging tools refuse to run here (see
+ *     ai-assistant.ts), and repairDemoRowFlags() below clears any that slipped
+ *     through before that guard existed.
  *
  * ensureDemoPractice() is idempotent: it creates the practice + a representative
  * dataset once, then returns the existing one on every later call.
@@ -69,6 +73,52 @@ function isoDate(offsetDays: number): string {
 const DEMO_DEFAULT_TREATMENT_RATE = '100.00';
 const CATALOG_TREATMENT_RATE = '289.00';
 
+/**
+ * Repair row-level demo flags inside the demo practice.
+ *
+ * The isolation model (see module header) is practice-level: `practices.isDemo`
+ * marks the sandbox, and its rows stay `isDemo = false` so the demo practice's
+ * own dashboard has data. Every analytics aggregate filters out row-level demo
+ * rows, so a flagged row inside the demo practice is invisible — flag them all
+ * and the demo shows zeros.
+ *
+ * That is exactly what happened in production: the seeded patients are named
+ * "Ava Sample", "Liam Demo", "Mia Example" with @example.com addresses, which
+ * makes them a perfect match for find_legacy_demo_candidates' telltales, and
+ * mark_patients_as_demo cascaded the flag to their appointments and claims. The
+ * demo dashboard read $0 / 0 claims and Blanche opened prospect demos with "no
+ * patients added yet". The tool now refuses to run inside a demo practice; this
+ * repairs the rows it already flagged.
+ *
+ * Runs on every ensureDemoPractice call so production self-heals on the next
+ * demo login, and is a no-op once applied.
+ */
+async function repairDemoRowFlags(practiceId: number): Promise<void> {
+  try {
+    const pool = await getPool();
+    let repaired = 0;
+    for (const table of ['patients', 'appointments', 'claims'] as const) {
+      const result = await pool.query(
+        `UPDATE ${table} SET is_demo = false WHERE practice_id = $1 AND is_demo = true`,
+        [practiceId],
+      );
+      repaired += result.rowCount ?? 0;
+    }
+    if (repaired) {
+      logger.info('Demo practice row-level demo flags cleared', {
+        practiceId,
+        repaired,
+      });
+    }
+  } catch (error) {
+    // Never block a demo login over it — the next call retries.
+    logger.warn('Could not repair demo practice row flags', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function normalizeDemoRates(practiceId: number): Promise<void> {
   try {
     const pool = await getPool();
@@ -102,6 +152,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
     const patients = await storage.getPatients(existing.id);
     if (patients.length > 0) {
       await normalizeDemoRates(existing.id);
+      await repairDemoRowFlags(existing.id);
       return existing;
     }
   }
@@ -141,6 +192,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
     }
 
     await normalizeDemoRates(practice.id);
+    await repairDemoRowFlags(practice.id);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.

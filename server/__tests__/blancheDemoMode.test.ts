@@ -4,7 +4,11 @@ vi.mock('../db', () => ({ db: {} }));
 vi.mock('../storage', () => ({ storage: {} }));
 vi.mock('../services/aiLearningService', () => ({}));
 
-import { rejectIfDemoData, summarizeProposal } from '../routes/ai-assistant';
+import {
+  rejectIfDemoData,
+  rejectDemoTaggingInDemoPractice,
+  summarizeProposal,
+} from '../routes/ai-assistant';
 
 /**
  * Phase 5 — demo / practice mode.
@@ -39,6 +43,34 @@ describe('rejectIfDemoData', () => {
     expect(patient.error).toContain('demo patient');
     expect(claim.error).toContain('demo claim');
     expect(appointment.error).toContain('demo appointment');
+  });
+});
+
+describe('rejectDemoTaggingInDemoPractice', () => {
+  it('lets a real practice tag its own legacy demo rows', () => {
+    expect(rejectDemoTaggingInDemoPractice({ isDemo: false }, 'mark_patients_as_demo')).toBeNull();
+    expect(rejectDemoTaggingInDemoPractice({}, 'mark_patients_as_demo')).toBeNull();
+    expect(rejectDemoTaggingInDemoPractice(null, 'enable_demo_mode')).toBeNull();
+    expect(rejectDemoTaggingInDemoPractice(undefined, 'find_legacy_demo_candidates')).toBeNull();
+  });
+
+  it('refuses inside the demo practice, naming the tool that was refused', () => {
+    const raw = rejectDemoTaggingInDemoPractice({ isDemo: true }, 'mark_patients_as_demo');
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw!);
+    expect(parsed.code).toBe('demo_practice_tagging_refused');
+    expect(parsed.error).toContain('mark_patients_as_demo');
+    // Explains WHY, so Blanche relays the reason instead of guessing.
+    expect(parsed.error).toMatch(/already demo data/i);
+    expect(parsed.error).toMatch(/leave the demo empty/i);
+  });
+
+  it('refuses each of the three tagging entry points', () => {
+    for (const tool of ['enable_demo_mode', 'find_legacy_demo_candidates', 'mark_patients_as_demo']) {
+      const parsed = JSON.parse(rejectDemoTaggingInDemoPractice({ isDemo: true }, tool)!);
+      expect(parsed.code).toBe('demo_practice_tagging_refused');
+      expect(parsed.error).toContain(tool);
+    }
   });
 });
 

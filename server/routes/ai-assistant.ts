@@ -483,6 +483,38 @@ export function rejectIfDemoData(
   return null;
 }
 
+/**
+ * Guard the inverse case: row-level demo tagging inside the DEMO practice.
+ *
+ * Isolation there is practice-level (`practices.isDemo`), and its rows are
+ * deliberately isDemo=false so the sandbox's own dashboard has numbers — see
+ * the header of services/demoPractice.ts. Since every analytics aggregate
+ * filters row-level demo rows out, tagging rows inside the demo practice makes
+ * them invisible and empties the very demo they exist to power.
+ *
+ * This is not hypothetical. The seeded demo patients ("Ava Sample", "Liam
+ * Demo", "Mia Example", @example.com addresses) match every telltale
+ * find_legacy_demo_candidates looks for, so it offered them up and
+ * mark_patients_as_demo cascaded the flag to their appointments and claims.
+ * The production demo dashboard read $0 with 0 claims, and Blanche greeted
+ * prospects with "no patients added yet" while the Patients page showed six.
+ *
+ * Returns a JSON-stringified refusal ready to return from a tool executor, or
+ * null when the caller should proceed. unmark_demo_patients is deliberately
+ * NOT guarded — it is the manual repair path.
+ */
+export function rejectDemoTaggingInDemoPractice(
+  practice: { isDemo?: boolean } | null | undefined,
+  toolName: string,
+): string | null {
+  if (!practice?.isDemo) return null;
+  return JSON.stringify({
+    error:
+      `This practice IS the demo sandbox, so ${toolName} doesn't apply here. Everything in it is already demo data — isolation is at the practice level, and its records are kept un-tagged on purpose so this practice's own dashboard, claims, and revenue show realistic numbers. Tagging them would hide them from every analytics view and leave the demo empty.`,
+    code: 'demo_practice_tagging_refused',
+  });
+}
+
 // Test-only access. Internal; do not import from runtime code.
 // `seed` is sync for test convenience because Redis is never available in
 // vitest — it goes straight to the in-memory Map fallback.
@@ -859,6 +891,8 @@ After you've helped them walk through the workflow on the demo data and they're 
 Demo and real data live side-by-side — they can't be confused because every demo row has a yellow "DEMO" badge in the UI, is excluded from analytics, and refuses to be sent or submitted. That's the whole demo-mode safety story.
 
 If a user mentions they have OLD test/demo/seed patients from before demo mode existed (or they want to use existing patients as "showcase data" when demoing the product to prospects), use find_legacy_demo_candidates to spot them by their telltales (@example.* email domains, 555 area codes, DEMO/TEST/SAMPLE in name). Show the list to the user, let THEM pick which IDs to mark, then call mark_patients_as_demo with the chosen IDs. The mark cascades to those patients' appointments and claims so the firewall stays consistent. If the user accidentally marks the wrong patient, unmark_demo_patients undoes it cleanly.
+
+None of this applies inside the DEMO practice itself (the "Try Free Demo" sandbox). There, isolation is at the practice level and the records are deliberately left un-tagged so the demo's own dashboard shows real-looking numbers — its patients only LOOK like legacy demo data because they're named Sample/Demo/Example. enable_demo_mode, find_legacy_demo_candidates, and mark_patients_as_demo all refuse there. Don't offer them; if the user asks for demo data, tell them they're already in it.
 
 ## Action Confirmation — STRICT RULES (read carefully)
 
@@ -2401,6 +2435,14 @@ async function executeToolForPractice(
         // feel substantial (revenue cycle, appeals, Front Desk activity, mix
         // of claim states). All rows carry isDemo=true → analytics excludes
         // them, submission/sending paths refuse them, DEMO badge in UI.
+        // Refused inside the demo practice for that exact reason: isDemo=true
+        // rows are filtered out of its dashboard, so a prospect who asked for
+        // sample data would watch nothing at all appear.
+        const enableRefusal = rejectDemoTaggingInDemoPractice(
+          await storage.getPractice(practiceId),
+          'enable_demo_mode',
+        );
+        if (enableRefusal) return enableRefusal;
         const today = new Date();
         const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
         const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
@@ -2636,6 +2678,13 @@ async function executeToolForPractice(
         // Read-only — surfaces patients that LOOK like demo data so the user
         // can review before flagging via mark_patients_as_demo. Scoped to the
         // caller's practice; excludes already-tagged rows (is_demo = true).
+        // Inside the demo practice every seeded patient matches the telltales,
+        // so refuse before offering the user a list that would empty the demo.
+        const legacyRefusal = rejectDemoTaggingInDemoPractice(
+          await storage.getPractice(practiceId),
+          'find_legacy_demo_candidates',
+        );
+        if (legacyRefusal) return legacyRefusal;
         const allPatients = await storage.getPatients(practiceId);
         const candidates: Array<{
           id: number;
@@ -2679,6 +2728,15 @@ async function executeToolForPractice(
       case 'mark_patients_as_demo':
       case 'unmark_demo_patients': {
         const targetFlag = (toolName === 'mark_patients_as_demo');
+        // Only the mark direction is guarded — unmark is how you repair a
+        // demo practice whose rows were tagged before the guard existed.
+        if (targetFlag) {
+          const markRefusal = rejectDemoTaggingInDemoPractice(
+            await storage.getPractice(practiceId),
+            'mark_patients_as_demo',
+          );
+          if (markRefusal) return markRefusal;
+        }
         const rawIds = Array.isArray(args.patientIds) ? args.patientIds : [];
         const patientIds = rawIds
           .map((x: any) => Number(x))

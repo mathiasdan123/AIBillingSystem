@@ -1,20 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockStorage, mockClient } = vi.hoisted(() => ({
-  mockStorage: {
-    getDemoPractice: vi.fn(),
-    createPractice: vi.fn(),
-    getPatients: vi.fn(),
-    createPatient: vi.fn(),
-    createAppointment: vi.fn(),
-    createClaim: vi.fn(),
-  },
+const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
   // Fake pooled client for the pg_advisory_lock path.
-  mockClient: { query: vi.fn().mockResolvedValue({}), release: vi.fn() },
-}));
+  const mockClient = { query: vi.fn().mockResolvedValue({}), release: vi.fn() };
+  return {
+    mockStorage: {
+      getDemoPractice: vi.fn(),
+      createPractice: vi.fn(),
+      getPatients: vi.fn(),
+      createPatient: vi.fn(),
+      createAppointment: vi.fn(),
+      createClaim: vi.fn(),
+    },
+    mockClient,
+    // pool.query is the un-pooled path used by normalizeDemoRates and
+    // repairDemoRowFlags; pool.connect serves the advisory-lock path.
+    mockPool: {
+      connect: vi.fn(async () => mockClient),
+      query: vi.fn(async () => ({ rowCount: 0 })),
+    },
+  };
+});
 vi.mock('../storage', () => ({ storage: mockStorage }));
 vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock('../db', () => ({ getPool: vi.fn(async () => ({ connect: vi.fn(async () => mockClient) })) }));
+vi.mock('../db', () => ({ getPool: vi.fn(async () => mockPool) }));
 
 import { ensureDemoPractice } from '../services/demoPractice';
 
