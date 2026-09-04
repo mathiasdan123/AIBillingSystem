@@ -25,6 +25,7 @@ const mockStorage = vi.hoisted(() => ({
   getInviteByToken: vi.fn(),
   updateInviteStatus: vi.fn(),
   updateUserMfa: vi.fn(),
+  createAuditLog: vi.fn(),
 }));
 
 vi.mock('../storage', () => ({ storage: mockStorage }));
@@ -57,6 +58,7 @@ vi.mock('../middleware/rate-limiter', () => ({
   authLimiter: (_req: any, _res: any, next: any) => next(),
   passwordResetLimiter: (_req: any, _res: any, next: any) => next(),
   registrationLimiter: (_req: any, _res: any, next: any) => next(),
+  incrementGlobalFailedAuth: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ---------------------------------------------------------------------------
@@ -446,6 +448,113 @@ describe('localAuth Routes (/api/auth)', () => {
         .expect(200);
 
       expect(res.body.message).toBe('Logged out successfully');
+    });
+  });
+
+  // ---- Login attempt auditing (LocalStrategy verify callback) ----
+
+  describe('login attempt auditing', () => {
+    // passport.use is called once at module load; grab the strategy during
+    // collection, before beforeEach's clearAllMocks wipes the recorded call.
+    const strategy: any = (passport.use as any).mock.calls[0][0];
+
+    const fakeReq = () =>
+      ({ ip: '203.0.113.9', get: () => 'test-agent' }) as any;
+
+    const runVerify = (email: string, password: string) =>
+      new Promise<{ user: any; info: any }>((resolve, reject) => {
+        strategy._verify(fakeReq(), email, password, (err: any, user: any, info: any) => {
+          if (err) return reject(err);
+          resolve({ user, info });
+        });
+      });
+
+    const baseUser = {
+      id: 'user-1',
+      email: 'dan@example.com',
+      practiceId: 7,
+      passwordHash: 'argon2-hash',
+      firstName: 'Dan',
+      lastName: 'K',
+      lockoutUntil: null,
+    };
+
+    it('records unknown_email with a generic public message', async () => {
+      mockStorage.getUserByEmail.mockResolvedValue(undefined);
+
+      const { user, info } = await runVerify('nobody@example.com', 'pw');
+
+      expect(user).toBe(false);
+      expect(info.message).toBe('Invalid email or password');
+      expect(mockStorage.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCategory: 'auth',
+          eventType: 'login',
+          success: false,
+          ipAddress: '203.0.113.9',
+          details: expect.objectContaining({ reason: 'unknown_email', email: 'nobody@example.com' }),
+        })
+      );
+    });
+
+    it('records wrong_password with attempt count, message stays generic', async () => {
+      const ps = await import('../services/passwordService');
+      (ps.verifyPassword as any).mockResolvedValue(false);
+      mockStorage.getUserByEmail.mockResolvedValue(baseUser);
+      mockStorage.incrementFailedLoginAttempts.mockResolvedValue(2);
+
+      const { user, info } = await runVerify('dan@example.com', 'wrong');
+
+      expect(user).toBe(false);
+      expect(info.message).toBe('Invalid email or password');
+      expect(mockStorage.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-1',
+          practiceId: 7,
+          success: false,
+          details: expect.objectContaining({ reason: 'wrong_password', failedAttempts: 2 }),
+        })
+      );
+    });
+
+    it('records account_locked with remaining minutes', async () => {
+      const ps = await import('../services/passwordService');
+      (ps.isAccountLocked as any).mockReturnValue(true);
+      mockStorage.getUserByEmail.mockResolvedValue(baseUser);
+
+      const { user, info } = await runVerify('dan@example.com', 'pw');
+
+      expect(user).toBe(false);
+      expect(info.message).toContain('25 minutes');
+      expect(mockStorage.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          details: expect.objectContaining({ reason: 'account_locked', remainingMinutes: 25 }),
+        })
+      );
+    });
+
+    it('records success on valid login', async () => {
+      mockStorage.getUserByEmail.mockResolvedValue(baseUser);
+
+      const { user } = await runVerify('dan@example.com', 'right');
+
+      expect(user).toMatchObject({ claims: { sub: 'user-1' } });
+      expect(mockStorage.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          details: expect.objectContaining({ reason: 'success' }),
+        })
+      );
+    });
+
+    it('does not fail the login when audit write fails', async () => {
+      mockStorage.getUserByEmail.mockResolvedValue(baseUser);
+      mockStorage.createAuditLog.mockRejectedValue(new Error('db down'));
+
+      const { user } = await runVerify('dan@example.com', 'right');
+
+      expect(user).toMatchObject({ claims: { sub: 'user-1' } });
     });
   });
 });
