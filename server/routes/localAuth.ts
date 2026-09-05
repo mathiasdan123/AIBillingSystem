@@ -50,20 +50,68 @@ async function sendPasswordResetEmail(
 
 const router = Router();
 
+/**
+ * Record a login attempt in the tamper-evident audit trail with the TRUE
+ * failure reason. The login response stays enumeration-safe ("Invalid email
+ * or password"); the exact reason is only visible to practice admins via the
+ * audit report viewer, so support can diagnose lockouts without the login
+ * page leaking account existence. Never throws — auth must not fail because
+ * auditing did.
+ */
+async function recordLoginAttempt(
+  req: import('express').Request,
+  outcome: {
+    reason:
+      | 'success'
+      | 'unknown_email'
+      | 'sso_required'
+      | 'account_locked'
+      | 'account_locked_now'
+      | 'no_password_set'
+      | 'wrong_password';
+    success: boolean;
+    email: string;
+    userId?: string;
+    practiceId?: number | null;
+    extra?: Record<string, unknown>;
+  }
+): Promise<void> {
+  try {
+    await storage.createAuditLog({
+      eventCategory: 'auth',
+      eventType: 'login',
+      userId: outcome.userId,
+      practiceId: outcome.practiceId ?? undefined,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') ?? undefined,
+      success: outcome.success,
+      details: { reason: outcome.reason, email: outcome.email, ...outcome.extra },
+    });
+  } catch (auditErr) {
+    logger.warn('Failed to record login attempt in audit log', {
+      reason: outcome.reason,
+      error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+    });
+  }
+}
+
 // Configure passport-local strategy
 passport.use(
   new LocalStrategy(
     {
       usernameField: 'email',
       passwordField: 'password',
+      passReqToCallback: true,
     },
-    async (email, password, done) => {
+    async (req, email, password, done) => {
       try {
-        const user = await storage.getUserByEmail(email.toLowerCase());
+        const normalizedEmail = email.toLowerCase();
+        const user = await storage.getUserByEmail(normalizedEmail);
 
         if (!user) {
           // Don't reveal whether user exists
           incrementGlobalFailedAuth().catch(() => {});
+          await recordLoginAttempt(req, { reason: 'unknown_email', success: false, email: normalizedEmail });
           return done(null, false, { message: 'Invalid email or password' });
         }
 
@@ -72,6 +120,13 @@ passport.use(
           try {
             const ssoConfig = await storage.getSsoConfigByPractice(user.practiceId);
             if (ssoConfig?.enabled && ssoConfig?.ssoEnforced) {
+              await recordLoginAttempt(req, {
+                reason: 'sso_required',
+                success: false,
+                email: normalizedEmail,
+                userId: user.id,
+                practiceId: user.practiceId,
+              });
               return done(null, false, {
                 message: 'Your organization requires SSO login. Please use the "Sign in with SSO" option.',
               });
@@ -90,6 +145,14 @@ passport.use(
           // Probing a locked account is suspicious — count toward brute force detection
           incrementGlobalFailedAuth().catch(() => {});
           const remainingMinutes = getRemainingLockoutMinutes(user.lockoutUntil);
+          await recordLoginAttempt(req, {
+            reason: 'account_locked',
+            success: false,
+            email: normalizedEmail,
+            userId: user.id,
+            practiceId: user.practiceId,
+            extra: { remainingMinutes },
+          });
           return done(null, false, {
             message: `Account locked. Try again in ${remainingMinutes} minutes.`,
           });
@@ -97,6 +160,13 @@ passport.use(
 
         // Check if user has a password set
         if (!user.passwordHash) {
+          await recordLoginAttempt(req, {
+            reason: 'no_password_set',
+            success: false,
+            email: normalizedEmail,
+            userId: user.id,
+            practiceId: user.practiceId,
+          });
           return done(null, false, { message: 'Invalid email or password' });
         }
 
@@ -118,7 +188,7 @@ passport.use(
             if (user.email) {
               await sendSecurityAlertEmail(user.email, {
                 alertType: 'account_lockout',
-                ipAddress: 'unknown', // Will be set from request
+                ipAddress: req.ip ?? 'unknown',
                 timestamp: new Date(),
                 failedAttempts,
               });
@@ -129,17 +199,40 @@ passport.use(
               failedAttempts,
             });
 
+            await recordLoginAttempt(req, {
+              reason: 'account_locked_now',
+              success: false,
+              email: normalizedEmail,
+              userId: user.id,
+              practiceId: user.practiceId,
+              extra: { failedAttempts },
+            });
             return done(null, false, {
               message: `Account locked due to too many failed attempts. Try again in ${PASSWORD_REQUIREMENTS.lockoutDurationMs / 60000} minutes.`,
             });
           }
 
+          await recordLoginAttempt(req, {
+            reason: 'wrong_password',
+            success: false,
+            email: normalizedEmail,
+            userId: user.id,
+            practiceId: user.practiceId,
+            extra: { failedAttempts },
+          });
           return done(null, false, { message: 'Invalid email or password' });
         }
 
         // Success - reset failed attempts and update last login
         await storage.resetFailedLoginAttempts(user.id);
         await storage.updateLastLoginAt(user.id);
+        await recordLoginAttempt(req, {
+          reason: 'success',
+          success: true,
+          email: normalizedEmail,
+          userId: user.id,
+          practiceId: user.practiceId,
+        });
 
         // Return user object for session
         return done(null, {
