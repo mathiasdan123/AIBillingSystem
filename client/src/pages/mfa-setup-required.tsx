@@ -8,6 +8,7 @@
  * access" alarms. This page is the gate: a single, focused next-step
  * UX that lets the user enable MFA, then routes them to the dashboard.
  */
+import MfaEnrollmentSecret from "@/components/MfaEnrollmentSecret";
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -105,17 +106,7 @@ export default function MfaSetupRequired() {
                 <p className="text-sm font-medium text-slate-800 mb-1">
                   Step 1 — Add to your authenticator
                 </p>
-                <p className="text-xs text-slate-600 mb-2">
-                  In your authenticator app, choose "Add account" → "Manual entry"
-                  and paste the URI below. Many apps also let you scan a QR — if
-                  yours does, paste the URI into a QR generator on your phone first.
-                </p>
-                <code
-                  className="block text-xs bg-slate-100 p-2 rounded break-all select-all"
-                  data-testid="text-otpauth-uri"
-                >
-                  {setupData.uri}
-                </code>
+                <MfaEnrollmentSecret uri={setupData.uri} />
               </div>
 
               <div>
