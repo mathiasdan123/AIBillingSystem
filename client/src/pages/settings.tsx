@@ -1,3 +1,4 @@
+import MfaEnrollmentSecret from "@/components/MfaEnrollmentSecret";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -2325,8 +2326,8 @@ export default function Settings() {
 
                     {mfaSetupData ? (
                       <div className="space-y-4 p-4 border rounded-lg">
-                        <p className="text-sm">Scan this URI with your authenticator app, then enter the 6-digit code to confirm:</p>
-                        <code className="block text-xs bg-slate-100 p-2 rounded break-all">{mfaSetupData.uri}</code>
+                        <p className="text-sm">Scan the QR code with your authenticator app, then enter the 6-digit code to confirm:</p>
+                        <MfaEnrollmentSecret uri={mfaSetupData.uri} />
                         <div className="flex gap-2">
                           <Input
                             value={mfaToken}
