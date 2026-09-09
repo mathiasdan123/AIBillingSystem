@@ -115,15 +115,34 @@ export async function pollTransactions(params: {
     );
   }
 
-  return {
-    transactions: list.map((t: any) => ({
+  const transactions = list
+    .map((t: any) => ({
       transactionId: t.transactionId ?? t.id,
-      transactionType: String(
-        t.transactionType ?? t.transactionSetId ?? t.type ?? '',
-      ) || null,
+      // Observed live envelope (core 2023-08-01): the set identifier lives at
+      // x12.metadata.transaction.transactionSetIdentifier ("835"). The flat
+      // fields are kept for older shapes. Missing all of them meant every
+      // real remittance was filtered out as "not an 835" while the poll
+      // looked healthy — the exact silent failure this file warns about.
+      transactionType:
+        String(
+          t.transactionType ??
+            t.transactionSetId ??
+            t.type ??
+            t.x12?.metadata?.transaction?.transactionSetIdentifier ??
+            '',
+        ) || null,
       createdAt: t.createdAt ?? t.processedAt ?? null,
-    })).filter((t: PolledTransaction) => !!t.transactionId),
-    nextPageToken: data?.nextPageToken ?? data?.pageToken ?? null,
+    }))
+    .filter((t: PolledTransaction) => !!t.transactionId);
+
+  // The polling endpoint is a tail-follow stream: it returns a nextPageToken
+  // even when the page is empty (verified live: page 2 of a quiet account is
+  // items:[] + a token, forever). Treat an empty page as end-of-stream —
+  // otherwise every sweep runs to the page cap doing nothing. The overlap
+  // window re-covers anything that lands between sweeps.
+  return {
+    transactions,
+    nextPageToken: transactions.length === 0 ? null : (data?.nextPageToken ?? null),
   };
 }
 
