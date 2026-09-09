@@ -4721,3 +4721,101 @@ export const insertBillingEnginePeriodSchema = createInsertSchema(billingEngineP
 });
 export type BillingEnginePeriod = typeof billingEnginePeriods.$inferSelect;
 export type InsertBillingEnginePeriod = z.infer<typeof insertBillingEnginePeriodSchema>;
+
+// ==================== DEPOSIT RECONCILIATION (Plaid) ====================
+// Three-way match: billed (claims) -> remitted (remittance_advice) -> deposited
+// (bank_transactions, synced read-only via Plaid). remittance_advice rows ARE
+// the expected deposits; these tables add the bank side plus match/exception
+// state. All tables are additive (zero-downtime safe).
+
+export const bankItems = pgTable("bank_items", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  plaidItemId: varchar("plaid_item_id").notNull(),
+  /** JSON-serialized EncryptedField (AES-256-GCM via phiEncryptionService). */
+  accessTokenEncrypted: text("access_token_encrypted").notNull(),
+  institutionName: varchar("institution_name"),
+  syncCursor: text("sync_cursor"),
+  status: varchar("status").default("active").notNull(), // active, login_required, disconnected
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_bank_items_plaid_item").on(table.plaidItemId),
+  index("idx_bank_items_practice").on(table.practiceId),
+]);
+
+export const bankAccounts = pgTable("bank_accounts", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id").references(() => bankItems.id).notNull(),
+  plaidAccountId: varchar("plaid_account_id").notNull(),
+  name: varchar("name"),
+  mask: varchar("mask"),
+  subtype: varchar("subtype"),
+}, (table) => [
+  uniqueIndex("uq_bank_accounts_plaid_account").on(table.plaidAccountId),
+  index("idx_bank_accounts_item").on(table.itemId),
+]);
+
+export const bankTransactions = pgTable("bank_transactions", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  accountId: integer("account_id").references(() => bankAccounts.id).notNull(),
+  plaidTransactionId: varchar("plaid_transaction_id").notNull(),
+  postedDate: date("posted_date").notNull(),
+  descriptor: text("descriptor").default("").notNull(),
+  /** Integer cents; positive = credit (deposit). */
+  amountCents: integer("amount_cents").notNull(),
+  pending: boolean("pending").default(false).notNull(),
+  status: varchar("status").default("unmatched").notNull(), // unmatched, matched, ignored
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_bank_transactions_plaid_txn").on(table.plaidTransactionId),
+  index("idx_bank_transactions_practice_status").on(table.practiceId, table.status),
+]);
+
+export const depositMatches = pgTable("deposit_matches", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  bankTransactionId: integer("bank_transaction_id").references(() => bankTransactions.id).notNull(),
+  kind: varchar("kind").notNull(), // trace, exact, bundle, manual
+  confidence: decimal("confidence", { precision: 3, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_deposit_matches_practice").on(table.practiceId),
+  index("idx_deposit_matches_txn").on(table.bankTransactionId),
+]);
+
+export const depositMatchMembers = pgTable("deposit_match_members", {
+  id: serial("id").primaryKey(),
+  matchId: integer("match_id").references(() => depositMatches.id).notNull(),
+  remittanceId: integer("remittance_id").references(() => remittanceAdvice.id).notNull(),
+}, (table) => [
+  uniqueIndex("uq_deposit_match_members").on(table.matchId, table.remittanceId),
+  index("idx_deposit_match_members_remittance").on(table.remittanceId),
+]);
+
+export const depositExceptions = pgTable("deposit_exceptions", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  type: varchar("type").notNull(), // missing_deposit, amount_mismatch, unmatched_deposit
+  remittanceId: integer("remittance_id").references(() => remittanceAdvice.id),
+  bankTransactionId: integer("bank_transaction_id").references(() => bankTransactions.id),
+  detail: text("detail").notNull(),
+  status: varchar("status").default("open").notNull(), // open, in_progress, resolved
+  assignee: varchar("assignee"),
+  notes: text("notes"),
+  openedAt: timestamp("opened_at").defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+}, (table) => [
+  index("idx_deposit_exceptions_practice_status").on(table.practiceId, table.status),
+]);
+
+export const insertBankItemSchema = createInsertSchema(bankItems).omit({ id: true, createdAt: true });
+export const insertBankAccountSchema = createInsertSchema(bankAccounts).omit({ id: true });
+export const insertBankTransactionSchema = createInsertSchema(bankTransactions).omit({ id: true, createdAt: true });
+export const insertDepositMatchSchema = createInsertSchema(depositMatches).omit({ id: true, createdAt: true });
+export const insertDepositExceptionSchema = createInsertSchema(depositExceptions).omit({ id: true, openedAt: true });
+export type BankItem = typeof bankItems.$inferSelect;
+export type BankAccount = typeof bankAccounts.$inferSelect;
+export type BankTransaction = typeof bankTransactions.$inferSelect;
+export type DepositMatch = typeof depositMatches.$inferSelect;
+export type DepositException = typeof depositExceptions.$inferSelect;

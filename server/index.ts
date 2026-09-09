@@ -278,12 +278,12 @@ app.use((req, res, next) => {
   } else {
     cspDirectives.push(
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://cdn.plaid.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https: blob:",
       "connect-src 'self' https://api.stripe.com https://api.openai.com https://*.ingest.sentry.io wss:",
-      "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
+      "frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://cdn.plaid.com",
       "frame-ancestors 'none'",
       "object-src 'none'",
       "base-uri 'self'",
@@ -372,6 +372,9 @@ app.use(generalLimiter);
 
 // Stripe webhook needs raw body for signature verification - must be before JSON parser
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
+
+// Plaid webhook needs raw body for signature verification - must be before JSON parser
+app.use('/api/plaid/webhook', express.raw({ type: 'application/json' }));
 
 // Body parsing with size limits (for all other routes)
 app.use(express.json({ limit: '10mb' }));

@@ -16,6 +16,7 @@ import {
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
+  reconciliationRouter, plaidWebhookRouter,
   documentsRouter, followUpsRouter, revenueAtRiskRouter, schedulingRouter, eligibilityRouter, payerIntelRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
   superbillsRouter,
@@ -202,6 +203,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/fee-schedules', requireFinancialRole);
   app.use('/api/payer-contracts', requireFinancialRole);
   app.use('/api/remittance', requireFinancialRole);
+  app.use('/api/reconciliation', requireFinancialRole);
   app.use('/api/revenue-at-risk', requireFinancialRole);
   app.use('/api/payment-postings', requireFinancialRole);
   app.use('/api/payer-intel', requireFinancialRole);
@@ -243,6 +245,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/payer-contracts', payerContractsRouter);
   // Remittance (ERA/835) routes: /api/remittance/*
   app.use('/api/remittance', remittanceRouter);
+  // Deposit reconciliation (Plaid three-way match): /api/reconciliation/*
+  app.use('/api/reconciliation', reconciliationRouter);
+  // Plaid webhook (public path, signature-verified in the handler): /api/plaid/webhook
+  app.use('/api/plaid', plaidWebhookRouter);
   // SSO (SAML/OIDC) routes: /api/sso/*
   app.use('/api/sso', ssoRouter);
   // Treatment Plans routes (patient-scoped): /api/patients/:id/treatment-plans
