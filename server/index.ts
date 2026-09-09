@@ -75,6 +75,7 @@ import rateLimit, { type Store } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static";
 import { requestTimeout } from "./middleware/requestTimeout";
+import { accessLogLine, safeResponseCode } from "./utils/accessLog";
 import { requestSanitizer } from "./middleware/sanitize";
 import { globalErrorHandler } from "./middleware/errorHandler";
 import { apiVersionMiddleware, apiVersionRewrite } from "./middleware/apiVersion";
@@ -419,10 +420,19 @@ app.use((req, res, next) => {
    * The path is redacted with the same helper used for Sentry and the audit
    * trail, since several portal routes carry the token as a path segment.
    */
+  // Capture ONLY the constant error `code` from JSON error responses (never
+  // the body — see accessLog.ts for the PHI guard and why the code is needed).
+  let responseCode: string | undefined;
+  const originalJson = res.json.bind(res);
+  (res as any).json = (body: unknown) => {
+    responseCode = safeResponseCode(body);
+    return originalJson(body);
+  };
+
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      log(`${req.method} ${redactSensitiveUrl(path)} ${res.statusCode} in ${duration}ms`);
+      log(accessLogLine(req.method, redactSensitiveUrl(path), res.statusCode, duration, responseCode));
     }
   });
 
