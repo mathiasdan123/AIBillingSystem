@@ -61,6 +61,7 @@ const Billing = lazy(() => import("@/pages/billing"));
 const Reimbursement = lazy(() => import("@/pages/reimbursement"));
 const PayerContracts = lazy(() => import("@/pages/payer-contracts"));
 const RemittancePage = lazy(() => import("@/pages/remittance"));
+const DepositsPage = lazy(() => import("@/pages/deposits"));
 const TreatmentPlans = lazy(() => import("@/pages/treatment-plans"));
 const AiInsights = lazy(() => import("@/pages/ai-insights"));
 const TherapistProductivity = lazy(() => import("@/pages/therapist-productivity"));
@@ -348,6 +349,7 @@ function Router() {
               <Route path="/insurance-rates" component={InsuranceRates} />
               <Route path="/reimbursement" component={Reimbursement} />
               <Route path="/remittance" component={RemittancePage} />
+              <Route path="/deposits" component={DepositsPage} />
               <Route path="/payer-contracts" component={PayerContracts} />
               <Route path="/ai-insights" component={AiInsights} />
               <Route path="/therapist-productivity" component={TherapistProductivity} />

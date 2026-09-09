@@ -5,6 +5,7 @@
  */
 
 import {
+  Landmark,
   Home,
   Users,
   FileText,
@@ -104,6 +105,7 @@ export const navigationSections: NavSection[] = [
       { nameKey: 'nav.billerCockpit', href: '/biller-cockpit', icon: ClipboardList, adminOnly: false, financial: true },
       { nameKey: 'nav.recoveryLedger', href: '/recovery-ledger', icon: DollarSign, adminOnly: false, financial: true },
       { nameKey: 'nav.era835', href: '/remittance', icon: Receipt, adminOnly: false, financial: true },
+      { nameKey: 'nav.deposits', href: '/deposits', icon: Landmark, adminOnly: false, financial: true },
       { nameKey: 'nav.appeals', href: '/appeals', icon: Scale, adminOnly: false, financial: true },
       { nameKey: 'nav.revenueAtRisk', href: '/revenue-at-risk', icon: AlertTriangle, adminOnly: false, financial: true },
       { nameKey: 'nav.payerContracts', href: '/payer-contracts', icon: Handshake, adminOnly: false, financial: true },
