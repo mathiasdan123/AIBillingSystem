@@ -146,11 +146,15 @@ async function pollPractice(
   } while (pageToken && pages < MAX_PAGES_PER_PRACTICE);
 
   if (pageToken) {
-    // Say so rather than let a truncated sweep look complete.
-    logger.warn('ERA poll hit the page cap; more transactions remain', {
+    // Say so rather than let a truncated sweep look complete — and leave the
+    // cursor where it was: advancing past pages we never read would skip
+    // their remittances permanently (the overlap rewind only re-covers
+    // minutes, not a multi-page backfill).
+    logger.warn('ERA poll hit the page cap; cursor held so the remainder is retried next run', {
       practiceId: practice.id,
       maxPages: MAX_PAGES_PER_PRACTICE,
     });
+    return;
   }
 
   // Rewind the cursor so the next run re-covers the tail of this one.
