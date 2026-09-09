@@ -19,7 +19,8 @@
     "test:client": "vitest run --config vitest.config.client.ts",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "docs:api": "node --import=tsx scripts/generate-openapi.ts"
+    "docs:api": "node --import=tsx scripts/generate-openapi.ts",
+    "test:stedi-e2e": "vitest run server/__tests__/stediTestMode.e2e.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.32.0",
