@@ -373,6 +373,9 @@ app.use(generalLimiter);
 // Stripe webhook needs raw body for signature verification - must be before JSON parser
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 
+// Plaid webhook needs raw body for signature verification - must be before JSON parser
+app.use('/api/plaid/webhook', express.raw({ type: 'application/json' }));
+
 // Body parsing with size limits (for all other routes)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));

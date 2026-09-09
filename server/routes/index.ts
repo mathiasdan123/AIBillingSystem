@@ -110,3 +110,4 @@ export { default as insuranceDataRoutes } from './insuranceDataRoutes';
  * - registerRoutes function (health check, middleware setup, router mounting)
  * - HTTP server creation
  */
+export { default as reconciliationRouter, plaidWebhookRouter } from './reconciliation';
