@@ -48,3 +48,14 @@ jobs:
       # client suite has its own config and never ran in CI before this step.
       - name: Run client tests
         run: npm run test:client
+
+      # End-to-end claims flow against Stedi TEST MODE (real network, fake
+      # payer). Submits a claim to the Stedi Test Payer and asserts acceptance.
+      # Runs for real only when the STEDI_TEST_API_KEY secret is configured —
+      # without it the suite self-skips and this step passes in seconds. The
+      # slow full-lifecycle variant (poll for the test 835, run the
+      # normalizer) is opt-in via STEDI_E2E_FULL=1 for manual/nightly runs.
+      - name: Stedi test-mode end-to-end
+        env:
+          STEDI_TEST_API_KEY: ${{ secrets.STEDI_TEST_API_KEY }}
+        run: npm run test:stedi-e2e
