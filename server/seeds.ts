@@ -1,5 +1,6 @@
 import { getDb } from "./db";
 import { CORE_CPT_CODES } from "./cptCatalog";
+import { ANTHEM_CROSSWALK_ROWS } from "./data/anthemCrosswalk";
 import { practices, cptCodes, icd10Codes, insurances, users, payerCrosswalk } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { hashPassword } from "./services/passwordService";
@@ -1490,21 +1491,10 @@ export async function seedDatabase(options?: { force?: boolean }) {
           isActive: true,
         },
         // BCBS state-specific plans
-        {
-          parentPayerName: "Blue Cross Blue Shield",
-          subPlanName: "Anthem BCBS of New York",
-          // Generic "anthem" keywords stay here so plans stored as plain
-          // "Anthem BCBS" keep matching. Anthem is state-specific in Stedi's
-          // registry (Indiana 130, California 040, Ohio 00834, ...) — add a
-          // row per state, with state-qualified keywords ordered before this
-          // one, when a practice starts billing another Anthem entity.
-          subPlanKeywords: ["anthem", "anthem bcbs", "anthem blue cross", "anthem ny", "anthem new york", "empire bcbs"],
-          tradingPartnerId: "803",
-          stediPayerId: "803",
-          state: "NY",
-          notes: "Anthem BCBS of New York (formerly Empire BCBS), Stedi OLQXL / primary payer ID 803. Prior value 00805 resolved to Excellus BCBS of NY, not Anthem.",
-          isActive: true,
-        },
+        // Anthem is state-specific in Stedi's registry; canonical rows (NY
+        // fallback + one per state) live in server/data/anthemCrosswalk.ts,
+        // shared with scripts/repair-anthem-crosswalk-payer-id.ts.
+        ...ANTHEM_CROSSWALK_ROWS,
         {
           parentPayerName: "Blue Cross Blue Shield",
           subPlanName: "Premera Blue Cross",

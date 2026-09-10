@@ -1496,6 +1496,29 @@ export interface PayerRoutingResult {
   routingSource: 'crosswalk' | 'static_map' | 'insurance_record' | 'default';
 }
 
+/**
+ * Normalize a payer/plan name for crosswalk matching: lowercase, punctuation
+ * to spaces, BCBS variants expanded to "blue cross blue shield", and the
+ * non-disambiguating "of"/"the" dropped — so "Anthem BCBS of Indiana" and
+ * "Anthem Blue Cross Blue Shield Indiana" compare equal. Pure; exported for
+ * tests. (Not payerMappingService.normalizePayerName — that module imports
+ * this one, and its normalizer strips corporate-suffix noise that crosswalk
+ * keywords may legitimately contain.)
+ */
+export function normalizePayerNameForMatch(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return String(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\bbluecross\b/g, 'blue cross')
+    .replace(/\bblueshield\b/g, 'blue shield')
+    .replace(/\bbcbs\b/g, 'blue cross blue shield')
+    .replace(/\bbc bs\b/g, 'blue cross blue shield')
+    .replace(/\b(of|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function resolvePayerId(
   insuranceName: string,
   patientInsuranceProvider: string | null,
@@ -1516,31 +1539,40 @@ export async function resolvePayerId(
       .from(payerCrosswalk)
       .where(eq(payerCrosswalk.isActive, true));
 
-    // Check patient's insurance provider name against sub-plan keywords
-    const searchText = normalizedPatientPlan || normalizedInsuranceName;
+    // Check patient's insurance provider name against sub-plan names and
+    // keywords. The MOST SPECIFIC match wins (longest matched phrase, with a
+    // bonus for matching the whole name), not the first row scanned —
+    // otherwise a generic keyword like "anthem" on one state's row would
+    // swallow plan names qualified for another state ("Anthem BCBS of
+    // Indiana"). Both sides are normalized so abbreviation variants compare
+    // equal.
+    const searchText = normalizePayerNameForMatch(normalizedPatientPlan || normalizedInsuranceName);
+    let best: { entry: (typeof crosswalkEntries)[number]; score: number } | null = null;
     for (const entry of crosswalkEntries) {
-      const keywords = (entry.subPlanKeywords as string[]) || [];
-      const subPlanLower = entry.subPlanName.toLowerCase();
-
-      // Exact sub-plan name match
-      if (searchText === subPlanLower || searchText.includes(subPlanLower)) {
-        return {
-          tradingPartnerId: entry.tradingPartnerId,
-          matchedSubPlan: entry.subPlanName,
-          routingSource: 'crosswalk',
-        };
-      }
-
-      // Keyword match
-      for (const keyword of keywords) {
-        if (searchText.includes(keyword.toLowerCase())) {
-          return {
-            tradingPartnerId: entry.tradingPartnerId,
-            matchedSubPlan: entry.subPlanName,
-            routingSource: 'crosswalk',
-          };
+      const candidates = [
+        entry.subPlanName,
+        ...((entry.subPlanKeywords as string[]) || []),
+      ];
+      for (const candidate of candidates) {
+        const normalized = normalizePayerNameForMatch(candidate);
+        if (!normalized) continue;
+        let score = 0;
+        if (searchText === normalized) {
+          score = 1000 + normalized.length;
+        } else if (searchText.includes(normalized)) {
+          score = normalized.length;
+        }
+        if (score > 0 && (!best || score > best.score)) {
+          best = { entry, score };
         }
       }
+    }
+    if (best) {
+      return {
+        tradingPartnerId: best.entry.tradingPartnerId,
+        matchedSubPlan: best.entry.subPlanName,
+        routingSource: 'crosswalk',
+      };
     }
   } catch (error) {
     // If crosswalk lookup fails, fall through to static map
