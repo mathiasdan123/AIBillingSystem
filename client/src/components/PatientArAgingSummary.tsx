@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, DollarSign, Clock, AlertTriangle } from "lucide-react";
@@ -30,9 +31,19 @@ function getBucketBarColor(bucket: string): string {
 }
 
 export default function PatientArAgingSummary() {
+  const { user } = useAuth();
+  // A/R is practice-financial data: admin/billing only (matches the server's
+  // requireFinancialRole gate). Therapist-role users get neither the query
+  // (a guaranteed 403) nor an empty card.
+  const isFinancialRole = user?.role === "admin" || user?.role === "billing";
   const { data: arData, isLoading } = useQuery<ArAgingData>({
     queryKey: ["/api/billing/ar-aging"],
+    enabled: isFinancialRole,
   });
+
+  if (!isFinancialRole) {
+    return null;
+  }
 
   if (isLoading) {
     return (

@@ -260,7 +260,13 @@ export const queryClient = new QueryClient({
         refreshAuthForMfaGate();
         return;
       }
-      if (msg.includes('401') || msg.includes('403')) {
+      // 401 ONLY. A 403 is a permission refusal (financial-role gate, MFA
+      // enforcement), not a dead session — treating it as one sent
+      // therapist-role users into a "Session expired" toast + redirect loop:
+      // dashboard fires a financial query -> 403 -> redirect to /api/login ->
+      // dashboard fires again -> 403, every ~2s until the auth rate limiter
+      // locked them out for 15 minutes.
+      if (msg.includes('401')) {
         // Dispatch a custom event that the Toaster/App can listen for
         window.dispatchEvent(new CustomEvent('auth-error', {
           detail: { message: 'Session expired, please log in again', status: msg },
