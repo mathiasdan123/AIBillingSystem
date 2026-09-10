@@ -45,6 +45,14 @@ export interface AiSoapBillingRequest {
    */
   practiceId?: number;
   activities: string[];
+  /**
+   * Per-activity therapist narratives — the primary Objective input per
+   * clinician feedback: "what happened / how did the patient respond"
+   * (before → intervention → response → functional change). Optional per
+   * activity; when present, the model treats it as the authoritative account
+   * of that activity.
+   */
+  activityDetails?: Array<{ name: string; response?: string }>;
   mood: string;
   caregiverReport?: string;
   duration: number;
@@ -188,6 +196,29 @@ export async function generateSoapNoteAndBilling(
     // No treatment plan available
   }
 
+  // Prior signed notes give the model REAL progress context — the only
+  // ground truth that legitimizes "compared to last session" statements
+  // (the anti-fabrication rules forbid such comparisons otherwise).
+  let priorSessions: Array<{ date: string; objective?: string; assessment?: string }> = [];
+  try {
+    if (request.practiceId) {
+      const priorNotes = await storage.getRecentSoapNotesForPatient(
+        request.patientId,
+        request.practiceId,
+        3,
+      );
+      const trim = (s: any) =>
+        typeof s === 'string' && s.length > 500 ? `${s.slice(0, 500)}…` : (s ?? undefined);
+      priorSessions = (priorNotes ?? []).map((n: any) => ({
+        date: n.therapistSignedAt ?? n.createdAt ?? 'unknown date',
+        objective: trim(n.objective),
+        assessment: trim(n.assessment),
+      }));
+    }
+  } catch (e) {
+    // No prior notes available — generation proceeds without progress context.
+  }
+
   // Calculate available billing units
   const billingUnits = Math.floor(request.duration / 15);
 
@@ -201,7 +232,7 @@ export async function generateSoapNoteAndBilling(
 
   // Build the AI prompt
   const systemPrompt = buildSystemPrompt(insuranceData);
-  const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals);
+  const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals, priorSessions);
 
   try {
     // Use streaming so we don't hit a long hang on a single request. The SDK
@@ -339,15 +370,15 @@ is a compliance and liability issue, not just a stylistic preference.
    - Direct quotations from the caregiver or patient — do not write
      'Mom reports "he can now button his shirt"' unless that exact
      sentiment appears in the input
-   - **Any comparison to prior performance or prior sessions.** Forbidden
-     phrasings include "improved from last session", "compared to
-     baseline observations", "carry-over of previously taught strategies",
-     "better than previously", "progressed from moderate assist to...",
-     and any "was X, now Y" structure. You have NO data about prior
-     sessions UNLESS the treatment plan or treatment goals data
-     explicitly provides a prior measurement or observation to compare
-     against. If in doubt, describe today's performance in absolute
-     terms without any prior reference.
+   - **Any comparison to prior performance or prior sessions that is not
+     grounded in provided data.** Comparisons ("improved from last
+     session", "progressed from moderate assist to...", any "was X, now Y"
+     structure) are permitted ONLY when the specific prior fact appears in
+     the PRIOR SESSION SUMMARIES section or the treatment plan/goals data
+     — and the comparison must cite that fact, not extrapolate beyond it.
+     If no such section or fact was provided, you have NO data about prior
+     sessions: describe today's performance in absolute terms without any
+     prior reference.
    - Social/behavioral details that weren't observed (e.g., "demonstrated
      good eye contact", "shared details about his week at school",
      "interacted well with peers") — unless the input mentions them
@@ -413,9 +444,11 @@ Cover, USING ONLY PROVIDED DATA:
    or interactions unless the input describes them. Do not use the
    mood field as a springboard to invent home/school/family context.
 
-3. PROGRESS CONTEXT — Only reference prior sessions if the treatment
-   plan or goals data explicitly describes prior performance. Never
-   invent "improved from last session" statements.
+3. PROGRESS CONTEXT — Only reference prior sessions when the PRIOR
+   SESSION SUMMARIES section or treatment plan/goals data explicitly
+   describes prior performance, and anchor every comparison to the
+   specific provided fact. Never invent "improved from last session"
+   statements.
 
 Length rule for Subjective: if the only information you have is a mood
 and a brief caregiver statement, the Subjective may be 2–3 sentences
@@ -542,13 +575,14 @@ the treating provider makes the final coding decision.`;
   return prompt;
 }
 
-function buildUserPrompt(
+export function buildUserPrompt(
   request: AiSoapBillingRequest,
   patient: any,
   billingUnits: number,
   insuranceData: any,
   treatmentPlan?: any,
-  treatmentGoals?: any[]
+  treatmentGoals?: any[],
+  priorSessions?: Array<{ date: string; objective?: string; assessment?: string }>
 ): string {
   // Calculate patient age
   const dob = new Date(patient.dateOfBirth);
@@ -600,7 +634,19 @@ SUBJECTIVE DATA:
 - Caregiver Report: ${request.caregiverReport || "(none provided — state that it was not obtained; do not invent one)"}
 
 ACTIVITIES/EXERCISES PERFORMED:
-${request.activities.map(a => `- ${a}`).join('\n')}
+${request.activities.map(a => {
+  const detail = request.activityDetails?.find(d => d.name === a);
+  return detail?.response
+    ? `- ${a}\n  THERAPIST'S ACCOUNT (primary source for this activity — use its facts, do not embellish): "${detail.response}"`
+    : `- ${a}`;
+}).join('\n')}
+${request.activityDetails?.some(d => d.response) ? `
+The THERAPIST'S ACCOUNT lines above are the primary Objective data. Structure
+each activity's documentation around the clinical arc they describe —
+presentation before → skilled intervention provided → patient response →
+functional change — using ONLY the facts in the account. Where an account and
+a structured rating disagree, the account wins. Activities without an account
+get the standard treatment from the structured fields alone.` : ''}
 
 CLINICAL OBSERVATIONS:
 - Overall Performance: ${request.assessment.performance}
@@ -627,6 +673,18 @@ CLINICAL OBSERVATIONS:
   }
   if (request.assessment.engagement) {
     prompt += `\n- Engagement/Participation: ${request.assessment.engagement}`;
+  }
+
+  if (priorSessions && priorSessions.length > 0) {
+    prompt += `
+
+PRIOR SESSION SUMMARIES (real data from this patient's signed notes — the
+ONLY sanctioned source for progress comparisons; cite nothing beyond it):`;
+    for (const s of priorSessions) {
+      prompt += `\n--- Session ${String(s.date).slice(0, 10)} ---`;
+      if (s.objective) prompt += `\nObjective: ${s.objective}`;
+      if (s.assessment) prompt += `\nAssessment: ${s.assessment}`;
+    }
   }
 
   prompt += `

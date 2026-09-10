@@ -381,8 +381,23 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
   const {
     patientId, activities, mood, caregiverReport, duration,
     location, assessment, planNextSteps, nextSessionFocus,
-    homeProgram, ratePerUnit
+    homeProgram, ratePerUnit, activityAssessments
   } = req.body;
+
+  // Per-activity therapist narratives ("what happened / how did the patient
+  // respond") — the primary objective input per clinician feedback. Only the
+  // name + narrative go to the model; structured ratings stay optional data.
+  const activityDetails = Array.isArray(activityAssessments)
+    ? activityAssessments
+        .filter((a: any) => a && typeof a.name === 'string')
+        .map((a: any) => ({
+          name: String(a.name),
+          response:
+            typeof a.response === 'string' && a.response.trim()
+              ? a.response.trim().slice(0, 2000)
+              : undefined,
+        }))
+    : undefined;
 
   if (!patientId || !activities || !Array.isArray(activities) || activities.length === 0) {
     return res.status(400).json({
@@ -448,6 +463,7 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         patientId,
         practiceId: soapUser.practiceId,
         activities,
+        activityDetails,
         mood: mood || 'Cooperative',
         caregiverReport,
         duration,
