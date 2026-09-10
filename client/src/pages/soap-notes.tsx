@@ -17,7 +17,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   FileText, Brain, CheckCircle, Clock, Lightbulb, Sparkles,
-  Plus, X, ChevronDown, ChevronUp, Loader2, Mic, ChevronsUpDown, Check, AlertTriangle
+  Plus, X, ChevronDown, ChevronUp, Loader2, Mic, ChevronsUpDown, Check, AlertTriangle,
+  ClipboardCheck
 } from "lucide-react";
 import { VoiceInput } from "@/components/VoiceInput";
 import { TextToSpeech } from "@/components/TextToSpeech";
@@ -769,6 +770,39 @@ export default function SoapNotes() {
         : a
       )
     );
+  };
+
+  // Pre-sign documentation check (clinician feedback): pass/warn checklist for
+  // skilled-care and medical-necessity elements, plus targeted questions for
+  // gaps. Reviewer only — it never writes note content.
+  const [docCheck, setDocCheck] = useState<{
+    checks: Array<{ item: string; status: 'pass' | 'warn'; detail: string }>;
+    questions: string[];
+  } | null>(null);
+  const [docCheckLoading, setDocCheckLoading] = useState(false);
+  const [docCheckError, setDocCheckError] = useState<string | null>(null);
+
+  const runDocCheck = async () => {
+    if (!generatedNote || !selectedPatient) return;
+    setDocCheckLoading(true);
+    setDocCheckError(null);
+    try {
+      const res = await apiRequest('POST', '/api/ai/soap-doc-check', {
+        patientId: selectedPatient,
+        subjective: generatedNote.subjective,
+        objective: generatedNote.objective,
+        assessment: generatedNote.assessment,
+        plan: generatedNote.plan,
+        activityDetails: selectedActivities.map(a => ({ name: a.name, response: a.response })),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Documentation check failed');
+      setDocCheck(data);
+    } catch (e: any) {
+      setDocCheckError(e.message || 'Documentation check failed. Please try again.');
+    } finally {
+      setDocCheckLoading(false);
+    }
   };
 
   const updateActivityResponse = (activityName: string, value: string) => {
@@ -2447,6 +2481,69 @@ export default function SoapNotes() {
                     <div>
                       <Label className="text-xs font-semibold text-orange-600">PLAN</Label>
                       <p className="mt-1 text-foreground">{generatedNote.plan}</p>
+                    </div>
+                    <Separator />
+                    {/* Documentation check — review before signing. Never edits
+                        the note; asks the therapist for missing facts instead. */}
+                    <div data-testid="doc-check-section">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-semibold text-teal-700 flex items-center gap-1">
+                          <ClipboardCheck className="w-3.5 h-3.5" />
+                          DOCUMENTATION CHECK
+                        </Label>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={runDocCheck}
+                          disabled={docCheckLoading}
+                          data-testid="button-run-doc-check"
+                        >
+                          {docCheckLoading ? (
+                            <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Checking…</>
+                          ) : docCheck ? 'Re-check' : 'Check documentation'}
+                        </Button>
+                      </div>
+                      {docCheckError && (
+                        <p className="text-xs text-red-600 mt-1">{docCheckError}</p>
+                      )}
+                      {docCheck && (
+                        <div className="mt-2 space-y-1">
+                          {docCheck.checks.map((c) => (
+                            <div key={c.item} className="flex items-start gap-2 text-xs">
+                              {c.status === 'pass' ? (
+                                <CheckCircle className="w-3.5 h-3.5 text-green-600 mt-0.5 shrink-0" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                              )}
+                              <span>
+                                <span className={c.status === 'pass' ? 'text-foreground' : 'font-medium text-amber-800'}>{c.item}</span>
+                                {c.status === 'warn' && <span className="text-muted-foreground"> — {c.detail}</span>}
+                              </span>
+                            </div>
+                          ))}
+                          {docCheck.questions.length > 0 && (
+                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                              <p className="text-xs font-medium text-amber-800 mb-1">
+                                To strengthen this note, add answers to:
+                              </p>
+                              <ul className="list-disc pl-4 space-y-0.5">
+                                {docCheck.questions.map((q, i) => (
+                                  <li key={i} className="text-xs text-amber-800">{q}</li>
+                                ))}
+                              </ul>
+                              <p className="text-[10px] text-muted-foreground mt-1">
+                                Edit the note sections above (or regenerate with more detail) — the check never fills gaps for you.
+                              </p>
+                            </div>
+                          )}
+                          {docCheck.questions.length === 0 && docCheck.checks.every(c => c.status === 'pass') && (
+                            <p className="text-xs text-green-700 mt-1">
+                              All documentation elements present — ready to sign.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <Separator />
                     <div>
