@@ -371,6 +371,40 @@ router.get('/claim-outcomes', isAuthenticated, isAdminOrBilling, async (req: any
 // Uses chunked transfer + periodic keepalive bytes so the ALB idle timeout
 // doesn't fire during long generations. JSON.parse ignores leading whitespace,
 // so the client calls response.json() as normal.
+/**
+ * POST /api/ai/soap-doc-check — pre-sign documentation review. Returns a
+ * pass/warn checklist for skilled-care / medical-necessity elements plus
+ * targeted questions for gaps. Reviewer only: never writes note content.
+ */
+router.post('/ai/soap-doc-check', isAuthenticated, async (req: any, res) => {
+  try {
+    const { runSoapDocCheck } = await import('../services/soapDocCheckService');
+    const { storage } = await import('../storage');
+    const user = await storage.getUser(req.user.claims.sub);
+    const { patientId, subjective, objective, assessment, plan, activityDetails } = req.body ?? {};
+    if (!patientId || !subjective || !objective || !assessment || !plan) {
+      return res.status(400).json({ error: 'patientId and all four SOAP sections are required' });
+    }
+    const result = await runSoapDocCheck({
+      patientId,
+      practiceId: user?.practiceId ?? undefined,
+      subjective: String(subjective),
+      objective: String(objective),
+      assessment: String(assessment),
+      plan: String(plan),
+      activityDetails: Array.isArray(activityDetails) ? activityDetails : undefined,
+    });
+    res.json(result);
+  } catch (error: any) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('unavailable') || msg.includes('not configured')) {
+      return res.status(503).json({ error: 'Documentation check is unavailable right now.' });
+    }
+    logger.error('SOAP doc check failed', { error: msg });
+    res.status(500).json({ error: 'Documentation check failed. Please try again.' });
+  }
+});
+
 router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) => {
   const startedAt = Date.now();
   logger.info('SOAP generation request received', {
