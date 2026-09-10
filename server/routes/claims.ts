@@ -25,6 +25,8 @@ import { createClaimSchema } from '../validation/schemas';
 import { AiClaimOptimizer } from '../aiClaimOptimizer';
 import { appealGenerator } from '../aiAppealGenerator';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
+import { listLifecycleClaims, type LifecycleStatus } from '../services/claimLifecycleService';
+import { getStediApiKeyForPractice } from '../services/stediService';
 import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
@@ -184,6 +186,47 @@ const generateSecureClaimNumber = (prefix: string): string => {
  *       500:
  *         description: Server error
  */
+/**
+ * GET /api/claims/lifecycle — clearinghouse-side view of submitted claims
+ * from Stedi's Claim Lifecycle API: acknowledgment/adjudication status and
+ * paid amounts, keyed by patientControlNumber (= platform claim id).
+ * Read-only; does not modify platform claim records. Mounted before /:id.
+ */
+router.get('/lifecycle', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { apiKey, isSandbox } = await getStediApiKeyForPractice(practiceId);
+    if (isSandbox) {
+      return res.json({ claims: [], sandbox: true });
+    }
+    const submittedAfter =
+      typeof req.query.submittedAfter === 'string' && req.query.submittedAfter
+        ? req.query.submittedAfter
+        : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const statuses =
+      typeof req.query.status === 'string' && req.query.status
+        ? (req.query.status.split(',') as LifecycleStatus[])
+        : undefined;
+
+    const claims = [];
+    let pageToken: string | undefined;
+    let pages = 0;
+    do {
+      const page = await listLifecycleClaims({ apiKey, submittedAfter, statuses, pageToken });
+      claims.push(...page.claims);
+      pageToken = page.nextPageToken ?? undefined;
+      pages++;
+    } while (pageToken && pages < 10);
+
+    res.json({ claims, truncated: Boolean(pageToken) });
+  } catch (error) {
+    logger.error('Claim lifecycle fetch failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(502).json({ message: 'Could not fetch claim lifecycle data from the clearinghouse' });
+  }
+});
+
 router.get('/', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
