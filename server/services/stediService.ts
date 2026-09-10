@@ -103,7 +103,10 @@ function getHeaders(apiKeyOverride?: string): HeadersInit {
 // Payer IDs for common insurance companies
 export const PAYER_IDS: Record<string, string> = {
   'aetna': '60054',
-  'anthem': '00805',
+  // Anthem is state-specific in Stedi's registry; 803 is Anthem BCBS of New
+  // York (the entity our practices bill). The old value 00805 resolves to
+  // Excellus BCBS of NY — not Anthem at all.
+  'anthem': '803', // Varies by state
   // Horizon BCBS of New Jersey — must come before the generic 'bcbs' entry so
   // substring matching routes "Horizon Blue Cross Blue Shield NJ" to Horizon.
   'horizon': '22099',

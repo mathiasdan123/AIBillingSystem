@@ -1492,12 +1492,17 @@ export async function seedDatabase(options?: { force?: boolean }) {
         // BCBS state-specific plans
         {
           parentPayerName: "Blue Cross Blue Shield",
-          subPlanName: "Anthem BCBS",
-          subPlanKeywords: ["anthem", "anthem bcbs", "anthem blue cross"],
-          tradingPartnerId: "00805",
-          stediPayerId: "00805",
-          state: "IN",
-          notes: "Anthem BCBS - IN, OH, KY, WI, CT, NH, ME, CO, NV, VA, GA, MO",
+          subPlanName: "Anthem BCBS of New York",
+          // Generic "anthem" keywords stay here so plans stored as plain
+          // "Anthem BCBS" keep matching. Anthem is state-specific in Stedi's
+          // registry (Indiana 130, California 040, Ohio 00834, ...) — add a
+          // row per state, with state-qualified keywords ordered before this
+          // one, when a practice starts billing another Anthem entity.
+          subPlanKeywords: ["anthem", "anthem bcbs", "anthem blue cross", "anthem ny", "anthem new york", "empire bcbs"],
+          tradingPartnerId: "803",
+          stediPayerId: "803",
+          state: "NY",
+          notes: "Anthem BCBS of New York (formerly Empire BCBS), Stedi OLQXL / primary payer ID 803. Prior value 00805 resolved to Excellus BCBS of NY, not Anthem.",
           isActive: true,
         },
         {
