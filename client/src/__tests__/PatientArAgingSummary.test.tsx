@@ -6,6 +6,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mocks = vi.hoisted(() => ({
   arData: undefined as any,
   isLoading: false,
+  role: 'admin' as string,
+}));
+
+// A/R is financial data: the component renders null for non-financial roles,
+// so these tests run as an admin by default (see the role-gating test below).
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ user: { id: 'u1', role: mocks.role }, isAuthenticated: true, isLoading: false }),
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -36,12 +43,24 @@ describe('PatientArAgingSummary', () => {
   beforeEach(() => {
     mocks.arData = undefined;
     mocks.isLoading = false;
+    mocks.role = 'admin';
   });
 
   it('returns null when no data is available', () => {
     mocks.arData = undefined;
     const { container } = renderComponent();
     // Component returns null when no data
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('renders nothing for therapist-role users even when data exists', () => {
+    mocks.role = 'therapist';
+    mocks.arData = {
+      totalOutstanding: 100,
+      buckets: [{ bucket: '0-30', count: 1, amount: 100 }],
+      byPatient: [],
+    };
+    const { container } = renderComponent();
     expect(container.innerHTML).toBe('');
   });
 
