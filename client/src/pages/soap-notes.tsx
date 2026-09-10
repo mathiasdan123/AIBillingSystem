@@ -201,6 +201,14 @@ interface ActivityAssessment {
 interface ActivityWithAssessment {
   name: string;
   assessment: ActivityAssessment;
+  /**
+   * Therapist's narrative for this activity: what happened and how the
+   * patient responded (before → intervention → response → functional change).
+   * Primary clinical input per clinician feedback (Kelli, Sept 2026) — the
+   * structured ratings above are optional supplements. Rides through the
+   * activities JSONB unchanged, so older notes without it stay valid.
+   */
+  response?: string;
 }
 
 const DEFAULT_ACTIVITY_ASSESSMENT: ActivityAssessment = {
@@ -760,6 +768,12 @@ export default function SoapNotes() {
         ? { ...a, assessment: { ...a.assessment, [field]: value } }
         : a
       )
+    );
+  };
+
+  const updateActivityResponse = (activityName: string, value: string) => {
+    setSelectedActivities(prev =>
+      prev.map(a => a.name === activityName ? { ...a, response: value } : a)
     );
   };
 
@@ -1701,6 +1715,27 @@ export default function SoapNotes() {
                               <span className="text-xs">Remove</span>
                             </Button>
                           </div>
+                          {/* Narrative-first input (clinician feedback): the story of
+                              the activity is the primary objective data; structured
+                              ratings below are optional. */}
+                          <div className="mb-2">
+                            <Label className="text-[10px] text-green-600">
+                              What happened / how did the patient respond?
+                            </Label>
+                            <Textarea
+                              value={activity.response ?? ""}
+                              onChange={(e) => updateActivityResponse(activity.name, e.target.value)}
+                              placeholder="e.g., Started with high arousal and difficulty following directions; after graded vestibular input on the swing, was able to follow a 2-step direction."
+                              rows={2}
+                              className="text-xs bg-card"
+                              data-testid={`textarea-activity-response-${activity.name}`}
+                            />
+                          </div>
+                          <details className="group">
+                            <summary className="text-[11px] text-green-700 cursor-pointer select-none hover:underline">
+                              Optional structured ratings
+                            </summary>
+                            <div className="mt-2">
                           {isStActivity(activity.name) ? (
                             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                               <div>
@@ -1838,6 +1873,8 @@ export default function SoapNotes() {
                               </div>
                             </div>
                           )}
+                            </div>
+                          </details>
                         </div>
                       ))}
                     </div>
