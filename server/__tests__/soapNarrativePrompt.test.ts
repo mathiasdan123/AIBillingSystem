@@ -68,3 +68,27 @@ describe('buildUserPrompt — prior session context', () => {
     expect(prompt).not.toContain('PRIOR SESSION SUMMARIES');
   });
 });
+
+describe('buildUserPrompt — plan carry-forward (Phase 3)', () => {
+  it('includes the most recent plan as the carry-forward baseline', () => {
+    const prompt = buildUserPrompt(
+      baseRequest(), patient, 3, null, undefined, undefined,
+      [
+        { date: '2026-09-03', objective: 'obj', assessment: 'assess', plan: 'Continue OT 2x/week focusing on bilateral coordination.' },
+        { date: '2026-08-27', objective: 'older', plan: 'Older plan.' },
+      ],
+    );
+    expect(prompt).toContain('MOST RECENT PLAN (carry-forward baseline');
+    expect(prompt).toContain('Continue OT 2x/week focusing on bilateral coordination.');
+    expect(prompt).not.toContain('MOST RECENT PLAN (carry-forward baseline — see the plan instructions):\nOlder plan.');
+    expect(prompt).toContain('Current plan remains appropriate; no changes recommended.');
+  });
+
+  it('omits the baseline when prior sessions carry no plan', () => {
+    const prompt = buildUserPrompt(
+      baseRequest(), patient, 3, null, undefined, undefined,
+      [{ date: '2026-09-03', objective: 'obj' }],
+    );
+    expect(prompt).not.toContain('MOST RECENT PLAN (carry-forward baseline');
+  });
+});

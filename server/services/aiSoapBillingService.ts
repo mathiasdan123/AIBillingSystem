@@ -199,7 +199,7 @@ export async function generateSoapNoteAndBilling(
   // Prior signed notes give the model REAL progress context — the only
   // ground truth that legitimizes "compared to last session" statements
   // (the anti-fabrication rules forbid such comparisons otherwise).
-  let priorSessions: Array<{ date: string; objective?: string; assessment?: string }> = [];
+  let priorSessions: Array<{ date: string; objective?: string; assessment?: string; plan?: string }> = [];
   try {
     if (request.practiceId) {
       const priorNotes = await storage.getRecentSoapNotesForPatient(
@@ -213,6 +213,7 @@ export async function generateSoapNoteAndBilling(
         date: n.therapistSignedAt ?? n.createdAt ?? 'unknown date',
         objective: trim(n.objective),
         assessment: trim(n.assessment),
+        plan: trim(n.plan),
       }));
     }
   } catch (e) {
@@ -582,7 +583,7 @@ export function buildUserPrompt(
   insuranceData: any,
   treatmentPlan?: any,
   treatmentGoals?: any[],
-  priorSessions?: Array<{ date: string; objective?: string; assessment?: string }>
+  priorSessions?: Array<{ date: string; objective?: string; assessment?: string; plan?: string }>
 ): string {
   // Calculate patient age
   const dob = new Date(patient.dateOfBirth);
@@ -685,6 +686,10 @@ ONLY sanctioned source for progress comparisons; cite nothing beyond it):`;
       if (s.objective) prompt += `\nObjective: ${s.objective}`;
       if (s.assessment) prompt += `\nAssessment: ${s.assessment}`;
     }
+    const mostRecentPlan = priorSessions[0]?.plan;
+    if (mostRecentPlan) {
+      prompt += `\n\nMOST RECENT PLAN (carry-forward baseline — see the plan instructions):\n${mostRecentPlan}`;
+    }
   }
 
   prompt += `
@@ -707,7 +712,7 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
 
   "assessment": "Clinical interpretation anchored to the observations actually provided (200-400 words when the input supports it; fewer paragraphs when it doesn't — omit sub-sections you have no data for). Connect each skilled intervention to a specific functional deficit using payer-aligned skilled vocabulary (skilled clinical analysis, clinical reasoning, task grading, neuromuscular re-education, cueing hierarchy, compensatory strategies, safety/judgment, measurable functional impact). Cover, as supported by the input: engagement/participation; postural/core control; motor planning & coordination; fine motor (only if fine-motor activities were done); sensory processing & regulation (frame in functional/neuromuscular terms — e.g. 'vestibular-proprioceptive input to support postural control and motor planning' — NOT as 'sensory play'); progress toward goals ONLY if goal data was provided (no invented 'improved from last session'). End with a medical-necessity statement ONLY when the documented observations support one — it must tie the OBSERVED deficits to functional participation, customized to this session. If the input is thin (sparse observations, no documented deficits), OMIT the medical-necessity statement entirely: per clinical review, a generic necessity sentence weakens documentation more than leaving it out. Do not name primitive reflexes (TLR/STNR/ATNR/Moro) or specific test patterns unless the input observed them.",
 
-  "plan": "Scaled to the input (80-200 words). Use the planNextSteps, nextSessionFocus, and homeProgram fields.\\n\\nNext session focus: use what the therapist wrote; you may add 2-3 activities that clinically align with that focus.\\n\\nTreatment frequency: state a cadence only if the treatment-plan data implies one; otherwise 'Continue current treatment frequency'.\\n\\nHome program: use the home program field if provided. If no new home program was given, write exactly: 'Reviewed continuation of current home strategies; no changes to home program at this time.' Do NOT invent exercises, rep counts, or imply parent education that didn't occur.\\n\\nGoals: reference ONLY the treatment goals provided. Coordination/referrals: only if clearly indicated.",
+  "plan": "Scaled to the input (80-200 words). CONTINUITY RULE (clinician-requested): when a MOST RECENT PLAN was provided, it is the baseline — plans appropriately stay the same across visits. If today's documented session gives no clinical reason to change it, carry its substance forward and OPEN with exactly: 'Current plan remains appropriate; no changes recommended.' If today's data DOES indicate a change, open with 'Suggested update: [the change]' followed by the one observation from today that motivates it, then the carried-forward remainder — the therapist accepts or rejects the suggestion when reviewing. Never rewrite the plan wholesale, and never invent a change to appear thorough. When no MOST RECENT PLAN was provided, draft from the planNextSteps, nextSessionFocus, and homeProgram fields.\\n\\nNext session focus: use what the therapist wrote; you may add 2-3 activities that clinically align with that focus.\\n\\nTreatment frequency: state a cadence only if the treatment-plan data implies one; otherwise 'Continue current treatment frequency'.\\n\\nHome program: use the home program field if provided. If no new home program was given, write exactly: 'Reviewed continuation of current home strategies; no changes to home program at this time.' Do NOT invent exercises, rep counts, or imply parent education that didn't occur.\\n\\nGoals: reference ONLY the treatment goals provided. Coordination/referrals: only if clearly indicated.",
 
   "cptCodes": [
     {

@@ -2006,16 +2006,26 @@ export default function SoapNotes() {
             </Card>
             )}
 
-            {/* Assessment Quick Selections */}
+            {/* Assessment Quick Selections — demoted to optional (clinician
+                feedback): the AI drafts the Assessment from the per-activity
+                narratives, goals, and prior sessions; these global ratings are
+                a duplicate of the per-activity ones and stay collapsed. */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <span className="w-6 h-6 rounded bg-purple-100 text-purple-700 flex items-center justify-center text-sm font-bold">A</span>
                   Assessment
                 </CardTitle>
+                <CardDescription className="text-xs">
+                  The AI drafts this section from your activity narratives, the patient's goals, and prior sessions — you review and edit it after generation.
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <details>
+                  <summary className="text-xs text-purple-700 cursor-pointer select-none hover:underline mb-2">
+                    Optional overall ratings
+                  </summary>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-2">
                   <div>
                     <Label className="text-xs text-muted-foreground">Performance</Label>
                     <Select value={assessment.performance} onValueChange={(v) => setAssessment({...assessment, performance: v})}>
@@ -2082,6 +2092,7 @@ export default function SoapNotes() {
                     </Select>
                   </div>
                 </div>
+                </details>
               </CardContent>
             </Card>
 
