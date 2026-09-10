@@ -56,8 +56,12 @@ const rows = [
   console.log('rewrote rows:', upd.rows.map((r) => r.id).join(',') || 'none');
   for (const r of rows) {
     const ins = await c.query(
+      // Explicit casts: $1 appears both in the SELECT list and the NOT EXISTS
+      // comparison, and Postgres deduces conflicting types (text vs varchar)
+      // for the bare parameter — error 42P08.
       'INSERT INTO payer_crosswalk (parent_payer_name,sub_plan_name,sub_plan_keywords,trading_partner_id,stedi_payer_id,state,notes,is_active) ' +
-        "SELECT 'Blue Cross Blue Shield',$1,$2::jsonb,$3,$3,$4,$5,true WHERE NOT EXISTS (SELECT 1 FROM payer_crosswalk WHERE sub_plan_name=$1) RETURNING id",
+        "SELECT 'Blue Cross Blue Shield',$1::varchar,$2::jsonb,$3::varchar,$3::varchar,$4::varchar,$5::text,true " +
+        'WHERE NOT EXISTS (SELECT 1 FROM payer_crosswalk WHERE sub_plan_name=$1::varchar) RETURNING id',
       [r.name, JSON.stringify(r.kw), r.id, r.state, r.notes],
     );
     if (ins.rows.length) console.log('inserted', ins.rows[0].id, r.name);
