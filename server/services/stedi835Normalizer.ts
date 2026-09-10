@@ -153,13 +153,29 @@ export function normalizeStedi835(report: any): NormalizedRemittance {
   for (const transaction of arr(report?.transactions)) {
     // Financial info (BPR/TRN) sits at transaction level when present.
     const financial = transaction?.financialInformation ?? {};
+    // TRN reassociation: the polled report (reports/v2 .../835, verified live
+    // 2026-09-10) carries it at paymentAndRemitReassociationDetails — this is
+    // the EFT trace the deposit-reconciliation matcher keys on. Older shapes
+    // kept as fallbacks.
     checkNumber =
       checkNumber ??
-      (transaction?.reassociationTraceNumber?.checkOrEFTTraceNumber ??
+      (transaction?.paymentAndRemitReassociationDetails?.checkOrEFTTraceNumber ??
+        transaction?.reassociationTraceNumber?.checkOrEFTTraceNumber ??
         financial?.checkOrEFTTraceNumber ??
         transaction?.traceNumber ??
         null);
     checkDate = checkDate ?? toIsoDate(financial?.checkIssueOrEFTEffectiveDate);
+
+    // Payer identification lives at transaction level in the polled report
+    // (transaction.payer.name / payerIdentificationNumber). The claim-level
+    // fallbacks below only fire when detailInfo exists — an interest-only or
+    // adjustment-only remit has none, which is how three real remits landed
+    // as "Unknown Payer" with no trace on 2026-09-10.
+    const topPayer = transaction?.payer ?? {};
+    if (!payerName && topPayer?.name) payerName = String(topPayer.name);
+    if (!payerId && topPayer?.payerIdentificationNumber) {
+      payerId = String(topPayer.payerIdentificationNumber);
+    }
 
     const transactionTotal = nullableNum(financial?.totalActualProviderPaymentAmount);
     if (transactionTotal != null) total += transactionTotal;

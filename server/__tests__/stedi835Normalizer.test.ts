@@ -150,3 +150,54 @@ describe('normalizeStedi835', () => {
     expect(normalizeStedi835(noTotal).totalPaymentAmount).toBe(160);
   });
 });
+
+describe('normalizeStedi835 — polled report shape (reports/v2, verified live 2026-09-10)', () => {
+  // Mirrors the real envelope: payer at transaction level, TRN trace under
+  // paymentAndRemitReassociationDetails, and (for interest-only remits) no
+  // detailInfo at all. All values fictional.
+  const POLLED_REPORT = {
+    meta: { applicationMode: 'production', transactionId: 'txn-test' },
+    transactions: [
+      {
+        controlNumber: '1009',
+        financialInformation: {
+          checkIssueOrEFTEffectiveDate: '20260909',
+          paymentMethodCode: 'ACH',
+          totalActualProviderPaymentAmount: 6.29,
+        },
+        payer: {
+          name: 'Cigna',
+          payerIdentificationNumber: '62308',
+        },
+        paymentAndRemitReassociationDetails: {
+          checkOrEFTTraceNumber: '260905590004475',
+          traceTypeCode: '1',
+        },
+        providerAdjustments: [
+          {
+            adjustments: [
+              { adjustmentReasonCode: 'L6', providerAdjustmentAmount: -6.29 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  it('reads payer name and id from the transaction-level payer block', () => {
+    const r = normalizeStedi835(POLLED_REPORT as any);
+    expect(r.payerName).toBe('Cigna');
+    expect(r.payerId).toBe('62308');
+  });
+
+  it('reads the EFT trace number from paymentAndRemitReassociationDetails', () => {
+    const r = normalizeStedi835(POLLED_REPORT as any);
+    expect(r.checkNumber).toBe('260905590004475');
+  });
+
+  it('handles an interest-only remit (no detailInfo) without losing the total', () => {
+    const r = normalizeStedi835(POLLED_REPORT as any);
+    expect(r.totalPaymentAmount).toBe(6.29);
+    expect(r.lineItems).toEqual([]);
+  });
+});
