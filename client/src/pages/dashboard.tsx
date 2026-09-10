@@ -45,12 +45,17 @@ export default function Dashboard() {
     enabled: isAuthenticated,
   }) as any;
 
+  // Practice financials are admin/billing only (requireFinancialRole on the
+  // server). A therapist-role dashboard must not even ask — the 403s it gets
+  // back are alarm noise and briefly looked like session expiry to the client.
+  const isFinancialRole = user?.role === 'admin' || user?.role === 'billing';
+
   // Shows the 5 most recent. The bare '/api/claims' endpoint is now bounded
   // server-side (100 most recent), so this no longer pulls the whole table —
   // and keeping this exact queryKey preserves the existing cache invalidations.
   const { data: recentClaims, isLoading: claimsLoading, isError: claimsError, refetch: refetchClaims } = useQuery({
     queryKey: ['/api/claims'],
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && isFinancialRole,
   }) as any;
 
   const { data: recentPatients, isLoading: patientsLoading, isError: patientsError, refetch: refetchPatients } = useQuery({
