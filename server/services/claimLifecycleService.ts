@@ -13,8 +13,12 @@
  */
 import logger from './logger';
 
-const STEDI_HEALTHCARE_BASE =
-  process.env.STEDI_HEALTHCARE_BASE || 'https://healthcare.us.stedi.com/2024-04-01';
+// NOTE the dedicated host: the Lifecycle API lives on claims.us.stedi.com
+// with its own version date — NOT the healthcare base. The healthcare base
+// answers /claims with an empty 200, which is a false-empty (verified live):
+// exactly the failure mode the 404 guard below exists for, but sneakier.
+const STEDI_CLAIMS_BASE =
+  process.env.STEDI_CLAIMS_BASE || 'https://claims.us.stedi.com/2025-03-07';
 
 export type LifecycleStatus =
   | 'SUBMITTED'
@@ -63,7 +67,7 @@ export async function listLifecycleClaims(params: {
     qs.set('pageSize', String(params.pageSize ?? 100));
   }
 
-  const url = `${STEDI_HEALTHCARE_BASE}/claims?${qs.toString()}`;
+  const url = `${STEDI_CLAIMS_BASE}/claims?${qs.toString()}`;
   const response = await fetch(url, {
     method: 'GET',
     headers: { Authorization: `Key ${params.apiKey}` },
