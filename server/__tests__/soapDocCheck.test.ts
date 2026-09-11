@@ -43,7 +43,7 @@ describe('runSoapDocCheck', () => {
       questions: [],
     });
     const r = await runSoapDocCheck(INPUT);
-    expect(r.checks).toHaveLength(6);
+    expect(r.checks).toHaveLength(DOC_CHECK_CATEGORIES.length);
     expect(r.checks.every((c) => c.status === 'pass')).toBe(true);
     expect(r.questions).toEqual([]);
   });

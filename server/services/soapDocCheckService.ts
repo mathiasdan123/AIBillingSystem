@@ -37,6 +37,7 @@ export const DOC_CHECK_CATEGORIES = [
   'Functional relevance documented',
   'Assistance/cueing specificity',
   'Skilled therapist involvement supported',
+  'Medical necessity supported',
 ] as const;
 
 export interface SoapDocCheckInput {
@@ -96,6 +97,7 @@ Category guidance:
 4. Functional relevance: does the note connect performance to daily function/participation?
 5. Assistance/cueing: are assistance levels or cue types stated specifically enough to reproduce (e.g. "moderate verbal cues"), for the key activities?
 6. Skilled involvement: would a reviewer see why a skilled therapist (not a parent or aide) was required?
+7. Medical necessity: does the Assessment tie the OBSERVED deficits to functional participation in a way that supports continued skilled therapy? Warn if the note documents deficits but never connects them to function/necessity, AND warn if a necessity statement is present but generic boilerplate unsupported by today's observations (a generic statement weakens documentation).
 
 Respond with ONLY this JSON:
 {

@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -782,8 +783,11 @@ export default function SoapNotes() {
   const [docCheckLoading, setDocCheckLoading] = useState(false);
   const [docCheckError, setDocCheckError] = useState<string | null>(null);
 
-  const runDocCheck = async () => {
-    if (!generatedNote || !selectedPatient) return;
+  const runDocCheck = async (): Promise<{
+    checks: Array<{ item: string; status: 'pass' | 'warn'; detail: string }>;
+    questions: string[];
+  } | null> => {
+    if (!generatedNote || !selectedPatient) return null;
     setDocCheckLoading(true);
     setDocCheckError(null);
     try {
@@ -798,11 +802,46 @@ export default function SoapNotes() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Documentation check failed');
       setDocCheck(data);
+      return data;
     } catch (e: any) {
       setDocCheckError(e.message || 'Documentation check failed. Please try again.');
+      return null;
     } finally {
       setDocCheckLoading(false);
     }
+  };
+
+  // Save-time documentation check (clinician-requested): pressing save runs
+  // the check and pops findings; the therapist can always save anyway — it is
+  // advisory, and a check OUTAGE never blocks saving a note.
+  const [docCheckDialogOpen, setDocCheckDialogOpen] = useState(false);
+
+  const handleSaveWithDocCheck = async () => {
+    if (savedNoteInfo || createSoapNoteMutation.isPending) return;
+    const result = await runDocCheck();
+    if (!result) {
+      // Check unavailable — advisory feature must not stand between a
+      // therapist and saving their note.
+      createSoapNoteMutation.mutate();
+      return;
+    }
+    if (result.checks.every((c) => c.status === 'pass')) {
+      toast({ title: 'Documentation check passed', description: 'All elements present — saving.' });
+      createSoapNoteMutation.mutate();
+      return;
+    }
+    setDocCheckDialogOpen(true);
+  };
+
+  /** passes/total → strength label + color, à la password meters. */
+  const docCheckStrength = (checks: Array<{ status: 'pass' | 'warn' }>) => {
+    const total = checks.length || 1;
+    const passes = checks.filter((c) => c.status === 'pass').length;
+    const pct = Math.round((passes / total) * 100);
+    if (pct === 100) return { pct, label: 'Strong', bar: 'bg-green-500', text: 'text-green-700' };
+    if (pct >= 70) return { pct, label: 'Good', bar: 'bg-lime-500', text: 'text-lime-700' };
+    if (pct >= 50) return { pct, label: 'Fair', bar: 'bg-amber-500', text: 'text-amber-700' };
+    return { pct, label: 'Needs work', bar: 'bg-red-500', text: 'text-red-700' };
   };
 
   const updateActivityResponse = (activityName: string, value: string) => {
@@ -2520,6 +2559,20 @@ export default function SoapNotes() {
                       )}
                       {docCheck && (
                         <div className="mt-2 space-y-1">
+                          {(() => {
+                            const s = docCheckStrength(docCheck.checks);
+                            return (
+                              <div className="mb-2">
+                                <div className="flex items-center justify-between text-xs mb-1">
+                                  <span className="text-muted-foreground">Note strength</span>
+                                  <span className={`font-medium ${s.text}`}>{s.label}</span>
+                                </div>
+                                <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${s.bar}`} style={{ width: `${s.pct}%` }} />
+                                </div>
+                              </div>
+                            );
+                          })()}
                           {docCheck.checks.map((c) => (
                             <div key={c.item} className="flex items-start gap-2 text-xs">
                               {c.status === 'pass' ? (
@@ -2609,13 +2662,20 @@ export default function SoapNotes() {
                   </CardContent>
                 </Card>
 
-                {/* Save Button */}
+                {/* Save Button — runs the documentation check first; popup is
+                    advisory and "Save anyway" is always available. */}
                 <Button
-                  onClick={() => createSoapNoteMutation.mutate()}
-                  disabled={createSoapNoteMutation.isPending || savedNoteInfo !== null}
+                  onClick={handleSaveWithDocCheck}
+                  disabled={createSoapNoteMutation.isPending || docCheckLoading || savedNoteInfo !== null}
                   className="w-full h-12 text-base"
+                  data-testid="button-save-note"
                 >
-                  {createSoapNoteMutation.isPending ? (
+                  {docCheckLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                      Checking documentation...
+                    </>
+                  ) : createSoapNoteMutation.isPending ? (
                     <>
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                       Saving...
@@ -2632,6 +2692,75 @@ export default function SoapNotes() {
                     </>
                   )}
                 </Button>
+
+                {/* Save-time documentation check popup (advisory) */}
+                <Dialog open={docCheckDialogOpen} onOpenChange={setDocCheckDialogOpen}>
+                  <DialogContent className="max-w-lg" data-testid="doc-check-dialog">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <ClipboardCheck className="w-4 h-4 text-teal-600" />
+                        Documentation check
+                      </DialogTitle>
+                      <DialogDescription>
+                        A few elements could be stronger. You can save as-is — this never blocks you.
+                      </DialogDescription>
+                    </DialogHeader>
+                    {docCheck && (
+                      <div className="space-y-3">
+                        {(() => {
+                          const s = docCheckStrength(docCheck.checks);
+                          return (
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span className="text-muted-foreground">Note strength</span>
+                                <span className={`font-medium ${s.text}`}>{s.label}</span>
+                              </div>
+                              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${s.bar}`} style={{ width: `${s.pct}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        <div className="space-y-1">
+                          {docCheck.checks.map((c) => (
+                            <div key={c.item} className="flex items-start gap-2 text-xs">
+                              {c.status === 'pass' ? (
+                                <CheckCircle className="w-3.5 h-3.5 text-green-600 mt-0.5 shrink-0" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                              )}
+                              <span>
+                                <span className={c.status === 'pass' ? '' : 'font-medium text-amber-800'}>{c.item}</span>
+                                {c.status === 'warn' && <span className="text-muted-foreground"> — {c.detail}</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        {docCheck.questions.length > 0 && (
+                          <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                            <p className="text-xs font-medium text-amber-800 mb-1">Quick questions that would strengthen it:</p>
+                            <ul className="list-disc pl-4 space-y-0.5">
+                              {docCheck.questions.map((q, i) => (
+                                <li key={i} className="text-xs text-amber-800">{q}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <DialogFooter className="gap-2">
+                      <Button variant="outline" onClick={() => setDocCheckDialogOpen(false)} data-testid="button-review-first">
+                        Review & edit first
+                      </Button>
+                      <Button
+                        onClick={() => { setDocCheckDialogOpen(false); createSoapNoteMutation.mutate(); }}
+                        data-testid="button-save-anyway"
+                      >
+                        Save anyway
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </>
             ) : (
               <Card className="border-dashed">
