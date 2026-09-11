@@ -816,6 +816,64 @@ export default function SoapNotes() {
   // advisory, and a check OUTAGE never blocks saving a note.
   const [docCheckDialogOpen, setDocCheckDialogOpen] = useState(false);
 
+  // Answer weaving (clinician round two): type answers under the check's
+  // questions and the AI incorporates exactly those facts into the note.
+  // One-level undo keeps the therapist in control of every AI edit.
+  const [docCheckAnswers, setDocCheckAnswers] = useState<Record<string, string>>({});
+  const [weaving, setWeaving] = useState(false);
+  const [weaveChanges, setWeaveChanges] = useState<Array<{ section: string; summary: string }> | null>(null);
+  const weaveBackupRef = useRef<{ subjective: string; objective: string; assessment: string; plan: string } | null>(null);
+
+  const handleWeaveAnswers = async () => {
+    if (!generatedNote || !selectedPatient || !docCheck) return;
+    const answers = docCheck.questions
+      .map((q) => ({ question: q, answer: (docCheckAnswers[q] ?? '').trim() }))
+      .filter((a) => a.answer);
+    if (answers.length === 0) return;
+    setWeaving(true);
+    try {
+      const res = await apiRequest('POST', '/api/ai/soap-weave-answers', {
+        patientId: selectedPatient,
+        subjective: generatedNote.subjective,
+        objective: generatedNote.objective,
+        assessment: generatedNote.assessment,
+        plan: generatedNote.plan,
+        answers,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not weave the answers in.');
+      weaveBackupRef.current = {
+        subjective: generatedNote.subjective,
+        objective: generatedNote.objective,
+        assessment: generatedNote.assessment,
+        plan: generatedNote.plan,
+      };
+      setGeneratedNote((prev) =>
+        prev
+          ? { ...prev, subjective: data.subjective, objective: data.objective, assessment: data.assessment, plan: data.plan }
+          : prev,
+      );
+      setWeaveChanges(data.changes ?? []);
+      setDocCheckAnswers({});
+      toast({ title: 'Answers woven in', description: 'Review the highlighted sections, then re-check.' });
+      // Refresh the checklist against the revised note.
+      setTimeout(() => { runDocCheck(); }, 0);
+    } catch (e: any) {
+      toast({ title: 'Weaving failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setWeaving(false);
+    }
+  };
+
+  const undoWeave = () => {
+    if (!weaveBackupRef.current) return;
+    const backup = weaveBackupRef.current;
+    setGeneratedNote((prev) => (prev ? { ...prev, ...backup } : prev));
+    weaveBackupRef.current = null;
+    setWeaveChanges(null);
+    toast({ title: 'Weave undone', description: 'The note is back to the previous version.' });
+  };
+
   const handleSaveWithDocCheck = async () => {
     if (savedNoteInfo || createSoapNoteMutation.isPending) return;
     const result = await runDocCheck();
@@ -2587,18 +2645,54 @@ export default function SoapNotes() {
                             </div>
                           ))}
                           {docCheck.questions.length > 0 && (
-                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
-                              <p className="text-xs font-medium text-amber-800 mb-1">
-                                To strengthen this note, add answers to:
+                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                              <p className="text-xs font-medium text-amber-800">
+                                Answer below and the AI will weave your facts into the note — only what you type, nothing more:
                               </p>
+                              {docCheck.questions.map((q) => (
+                                <div key={q}>
+                                  <p className="text-xs text-amber-800 mb-0.5">{q}</p>
+                                  <Textarea
+                                    value={docCheckAnswers[q] ?? ''}
+                                    onChange={(e) => setDocCheckAnswers((prev) => ({ ...prev, [q]: e.target.value }))}
+                                    rows={1}
+                                    className="text-xs bg-card"
+                                    placeholder="Your answer (or leave blank to skip)"
+                                    data-testid={`textarea-doc-check-answer`}
+                                  />
+                                </div>
+                              ))}
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={handleWeaveAnswers}
+                                  disabled={weaving || !docCheck.questions.some((q) => (docCheckAnswers[q] ?? '').trim())}
+                                  data-testid="button-weave-answers"
+                                >
+                                  {weaving ? (<><Loader2 className="w-3 h-3 mr-1 animate-spin" />Weaving…</>) : 'Weave answers into note'}
+                                </Button>
+                                <span className="text-[10px] text-muted-foreground">
+                                  You can also just edit the sections above directly.
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          {weaveChanges && weaveChanges.length > 0 && (
+                            <div className="mt-2 p-2 bg-teal-50 border border-teal-200 rounded-lg">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-xs font-medium text-teal-800">What the AI changed:</p>
+                                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={undoWeave} data-testid="button-undo-weave">
+                                  Undo
+                                </Button>
+                              </div>
                               <ul className="list-disc pl-4 space-y-0.5">
-                                {docCheck.questions.map((q, i) => (
-                                  <li key={i} className="text-xs text-amber-800">{q}</li>
+                                {weaveChanges.map((c, i) => (
+                                  <li key={i} className="text-xs text-teal-800">
+                                    <span className="uppercase font-medium">{c.section}</span>: {c.summary}
+                                  </li>
                                 ))}
                               </ul>
-                              <p className="text-[10px] text-muted-foreground mt-1">
-                                Edit the note sections above (or regenerate with more detail) — the check never fills gaps for you.
-                              </p>
                             </div>
                           )}
                           {docCheck.questions.length === 0 && docCheck.checks.every(c => c.status === 'pass') && (

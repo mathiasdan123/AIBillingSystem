@@ -405,6 +405,43 @@ router.post('/ai/soap-doc-check', isAuthenticated, async (req: any, res) => {
   }
 });
 
+/**
+ * POST /api/ai/soap-weave-answers — incorporates the therapist's typed
+ * answers to doc-check questions into the draft note (minimal-diff edit;
+ * answers are the only new information).
+ */
+router.post('/ai/soap-weave-answers', isAuthenticated, async (req: any, res) => {
+  try {
+    const { weaveAnswersIntoNote } = await import('../services/soapAnswerWeaveService');
+    const { storage } = await import('../storage');
+    const user = await storage.getUser(req.user.claims.sub);
+    const { patientId, subjective, objective, assessment, plan, answers } = req.body ?? {};
+    if (!patientId || !subjective || !objective || !assessment || !plan || !Array.isArray(answers)) {
+      return res.status(400).json({ error: 'patientId, all four SOAP sections, and answers are required' });
+    }
+    const result = await weaveAnswersIntoNote({
+      patientId,
+      practiceId: user?.practiceId ?? undefined,
+      subjective: String(subjective),
+      objective: String(objective),
+      assessment: String(assessment),
+      plan: String(plan),
+      answers,
+    });
+    res.json(result);
+  } catch (error: any) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('unavailable') || msg.includes('not configured')) {
+      return res.status(503).json({ error: 'Answer weaving is unavailable right now.' });
+    }
+    if (msg.includes('No answers provided')) {
+      return res.status(400).json({ error: 'Type at least one answer first.' });
+    }
+    logger.error('SOAP answer weaving failed', { error: msg });
+    res.status(500).json({ error: 'Could not weave the answers in. Please try again.' });
+  }
+});
+
 router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) => {
   const startedAt = Date.now();
   logger.info('SOAP generation request received', {
