@@ -24,6 +24,7 @@ import {
 import { VoiceInput } from "@/components/VoiceInput";
 import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient, streamRequest } from "@/lib/queryClient";
+import { parsePlanSuggestion } from "@/lib/planSuggestion";
 import { extractSoapPreview } from "@/lib/soapPreview";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -825,10 +826,18 @@ export default function SoapNotes() {
   const weaveBackupRef = useRef<{ subjective: string; objective: string; assessment: string; plan: string } | null>(null);
 
   const handleWeaveAnswers = async () => {
-    if (!generatedNote || !selectedPatient || !docCheck) return;
+    if (!docCheck) return;
     const answers = docCheck.questions
       .map((q) => ({ question: q, answer: (docCheckAnswers[q] ?? '').trim() }))
       .filter((a) => a.answer);
+    await weaveFacts(answers);
+  };
+
+  /** Shared minimal-diff edit path: doc-check answers and the plan-suggestion
+   *  Accept button both go through here, so "What the AI changed" + Undo
+   *  apply to every AI edit uniformly. */
+  const weaveFacts = async (answers: Array<{ question: string; answer: string }>) => {
+    if (!generatedNote || !selectedPatient) return;
     if (answers.length === 0) return;
     setWeaving(true);
     try {
@@ -872,6 +881,38 @@ export default function SoapNotes() {
     weaveBackupRef.current = null;
     setWeaveChanges(null);
     toast({ title: 'Weave undone', description: 'The note is back to the previous version.' });
+  };
+
+  // Plan suggested-update card (clinician feature): Accept integrates the
+  // change via the weave path (undo + change list included); Dismiss keeps
+  // the carried-forward plan and drops the suggestion.
+  const planSuggestion = generatedNote ? parsePlanSuggestion(generatedNote.plan) : null;
+
+  const acceptPlanSuggestion = async () => {
+    if (!planSuggestion) return;
+    await weaveFacts([
+      {
+        question:
+          'The therapist ACCEPTED this suggested plan change. Integrate it into the Plan section as established plan content — remove the "Suggested update:" framing and its motivating-observation sentence from the Plan (the observation already lives in Objective/Assessment).',
+        answer: planSuggestion.suggestion,
+      },
+    ]);
+  };
+
+  const dismissPlanSuggestion = () => {
+    if (!generatedNote || !planSuggestion) return;
+    weaveBackupRef.current = {
+      subjective: generatedNote.subjective,
+      objective: generatedNote.objective,
+      assessment: generatedNote.assessment,
+      plan: generatedNote.plan,
+    };
+    const newPlan = planSuggestion.remainder.trim()
+      ? planSuggestion.remainder
+      : 'Current plan remains appropriate; no changes recommended.';
+    setGeneratedNote((prev) => (prev ? { ...prev, plan: newPlan } : prev));
+    setWeaveChanges([{ section: 'plan', summary: 'Removed the suggested update (dismissed by therapist); carried-forward plan kept.' }]);
+    toast({ title: 'Suggestion dismissed', description: 'The plan keeps its carried-forward content. Undo is available.' });
   };
 
   const handleSaveWithDocCheck = async () => {
@@ -2588,7 +2629,40 @@ export default function SoapNotes() {
                     <Separator />
                     <div>
                       <Label className="text-xs font-semibold text-orange-600">PLAN</Label>
-                      <p className="mt-1 text-foreground">{generatedNote.plan}</p>
+                      {planSuggestion ? (
+                        <div className="mt-1 space-y-2">
+                          <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg" data-testid="plan-suggestion-card">
+                            <p className="text-xs font-medium text-amber-800 mb-1">Suggested plan change</p>
+                            <p className="text-sm text-amber-900 whitespace-pre-line">{planSuggestion.suggestion}</p>
+                            <div className="flex gap-2 mt-2">
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={acceptPlanSuggestion}
+                                disabled={weaving}
+                                data-testid="button-accept-plan-suggestion"
+                              >
+                                {weaving ? (<><Loader2 className="w-3 h-3 mr-1 animate-spin" />Integrating…</>) : (<><Check className="w-3 h-3 mr-1" />Accept &amp; integrate</>)}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={dismissPlanSuggestion}
+                                disabled={weaving}
+                                data-testid="button-dismiss-plan-suggestion"
+                              >
+                                <X className="w-3 h-3 mr-1" />Dismiss
+                              </Button>
+                            </div>
+                          </div>
+                          {planSuggestion.remainder && (
+                            <p className="text-foreground whitespace-pre-line">{planSuggestion.remainder}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-1 text-foreground">{generatedNote.plan}</p>
+                      )}
                     </div>
                     <Separator />
                     {/* Documentation check — review before signing. Never edits
