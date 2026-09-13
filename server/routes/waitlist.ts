@@ -365,6 +365,77 @@ router.post('/waitlist/find-matches', isAuthenticated, async (req: any, res) => 
   }
 });
 
+/**
+ * POST /api/waitlist/:id/confirm-offer — the therapist confirms the freed
+ * slot is real and wants it filled; only now does the family get contacted.
+ */
+router.post('/waitlist/:id/confirm-offer', isAuthenticated, async (req: any, res) => {
+  try {
+    const entryId = parseInt(req.params.id);
+    const practiceId = getAuthorizedPracticeId(req);
+    const entry = await storage.getWaitlistEntry(entryId);
+    if (!entry || entry.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Waitlist entry not found' });
+    }
+    if (entry.status !== 'pending_confirmation' || !entry.offeredSlot) {
+      return res.status(400).json({ message: 'This entry is not awaiting confirmation' });
+    }
+    const result = await offerSlotToFamily(entry, practiceId, entry.offeredSlot as any);
+    res.json({
+      offered: true,
+      respondBy: result.respondBy.toISOString(),
+      notificationSent: result.notificationSent,
+    });
+  } catch (error) {
+    logger.error('Error confirming waitlist offer', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to confirm the offer' });
+  }
+});
+
+/**
+ * POST /api/waitlist/:id/skip-offer — the therapist passes on this match.
+ * mode "next" (default) keeps the slot in play and offers it directly to the
+ * next matching family (the therapist is actively managing, so no second
+ * confirmation); mode "release" means the slot is not actually available —
+ * the entry returns to waiting and nothing else is offered.
+ */
+router.post('/waitlist/:id/skip-offer', isAuthenticated, async (req: any, res) => {
+  try {
+    const entryId = parseInt(req.params.id);
+    const practiceId = getAuthorizedPracticeId(req);
+    const mode = req.body?.mode === 'release' ? 'release' : 'next';
+    const entry = await storage.getWaitlistEntry(entryId);
+    if (!entry || entry.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Waitlist entry not found' });
+    }
+    if (entry.status !== 'pending_confirmation' || !entry.offeredSlot) {
+      return res.status(400).json({ message: 'This entry is not awaiting confirmation' });
+    }
+    const slot = entry.offeredSlot as any;
+
+    await storage.updateWaitlistEntry(entryId, {
+      status: 'waiting',
+      offeredAt: null,
+      offeredSlot: null,
+    } as any);
+
+    let nextOffer = null;
+    if (mode === 'next') {
+      nextOffer = await autoFillSlot(practiceId, {
+        therapistId: slot.therapistId || entry.therapistId || undefined,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        excludeEntryIds: [entryId],
+      });
+    }
+    res.json({ skipped: true, mode, nextOffer });
+  } catch (error) {
+    logger.error('Error skipping waitlist offer', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to skip the offer' });
+  }
+});
+
 // Notify a waitlist patient about an opening
 router.post('/waitlist/:id/notify', isAuthenticated, async (req: any, res) => {
   try {
@@ -497,6 +568,13 @@ interface AutoFillParams {
   endTime?: string;
   appointmentType?: string;
   excludeEntryIds?: number[];
+  /**
+   * Confirm-first (clinician spec): hold the match in pending_confirmation
+   * and notify the slot's therapist instead of contacting the family
+   * directly. Used by the cancellation hook; manual auto-fill (a human
+   * clicking) offers directly.
+   */
+  requireTherapistConfirmation?: boolean;
 }
 
 /**
@@ -562,18 +640,112 @@ export async function autoFillSlot(practiceId: number, params: AutoFillParams) {
     endTime: endTime || startTime,
   };
 
-  // Update entry to "offered" status
-  await storage.updateWaitlistEntry(topMatch.id, {
+  // Confirm-first flow (clinician spec — Megan, Wonder Kids): when a slot
+  // frees up via cancellation, the slot's therapist confirms it is really
+  // available and that they want it filled BEFORE any family is contacted.
+  if (params.requireTherapistConfirmation && therapistId) {
+    await storage.updateWaitlistEntry(topMatch.id, {
+      status: 'pending_confirmation',
+      offeredAt: new Date(),
+      // therapistId rides in the slot JSON so skip-offer can cascade the
+      // same slot to the next family with correct therapist matching.
+      offeredSlot: { ...offeredSlot, therapistId },
+    } as any);
+
+    let therapistNotified = false;
+    try {
+      const therapist = await storage.getUser(therapistId);
+      const { isEmailConfigured } = await import('../email');
+      if (therapist?.email && isEmailConfigured()) {
+        const { sendEmail } = await import('../services/emailService');
+        const formattedDate = slotDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+        await sendEmail({
+          to: therapist.email,
+          subject: `Open slot ${formattedDate} ${startTime} — ${matches.length} waitlisted ${matches.length === 1 ? 'family matches' : 'families match'}`,
+          html: `<p>Hi ${therapist.firstName || ''},</p>
+<p>A slot just opened on your schedule (cancellation): <strong>${formattedDate}, ${startTime}${endTime ? ` - ${endTime}` : ''}</strong>.</p>
+<p>${matches.length} waitlisted ${matches.length === 1 ? 'family matches' : 'families match'} this time. Open the Waitlist page to confirm the slot is still available and offer it — nothing is sent to any family until you confirm.</p>`,
+          text: `A slot opened ${formattedDate} ${startTime}. ${matches.length} waitlisted families match. Confirm in the Waitlist page to offer it.`,
+        });
+        therapistNotified = true;
+      }
+    } catch (err) {
+      logger.warn('Waitlist therapist-confirmation email failed (non-blocking)', { error: (err as Error).message });
+    }
+
+    logger.info('Waitlist auto-fill: awaiting therapist confirmation', {
+      waitlistEntryId: topMatch.id,
+      therapistId,
+      slot: offeredSlot,
+      matchCount: matches.length,
+      therapistNotified,
+    });
+
+    return {
+      matched: true,
+      pendingConfirmation: true,
+      message: 'Match found — awaiting therapist confirmation before offering to the family',
+      matchCount: matches.length,
+      offeredTo: {
+        waitlistEntryId: topMatch.id,
+        patientId: topMatch.patientId,
+        priority: topMatch.priority,
+      },
+      therapistNotified,
+    };
+  }
+
+  const offerResult = await offerSlotToFamily(topMatch, practiceId, offeredSlot);
+
+  logger.info('Waitlist auto-fill: slot offered', {
+    waitlistEntryId: topMatch.id,
+    patientId: topMatch.patientId,
+    slot: offeredSlot,
+    matchCount: matches.length,
+    notificationSent: offerResult.notificationSent,
+  });
+
+  return {
+    matched: true,
+    message: 'Slot offered to top matching patient',
+    matchCount: matches.length,
+    offeredTo: {
+      waitlistEntryId: topMatch.id,
+      patientId: topMatch.patientId,
+      priority: topMatch.priority,
+      respondBy: offerResult.respondBy.toISOString(),
+    },
+    notificationSent: offerResult.notificationSent,
+  };
+}
+
+/**
+ * Offers a slot to a waitlist family: flips the entry to "offered" with a
+ * 24-hour response deadline and notifies the family by email/SMS. Shared by
+ * the direct auto-fill path and the therapist confirm-offer endpoint.
+ */
+export async function offerSlotToFamily(
+  entry: any,
+  practiceId: number,
+  offeredSlot: { date: string; startTime: string; endTime: string },
+): Promise<{ respondBy: Date; notificationSent: boolean }> {
+  const respondBy = new Date();
+  respondBy.setHours(respondBy.getHours() + 24);
+
+  await storage.updateWaitlistEntry(entry.id, {
     status: 'offered',
     offeredAt: new Date(),
     offeredSlot,
     respondBy,
   } as any);
 
-  // Send notification (email/SMS placeholder)
+  const slotDate = new Date(offeredSlot.date);
+  const startTime = offeredSlot.startTime;
+  const endTime = offeredSlot.endTime;
+
   let notificationSent = false;
   try {
-    const patient = await storage.getPatient(topMatch.patientId);
+    const patient = await storage.getPatient(entry.patientId);
     const practice = await storage.getPractice(practiceId);
     const practiceName = practice?.name || 'Your Practice';
 
@@ -638,26 +810,7 @@ export async function autoFillSlot(practiceId: number, params: AutoFillParams) {
     logger.warn('Auto-fill notification error', { error: (err as Error).message });
   }
 
-  logger.info('Waitlist auto-fill: slot offered', {
-    waitlistEntryId: topMatch.id,
-    patientId: topMatch.patientId,
-    slot: offeredSlot,
-    matchCount: matches.length,
-    notificationSent,
-  });
-
-  return {
-    matched: true,
-    message: 'Slot offered to top matching patient',
-    matchCount: matches.length,
-    offeredTo: {
-      waitlistEntryId: topMatch.id,
-      patientId: topMatch.patientId,
-      priority: topMatch.priority,
-      respondBy: respondBy.toISOString(),
-    },
-    notificationSent,
-  };
+  return { respondBy, notificationSent };
 }
 
 export default router;

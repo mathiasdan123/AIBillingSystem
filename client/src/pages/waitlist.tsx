@@ -127,8 +127,15 @@ const PRIORITY_LABELS: Record<number, { label: string; color: string }> = {
   4: { label: "Urgent", color: "bg-red-100 text-red-800" },
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  pending_confirmation: "Needs confirmation",
+};
+const formatStatus = (status: string) =>
+  STATUS_LABELS[status] ?? status.charAt(0).toUpperCase() + status.slice(1);
+
 const STATUS_COLORS: Record<string, string> = {
   waiting: "bg-blue-100 text-blue-800",
+  pending_confirmation: "bg-amber-100 text-amber-800",
   offered: "bg-purple-100 text-purple-800",
   scheduled: "bg-green-100 text-green-800",
   expired: "bg-gray-100 text-gray-800",
@@ -271,6 +278,52 @@ export default function WaitlistPage() {
     },
     onError: () => {
       toast({ title: "Failed to decline offer", variant: "destructive" });
+    },
+  });
+
+  // Therapist confirms a pending slot match: only now is the family contacted
+  const confirmOffer = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/waitlist/${id}/confirm-offer`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist/stats"] });
+      setSelectedEntry(null);
+      toast({
+        title: "Offer sent to family",
+        description: data.notificationSent
+          ? "The family was notified and has 24 hours to respond."
+          : "Offer recorded — family contact info missing, reach out directly.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to confirm", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const skipOffer = useMutation({
+    mutationFn: async ({ id, mode }: { id: number; mode: "next" | "release" }) => {
+      const res = await apiRequest("POST", `/api/waitlist/${id}/skip-offer`, { mode });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist/stats"] });
+      setSelectedEntry(null);
+      toast({
+        title: data.mode === "release" ? "Slot released" : "Passed to next family",
+        description:
+          data.mode === "release"
+            ? "No family was contacted."
+            : data.nextOffer?.matched
+              ? "The slot was offered to the next matching family."
+              : "No other matching families on the waitlist.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to skip", description: err.message, variant: "destructive" });
     },
   });
 
@@ -498,6 +551,7 @@ export default function WaitlistPage() {
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
             <SelectItem value="waiting">Waiting</SelectItem>
+            <SelectItem value="pending_confirmation">Needs confirmation</SelectItem>
             <SelectItem value="offered">Offered</SelectItem>
             <SelectItem value="scheduled">Scheduled</SelectItem>
             <SelectItem value="cancelled">Cancelled</SelectItem>
@@ -559,7 +613,7 @@ export default function WaitlistPage() {
                       {PRIORITY_LABELS[entry.priority]?.label || "Normal"}
                     </Badge>
                     <Badge className={STATUS_COLORS[entry.status] || STATUS_COLORS.waiting}>
-                      {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
+                      {formatStatus(entry.status)}
                     </Badge>
                   </div>
                 </div>
@@ -582,12 +636,61 @@ export default function WaitlistPage() {
                 {/* Status & Priority */}
                 <div className="flex gap-2">
                   <Badge className={STATUS_COLORS[selectedEntry.status] || STATUS_COLORS.waiting}>
-                    {selectedEntry.status.charAt(0).toUpperCase() + selectedEntry.status.slice(1)}
+                    {formatStatus(selectedEntry.status)}
                   </Badge>
                   <Badge className={PRIORITY_LABELS[selectedEntry.priority]?.color || PRIORITY_LABELS[0].color}>
                     {PRIORITY_LABELS[selectedEntry.priority]?.label || "Normal"} Priority
                   </Badge>
                 </div>
+
+                {/* Awaiting therapist confirmation (confirm-first flow) */}
+                {selectedEntry.status === "pending_confirmation" && selectedEntry.offeredSlot && (
+                  <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-900/20 space-y-3" data-testid="pending-confirmation-card">
+                    <h4 className="font-medium flex items-center gap-2">
+                      <Timer className="h-4 w-4 text-amber-600" />
+                      Awaiting your confirmation
+                    </h4>
+                    <p className="text-sm">
+                      A slot opened on{" "}
+                      {new Date(selectedEntry.offeredSlot.date + "T00:00:00").toLocaleDateString("en-US", {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                      })}{" "}
+                      at {selectedEntry.offeredSlot.startTime} and this family matches. Nothing has been
+                      sent to them yet — confirm the slot is still available first.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => confirmOffer.mutate(selectedEntry.id)}
+                        disabled={confirmOffer.isPending || skipOffer.isPending}
+                        data-testid="button-confirm-offer"
+                      >
+                        <ThumbsUp className="mr-1 h-4 w-4" />
+                        {confirmOffer.isPending ? "Sending..." : "Confirm & offer to family"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => skipOffer.mutate({ id: selectedEntry.id, mode: "next" })}
+                        disabled={confirmOffer.isPending || skipOffer.isPending}
+                        data-testid="button-skip-next"
+                      >
+                        Pass to next family
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => skipOffer.mutate({ id: selectedEntry.id, mode: "release" })}
+                        disabled={confirmOffer.isPending || skipOffer.isPending}
+                        data-testid="button-release-slot"
+                      >
+                        Slot no longer available
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Offered Slot Info */}
                 {selectedEntry.status === "offered" && selectedEntry.offeredSlot && (
@@ -1199,6 +1302,28 @@ function AddWaitlistForm({
                 {day.label.slice(0, 3)}
               </Label>
             </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Preferred Time of Day</Label>
+        <div className="flex flex-wrap gap-1 mb-1">
+          {[
+            { label: "Morning", start: "08:00", end: "12:00" },
+            { label: "Afternoon", start: "12:00", end: "15:00" },
+            { label: "After school", start: "15:00", end: "18:00" },
+          ].map((b) => (
+            <Button
+              key={b.label}
+              type="button"
+              size="sm"
+              variant={formData.preferredTimeStart === b.start && formData.preferredTimeEnd === b.end ? "default" : "outline"}
+              className="h-7 text-xs"
+              onClick={() => setFormData((prev) => ({ ...prev, preferredTimeStart: b.start, preferredTimeEnd: b.end }))}
+            >
+              {b.label}
+            </Button>
           ))}
         </div>
       </div>

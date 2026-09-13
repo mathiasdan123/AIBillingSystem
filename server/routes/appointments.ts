@@ -392,6 +392,9 @@ router.post('/:id/cancel', isAuthenticated, async (req: any, res) => {
           startTime: startTimeStr,
           endTime: endTimeStr,
           appointmentType: appt.title || undefined,
+          // Confirm-first (clinician spec): the slot's therapist verifies
+          // availability before any family is contacted.
+          requireTherapistConfirmation: true,
         });
 
         if (autoFillResult.matched) {
