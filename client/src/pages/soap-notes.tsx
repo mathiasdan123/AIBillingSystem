@@ -19,7 +19,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   FileText, Brain, CheckCircle, Clock, Lightbulb, Sparkles,
   Plus, X, ChevronDown, ChevronUp, Loader2, Mic, ChevronsUpDown, Check, AlertTriangle,
-  ClipboardCheck
+  ClipboardCheck, TrendingUp
 } from "lucide-react";
 import { VoiceInput } from "@/components/VoiceInput";
 import { TextToSpeech } from "@/components/TextToSpeech";
@@ -1171,6 +1171,12 @@ export default function SoapNotes() {
         // Persist the picked intervention names alongside the note so the
         // chart history shows them and analytics can later count usage.
         interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
+        // Per-exercise progress (opt-in): send the Level of Assist for any
+        // activity the therapist filled it in for. Only these get logged and
+        // graphed — filling the field is what produces the progress chart.
+        activityAssists: selectedActivities
+          .filter((a) => a.assessment?.assistance)
+          .map((a) => ({ name: a.name, assistLevel: a.assessment.assistance })),
       };
 
       const soapNoteResponse = await apiRequest("POST", "/api/soap-notes", soapNoteData);
@@ -1907,6 +1913,12 @@ export default function SoapNotes() {
                               data-testid={`textarea-activity-response-${activity.name}`}
                             />
                           </div>
+                          {!activity.assessment?.assistance && !isStActivity(activity.name) && (
+                            <p className="text-[11px] text-teal-700 mb-1 flex items-center gap-1">
+                              <TrendingUp className="w-3 h-3" />
+                              Add a Level of Assist below to track this exercise's progress over time.
+                            </p>
+                          )}
                           <details className="group">
                             <summary className="text-[11px] text-green-700 cursor-pointer select-none hover:underline">
                               Optional structured ratings

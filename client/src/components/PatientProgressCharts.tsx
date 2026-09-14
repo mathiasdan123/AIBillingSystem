@@ -8,7 +8,10 @@ import { Loader2, TrendingUp, Target } from "lucide-react";
 interface ProgressPoint { date: string; value: number; severity?: string | null; reliableChange?: boolean | null; }
 interface GoalSeries { goalId: number; description: string; status: string; points: ProgressPoint[]; }
 interface MeasureSeries { templateId: number; name: string; shortName: string | null; clinicalCutoff: number | null; maxScore: number | null; points: ProgressPoint[]; }
-interface PatientProgress { goals: GoalSeries[]; outcomeMeasures: MeasureSeries[]; }
+interface ActivitySeries { activityName: string; points: Array<{ date: string; score: number; level: string }>; }
+interface PatientProgress { goals: GoalSeries[]; outcomeMeasures: MeasureSeries[]; activities?: ActivitySeries[]; }
+
+const ASSIST_TICKS = ["", "Dependent", "Max", "Mod", "Min", "Verbal", "Indep."];
 
 const LINE_COLORS = ["#0E7A6E", "#2563EB", "#9333EA", "#D97706", "#DC2626", "#0891B2"];
 
@@ -35,8 +38,9 @@ export default function PatientProgressCharts({ patientId }: { patientId: number
 
   const goals = data?.goals ?? [];
   const measures = data?.outcomeMeasures ?? [];
+  const activities = data?.activities ?? [];
 
-  if (goals.length === 0 && measures.length === 0) {
+  if (goals.length === 0 && measures.length === 0 && activities.length === 0) {
     return (
       <div className="text-center py-10 text-muted-foreground text-sm">
         <TrendingUp className="w-6 h-6 mx-auto mb-2 opacity-50" />
@@ -77,6 +81,57 @@ export default function PatientProgressCharts({ patientId }: { patientId: number
                     data={g.points}
                     dataKey="value"
                     name={g.description.length > 42 ? g.description.slice(0, 42) + "…" : g.description}
+                    stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {activities.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-teal-600" /> Per-exercise progress (level of assist)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-[11px] text-muted-foreground">
+              Higher is more independent — an upward line means the child needs less help with that exercise.
+            </p>
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart margin={{ top: 5, right: 12, bottom: 5, left: -8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="date"
+                  type="category"
+                  allowDuplicatedCategory={false}
+                  tickFormatter={fmtDate}
+                  tick={{ fontSize: 11 }}
+                />
+                <YAxis
+                  domain={[1, 6]}
+                  ticks={[1, 2, 3, 4, 5, 6]}
+                  tickFormatter={(v: number) => ASSIST_TICKS[v] ?? ""}
+                  tick={{ fontSize: 10 }}
+                  width={54}
+                />
+                <Tooltip
+                  labelFormatter={(d) => fmtDate(String(d))}
+                  formatter={(_v: number, _n: string, item: any) => [item?.payload?.level ?? "", item?.payload?.activityName ?? ""]}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {activities.map((a, i) => (
+                  <Line
+                    key={a.activityName}
+                    data={a.points.map((p) => ({ ...p, activityName: a.activityName }))}
+                    dataKey="score"
+                    name={a.activityName}
                     stroke={LINE_COLORS[i % LINE_COLORS.length]}
                     strokeWidth={2}
                     dot={{ r: 3 }}

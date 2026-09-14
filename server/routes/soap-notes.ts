@@ -146,6 +146,30 @@ router.post('/', isAuthenticated, async (req: any, res) => {
 
     const soapNote = await storage.createSoapNote(req.body);
 
+    // Per-exercise progress (opt-in): log the Level of Assist for any activity
+    // the therapist filled it in for. Non-blocking — a note must save even if
+    // progress logging hiccups.
+    try {
+      const activityAssists = Array.isArray(req.body.activityAssists) ? req.body.activityAssists : null;
+      if (activityAssists && activityAssists.length > 0 && (soapNote as any).patientId) {
+        const user = await storage.getUser(req.user.claims.sub);
+        if (user?.practiceId) {
+          const { logActivityProgress } = await import('../services/activityProgressService');
+          await logActivityProgress({
+            practiceId: user.practiceId,
+            patientId: (soapNote as any).patientId,
+            soapNoteId: soapNote.id,
+            sessionDate: req.body.sessionDate,
+            activities: activityAssists,
+          });
+        }
+      }
+    } catch (progressErr) {
+      logger.warn('Activity progress logging failed (non-blocking)', {
+        error: progressErr instanceof Error ? progressErr.message : String(progressErr),
+      });
+    }
+
     // Auto-generate AI-assisted superbill from the session
     let generatedClaim = null;
     let billingOptimization = null;
