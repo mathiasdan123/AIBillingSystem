@@ -630,6 +630,29 @@ router.get('/patients/:id/progress-notes', isAuthenticated, async (req: any, res
   }
 });
 
+/**
+ * GET /api/patients/:id/progress — assembled progress time series for the
+ * patient's Progress view: treatment-goal % over time and standardized
+ * outcome-measure scores over time. Read-only aggregation of existing data.
+ */
+router.get('/patients/:id/progress', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const patientId = parseInt(req.params.id, 10);
+    // Tenant guard: never assemble another practice's patient data.
+    const patient = await storage.getPatient(patientId);
+    if (!patient || patient.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    const { getPatientProgress } = await import('../services/patientProgressService');
+    const progress = await getPatientProgress(patientId);
+    res.json(progress);
+  } catch (error) {
+    logger.error('Error building patient progress', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to build patient progress' });
+  }
+});
+
 router.put('/patients/:id/progress-notes/:noteId/share', isAuthenticated, async (req: any, res) => {
   try {
     const noteId = parseInt(req.params.noteId);
