@@ -111,3 +111,4 @@ export { default as insuranceDataRoutes } from './insuranceDataRoutes';
  * - HTTP server creation
  */
 export { default as reconciliationRouter, plaidWebhookRouter } from './reconciliation';
+export { default as supportRouter } from './support';

@@ -218,6 +218,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return 'List custom notification templates';
     case 'send_patient_payment_link':
       return `Send payment link${name ? ` to ${name}` : ''}${args.amount ? ` for $${args.amount}` : ''}`;
+    case 'report_issue':
+      return `File a support ticket (${args.severity ?? 'normal'}): ${String(args.description ?? '').slice(0, 80)}`;
     case 'get_prior_session_notes':
       return `Get prior session notes for patient ${args.patientId ?? ''} (limit ${args.limit ?? 5})`.trim();
     case 'generate_soap_note':
@@ -1586,6 +1588,18 @@ const assistantTools: Anthropic.Tool[] = [
         totalAmount: { type: 'number' as const, description: 'Total billed amount in dollars' },
       },
       required: ['patientId', 'serviceDate', 'cptCodes'],
+    },
+  },
+  {
+    name: 'report_issue',
+    description: 'File a support ticket when the user reports a bug, glitch, error message, or something in TherapyBill not working as expected — or asks how to report a problem. Capture their description faithfully (their words, plus the error text if they shared one). Use severity "urgent" only when the user cannot work at all (cannot log in, notes will not save, money numbers look wrong); otherwise "normal", or "low" for polish/requests. After filing, tell the user their ticket number and that the team was notified. Do NOT use this for how-do-I questions you can answer yourself.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        description: { type: 'string' as const, description: "The problem in the user's words, including any exact error text they mentioned and what they were doing when it happened" },
+        severity: { type: 'string' as const, description: 'urgent | normal | low (default normal)' },
+      },
+      required: ['description'],
     },
   },
   {
@@ -3217,6 +3231,26 @@ async function executeToolForPractice(
         });
       }
 
+      case 'report_issue': {
+        const { createSupportTicket } = await import('../services/supportTicketService');
+        let reporterRole: string | undefined;
+        try {
+          if (userId) reporterRole = (await storage.getUser(userId))?.role ?? undefined;
+        } catch { /* role is informational */ }
+        const ticket = await createSupportTicket({
+          practiceId,
+          userId: userId ?? undefined,
+          userRole: reporterRole,
+          severity: typeof args.severity === 'string' ? args.severity : undefined,
+          description: String(args.description ?? ''),
+          source: 'blanche',
+        });
+        return JSON.stringify({
+          ticketId: ticket.id,
+          severity: ticket.severity,
+          message: 'Ticket filed and the team notified. Give the user the ticket number.',
+        });
+      }
       case 'list_cpt_codes': {
         // Read-only catalog lookup. Exists so Blanche can resolve a CPT
         // string to its database id instead of guessing an integer — a
@@ -3710,7 +3744,9 @@ async function executeToolForPractice(
         });
       }
 
-      case 'get_prior_session_notes': {
+      case 'report_issue':
+      return `File a support ticket (${args.severity ?? 'normal'}): ${String(args.description ?? '').slice(0, 80)}`;
+    case 'get_prior_session_notes': {
         // Pre-charting read tool. Tenant guard happens in the storage
         // helper itself (joins through treatment_session.practiceId).
         // We still double-check the patient is in this practice so the

@@ -143,6 +143,8 @@ const PARITY_TOOLS: ReadonlySet<string> = new Set([
  */
 const SURFACE_ONLY_REASONS: Record<string, string> = {
   // ── in-app only: web-chat UX / admin / onboarding ──
+  report_issue:
+    'in-app only: support-ticket intake for the web app surface (auto-carries app context); MCP/Desktop users report issues to Daniel directly',
   triage_eligibility_failure:
     'in-app only: entry point is the failure-toast "Ask Blanche" affordance; MCP already exposes the underlying primitives (get_patient, check_eligibility, search_payer) for Desktop-side triage',
   navigate_user: 'in-app only: drives client-side React router; no MCP analog',

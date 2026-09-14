@@ -53,12 +53,18 @@ vi.mock('next-themes', () => ({
   ThemeProvider: ({ children }: any) => children,
 }));
 
-vi.mock('@tanstack/react-query', () => ({
-  useQuery: () => ({ data: [], isLoading: false }),
-  useMutation: vi.fn(),
-  QueryClient: vi.fn(),
-  QueryClientProvider: ({ children }: any) => children,
-}));
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  // Partial mock: keep the real exports (ReportProblemButton pulls in the
+  // queryClient lib, which constructs QueryCache/MutationCache at import) and
+  // override only the hooks the nav tests stub.
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>();
+  return {
+    ...actual,
+    useQuery: () => ({ data: [], isLoading: false }),
+    useMutation: vi.fn(),
+    QueryClientProvider: ({ children }: any) => children,
+  };
+});
 
 // Mock radix select (used by LanguageSwitcher & location picker)
 vi.mock('@/components/ui/select', () => ({

@@ -4819,3 +4819,29 @@ export type BankAccount = typeof bankAccounts.$inferSelect;
 export type BankTransaction = typeof bankTransactions.$inferSelect;
 export type DepositMatch = typeof depositMatches.$inferSelect;
 export type DepositException = typeof depositExceptions.$inferSelect;
+
+// ==================== SUPPORT TICKETS ====================
+// In-app problem reports (from the Report a Problem button and Blanche's
+// report_issue tool). Server-side enrichment captures the diagnostic context
+// so users never have to describe their environment. Additive table.
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  userId: varchar("user_id").references(() => users.id),
+  userRole: varchar("user_role"),
+  severity: varchar("severity").default("normal").notNull(), // urgent, normal, low
+  description: text("description").notNull(),
+  page: varchar("page"), // client route where the report was filed
+  release: varchar("release"), // RELEASE_SHA serving the session
+  userAgent: text("user_agent"),
+  source: varchar("source").default("app").notNull(), // app, blanche
+  status: varchar("status").default("open").notNull(), // open, in_progress, resolved
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+}, (table) => [
+  index("idx_support_tickets_practice_status").on(table.practiceId, table.status),
+]);
+
+export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, resolvedAt: true });
+export type SupportTicket = typeof supportTickets.$inferSelect;
