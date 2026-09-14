@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PatientBillingTab from "@/components/PatientBillingTab";
 import QueryErrorState from "@/components/QueryErrorState";
 import PatientProgressNotesManager from "@/components/PatientProgressNotesManager";
+import PatientProgressCharts from "@/components/PatientProgressCharts";
 import { DemoBadge } from "@/components/DemoBadge";
 import InsuranceEditDialog from "@/components/InsuranceEditDialog";
 
@@ -1511,7 +1512,7 @@ export default function Patients() {
             <Tabs defaultValue="details" className="w-full">
               {/* Billing tab shows claim charges and balances — admin/billing
                   roles only, matching the server's requireFinancialRole gate. */}
-              <TabsList className={`grid w-full ${hasFinancialAccess ? 'grid-cols-4' : 'grid-cols-3'}`}>
+              <TabsList className={`grid w-full ${hasFinancialAccess ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 <TabsTrigger value="details">Details</TabsTrigger>
                 <TabsTrigger value="intake" className="relative">
                   Intake
@@ -1520,6 +1521,7 @@ export default function Patients() {
                   )}
                 </TabsTrigger>
                 {hasFinancialAccess && <TabsTrigger value="billing">Billing</TabsTrigger>}
+                <TabsTrigger value="progress">Progress</TabsTrigger>
                 <TabsTrigger value="progress-notes">Notes</TabsTrigger>
               </TabsList>
 
@@ -2070,6 +2072,10 @@ export default function Patients() {
                 </div>
               )}
             </div>
+              </TabsContent>
+
+              <TabsContent value="progress" className="mt-4">
+                <PatientProgressCharts patientId={selectedPatient.id} />
               </TabsContent>
 
               <TabsContent value="progress-notes" className="mt-4">
