@@ -645,8 +645,12 @@ router.get('/patients/:id/progress', isAuthenticated, async (req: any, res) => {
       return res.status(404).json({ message: 'Patient not found' });
     }
     const { getPatientProgress } = await import('../services/patientProgressService');
-    const progress = await getPatientProgress(patientId);
-    res.json(progress);
+    const { getActivityProgress } = await import('../services/activityProgressService');
+    const [progress, activities] = await Promise.all([
+      getPatientProgress(patientId),
+      getActivityProgress(patientId),
+    ]);
+    res.json({ ...progress, activities });
   } catch (error) {
     logger.error('Error building patient progress', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to build patient progress' });

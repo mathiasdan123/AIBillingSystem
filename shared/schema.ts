@@ -4845,3 +4845,27 @@ export const supportTickets = pgTable("support_tickets", {
 
 export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, resolvedAt: true });
 export type SupportTicket = typeof supportTickets.$inferSelect;
+
+// ==================== ACTIVITY PROGRESS LOG ====================
+// Per-activity "level of assist" captured on a signed SOAP note, the
+// structured signal behind per-exercise progress charts. Written only when
+// the therapist fills the optional Level of Assist for an activity (opt-in:
+// filling it is what produces the graph). Additive, patient-scoped.
+export const activityProgressLog = pgTable("activity_progress_log", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  soapNoteId: integer("soap_note_id").references(() => soapNotes.id),
+  activityName: varchar("activity_name").notNull(),
+  assistLevel: varchar("assist_level").notNull(), // e.g. "Minimal Assist"
+  // Ordinal score: higher = more independent, so an upward line = progress.
+  // Dependent 1 → Maximal 2 → Moderate 3 → Minimal 4 → Verbal Cues 5 → Independent 6.
+  assistScore: integer("assist_score").notNull(),
+  sessionDate: date("session_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_activity_progress_patient_activity").on(table.patientId, table.activityName),
+]);
+
+export const insertActivityProgressLogSchema = createInsertSchema(activityProgressLog).omit({ id: true, createdAt: true });
+export type ActivityProgressLog = typeof activityProgressLog.$inferSelect;
