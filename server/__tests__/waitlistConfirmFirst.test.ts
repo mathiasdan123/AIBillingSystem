@@ -69,6 +69,17 @@ describe('autoFillSlot — confirm-first flow', () => {
     expect(update.respondBy).toBeInstanceOf(Date);
   });
 
+  it('holds for confirmation even when the slot has no assigned therapist (no direct family offer)', async () => {
+    const result = await autoFillSlot(1, { ...SLOT, therapistId: undefined, requireTherapistConfirmation: true });
+    expect(result.matched).toBe(true);
+    expect((result as any).pendingConfirmation).toBe(true);
+    const [, update] = mockStorage.updateWaitlistEntry.mock.calls[0];
+    expect(update.status).toBe('pending_confirmation');
+    // no therapist to email, and crucially the family is never contacted
+    expect((result as any).therapistNotified).toBe(false);
+    expect(mockStorage.getPatient).not.toHaveBeenCalled();
+  });
+
   it('still respects preferences: wrong day never matches', async () => {
     mockStorage.getWaitlist.mockResolvedValue([{ ...ENTRY, preferredDays: [OTHER_WEEKDAY] }]);
     const result = await autoFillSlot(1, { ...SLOT, requireTherapistConfirmation: true });
