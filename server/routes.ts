@@ -16,7 +16,7 @@ import {
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
-  reconciliationRouter, plaidWebhookRouter,
+  reconciliationRouter, plaidWebhookRouter, supportRouter,
   documentsRouter, followUpsRouter, revenueAtRiskRouter, schedulingRouter, eligibilityRouter, payerIntelRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
   superbillsRouter,
@@ -249,6 +249,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/reconciliation', reconciliationRouter);
   // Plaid webhook (public path, signature-verified in the handler): /api/plaid/webhook
   app.use('/api/plaid', plaidWebhookRouter);
+  // Support ticket intake: /api/support/*
+  app.use('/api/support', supportRouter);
   // SSO (SAML/OIDC) routes: /api/sso/*
   app.use('/api/sso', ssoRouter);
   // Treatment Plans routes (patient-scoped): /api/patients/:id/treatment-plans

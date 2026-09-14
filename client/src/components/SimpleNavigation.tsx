@@ -43,6 +43,7 @@ import { useAuth } from "@/hooks/useAuth";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { openCommandPalette } from "@/components/CommandPalette";
 import HelpSidebar from "@/components/HelpSidebar";
+import ReportProblemButton from "@/components/ReportProblemButton";
 import {
   topLevelItems,
   navigationSections,
@@ -658,6 +659,7 @@ export default function SimpleNavigation() {
               <MessageSquare className="w-3.5 h-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
             </Button>
             <HelpSidebar />
+            <ReportProblemButton />
             <Button
               variant="ghost"
               size="sm"
