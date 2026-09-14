@@ -643,18 +643,24 @@ export async function autoFillSlot(practiceId: number, params: AutoFillParams) {
   // Confirm-first flow (clinician spec — Megan, Wonder Kids): when a slot
   // frees up via cancellation, the slot's therapist confirms it is really
   // available and that they want it filled BEFORE any family is contacted.
-  if (params.requireTherapistConfirmation && therapistId) {
+  // Confirm-first holds the match for a human even when the freed slot has no
+  // assigned therapist (e.g. an unassigned cancellation). Megan's rule is
+  // "never contact a family until a human confirms" — so a missing therapist
+  // must NOT fall through to a direct family offer. With no therapist to
+  // email, the match still parks in pending_confirmation for a practice admin
+  // to confirm from the Waitlist page.
+  if (params.requireTherapistConfirmation) {
     await storage.updateWaitlistEntry(topMatch.id, {
       status: 'pending_confirmation',
       offeredAt: new Date(),
-      // therapistId rides in the slot JSON so skip-offer can cascade the
-      // same slot to the next family with correct therapist matching.
+      // therapistId (may be undefined) rides in the slot JSON so skip-offer
+      // can cascade the same slot to the next family with correct matching.
       offeredSlot: { ...offeredSlot, therapistId },
     } as any);
 
     let therapistNotified = false;
     try {
-      const therapist = await storage.getUser(therapistId);
+      const therapist = therapistId ? await storage.getUser(therapistId) : null;
       const { isEmailConfigured } = await import('../email');
       if (therapist?.email && isEmailConfigured()) {
         const { sendEmail } = await import('../services/emailService');
