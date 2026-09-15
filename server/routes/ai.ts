@@ -372,6 +372,40 @@ router.get('/claim-outcomes', isAuthenticated, isAdminOrBilling, async (req: any
 // doesn't fire during long generations. JSON.parse ignores leading whitespace,
 // so the client calls response.json() as normal.
 /**
+ * POST /api/ai/progress-report — draft a clinical progress summary across a
+ * date range from the patient's signed notes and recorded goal progress.
+ * Prototype; returns a draft the therapist edits.
+ */
+router.post('/ai/progress-report', isAuthenticated, async (req: any, res) => {
+  try {
+    const { generateProgressReport } = await import('../services/progressReportService');
+    const { storage } = await import('../storage');
+    const user = await storage.getUser(req.user.claims.sub);
+    const { patientId, from, to } = req.body ?? {};
+    if (!patientId || !from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ error: 'patientId, from and to (YYYY-MM-DD) are required' });
+    }
+    const result = await generateProgressReport({
+      patientId,
+      practiceId: user?.practiceId ?? undefined,
+      from: String(from),
+      to: String(to),
+    });
+    res.json(result);
+  } catch (error: any) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('unavailable') || msg.includes('not configured')) {
+      return res.status(503).json({ error: 'Progress report is unavailable right now.' });
+    }
+    if (msg.includes('No signed notes')) {
+      return res.status(400).json({ error: msg });
+    }
+    logger.error('Progress report failed', { error: msg });
+    res.status(500).json({ error: 'Could not draft the progress report. Please try again.' });
+  }
+});
+
+/**
  * POST /api/ai/soap-doc-check — pre-sign documentation review. Returns a
  * pass/warn checklist for skilled-care / medical-necessity elements plus
  * targeted questions for gaps. Reviewer only: never writes note content.
