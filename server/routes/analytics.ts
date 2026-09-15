@@ -553,6 +553,78 @@ router.get('/therapist-productivity', isAuthenticated, async (req: any, res) => 
 });
 
 // Therapist productivity trends (monthly)
+/**
+ * GET /api/analytics/session-log — HR-facing live tally of completed
+ * sessions and evaluations per therapist for a date range. Replaces the
+ * biweekly manual HR reconciliation: it reads current appointment data on
+ * every request, so cancellations and waitlist adds are reflected live.
+ * Evaluations are counted separately (appointment title contains "eval").
+ */
+router.get('/session-log', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const defaultStart = new Date();
+    defaultStart.setDate(defaultStart.getDate() - 14); // HR's usual biweekly window
+    const startDate = validateDate(req.query.start as string) || defaultStart;
+    const endDate = validateDate(req.query.end as string) || new Date();
+    if (startDate > endDate) {
+      return res.status(400).json({ message: 'Start date must be before end date' });
+    }
+
+    const db = await getDb();
+    const therapists = await db
+      .select({ id: users.id, firstName: users.firstName, lastName: users.lastName, credentials: users.credentials })
+      .from(users)
+      .where(and(eq(users.practiceId, practiceId), eq(users.role, 'therapist')));
+
+    const rows = [];
+    for (const t of therapists) {
+      const agg = await db
+        .select({
+          completedEvaluations: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'completed' AND ${appointments.title} ILIKE '%eval%')`,
+          completedSessions: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'completed' AND (${appointments.title} NOT ILIKE '%eval%' OR ${appointments.title} IS NULL))`,
+          cancelled: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'cancelled')`,
+          noShow: sql<number>`COUNT(*) FILTER (WHERE ${appointments.status} = 'no_show')`,
+        })
+        .from(appointments)
+        .where(and(
+          eq(appointments.therapistId, t.id),
+          eq(appointments.practiceId, practiceId),
+          gte(appointments.startTime, startDate),
+          lte(appointments.startTime, endDate),
+        ));
+      const a = agg[0] || {};
+      const evals = Number(a.completedEvaluations) || 0;
+      const sessions = Number(a.completedSessions) || 0;
+      rows.push({
+        therapistId: t.id,
+        therapistName: `${t.firstName || ''} ${t.lastName || ''}`.trim() || 'Unnamed',
+        credentials: t.credentials || null,
+        completedSessions: sessions,
+        completedEvaluations: evals,
+        totalCompleted: sessions + evals,
+        cancelled: Number(a.cancelled) || 0,
+        noShow: Number(a.noShow) || 0,
+      });
+    }
+    rows.sort((x, y) => y.totalCompleted - x.totalCompleted);
+
+    res.json({
+      period: { start: startDate.toISOString().split('T')[0], end: endDate.toISOString().split('T')[0] },
+      generatedAt: new Date().toISOString(),
+      therapists: rows,
+      totals: {
+        completedSessions: rows.reduce((s, r) => s + r.completedSessions, 0),
+        completedEvaluations: rows.reduce((s, r) => s + r.completedEvaluations, 0),
+        totalCompleted: rows.reduce((s, r) => s + r.totalCompleted, 0),
+      },
+    });
+  } catch (error) {
+    logger.error('Error building session log', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to build session log' });
+  }
+});
+
 router.get('/therapist-productivity/trends', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
