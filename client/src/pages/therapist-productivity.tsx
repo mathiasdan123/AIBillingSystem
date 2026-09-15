@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import SessionLogCard from "@/components/SessionLogCard";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -266,6 +267,9 @@ export default function TherapistProductivity() {
           </Button>
         </div>
       </div>
+
+      {/* HR session log (live) */}
+      <SessionLogCard start={dateRange.start} end={dateRange.end} />
 
       {/* Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
