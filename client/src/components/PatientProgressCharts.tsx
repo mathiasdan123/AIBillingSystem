@@ -11,7 +11,7 @@ interface MeasureSeries { templateId: number; name: string; shortName: string | 
 interface ActivitySeries { activityName: string; points: Array<{ date: string; score: number; level: string }>; }
 interface PatientProgress { goals: GoalSeries[]; outcomeMeasures: MeasureSeries[]; activities?: ActivitySeries[]; }
 
-const ASSIST_TICKS = ["", "Dependent", "Max", "Mod", "Min", "Verbal", "Indep."];
+const ASSIST_TICKS = ["", "Dependent", "Max", "Mod", "Min", "Tactile", "Gestural", "Verbal", "Indep."];
 
 const LINE_COLORS = ["#0E7A6E", "#2563EB", "#9333EA", "#D97706", "#DC2626", "#0891B2"];
 
@@ -115,8 +115,8 @@ export default function PatientProgressCharts({ patientId }: { patientId: number
                   tick={{ fontSize: 11 }}
                 />
                 <YAxis
-                  domain={[1, 6]}
-                  ticks={[1, 2, 3, 4, 5, 6]}
+                  domain={[1, 8]}
+                  ticks={[1, 2, 3, 4, 5, 6, 7, 8]}
                   tickFormatter={(v: number) => ASSIST_TICKS[v] ?? ""}
                   tick={{ fontSize: 10 }}
                   width={54}

@@ -21,7 +21,9 @@ describe('assistScore', () => {
     expect(assistScore('Dependent')).toBe(1);
     expect(assistScore('Moderate Assist')).toBe(3);
     expect(assistScore('Minimal Assist')).toBe(4);
-    expect(assistScore('Independent')).toBe(6);
+    expect(assistScore('Independent')).toBe(8);
+    expect(assistScore('Tactile Cues')).toBe(5);
+    expect(assistScore('Visual/Gestural Cues')).toBe(6);
   });
   it('returns null for blank/unknown values', () => {
     expect(assistScore('')).toBeNull();
