@@ -99,7 +99,7 @@ Respond with ONLY this JSON:
 }`;
 
   const response = await client.messages.create({
-    model: process.env.AI_SOAP_MODEL || 'claude-sonnet-5',
+    model: process.env.AI_SOAP_MODEL || 'claude-sonnet-4-5',
     max_tokens: 3000,
     temperature: 0,
     messages: [{ role: 'user', content: prompt }],
