@@ -161,7 +161,7 @@ const CPT_CODE_INFO = {
 
 const ASSESSMENT_OPTIONS = {
   performance: ["Improved", "Stable", "Regression"],
-  assistance: ["Independent", "Verbal Cues Only", "Minimal Assist", "Moderate Assist", "Maximal Assist", "Dependent"],
+  assistance: ["Independent", "Verbal Cues Only", "Visual/Gestural Cues", "Tactile Cues", "Minimal Assist", "Moderate Assist", "Maximal Assist", "Dependent"],
   strength: ["Strong", "Adequate", "Fatigued", "Weak"],
   motorPlanning: ["Intact", "Mild Difficulty", "Moderate Difficulty", "Severe Difficulty"],
   sensoryRegulation: ["Well-Regulated", "Needed Minimal Supports", "Required Frequent Supports", "Unable to Regulate"]

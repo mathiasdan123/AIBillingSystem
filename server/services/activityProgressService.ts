@@ -11,7 +11,9 @@ import { db } from '../db';
 import { activityProgressLog } from '@shared/schema';
 
 /** Assist ladder → ordinal. Higher = more independent, so an upward line reads
- * as improvement. Unknown/blank values return null and are not logged. */
+ * as improvement. Cue-based prompts sit between verbal cues and physical
+ * assist (less support than a physical assist, more than verbal alone).
+ * Unknown/blank values return null and are not logged. */
 const ASSIST_SCORE: Record<string, number> = {
   dependent: 1,
   'maximal assist': 2,
@@ -20,11 +22,15 @@ const ASSIST_SCORE: Record<string, number> = {
   'mod assist': 3,
   'minimal assist': 4,
   'min assist': 4,
-  'verbal cues only': 5,
-  'verbal cues': 5,
-  supervision: 5,
-  independent: 6,
-  'modified independent': 6,
+  'tactile cues': 5,
+  'visual/gestural cues': 6,
+  'gestural cues': 6,
+  'visual cues': 6,
+  'verbal cues only': 7,
+  'verbal cues': 7,
+  supervision: 7,
+  independent: 8,
+  'modified independent': 8,
 };
 
 export function assistScore(level: string | undefined | null): number | null {
