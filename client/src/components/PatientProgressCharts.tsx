@@ -1,9 +1,17 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, TrendingUp, Target } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { Loader2, TrendingUp, Target, FileText, Copy } from "lucide-react";
 
 interface ProgressPoint { date: string; value: number; severity?: string | null; reliableChange?: boolean | null; }
 interface GoalSeries { goalId: number; description: string; status: string; points: ProgressPoint[]; }
@@ -25,6 +33,81 @@ export default function PatientProgressCharts({ patientId }: { patientId: number
     enabled: !!patientId,
   });
 
+  const { toast } = useToast();
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [from, setFrom] = useState(monthAgo);
+  const [to, setTo] = useState(today);
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState<{ subjective: string; objective: string; assessment: string; plan: string } | null>(null);
+
+  const generateReport = async () => {
+    setDrafting(true);
+    try {
+      const res = await apiRequest("POST", "/api/ai/progress-report", { patientId, from, to });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not draft the report.");
+      setDraft(body.report);
+    } catch (e: any) {
+      toast({ title: "Couldn't draft the report", description: e.message, variant: "destructive" });
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const copyDraft = async () => {
+    if (!draft) return;
+    const text = `PROGRESS SUMMARY (${from} to ${to})\n\nSUBJECTIVE:\n${draft.subjective}\n\nOBJECTIVE:\n${draft.objective}\n\nASSESSMENT:\n${draft.assessment}\n\nPLAN:\n${draft.plan}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: "Copied", description: "Progress summary copied to clipboard." });
+    } catch {
+      toast({ title: "Copy failed", description: "Select and copy manually.", variant: "destructive" });
+    }
+  };
+
+  const reportDialog = (
+    <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="progress-report-dialog">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-teal-600" /> Draft progress summary
+          </DialogTitle>
+          <DialogDescription>
+            The AI reviews this patient's signed notes and goal progress in the range and drafts a summary. Review and edit before using; it never invents beyond the documented sessions.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-end gap-2 flex-wrap">
+          <div><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8" /></div>
+          <div><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8" /></div>
+          <Button size="sm" onClick={generateReport} disabled={drafting} data-testid="button-generate-progress-report">
+            {drafting ? (<><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />Drafting…</>) : "Generate draft"}
+          </Button>
+          {draft && (
+            <Button size="sm" variant="outline" onClick={copyDraft}><Copy className="w-3.5 h-3.5 mr-1" />Copy</Button>
+          )}
+        </div>
+        {draft && (
+          <div className="space-y-3 mt-2">
+            {(["subjective", "objective", "assessment", "plan"] as const).map((section) => (
+              <div key={section}>
+                <Label className="text-xs font-semibold uppercase text-muted-foreground">{section}</Label>
+                <Textarea
+                  value={draft[section]}
+                  onChange={(e) => setDraft((prev) => (prev ? { ...prev, [section]: e.target.value } : prev))}
+                  rows={section === "assessment" ? 6 : 3}
+                  className="text-sm mt-1"
+                  data-testid={`textarea-report-${section}`}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-10 text-muted-foreground">
@@ -42,15 +125,29 @@ export default function PatientProgressCharts({ patientId }: { patientId: number
 
   if (goals.length === 0 && measures.length === 0 && activities.length === 0) {
     return (
-      <div className="text-center py-10 text-muted-foreground text-sm">
-        <TrendingUp className="w-6 h-6 mx-auto mb-2 opacity-50" />
-        No progress data yet. Goal progress and outcome-measure scores appear here as sessions are documented.
-      </div>
+      <>
+        <div className="flex justify-end mb-2">
+          <Button size="sm" variant="outline" onClick={() => setReportOpen(true)} data-testid="button-open-progress-report">
+            <FileText className="w-3.5 h-3.5 mr-1" /> Draft progress summary
+          </Button>
+        </div>
+        <div className="text-center py-10 text-muted-foreground text-sm">
+          <TrendingUp className="w-6 h-6 mx-auto mb-2 opacity-50" />
+          No progress data yet. Goal progress and outcome-measure scores appear here as sessions are documented.
+        </div>
+        {reportDialog}
+      </>
     );
   }
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={() => setReportOpen(true)} data-testid="button-open-progress-report">
+          <FileText className="w-3.5 h-3.5 mr-1" /> Draft progress summary
+        </Button>
+      </div>
+      {reportDialog}
       {goals.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
