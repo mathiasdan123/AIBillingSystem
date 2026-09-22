@@ -1730,6 +1730,30 @@ function registerJobs() {
   });
   scheduledTasks.set('eraPoll', eraPollTask);
 
+  // Support-ticket triage — every 10 minutes.
+  //
+  // The 24/7 first responder: classifies untriaged open tickets, drafts a
+  // reply grounded in the FAQ + live system status (created as a DRAFT the
+  // reporter cannot see until an admin publishes it from /support-tickets),
+  // and escalates cannot-work tickets by email. Same discipline as the ERA
+  // poller: every processed ticket is marked triaged exactly once, and a
+  // ticket with an existing agent reply is never drafted twice. Kill switch:
+  // SUPPORT_TRIAGE_DISABLED=1.
+  const supportTriageTask = cron.schedule('*/10 * * * *', async () => {
+    try {
+      const { triageOpenTickets } = await import('./services/supportTriageService');
+      const summary = await triageOpenTickets();
+      if (summary.scanned > 0 || summary.failures > 0) {
+        logger.info('Support triage completed', summary as unknown as Record<string, unknown>);
+      }
+    } catch (error: any) {
+      logger.error('Support triage task failed', { error: error.message });
+    }
+  }, {
+    timezone: process.env.TIMEZONE || 'America/New_York',
+  });
+  scheduledTasks.set('supportTriage', supportTriageTask);
+
   // ERA silence check — daily 07:45.
   //
   // An absence is the hardest fault to notice, and this system has already

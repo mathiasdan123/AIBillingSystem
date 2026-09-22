@@ -13,9 +13,14 @@
  * contain user-written problem descriptions but no patient data fields), and
  * infrastructure booleans/latencies.
  */
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
-import { supportTickets, type SupportTicket } from '@shared/schema';
+import {
+  supportTickets,
+  supportTicketReplies,
+  type SupportTicket,
+  type SupportTicketReply,
+} from '@shared/schema';
 import { helpSections, filterHelpSections, type HelpSection } from '@shared/help-content';
 
 // ── FAQ search ────────────────────────────────────────────────────────
@@ -75,6 +80,12 @@ export function searchHelp(query: string): {
 
 // ── Ticket visibility ─────────────────────────────────────────────────
 
+export interface TicketReplySummary {
+  from: 'you' | 'support';
+  body: string;
+  at: Date | null;
+}
+
 export interface TicketSummary {
   id: number;
   severity: string;
@@ -85,6 +96,7 @@ export interface TicketSummary {
   notes: string | null;
   createdAt: Date | null;
   resolvedAt: Date | null;
+  replies: TicketReplySummary[];
 }
 
 const TICKET_STATUSES = new Set(['open', 'in_progress', 'resolved']);
@@ -116,6 +128,33 @@ export async function listUserTickets(opts: {
     .where(and(...conditions))
     .orderBy(desc(supportTickets.createdAt))
     .limit(MAX_TICKETS);
+
+  // Published replies only — agent drafts stay invisible until an admin
+  // publishes them from /support-tickets, and this chat surface is exactly
+  // where that boundary matters.
+  const repliesByTicket = new Map<number, TicketReplySummary[]>();
+  if (rows.length > 0) {
+    const replyRows: SupportTicketReply[] = await db
+      .select()
+      .from(supportTicketReplies)
+      .where(
+        and(
+          inArray(supportTicketReplies.ticketId, rows.map((t) => t.id)),
+          eq(supportTicketReplies.status, 'published')
+        )
+      )
+      .orderBy(asc(supportTicketReplies.createdAt));
+    for (const r of replyRows) {
+      const list = repliesByTicket.get(r.ticketId) ?? [];
+      list.push({
+        from: r.authorType === 'user' ? 'you' : 'support',
+        body: r.body.length > 500 ? `${r.body.slice(0, 500)}…` : r.body,
+        at: r.publishedAt ?? r.createdAt,
+      });
+      repliesByTicket.set(r.ticketId, list);
+    }
+  }
+
   return rows.map((t) => ({
     id: t.id,
     severity: t.severity,
@@ -126,6 +165,7 @@ export async function listUserTickets(opts: {
     notes: t.notes,
     createdAt: t.createdAt,
     resolvedAt: t.resolvedAt,
+    replies: repliesByTicket.get(t.id) ?? [],
   }));
 }
 

@@ -18,7 +18,8 @@ const { mockStorage, mockRedis, mockDbRows } = vi.hoisted(() => ({
     getRedisClient: vi.fn(() => null),
     isRedisReady: vi.fn(() => false),
   },
-  mockDbRows: { rows: [] as any[], lastWhere: undefined as unknown },
+  // Each select consumes the next entry: [ticket rows, reply rows, ...].
+  mockDbRows: { queue: [] as any[][], lastWhere: undefined as unknown },
 }));
 
 vi.mock('../storage', () => ({ storage: mockStorage }));
@@ -30,10 +31,15 @@ vi.mock('../db', () => ({
       from: vi.fn(() => ({
         where: vi.fn((cond: unknown) => {
           mockDbRows.lastWhere = cond;
+          const rows = mockDbRows.queue.shift() ?? [];
+          // Chain must satisfy both shapes: .orderBy().limit() (tickets) and
+          // awaited .orderBy() (replies).
           return {
-            orderBy: vi.fn(() => ({
-              limit: vi.fn(() => Promise.resolve(mockDbRows.rows)),
-            })),
+            orderBy: vi.fn(() =>
+              Object.assign(Promise.resolve(rows), {
+                limit: vi.fn(() => Promise.resolve(rows)),
+              })
+            ),
           };
         }),
       })),
@@ -45,7 +51,7 @@ import { searchHelp, listUserTickets, getSystemStatus } from '../services/suppor
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDbRows.rows = [];
+  mockDbRows.queue = [];
   mockDbRows.lastWhere = undefined;
   mockRedis.getRedisClient.mockReturnValue(null);
   mockStorage.getAllPracticeIds.mockResolvedValue([1]);
@@ -103,17 +109,31 @@ describe('listUserTickets', () => {
   });
 
   it('admin without a userId still queries (practice-wide scope)', async () => {
-    mockDbRows.rows = [{ ...base, description: 'short' }];
+    mockDbRows.queue = [[{ ...base, description: 'short' }], []];
     const res = await listUserTickets({ userId: null, practiceId: 1, isAdmin: true });
     expect(res).toHaveLength(1);
     expect(mockDbRows.lastWhere).toBeDefined();
   });
 
   it('truncates long descriptions to 300 chars', async () => {
-    mockDbRows.rows = [{ ...base, description: 'x'.repeat(500) }];
+    mockDbRows.queue = [[{ ...base, description: 'x'.repeat(500) }], []];
     const res = await listUserTickets({ userId: 'u1', practiceId: 1, isAdmin: false });
     expect(res[0].description.length).toBeLessThanOrEqual(301); // 300 + ellipsis
     expect(res[0].description.endsWith('…')).toBe(true);
+  });
+
+  it('attaches published replies labeled by author side', async () => {
+    mockDbRows.queue = [
+      [{ ...base, description: 'short' }],
+      [
+        { ticketId: 7, authorType: 'agent', body: 'We are on it.', status: 'published', createdAt: new Date(), publishedAt: new Date() },
+        { ticketId: 7, authorType: 'user', body: 'Thanks!', status: 'published', createdAt: new Date(), publishedAt: null },
+      ],
+    ];
+    const res = await listUserTickets({ userId: 'u1', practiceId: 1, isAdmin: false });
+    expect(res[0].replies).toHaveLength(2);
+    expect(res[0].replies[0].from).toBe('support');
+    expect(res[0].replies[1].from).toBe('you');
   });
 });
 
