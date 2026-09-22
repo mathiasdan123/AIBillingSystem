@@ -40,6 +40,7 @@ import {
   Mail,
   Activity,
   Link2,
+  LifeBuoy,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -173,6 +174,7 @@ export const navigationSections: NavSection[] = [
           { nameKey: 'nav.notificationPreferences', href: '/notification-settings', icon: Bell, adminOnly: false },
         ],
       },
+      { nameKey: 'nav.supportTickets', href: '/support-tickets', icon: LifeBuoy, adminOnly: true },
       { nameKey: 'nav.subscription', href: '/subscription', icon: CreditCard, adminOnly: true },
       { nameKey: 'nav.preferences', href: '/settings', icon: Settings, adminOnly: false },
     ],

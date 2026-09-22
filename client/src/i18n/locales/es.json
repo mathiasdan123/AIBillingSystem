@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "Panel Principal",
-    "patientIntake": "Admision de Pacientes",
+    "patientIntake": "Admisión de Paciente",
     "patients": "Pacientes",
     "calendar": "Calendario",
     "waitlist": "Lista de Espera",
@@ -52,7 +52,6 @@
     "inbox": "Bandeja",
     "practice": "Consulta",
     "practiceDetails": "Detalles de la Consulta",
-    "patientIntake": "Admisión de Paciente",
     "payerEnrollments": "Inscripciones de Pagadores",
     "complianceGroup": "Cumplimiento",
     "data": "Datos",
@@ -60,7 +59,8 @@
     "productivity": "Productividad",
     "insights": "Información",
     "rates": "Tarifas",
-    "frontDesk": "Recepción"
+    "frontDesk": "Recepción",
+    "supportTickets": "Tickets de Soporte"
   },
   "help": {
     "title": "Centro de Ayuda",

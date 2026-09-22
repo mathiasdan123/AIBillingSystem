@@ -96,6 +96,7 @@ const OperationsReportPage = lazy(() => import("@/pages/reports/OperationsReport
 const BillingGuide = lazy(() => import("@/pages/billing-guide"));
 const Credentialing = lazy(() => import("@/pages/credentialing"));
 const MaintenanceWindows = lazy(() => import("@/pages/maintenance-windows"));
+const SupportTickets = lazy(() => import("@/pages/support-tickets"));
 const CostDashboard = lazy(() => import("@/pages/cost-dashboard"));
 const InvestorMetrics = lazy(() => import("@/pages/investor-metrics"));
 
@@ -364,6 +365,7 @@ function Router() {
               <Route path="/insights-report" component={InsightsReport} />
               {isAdmin && <Route path="/credentialing" component={Credentialing} />}
               {isAdmin && <Route path="/maintenance-windows" component={MaintenanceWindows} />}
+              {isAdmin && <Route path="/support-tickets" component={SupportTickets} />}
               {isAdmin && <Route path="/cost-dashboard" component={CostDashboard} />}
               {isAdmin && <Route path="/investor-metrics" component={InvestorMetrics} />}
               <Route path="/notification-settings" component={NotificationSettings} />
