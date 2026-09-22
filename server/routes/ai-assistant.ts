@@ -1625,7 +1625,7 @@ const assistantTools: Anthropic.Tool[] = [
   },
   {
     name: 'get_my_support_tickets',
-    description: 'List the support tickets this user has filed (admins see every ticket in the practice). Use when the user asks about a bug report or ticket they submitted — "what happened to my report?", "any update on that issue?", "did you fix the thing I reported?". Returns id, status (open / in_progress / resolved), severity, description, and any resolution notes from the team. Do NOT file a new ticket for a problem the user is merely following up on.',
+    description: 'List the support tickets this user has filed (admins see every ticket in the practice). Use when the user asks about a bug report or ticket they submitted — "what happened to my report?", "any update on that issue?", "did you fix the thing I reported?". Returns id, status (open / in_progress / resolved), severity, description, resolution notes, and the reply thread from the support team — read those replies to the user when they ask for an update. Do NOT file a new ticket for a problem the user is merely following up on.',
     input_schema: {
       type: 'object' as const,
       properties: {
