@@ -11,14 +11,14 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import { helpSections, filterHelpSections, type HelpItem } from '@/lib/help-content';
+import { helpSections, filterHelpSections, type HelpItem } from '@shared/help-content';
 
 /**
  * In-app Help sidebar.
  *
  * Renders a small ? icon button; clicking it opens a right-side slide-out
- * panel with searchable FAQ content. Content lives in @/lib/help-content
- * and is edited there, not here.
+ * panel with searchable FAQ content. Content lives in @shared/help-content
+ * (shared with Blanche's search_help tool) and is edited there, not here.
  *
  * Designed so sales/CS + end users can both use it — same source of truth
  * as the external Notion/Google Doc FAQ.

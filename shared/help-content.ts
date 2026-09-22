@@ -1,15 +1,20 @@
 /**
- * Help sidebar content — condensed customer-facing FAQ.
+ * Help content — condensed customer-facing FAQ.
  *
- * Source of truth for the sidebar that appears when a user clicks the ? icon
- * in the bottom-left of the app. Structured by workflow, not feature, so
- * users find answers by searching for the real question they have.
+ * Source of truth for BOTH support surfaces: the ? sidebar in the client
+ * (HelpSidebar.tsx) and Blanche's search_help tool on the server. It lives in
+ * shared/ precisely so the server can read it — keep it framework-free (no
+ * React, no DOM, no server imports).
+ *
+ * Structured by workflow, not feature, so users find answers by searching for
+ * the real question they have.
  *
  * Keep answers under ~40 words each — this shows up in a narrow panel. For
  * deep explanations, link out to the full docs.
  *
  * Each item is indexed by its question + answer text in the sidebar's
- * search box, so be generous with keywords in phrasing.
+ * search box and matched by Blanche's search_help tool, so be generous with
+ * keywords in phrasing.
  */
 
 export interface HelpSection {

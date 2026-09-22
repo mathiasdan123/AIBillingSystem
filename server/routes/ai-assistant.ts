@@ -862,6 +862,16 @@ So: NEVER write step-by-step click instructions that describe interface elements
 
 Specifically for CPT codes on a claim: the reliable path is the add_claim_line_item tool on a draft claim (call list_cpt_codes first to resolve the code to its id — never guess the id). Do not talk users through adding codes via the New Claim dialog or the claim detail view.
 
+## Product Help & Tech Support
+You are also the first line of tech support, around the clock. Route support-flavored messages through the right tool instead of answering from memory:
+
+1. **"How do I…" / "What does X do" / "Is Y included" questions about TherapyBill itself** → call search_help FIRST and ground your answer in the returned FAQ entries. The FAQ is the product's source of truth; your training data about TherapyBill is stale. If search_help returns nothing relevant, say the FAQ doesn't cover it and answer from general knowledge, clearly framed as such — or offer to file a ticket asking the team to document it.
+2. **"The site is down / slow / broken / won't load / erroring"** → call get_system_status FIRST. If it reports degraded, tell the user plainly which part is unhealthy, that it is on our side, and file an urgent ticket via report_issue if one seems warranted. If healthy, walk them through the local checks (hard refresh: Cmd-Shift-R / Ctrl-Shift-R) and file a ticket if the problem persists — a healthy status plus a persistent user-visible failure IS a real bug.
+3. **A concrete bug, glitch, or error message** → report_issue (as already described on that tool). Include exact error text.
+4. **"What happened to my bug report / that thing I reported"** → get_my_support_tickets. Read them the status and any resolution notes. Never file a duplicate ticket for a follow-up question.
+
+Never speculate about outages, and never claim "everything looks fine" without having called get_system_status in this conversation.
+
 ## Onboarding Guidance
 NEVER answer setup questions from your own memory. The real setup state lives in the database and changes as the user takes actions. On the first user message of a conversation (or any time you're asked about setup, getting started, what's left, what to do next), CALL the get_practice_setup_status tool FIRST and base your answer on the returned checklist. Do not invent steps or hardcode a list.
 
@@ -1600,6 +1610,37 @@ const assistantTools: Anthropic.Tool[] = [
         severity: { type: 'string' as const, description: 'urgent | normal | low (default normal)' },
       },
       required: ['description'],
+    },
+  },
+  {
+    name: 'search_help',
+    description: 'Search the TherapyBill product FAQ for how-to answers, feature explanations, pricing/plan questions, and troubleshooting steps. Call this BEFORE answering any question about how TherapyBill itself works (buttons, pages, settings, what is included, how a workflow runs) — the FAQ is the source of truth and is more current than your training. Pass the user\'s question or its keywords; an empty query returns the list of topics. If the FAQ has no answer, say so and answer from your own knowledge, clearly framed as such.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string' as const, description: 'The user\'s question or keywords, e.g. "reset MFA", "secondary claim", "cancel subscription". Empty string lists all help topics.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_my_support_tickets',
+    description: 'List the support tickets this user has filed (admins see every ticket in the practice). Use when the user asks about a bug report or ticket they submitted — "what happened to my report?", "any update on that issue?", "did you fix the thing I reported?". Returns id, status (open / in_progress / resolved), severity, description, and any resolution notes from the team. Do NOT file a new ticket for a problem the user is merely following up on.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        status: { type: 'string' as const, description: 'Optional filter: open | in_progress | resolved' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_system_status',
+    description: 'Live platform health check: database, cache, clearinghouse configuration, code catalogs, and the running release. Call this FIRST when a user says the site is down, slow, broken, erroring, or not loading — before troubleshooting or filing a ticket — so you can tell them whether the platform itself is degraded (reassure + report) or healthy (their issue is local or a real bug worth a ticket). Contains no patient or practice data.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
     },
   },
   {
@@ -3251,6 +3292,37 @@ async function executeToolForPractice(
           message: 'Ticket filed and the team notified. Give the user the ticket number.',
         });
       }
+      case 'search_help': {
+        const { searchHelp } = await import('../services/supportAssistService');
+        return JSON.stringify(searchHelp(typeof args.query === 'string' ? args.query : ''));
+      }
+
+      case 'get_my_support_tickets': {
+        const { listUserTickets } = await import('../services/supportAssistService');
+        let isAdmin = false;
+        try {
+          if (userId) isAdmin = (await storage.getUser(userId))?.role === 'admin';
+        } catch { /* default to own-tickets-only visibility */ }
+        const tickets = await listUserTickets({
+          userId: userId ?? null,
+          practiceId,
+          isAdmin,
+          status: typeof args.status === 'string' ? args.status : undefined,
+        });
+        return JSON.stringify({
+          tickets,
+          scope: isAdmin ? 'practice' : 'own',
+          message: tickets.length === 0
+            ? 'No tickets found. If the user reported something recently, it may have been filed under another account.'
+            : 'Summarize status in plain language; share resolution notes when present.',
+        });
+      }
+
+      case 'get_system_status': {
+        const { getSystemStatus } = await import('../services/supportAssistService');
+        return JSON.stringify(await getSystemStatus());
+      }
+
       case 'list_cpt_codes': {
         // Read-only catalog lookup. Exists so Blanche can resolve a CPT
         // string to its database id instead of guessing an integer — a

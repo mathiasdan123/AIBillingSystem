@@ -145,6 +145,12 @@ const SURFACE_ONLY_REASONS: Record<string, string> = {
   // ── in-app only: web-chat UX / admin / onboarding ──
   report_issue:
     'in-app only: support-ticket intake for the web app surface (auto-carries app context); MCP/Desktop users report issues to Daniel directly',
+  search_help:
+    'in-app only: product FAQ lookup for the web-chat support surface; Desktop users ask Claude, which has broader context',
+  get_my_support_tickets:
+    'in-app only: pairs with report_issue on the same surface — ticket follow-up belongs where tickets are filed',
+  get_system_status:
+    'in-app only: web-chat "is it down?" triage; MCP/Desktop can hit /api/health directly',
   triage_eligibility_failure:
     'in-app only: entry point is the failure-toast "Ask Blanche" affordance; MCP already exposes the underlying primitives (get_patient, check_eligibility, search_payer) for Desktop-side triage',
   navigate_user: 'in-app only: drives client-side React router; no MCP analog',
