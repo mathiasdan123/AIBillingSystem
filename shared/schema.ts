@@ -4837,6 +4837,9 @@ export const supportTickets = pgTable("support_tickets", {
   source: varchar("source").default("app").notNull(), // app, blanche
   status: varchar("status").default("open").notNull(), // open, in_progress, resolved
   notes: text("notes"),
+  // Support-agent triage (filled by the scheduled triage job; null = not yet triaged)
+  triageCategory: varchar("triage_category"), // how_to, bug, outage, billing_question, feature_request, other
+  triagedAt: timestamp("triaged_at"),
   createdAt: timestamp("created_at").defaultNow(),
   resolvedAt: timestamp("resolved_at"),
 }, (table) => [
@@ -4845,6 +4848,28 @@ export const supportTickets = pgTable("support_tickets", {
 
 export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, resolvedAt: true });
 export type SupportTicket = typeof supportTickets.$inferSelect;
+
+// Reply thread on a support ticket. Three author types: the reporting user
+// following up ('user'), a human admin answering ('staff'), and the support
+// agent's AI-drafted responses ('agent'). Agent replies are born status
+// 'draft' and invisible to the reporter until an admin publishes them —
+// the human-approval gate for autonomous support. Additive table.
+export const supportTicketReplies = pgTable("support_ticket_replies", {
+  id: serial("id").primaryKey(),
+  ticketId: integer("ticket_id").references(() => supportTickets.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(), // denormalized: scoping without a join
+  authorType: varchar("author_type").notNull(), // user, staff, agent
+  authorUserId: varchar("author_user_id").references(() => users.id),
+  body: text("body").notNull(),
+  status: varchar("status").default("published").notNull(), // draft, published
+  createdAt: timestamp("created_at").defaultNow(),
+  publishedAt: timestamp("published_at"),
+}, (table) => [
+  index("idx_support_ticket_replies_ticket").on(table.ticketId),
+]);
+
+export const insertSupportTicketReplySchema = createInsertSchema(supportTicketReplies).omit({ id: true, createdAt: true, publishedAt: true });
+export type SupportTicketReply = typeof supportTicketReplies.$inferSelect;
 
 // ==================== ACTIVITY PROGRESS LOG ====================
 // Per-activity "level of assist" captured on a signed SOAP note, the
