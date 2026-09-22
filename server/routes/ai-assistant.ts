@@ -673,14 +673,10 @@ function getCachedResponse(key: string): CachedResponse | null {
 
 // ---------------------------------------------------------------------------
 // Cost Optimization #3: Rate Limiting per Practice
-// Prevent any single practice from running up excessive API costs
+// Prevent any single practice from running up excessive API costs.
+// Counting lives in blancheUsageService — Redis-backed so the limit holds
+// fleet-wide, with the old per-task in-memory Map as fallback.
 // ---------------------------------------------------------------------------
-interface PracticeUsage {
-  count: number;
-  resetDate: string; // YYYY-MM-DD
-}
-
-const practiceUsageMap = new Map<number, PracticeUsage>();
 
 /** Get the daily message limit for a billing plan */
 function getPlanLimit(billingPlan: string | null | undefined): number {
@@ -692,35 +688,22 @@ function getPlanLimit(billingPlan: string | null | undefined): number {
   }
 }
 
-/** Get today's date string in YYYY-MM-DD format */
-function getTodayString(): string {
-  return new Date().toISOString().split('T')[0];
-}
-
 /** Check if a practice has exceeded its daily message limit. Returns the limit and current count. */
-function checkPracticeRateLimit(practiceId: number, billingPlan: string | null | undefined): { allowed: boolean; limit: number; used: number } {
-  const today = getTodayString();
+async function checkPracticeRateLimit(practiceId: number, billingPlan: string | null | undefined): Promise<{ allowed: boolean; limit: number; used: number }> {
   const limit = getPlanLimit(billingPlan);
-
-  let usage = practiceUsageMap.get(practiceId);
-  if (!usage || usage.resetDate !== today) {
-    // New day — reset counter
-    usage = { count: 0, resetDate: today };
-    practiceUsageMap.set(practiceId, usage);
-  }
-
-  return { allowed: usage.count < limit, limit, used: usage.count };
+  const { getDailyUsage } = await import('../services/blancheUsageService');
+  const used = await getDailyUsage(practiceId);
+  return { allowed: used < limit, limit, used };
 }
 
-/** Increment the usage counter for a practice */
+/**
+ * Count one assistant message. Fire-and-forget by design: accounting must
+ * never add latency to (or fail) the user's turn.
+ */
 function incrementPracticeUsage(practiceId: number): void {
-  const today = getTodayString();
-  let usage = practiceUsageMap.get(practiceId);
-  if (!usage || usage.resetDate !== today) {
-    usage = { count: 0, resetDate: today };
-  }
-  usage.count++;
-  practiceUsageMap.set(practiceId, usage);
+  import('../services/blancheUsageService')
+    .then(({ incrementDailyUsage }) => incrementDailyUsage(practiceId))
+    .catch(() => { /* accounting never breaks the turn */ });
 }
 
 let anthropic: Anthropic | null = null;
@@ -5559,7 +5542,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       // Non-blocking — default to free tier limit
     }
 
-    const rateCheck = checkPracticeRateLimit(practiceId, billingPlan);
+    const rateCheck = await checkPracticeRateLimit(practiceId, billingPlan);
     if (!rateCheck.allowed) {
       return res.json({
         response: "You've reached your daily assistant limit. Upgrade your plan for more, or try again tomorrow.",
