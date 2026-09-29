@@ -102,6 +102,50 @@ export interface AddReplyInput {
   asDraft?: boolean;
 }
 
+/**
+ * Email the ticket's reporter when a reply becomes visible to them (a staff
+ * reply, or an agent draft an admin published). Same non-blocking contract as
+ * the ticket-creation notification: the DB row is the source of truth, and a
+ * missing/failing email never fails the operation (SES sandbox only delivers
+ * to verified recipients, so failures are expected for now).
+ *
+ * HIPAA: the email contains only the ticket id and the reply body (support
+ * prose written by staff or the agent) — never the original ticket
+ * description, which may contain PHI the reporter typed.
+ *
+ * Kill switch: SUPPORT_REPLY_NOTIFY_DISABLED=1 skips entirely.
+ */
+export async function notifyReporterOfReply(ticketId: number, replyBody: string): Promise<void> {
+  if (process.env.SUPPORT_REPLY_NOTIFY_DISABLED === '1') return;
+  try {
+    const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.id, ticketId));
+    if (!ticket?.userId) return; // no reporter on record — nothing to notify
+    const { storage } = await import('../storage');
+    const reporter = await storage.getUser(ticket.userId);
+    const email = reporter?.email;
+    if (!email) return; // reporter has no email — silently skip
+    const { isEmailConfigured } = await import('../email');
+    if (!isEmailConfigured()) return;
+    const { sendEmail } = await import('./emailService');
+    // Style note: reporter facing copy below intentionally avoids hyphens
+    // and dashes (outward comms rule).
+    await sendEmail({
+      to: email,
+      subject: `New reply on your support ticket #${ticketId}`,
+      html: `<p>There is a new reply on your support ticket #${ticketId}:</p>
+<blockquote>${replyBody.replace(/</g, '&lt;')}</blockquote>
+<p>To see the full conversation or to respond, open TherapyBill AI and go to your support ticket.</p>`,
+      text: `There is a new reply on your support ticket #${ticketId}:\n\n${replyBody}\n\nTo see the full conversation or to respond, open TherapyBill AI and go to your support ticket.`,
+    });
+    logger.info('Support reply notification sent to reporter', { ticketId });
+  } catch (err) {
+    logger.warn('Support reply notification email failed (non-blocking)', {
+      ticketId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 export async function addTicketReply(input: AddReplyInput): Promise<SupportTicketReply> {
   const body = (input.body ?? '').trim().slice(0, 5000);
   if (body.length < 2) {
@@ -126,6 +170,11 @@ export async function addTicketReply(input: AddReplyInput): Promise<SupportTicke
     authorType: input.authorType,
     status: reply!.status,
   });
+  // Staff replies are immediately visible to the reporter — let them know.
+  // ('user' replies are the reporter's own; 'agent' drafts notify on publish.)
+  if (input.authorType === 'staff') {
+    await notifyReporterOfReply(input.ticketId, reply!.body);
+  }
   return reply!;
 }
 
@@ -179,6 +228,10 @@ export async function publishTicketReply(opts: {
     replyId: opts.replyId,
     edited: body.length >= 2 && body !== existing.body,
   });
+  if (updated) {
+    // The reply just became visible to the reporter — let them know.
+    await notifyReporterOfReply(existing.ticketId, updated.body);
+  }
   return updated ?? null;
 }
 
