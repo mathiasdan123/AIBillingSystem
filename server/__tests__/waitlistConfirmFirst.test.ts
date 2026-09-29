@@ -17,10 +17,9 @@ vi.mock('../services/smsService', () => ({ isSMSConfigured: () => false, sendSMS
 import { autoFillSlot } from '../routes/waitlist';
 
 const SLOT = { therapistId: 'therapist-1', date: '2026-09-16', startTime: '15:30', endTime: '16:15' };
-// The matcher derives the weekday via toLocaleDateString on new Date(date),
-// which is timezone-dependent — compute it the same way so the test is
-// stable in any TZ.
-const SLOT_WEEKDAY = new Date(SLOT.date).toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+// The matcher now derives the weekday from the date parts alone (TZ-independent),
+// so the expectation is a plain calendar fact: 2026-09-16 is a Wednesday.
+const SLOT_WEEKDAY = 'wednesday';
 const OTHER_WEEKDAY = SLOT_WEEKDAY === 'monday' ? 'tuesday' : 'monday';
 
 const ENTRY = {
