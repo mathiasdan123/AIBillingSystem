@@ -49,8 +49,15 @@ const safeErrorResponse = (res: Response, statusCode: number, msg: string, error
 };
 
 /**
- * GET / — merged list scoped to the practice.
- * Returns: { categories: [{ category, items: [{id, name, description, isCustom, isActive}] }] }
+ * GET / — merged, deduplicated list scoped to the practice.
+ * Returns: { categories: [{ category, items: [{id, name, description, isCustom, isActive, sortOrder, overrideId}] }] }
+ *
+ * A practice-owned row sharing a (category, name) with a system default is
+ * that practice's visibility override ("shadow" row): the system item is
+ * reported once, with the override's isActive applied and the shadow row's
+ * id exposed as overrideId (so admin UIs can PATCH/DELETE it to unhide).
+ * Every other practice-owned row is a genuine custom item.
+ *
  * Only isActive=true items are included by default; pass ?includeInactive=true for admin views.
  */
 router.get('/', isAuthenticated, async (req: any, res: Response) => {
@@ -71,20 +78,42 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
       )
       .orderBy(soapInterventionTemplates.category, soapInterventionTemplates.sortOrder, soapInterventionTemplates.name);
 
-    const filtered = includeInactive ? rows : rows.filter((r: any) => r.isActive !== false);
+    // Two passes: collect the practice's shadow rows keyed by
+    // (category, name), then fold each into its system item.
+    const keyOf = (r: any) => `${String(r.category).toLowerCase()}|${String(r.name).toLowerCase()}`;
+    const systemKeys = new Set<string>();
+    for (const r of rows) {
+      if (r.practiceId == null) systemKeys.add(keyOf(r));
+    }
+    const overrides = new Map<string, any>();
+    for (const r of rows) {
+      if (r.practiceId != null && systemKeys.has(keyOf(r))) overrides.set(keyOf(r), r);
+    }
 
-    // Group by category preserving order from sortOrder.
-    const byCategory = new Map<string, any[]>();
-    for (const r of filtered) {
-      if (!byCategory.has(r.category)) byCategory.set(r.category, []);
-      byCategory.get(r.category)!.push({
+    const merged: any[] = [];
+    for (const r of rows) {
+      if (r.practiceId != null && systemKeys.has(keyOf(r))) continue; // folded into the system item
+      const ov = r.practiceId == null ? overrides.get(keyOf(r)) : undefined;
+      merged.push({
+        category: r.category,
         id: r.id,
         name: r.name,
         description: r.description,
-        isCustom: r.isCustom,
-        isActive: r.isActive,
+        isCustom: r.practiceId != null,
+        isActive: ov ? ov.isActive !== false : r.isActive !== false,
         sortOrder: r.sortOrder,
+        overrideId: ov ? ov.id : null,
       });
+    }
+
+    const filtered = includeInactive ? merged : merged.filter((m) => m.isActive);
+
+    // Group by category preserving order from sortOrder.
+    const byCategory = new Map<string, any[]>();
+    for (const m of filtered) {
+      if (!byCategory.has(m.category)) byCategory.set(m.category, []);
+      const { category: _category, ...item } = m;
+      byCategory.get(m.category)!.push(item);
     }
     const categories = Array.from(byCategory.entries()).map(([category, items]) => ({
       category,
@@ -98,7 +127,10 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
 
 /**
  * POST / — add a practice-custom intervention.
- * Body: { category, name, description? }
+ * Body: { category, name, description?, isActive? }
+ *
+ * Passing isActive:false with the same category+name as a system default
+ * creates the "shadow" row that hides that default for this practice.
  */
 router.post('/', isAuthenticated, async (req: any, res: Response) => {
   try {
@@ -116,7 +148,7 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
         name: String(name).trim().slice(0, 200),
         description: description ? String(description).trim() : null,
         isCustom: true,
-        isActive: true,
+        isActive: typeof req.body?.isActive === 'boolean' ? req.body.isActive : true,
         sortOrder: 9999, // append to end of category
       })
       .returning();
