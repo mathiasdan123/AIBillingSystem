@@ -75,6 +75,31 @@ export function zonedStartOfNextDay(date: Date, timeZone: string): Date {
   return zonedAddDays(date, 1, timeZone);
 }
 
+/**
+ * The UTC instant at wall-clock `HH:MM[:SS]` of calendar day `YYYY-MM-DD` in
+ * `timeZone` (default: the practice timezone). Use this wherever a user-facing
+ * date + time pair becomes a stored timestamp — `new Date(`${date}T${time}`)`
+ * constructs the instant in the SERVER's zone (UTC on ECS), which books a
+ * "3:00 PM" appointment at 3:00 PM UTC = 11:00 AM Eastern.
+ *
+ * Two offset passes so times near a DST transition resolve against the offset
+ * actually in force at that wall-clock moment. Malformed parts propagate to an
+ * Invalid Date, matching the previous constructor's behavior.
+ */
+export function zonedInstant(
+  dateStr: string,
+  timeStr: string,
+  timeZone: string = getBusinessTimeZone()
+): Date {
+  const [y, mo, d] = dateStr.slice(0, 10).split('-').map(Number);
+  const [hh = 0, mi = 0, ss = 0] = timeStr.split(':').map(Number);
+  const desired = Date.UTC(y, mo - 1, d, hh, mi, ss);
+  if (Number.isNaN(desired)) return new Date(NaN); // Intl throws on Invalid Date
+  let ts = desired - zoneOffsetMs(new Date(desired), timeZone);
+  ts = desired - zoneOffsetMs(new Date(ts), timeZone);
+  return new Date(ts);
+}
+
 /** YYYY-MM-DD of `date`'s calendar day in `timeZone`. */
 export function zonedDateString(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {

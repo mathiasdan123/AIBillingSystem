@@ -19,6 +19,7 @@ import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import { decryptField } from '../services/phiEncryptionService';
 import { getRedisClient, isRedisReady } from '../services/redisClient';
+import { zonedInstant, zonedDateString, getBusinessTimeZone } from '../utils/timezone';
 import {
   claims,
   patients,
@@ -2850,7 +2851,7 @@ async function executeToolForPractice(
 
       case 'create_appointment': {
         const duration = (args.duration as number) || 60;
-        const startTime = new Date(`${args.date}T${args.time}:00`);
+        const startTime = zonedInstant(String(args.date), String(args.time));
         const endTime = new Date(startTime.getTime() + duration * 60000);
         const appt = await storage.createAppointment({
           practiceId,
@@ -2874,7 +2875,7 @@ async function executeToolForPractice(
         const existingDurationMin = Math.max(15, Math.round((existingEnd.getTime() - existingStart.getTime()) / 60000));
         const duration = (args.duration as number) || existingDurationMin;
 
-        const newStart = new Date(`${args.date}T${args.time}:00`);
+        const newStart = zonedInstant(String(args.date), String(args.time));
         if (isNaN(newStart.getTime())) {
           return JSON.stringify({ error: 'Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).' });
         }
@@ -3020,15 +3021,17 @@ async function executeToolForPractice(
         // than ID — until now, the prompts and tool-result hints told her
         // to "call get_appointments" but the tool did not exist, so she
         // either invented a behavior or fell back to asking the user.
-        const todayIso = new Date().toISOString().split('T')[0];
+        // "Today" in the practice timezone — the UTC calendar day is already
+        // tomorrow during an Eastern evening.
+        const todayIso = zonedDateString(new Date(), getBusinessTimeZone());
         const rawStart = typeof args.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.startDate as string)
           ? (args.startDate as string)
           : todayIso;
         const rawEnd = typeof args.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.endDate as string)
           ? (args.endDate as string)
           : rawStart;
-        const start = new Date(`${rawStart}T00:00:00`);
-        const end = new Date(`${rawEnd}T23:59:59`);
+        const start = zonedInstant(rawStart, '00:00:00');
+        const end = zonedInstant(rawEnd, '23:59:59');
         const includeCancelled = args.includeCancelled === true;
         const filterPatientId = typeof args.patientId === 'number' ? args.patientId : null;
 

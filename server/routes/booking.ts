@@ -14,6 +14,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { zonedInstant } from '../utils/timezone';
 
 const router = Router();
 
@@ -218,7 +219,7 @@ router.post('/booking/bookings/:id/confirm', isAuthenticated, async (req: any, r
       ? await storage.getAppointmentType(booking.appointmentTypeId)
       : null;
 
-    const startTime = new Date(`${booking.requestedDate}T${booking.requestedTime}`);
+    const startTime = zonedInstant(booking.requestedDate, booking.requestedTime);
     const endTime = new Date(startTime.getTime() + (appointmentType?.duration || 60) * 60000);
 
     const appointment = await storage.createAppointment({
@@ -313,7 +314,7 @@ router.post('/appointment-requests/:id/approve', isAuthenticated, async (req: an
 
     const appointmentStart = startTime
       ? new Date(startTime)
-      : new Date(`${request.requestedDate}T${request.requestedTime}`);
+      : zonedInstant(request.requestedDate, request.requestedTime);
     const duration = appointmentType?.duration || 60;
     const appointmentEnd = endTime
       ? new Date(endTime)

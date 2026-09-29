@@ -25,6 +25,7 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
 import { weekdayOfDateString, formatDateOnlyLong } from '../utils/dateOnly';
+import { zonedInstant } from '../utils/timezone';
 
 const router = Router();
 
@@ -268,8 +269,8 @@ router.post('/waitlist/:id/accept', isAuthenticated, async (req: any, res) => {
       patientId: entry.patientId,
       therapistId: entry.therapistId || undefined,
       title: entry.appointmentType || 'Waitlist Appointment',
-      startTime: new Date(`${offeredSlot.date}T${offeredSlot.startTime}`),
-      endTime: new Date(`${offeredSlot.date}T${offeredSlot.endTime}`),
+      startTime: zonedInstant(offeredSlot.date, offeredSlot.startTime),
+      endTime: zonedInstant(offeredSlot.date, offeredSlot.endTime),
       status: 'scheduled',
       notes: `Booked from waitlist entry #${entryId}`,
     });
