@@ -32,7 +32,11 @@ import { getStediApiKeyForPractice, isStediConfigured } from './stediService';
 import { pollTransactions, fetch835Report, is835 } from './stediEraService';
 import { normalizeStedi835 } from './stedi835Normalizer';
 import { ingestRemittance } from './remittanceIngestionService';
-import { autoMatchRemittance } from './eraAutoMatchService';
+import {
+  autoMatchRemittance,
+  matchRemittanceLineItems,
+  findRemittancesNeedingMatch,
+} from './eraAutoMatchService';
 import { encryptRemittanceLineItem } from './phiEncryptionService';
 
 /** How far back to look the first time a practice is polled. */
@@ -41,9 +45,14 @@ const INITIAL_LOOKBACK_DAYS = 30;
 const OVERLAP_MINUTES = 90;
 /** Guard against an unbounded backfill hammering Stedi in one run. */
 const MAX_PAGES_PER_PRACTICE = 20;
+/** Cap the per-run match backfill so one practice cannot monopolise a sweep. */
+const MAX_MATCH_BACKFILL_PER_PRACTICE = 50;
 /**
- * Auto-posting can be turned off for a cautious rollout. ERAs are still
- * ingested; they simply wait for someone to press Auto-match.
+ * Auto-POSTING can be turned off for a cautious rollout. This gates only the
+ * money step: ERAs are still ingested and their line items are still MATCHED
+ * to claims on arrival — a linked line is information, not a posting. With
+ * auto-post off, matched lines wait for someone to press Auto-Match, which
+ * records the payments.
  */
 const AUTO_POST = process.env.ERA_AUTO_POST !== 'false';
 
@@ -53,6 +62,10 @@ export interface EraPollSummary {
   remittancesIngested: number;
   duplicatesSkipped: number;
   lineItemsMatched: number;
+  /** Lines linked to claims by match-only passes (no posting). */
+  lineItemsLinked: number;
+  /** Lines deliberately left unmatched with a review flag for a human. */
+  lineItemsFlaggedForReview: number;
   postingFailures: number;
   errors: Array<{ practiceId: number; transactionId?: string; error: string }>;
 }
@@ -64,6 +77,8 @@ function emptySummary(): EraPollSummary {
     remittancesIngested: 0,
     duplicatesSkipped: 0,
     lineItemsMatched: 0,
+    lineItemsLinked: 0,
+    lineItemsFlaggedForReview: 0,
     postingFailures: 0,
     errors: [],
   };
@@ -194,15 +209,26 @@ async function ingestOne(
     total: normalized.totalPaymentAmount,
   });
 
-  if (!AUTO_POST) return;
+  if (!AUTO_POST) {
+    // Matching still happens — ERA_AUTO_POST only kills the money step.
+    // Linked lines wait for a human to press Auto-Match, which posts them.
+    const matchOnly = await matchRemittanceLineItems(practiceId, outcome.remittanceId);
+    if (matchOnly) {
+      summary.lineItemsLinked += matchOnly.linked;
+      summary.lineItemsFlaggedForReview += matchOnly.needsReview;
+    }
+    return;
+  }
 
-  // Same matching a human gets from the Auto-match button: identity is
-  // mandatory and the score must clear the threshold. Anything short of that
-  // stays unmatched for review rather than being posted on a guess.
+  // Same matching a human gets from the Auto-match button: a claim-number
+  // echo or mandatory identity clearing the score threshold. Anything short
+  // of that — including an ambiguous candidate set — stays unmatched for
+  // review rather than being posted on a guess.
   const matchResult = await autoMatchRemittance(practiceId, outcome.remittanceId, null);
   if (!matchResult) return;
 
   summary.lineItemsMatched += matchResult.matched;
+  summary.lineItemsFlaggedForReview += matchResult.needsReview;
   summary.postingFailures += matchResult.postingFailures.length;
 
   if (matchResult.postingFailures.length > 0) {
@@ -213,6 +239,40 @@ async function ingestOne(
       remittanceId: outcome.remittanceId,
       failures: matchResult.postingFailures,
     });
+  }
+}
+
+/**
+ * Match-only backfill: link line items of remittances that were ingested
+ * before matching existed, arrived while matching failed, or were re-seen as
+ * duplicates. Never posts money — with ERA_AUTO_POST on, posting still only
+ * happens for freshly ingested remits or via the Auto-Match button, so the
+ * kill switch's history is respected.
+ */
+async function backfillUnmatchedRemittances(
+  practiceId: number,
+  summary: EraPollSummary,
+): Promise<void> {
+  const remittanceIds = await findRemittancesNeedingMatch(
+    practiceId,
+    MAX_MATCH_BACKFILL_PER_PRACTICE,
+  );
+
+  for (const remittanceId of remittanceIds) {
+    try {
+      const matchOnly = await matchRemittanceLineItems(practiceId, remittanceId);
+      if (matchOnly) {
+        summary.lineItemsLinked += matchOnly.linked;
+        summary.lineItemsFlaggedForReview += matchOnly.needsReview;
+      }
+    } catch (err: any) {
+      logger.error('ERA match backfill failed for remittance', {
+        practiceId,
+        remittanceId,
+        error: err?.message,
+      });
+      summary.errors.push({ practiceId, error: err?.message ?? 'unknown' });
+    }
   }
 }
 
@@ -233,6 +293,10 @@ export async function pollAndIngestEras(): Promise<EraPollSummary> {
   for (const practice of pollable) {
     try {
       await pollPractice(practice as any, summary);
+      // Match anything still sitting unmatched — remits ingested before
+      // matching existed, manual uploads nobody matched, duplicates the
+      // ingest path skipped. Matching only; money is never posted here.
+      await backfillUnmatchedRemittances(practice.id, summary);
       summary.practicesPolled++;
     } catch (err: any) {
       logger.error('ERA poll failed for practice', {

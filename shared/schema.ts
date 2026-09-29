@@ -3387,6 +3387,36 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
   adjustmentReasonCodes: jsonb("adjustment_reason_codes"), // e.g. [{ code: "CO-45", description: "..." }]
   remarkCodes: jsonb("remark_codes"), // e.g. [{ code: "N130", description: "..." }]
   status: varchar("status").default("unmatched").notNull(), // matched, unmatched, partial
+  /**
+   * CLP01 patient control number from the 835 — the claim identifier WE sent
+   * on the 837 (claims.claimNumber, or the `CLM{id}` fallback), echoed back by
+   * the payer. The strongest matching key there is: it names our own claim.
+   * Nullable — manual uploads and older rows may not carry it.
+   */
+  claimReference: varchar("claim_reference"),
+  /** CLP07 payer claim control number — the payer's own id, kept for appeals/reference. */
+  payerClaimId: varchar("payer_claim_id"),
+  /**
+   * How the line was matched: 'claim_number', a scored signal list such as
+   * 'exact_name+service_date+cpt', or 'manual'. NULL on rows matched before
+   * this column existed (those payments were posted under the old fused path).
+   */
+  matchType: varchar("match_type"),
+  matchedAt: timestamp("matched_at"),
+  /**
+   * Why auto-match declined to link this line: 'ambiguous_claim_reference',
+   * 'claim_number_amount_mismatch', or 'multiple_candidates'. Set only while
+   * the line is unmatched, so the remittance page can flag it for a human.
+   * Auto-match never guesses with money — an ambiguous line stays unmatched.
+   */
+  matchReviewReason: varchar("match_review_reason"),
+  /**
+   * When the automated path recorded this line's payment posting. Lets a
+   * match-only pass (ERA_AUTO_POST=false) link lines without posting, and the
+   * Auto-Match button later post exactly those — never a line posted already,
+   * never a legacy row (matchType NULL) posted under the old fused path.
+   */
+  autoPostedAt: timestamp("auto_posted_at"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_remittance_line_items_remittance").on(table.remittanceId),

@@ -124,6 +124,8 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
       lineItemsData = (body.lineItems || []).map((item: any) => ({
         patientName: item.patientName || 'Unknown',
         memberId: item.memberId || null,
+        claimReference: item.claimReference || null,
+        payerClaimId: item.payerClaimId || null,
         serviceDate: item.serviceDate || null,
         cptCode: item.cptCode || null,
         chargedAmount: parseFloat(item.chargedAmount) || 0,
@@ -299,16 +301,24 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
     }
 
     if (result.total === 0) {
-      return res.json({ message: 'No unmatched line items to process', matched: 0, total: 0 });
+      return res.json({ message: 'No unmatched line items to process', matched: 0, posted: 0, total: 0 });
     }
 
+    const reviewNote =
+      result.needsReview > 0
+        ? ` ${result.needsReview} line item(s) need manual review.`
+        : '';
     res.json({
       message:
         result.postingFailures.length > 0
-          ? `Auto-matching complete: ${result.matched} of ${result.total} line items matched, ` +
-            `but ${result.postingFailures.length} payment(s) could not be recorded — review before relying on these totals.`
-          : `Auto-matching complete: ${result.matched} of ${result.total} line items matched`,
+          ? `Auto-matching complete: ${result.matched} line item(s) matched and ${result.posted} payment(s) recorded, ` +
+            `but ${result.postingFailures.length} payment(s) could not be recorded — review before relying on these totals.` +
+            reviewNote
+          : `Auto-matching complete: ${result.matched} line item(s) matched, ${result.posted} payment(s) recorded.` +
+            reviewNote,
       matched: result.matched,
+      posted: result.posted,
+      needsReview: result.needsReview,
       // Non-empty means money was matched but NOT recorded — must not be
       // presented as a clean success.
       postingFailures: result.postingFailures,
@@ -379,12 +389,17 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
       return res.status(404).json({ message: 'Claim not found in this practice' });
     }
 
-    // Update line item
+    // Update line item. matchType 'manual' marks this as a human decision:
+    // auto-match never re-decides or overwrites it, and the auto path never
+    // posts it (this route records the payment itself, below).
     await db
       .update(remittanceLineItems)
       .set({
         claimId: targetClaimId,
         status: 'matched',
+        matchType: 'manual',
+        matchedAt: new Date(),
+        matchReviewReason: null,
       })
       .where(eq(remittanceLineItems.id, lineItemId));
 
