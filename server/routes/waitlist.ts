@@ -24,6 +24,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { weekdayOfDateString, formatDateOnlyLong } from '../utils/dateOnly';
 
 const router = Router();
 
@@ -355,7 +356,9 @@ router.post('/waitlist/find-matches', isAuthenticated, async (req: any, res) => 
     const matches = await storage.getWaitlistForSlot(
       practiceId,
       therapistId,
-      new Date(date),
+      // Pass the raw string: the storage layer derives the weekday from the
+      // date parts, avoiding the UTC-midnight-vs-local-day parsing trap.
+      date,
       time
     );
     res.json(matches);
@@ -455,12 +458,7 @@ router.post('/waitlist/:id/notify', isAuthenticated, async (req: any, res) => {
     const practice = await storage.getPractice(entry.practiceId);
     const practiceName = practice?.name || 'Your Practice';
 
-    const slotDate = new Date(date);
-    const formattedDate = slotDate.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
+    const formattedDate = formatDateOnlyLong(date);
 
     const results: { emailSent?: boolean; smsSent?: boolean; errors: string[] } = { errors: [] };
 
@@ -584,8 +582,11 @@ interface AutoFillParams {
 export async function autoFillSlot(practiceId: number, params: AutoFillParams) {
   const { therapistId, date, startTime, endTime, appointmentType, excludeEntryIds = [] } = params;
 
-  const slotDate = new Date(date);
-  const dayOfWeek = slotDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+  // Derive the weekday from the date parts alone — `new Date('YYYY-MM-DD')`
+  // parses as UTC midnight, so a local-time weekday read on a server in
+  // America/New_York would yield the PREVIOUS day (a Monday slot matching
+  // Sunday preferences).
+  const dayOfWeek = weekdayOfDateString(date);
 
   // Get all waiting entries for this practice
   const waitingEntries = await storage.getWaitlist(practiceId, { status: 'waiting' });
@@ -664,7 +665,7 @@ export async function autoFillSlot(practiceId: number, params: AutoFillParams) {
       const { isEmailConfigured } = await import('../email');
       if (therapist?.email && isEmailConfigured()) {
         const { sendEmail } = await import('../services/emailService');
-        const formattedDate = slotDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+        const formattedDate = formatDateOnlyLong(date);
         await sendEmail({
           to: therapist.email,
           subject: `Open slot ${formattedDate} ${startTime} — ${matches.length} waitlisted ${matches.length === 1 ? 'family matches' : 'families match'}`,
@@ -745,7 +746,6 @@ export async function offerSlotToFamily(
     respondBy,
   } as any);
 
-  const slotDate = new Date(offeredSlot.date);
   const startTime = offeredSlot.startTime;
   const endTime = offeredSlot.endTime;
 
@@ -756,11 +756,9 @@ export async function offerSlotToFamily(
     const practiceName = practice?.name || 'Your Practice';
 
     if (patient) {
-      const formattedDate = slotDate.toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-      });
+      // Date-part-only formatting: TZ-independent so the named weekday always
+      // matches the slot's calendar date.
+      const formattedDate = formatDateOnlyLong(offeredSlot.date);
 
       if (patient.email) {
         try {

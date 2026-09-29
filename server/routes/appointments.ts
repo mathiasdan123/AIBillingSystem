@@ -18,6 +18,8 @@ import { createAppointmentSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
 import { chargeCopay, isStripeConfigured, createPatientPaymentLink, practiceMayCollectPatientPayments } from '../services/stripeService';
+import { getBusinessTimeZone, zonedDateString } from '../utils/timezone';
+import { zonedTimeString } from '../utils/dateOnly';
 
 const router = Router();
 
@@ -381,9 +383,16 @@ router.post('/:id/cancel', isAuthenticated, async (req: any, res) => {
         const { autoFillSlot } = await import('./waitlist');
         const startDate = new Date(appt.startTime);
         const endDate = appt.endTime ? new Date(appt.endTime) : null;
-        const dateStr = startDate.toISOString().split('T')[0];
-        const startTimeStr = startDate.toTimeString().slice(0, 5);
-        const endTimeStr = endDate ? endDate.toTimeString().slice(0, 5) : undefined;
+        // The freed slot's calendar date and wall-clock times must both be
+        // taken in the practice timezone. The old mix of toISOString (UTC
+        // date) + toTimeString (server-local time) disagreed with itself and
+        // with family preferences whenever the server TZ differed — an
+        // evening ET cancellation reported the next UTC day, matching the
+        // wrong day's preferences.
+        const tz = getBusinessTimeZone();
+        const dateStr = zonedDateString(startDate, tz);
+        const startTimeStr = zonedTimeString(startDate, tz);
+        const endTimeStr = endDate ? zonedTimeString(endDate, tz) : undefined;
 
         autoFillResult = await autoFillSlot(appt.practiceId, {
           appointmentId: appt.id,

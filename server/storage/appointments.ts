@@ -47,6 +47,7 @@ import { db } from "../db";
 import { randomBytes } from "crypto";
 import { eq, desc, and, gte, lte, ne, lt, isNull, count, sql } from "drizzle-orm";
 import { stripImmutable } from "../utils/sanitizeUpdate";
+import { weekdayOfDateString } from "../utils/dateOnly";
 import {
   encryptTelehealthSessionRecord,
   decryptTelehealthSessionRecord,
@@ -530,10 +531,22 @@ export async function deleteWaitlistEntry(id: number): Promise<void> {
 export async function getWaitlistForSlot(
   practiceId: number,
   therapistId: string | null,
-  slotDate: Date,
+  slotDate: Date | string,
   slotTimeStart: string
 ): Promise<WaitlistEntry[]> {
-  const dayOfWeek = slotDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+  // For a YYYY-MM-DD string (or a Date built from one — exactly UTC midnight)
+  // the weekday comes from the date parts alone, TZ-independent. Any other
+  // Date is a real instant, so its calendar day is taken in the practice
+  // timezone — never the server's local zone, and never via bare
+  // toLocaleDateString on a UTC-midnight Date, which shifts to the previous
+  // day on servers west of UTC.
+  const dayOfWeek = weekdayOfDateString(
+    typeof slotDate === 'string'
+      ? slotDate
+      : slotDate.getTime() % 86_400_000 === 0
+        ? slotDate.toISOString().slice(0, 10)
+        : slotDate.toISOString()
+  );
 
   const entries = await db
     .select()
