@@ -5,6 +5,13 @@
   `scripts/lint-schema-diff.sh`, wired into CI (`76c14c7`).
 - ❌ Production still applies schema via `drizzle-kit push --force`. The
   baseline reconciliation below is **not** done and needs a maintenance window.
+- 🧰 **2026-09-29: the maintenance window is fully prepared.** Steps 1–6 are
+  scripted in `scripts/migration-reconciliation/` (numbered 01–05; every
+  script demands `--i-am-on-a-restored-copy` and hard-refuses production
+  URLs) and sequenced — prerequisites, timing, go/no-go gates, rollback per
+  step, and the final deploy.yml switch as a ready-to-apply diff — in
+  **[docs/migration-baseline-runbook.md](migration-baseline-runbook.md)**.
+  The window's remaining work is executing that reviewed checklist.
 
 **Owner:** unassigned.
 
