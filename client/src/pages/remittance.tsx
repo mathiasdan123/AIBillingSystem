@@ -49,6 +49,10 @@ interface RemittanceLineItem {
   adjustmentReasonCodes: Array<{ code: string; description: string }> | null;
   remarkCodes: Array<{ code: string; description: string }> | null;
   status: string;
+  claimReference?: string | null;
+  payerClaimId?: string | null;
+  matchType?: string | null;
+  matchReviewReason?: string | null;
 }
 
 interface RemittanceDetail extends RemittanceRecord {
@@ -95,6 +99,18 @@ function StatusBadge({ status }: { status: string }) {
     default:
       return <Badge className="bg-gray-100 text-gray-800 hover:bg-gray-100"><Clock className="w-3 h-3 mr-1" /> Pending</Badge>;
   }
+}
+
+// Why auto-match deliberately left a line unmatched. These lines need a
+// human decision — auto-match never guesses with money.
+const REVIEW_REASON_LABELS: Record<string, string> = {
+  ambiguous_claim_reference: 'Claim number matches multiple claims',
+  claim_number_amount_mismatch: 'Claim number found, but amounts disagree',
+  multiple_candidates: 'Multiple candidate claims — pick the right one',
+};
+
+function reviewReasonLabel(reason: string): string {
+  return REVIEW_REASON_LABELS[reason] || 'Needs manual review';
 }
 
 // ==================== Format Helpers ====================
@@ -667,6 +683,7 @@ export default function Remittance() {
                         <td className="p-2">
                           <div className="font-medium">{item.patientName}</div>
                           {item.memberId && <div className="text-xs text-slate-400">ID: {item.memberId}</div>}
+                          {item.claimReference && <div className="text-xs text-slate-400">Claim ref: {item.claimReference}</div>}
                         </td>
                         <td className="p-2">{formatDate(item.serviceDate)}</td>
                         <td className="p-2">
@@ -678,7 +695,20 @@ export default function Remittance() {
                         <td className="p-2 text-right">{formatCurrency(item.allowedAmount)}</td>
                         <td className="p-2 text-right font-medium text-green-600">{formatCurrency(item.paidAmount)}</td>
                         <td className="p-2 text-right text-red-600">{formatCurrency(item.adjustmentAmount)}</td>
-                        <td className="p-2"><StatusBadge status={item.status} /></td>
+                        <td className="p-2">
+                          {item.status === 'unmatched' && item.matchReviewReason ? (
+                            <div>
+                              <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+                                <AlertCircle className="w-3 h-3 mr-1" /> Needs review
+                              </Badge>
+                              <div className="text-xs text-amber-700 mt-1 max-w-[180px]">
+                                {reviewReasonLabel(item.matchReviewReason)}
+                              </div>
+                            </div>
+                          ) : (
+                            <StatusBadge status={item.status} />
+                          )}
+                        </td>
                         <td className="p-2">
                           {item.status === 'unmatched' && (
                             <Button
@@ -690,7 +720,18 @@ export default function Remittance() {
                             </Button>
                           )}
                           {item.status === 'matched' && item.claimId && (
-                            <span className="text-xs text-green-600">Claim #{item.claimId}</span>
+                            <div>
+                              <span className="text-xs text-green-600">Claim #{item.claimId}</span>
+                              {item.matchType && (
+                                <div className="text-xs text-slate-400">
+                                  {item.matchType === 'manual'
+                                    ? 'matched manually'
+                                    : item.matchType === 'claim_number'
+                                      ? 'auto: claim number'
+                                      : 'auto: patient identity'}
+                                </div>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>

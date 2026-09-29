@@ -465,6 +465,10 @@ export function getReasonCodeDescription(code: string): string {
 export function flattenToLineItems(parsed: Parsed835): Array<{
   patientName: string;
   memberId: string | null;
+  /** CLP01 patient control number — the claim id we submitted on the 837. */
+  claimReference: string | null;
+  /** CLP07 payer claim control number. */
+  payerClaimId: string | null;
   serviceDate: string | null;
   cptCode: string | null;
   chargedAmount: number;
@@ -488,6 +492,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
   const items: Array<{
     patientName: string;
     memberId: string | null;
+    claimReference: string | null;
+    payerClaimId: string | null;
     serviceDate: string | null;
     cptCode: string | null;
     chargedAmount: number;
@@ -521,6 +527,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
         items.push({
           patientName: claim.patientName || claim.patientControlNumber,
           memberId: claim.memberId || null,
+          claimReference: claim.patientControlNumber || null,
+          payerClaimId: claim.payerClaimControlNumber || null,
           serviceDate: svc.serviceDate || null,
           cptCode: svc.procedureCode || null,
           chargedAmount: svc.chargedAmount,
@@ -551,6 +559,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
       items.push({
         patientName: claim.patientName || claim.patientControlNumber,
         memberId: claim.memberId || null,
+        claimReference: claim.patientControlNumber || null,
+        payerClaimId: claim.payerClaimControlNumber || null,
         serviceDate: null,
         cptCode: null,
         chargedAmount: claim.chargedAmount,

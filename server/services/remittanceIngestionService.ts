@@ -123,6 +123,10 @@ export async function ingestRemittance(
       remittanceId: remittance.id,
       patientName: item.patientName,
       memberId: item.memberId,
+      // CLP01/CLP07 claim references — the deterministic keys the
+      // auto-matcher links on. Optional: older callers may not supply them.
+      claimReference: (item as any).claimReference ?? null,
+      payerClaimId: (item as any).payerClaimId ?? null,
       serviceDate: item.serviceDate,
       cptCode: item.cptCode,
       chargedAmount: item.chargedAmount != null ? String(item.chargedAmount) : null,

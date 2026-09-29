@@ -23,6 +23,8 @@ const H = vi.hoisted(() => ({
   fetch835: vi.fn(),
   ingest: vi.fn(),
   autoMatch: vi.fn(),
+  matchOnly: vi.fn(),
+  needingMatch: vi.fn(),
   stediKey: vi.fn(),
 }));
 
@@ -56,7 +58,11 @@ vi.mock('../services/stedi835Normalizer', () => ({
   normalizeStedi835: (r: any) => r,
 }));
 vi.mock('../services/remittanceIngestionService', () => ({ ingestRemittance: H.ingest }));
-vi.mock('../services/eraAutoMatchService', () => ({ autoMatchRemittance: H.autoMatch }));
+vi.mock('../services/eraAutoMatchService', () => ({
+  autoMatchRemittance: H.autoMatch,
+  matchRemittanceLineItems: H.matchOnly,
+  findRemittancesNeedingMatch: H.needingMatch,
+}));
 vi.mock('../services/phiEncryptionService', () => ({
   encryptRemittanceLineItem: (i: any) => i,
 }));
@@ -74,7 +80,16 @@ beforeEach(() => {
   });
   H.fetch835.mockResolvedValue({ payerName: 'Horizon', lineItems: [] });
   H.ingest.mockResolvedValue({ status: 'created', remittanceId: 500 });
-  H.autoMatch.mockResolvedValue({ matched: 1, total: 1, results: [], postingFailures: [] });
+  H.autoMatch.mockResolvedValue({
+    matched: 1,
+    posted: 1,
+    total: 1,
+    needsReview: 0,
+    results: [],
+    postingFailures: [],
+  });
+  H.matchOnly.mockResolvedValue({ linked: 0, total: 0, needsReview: 0, results: [] });
+  H.needingMatch.mockResolvedValue([]);
 });
 
 describe('pollAndIngestEras', () => {
@@ -168,6 +183,40 @@ describe('pollAndIngestEras', () => {
     // Matched but not recorded: the claim looks reconciled while the money is
     // missing from collections.
     expect(summary.postingFailures).toBe(1);
+  });
+
+  it('runs a match-only backfill over remittances that still have unmatched lines', async () => {
+    // Already-ingested remits (pre-feature, manual uploads, skipped
+    // duplicates) must still get matched — but NEVER auto-posted here.
+    H.ingest.mockResolvedValue({ status: 'duplicate', reason: 'transaction_id', remittanceId: 500 });
+    H.needingMatch.mockResolvedValue([500, 501]);
+    H.matchOnly.mockResolvedValue({ linked: 2, total: 3, needsReview: 1, results: [] });
+
+    const summary = await pollAndIngestEras();
+
+    expect(H.matchOnly).toHaveBeenCalledWith(1, 500);
+    expect(H.matchOnly).toHaveBeenCalledWith(1, 501);
+    expect(H.autoMatch).not.toHaveBeenCalled();
+    expect(summary.lineItemsLinked).toBe(4);
+    expect(summary.lineItemsFlaggedForReview).toBe(2);
+  });
+
+  it('with ERA_AUTO_POST=false, still MATCHES new ingests but never posts', async () => {
+    // The kill switch gates only the money step. Matching (linking a line to
+    // a claim) is information, and must happen on arrival regardless.
+    vi.resetModules();
+    process.env.ERA_AUTO_POST = 'false';
+    try {
+      const { pollAndIngestEras: pollNoPost } = await import('../services/eraPollingService');
+      const summary = await pollNoPost();
+
+      expect(H.autoMatch).not.toHaveBeenCalled();
+      expect(H.matchOnly).toHaveBeenCalledWith(1, 500);
+      expect(summary.remittancesIngested).toBe(1);
+    } finally {
+      delete process.env.ERA_AUTO_POST;
+      vi.resetModules();
+    }
   });
 
   it('uses a bounded lookback on a practice that has never been polled', async () => {

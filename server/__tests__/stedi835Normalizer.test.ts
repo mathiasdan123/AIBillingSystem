@@ -121,6 +121,20 @@ describe('normalizeStedi835', () => {
     expect(line.patientResponsibility).toBe(25);
   });
 
+  it('carries CLP01/CLP07 claim references onto every line item', () => {
+    const withPayerRef = structuredClone(REPORT) as any;
+    withPayerRef.transactions[0].detailInfo[0].paymentInfo[0].claimPaymentInfo.payerClaimControlNumber =
+      'PYR-77';
+
+    const [line] = normalizeStedi835(withPayerRef).lineItems;
+
+    // CLP01 is the claim number WE submitted on the 837 — the deterministic
+    // key the auto-matcher links on. Dropping it forces every match back to
+    // name-based scoring.
+    expect(line.claimReference).toBe('CLM-1001');
+    expect(line.payerClaimId).toBe('PYR-77');
+  });
+
   it('still records a claim-level payment that has no service lines', () => {
     const claimOnly = structuredClone(REPORT) as any;
     claimOnly.transactions[0].detailInfo[0].paymentInfo[0].serviceLines = [];

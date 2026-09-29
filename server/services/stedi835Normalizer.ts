@@ -22,6 +22,14 @@
 export interface NormalizedLineItem {
   patientName: string;
   memberId: string | null;
+  /**
+   * CLP01 patient control number — the claim identifier WE put on the 837
+   * (claims.claimNumber or the `CLM{id}` fallback), echoed back by the payer.
+   * The deterministic matching key for eraAutoMatchService.
+   */
+  claimReference: string | null;
+  /** CLP07 payer claim control number — the payer's own id for this claim. */
+  payerClaimId: string | null;
   serviceDate: string | null;
   cptCode: string | null;
   chargedAmount: number;
@@ -115,9 +123,13 @@ function normalizeServiceLine(
     .map((c: any) => String(c))
     .filter(Boolean);
 
+  const info = claim?.claimPaymentInfo ?? {};
+
   return {
     patientName: patientDisplayName,
     memberId,
+    claimReference: info?.patientControlNumber ? String(info.patientControlNumber) : null,
+    payerClaimId: info?.payerClaimControlNumber ? String(info.payerClaimControlNumber) : null,
     serviceDate:
       toIsoDate(line?.serviceDate) ??
       toIsoDate(line?.serviceStartDate) ??
@@ -137,9 +149,10 @@ function normalizeServiceLine(
 /**
  * Flatten a Stedi 835 report into one remittance record plus its line items.
  *
- * `patientControlNumber` (CLP01) is echoed onto each line item's memberId
- * fallback path only where a member id is genuinely absent — the existing
- * matcher scores on identity, and a control number is not an identity.
+ * `patientControlNumber` (CLP01) is carried on each line item as
+ * `claimReference` — it is the claim id WE submitted on the 837, so the
+ * auto-matcher can use it as a deterministic key back to claims.claimNumber.
+ * `payerClaimControlNumber` (CLP07) rides along as `payerClaimId`.
  */
 export function normalizeStedi835(report: any): NormalizedRemittance {
   const lineItems: NormalizedLineItem[] = [];
@@ -201,6 +214,8 @@ export function normalizeStedi835(report: any): NormalizedRemittance {
           lineItems.push({
             patientName: displayName,
             memberId,
+            claimReference: info?.patientControlNumber ? String(info.patientControlNumber) : null,
+            payerClaimId: info?.payerClaimControlNumber ? String(info.payerClaimControlNumber) : null,
             serviceDate: toIsoDate(info?.claimStatementPeriodStart),
             cptCode: null,
             chargedAmount: num(info?.totalClaimChargeAmount),
