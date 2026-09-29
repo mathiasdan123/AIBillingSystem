@@ -142,6 +142,7 @@ export const navigationSections: NavSection[] = [
           { nameKey: 'nav.providerProfile', href: '/provider-profile', icon: Building2, adminOnly: false, financial: true },
           { nameKey: 'nav.payerMapping', href: '/payer-mapping', icon: Link2, adminOnly: true },
           { nameKey: 'nav.enrollmentOverview', href: '/enrollment-overview', icon: BarChart3, adminOnly: true },
+          { nameKey: 'nav.interventionsLibrary', href: '/interventions-library', icon: ClipboardList, adminOnly: true },
           { nameKey: 'nav.credentialing', href: '/credentialing', icon: ShieldCheck, adminOnly: true },
           { nameKey: 'nav.stediReadiness', href: '/stedi-readiness', icon: Activity, adminOnly: true },
         ],

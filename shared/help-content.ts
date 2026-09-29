@@ -261,7 +261,7 @@ export const helpSections: HelpSection[] = [
       {
         question: 'Can I add my own interventions to the picker?',
         answer:
-          'Yes — practice admins can add custom items via API today (UI coming soon). System defaults are shared and can\'t be deleted, but you can hide ones you don\'t use.',
+          'Yes — practice admins manage them in Settings → Practice → Interventions Library: add, edit, or delete custom items. System defaults are shared and can\'t be deleted, but you can hide ones you don\'t use with the visibility toggle.',
       },
     ],
   },

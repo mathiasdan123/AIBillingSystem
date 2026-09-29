@@ -60,7 +60,8 @@
     "insights": "Información",
     "rates": "Tarifas",
     "frontDesk": "Recepción",
-    "supportTickets": "Tickets de Soporte"
+    "supportTickets": "Tickets de Soporte",
+    "interventionsLibrary": "Biblioteca de Intervenciones"
   },
   "help": {
     "title": "Centro de Ayuda",
