@@ -68,7 +68,7 @@ export async function postPayment(
     // Without this, a claim marked paid by the status cron and then confirmed
     // by the ERA would be counted twice — which is worse than the bug this
     // whole change fixes, because it over-reports collections and over-bills
-    // the 6% platform fee rather than under-reporting it.
+    // the percentage platform fee rather than under-reporting it.
     if (data.source === 'era') {
       await tx
         .update(paymentPostings)

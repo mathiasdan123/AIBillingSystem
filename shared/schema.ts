@@ -126,7 +126,7 @@ export const practices = pgTable("practices", {
   stripeSubscriptionId: varchar("stripe_subscription_id"),
   stripePaymentMethodId: varchar("stripe_payment_method_id"),
   billingPlan: varchar("billing_plan").default("starter"), // starter, professional, practice
-  billingPercentage: decimal("billing_percentage", { precision: 5, scale: 2 }).default("6"), // billing engine: 6% of insurance collections
+  billingPercentage: decimal("billing_percentage", { precision: 5, scale: 2 }).default("5"), // billing engine: 5% of insurance collections (was 6% until 2026-10-01)
   billingInterval: varchar("billing_interval").default("monthly"), // monthly, annual
   trialEndsAt: timestamp("trial_ends_at"),
   // Stedi clearinghouse fields
@@ -3340,7 +3340,7 @@ export const remittanceAdvice = pgTable("remittance_advice", {
   /**
    * SHA-256 of the uploaded content, for idempotency. Uploading the same 835
    * twice would otherwise post every payment on it twice — inflating the
-   * practice's A/R and the collections basis TherapyBill invoices 6% of.
+   * practice's A/R and the collections basis TherapyBill's percentage fee is invoiced on.
    * Nullable so rows that predate this column stay valid; Postgres unique
    * indexes ignore NULLs, so they do not collide with each other.
    */

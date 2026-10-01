@@ -22,7 +22,7 @@ function toCents(amount: string | null | undefined): number {
  *
  * Why this exists: writing `claims.paidAmount` is not the same as recording
  * the money. A/R, patient statements, the collections rate and the
- * 6%-of-collections basis all read `payment_postings`. Both status paths — the
+ * percentage-of-collections basis all read `payment_postings`. Both status paths — the
  * 4-hourly poller and the daily reaper — set the claim column and nothing
  * else, so a claim confirmed paid contributed $0 to every one of those.
  *

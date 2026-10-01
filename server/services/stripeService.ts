@@ -135,8 +135,8 @@ export const PRICING_PLANS = {
   },
 };
 
-/** AI Billing Engine: 6% of insurance collections */
-export const BILLING_ENGINE_PERCENTAGE = 6;
+/** AI Billing Engine: 5% of insurance collections (was 6% until 2026-10-01) */
+export const BILLING_ENGINE_PERCENTAGE = 5;
 
 /**
  * Create Stripe Products and Prices for the pricing catalog.
@@ -184,7 +184,7 @@ export async function createStripePricingCatalog(): Promise<{
   // Billing engine product (usage tracked manually, charged via PaymentIntent)
   const billingProduct = await s.products.create({
     name: 'TherapyBill AI \u2014 Billing Engine',
-    description: '6% of insurance collections',
+    description: '5% of insurance collections',
     metadata: { planKey: 'billing-engine' },
   });
   products['billing-engine'] = billingProduct.id;
