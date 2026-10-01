@@ -334,12 +334,21 @@ if (redisClient) {
   console.log('ℹ  Using in-memory rate limiting (set REDIS_URL for distributed rate limiting)');
 }
 
+// passOnStoreError: a Redis store failure must never fail the request.
+// During the 2026-10-01 ElastiCache service update, the node briefly went
+// read-only and rate-limit-redis's Lua script threw READONLY — which, with
+// the default fail-closed behavior, 500'd live requests (Sentry a244cb79).
+// Every other Redis consumer here degrades to in-memory; these now match
+// (fail-open for the window of an outage, logged by express-rate-limit).
+// Auth brute-force still has its own backstop: bruteForceProtection keeps
+// an in-memory counter independent of these limiters.
 const generalLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS,
   max: RATE_LIMIT_MAX_GENERAL,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: true,
   ...(useRedis ? { store: makeRedisStore('rl:gen:') } : {}),
 });
 
@@ -349,6 +358,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many authentication attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: true,
   ...(useRedis ? { store: makeRedisStore('rl:auth:') } : {}),
 });
 
@@ -358,6 +368,7 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many API requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: true,
   ...(useRedis ? { store: makeRedisStore('rl:api:') } : {}),
 });
 
