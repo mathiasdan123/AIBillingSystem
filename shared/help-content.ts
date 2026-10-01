@@ -437,7 +437,7 @@ export const helpSections: HelpSection[] = [
       {
         question: 'What\'s the contract length?',
         answer:
-          'Month-to-month by default. Annual prepay gets 15% off.',
+          'Month-to-month by default. Annual prepay saves about 30% versus paying monthly — exact prices are on the Pricing page.',
       },
       {
         question: 'What happens if I cancel?',

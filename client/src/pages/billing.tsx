@@ -356,7 +356,7 @@ export default function Billing() {
               <div className="text-2xl font-bold text-blue-600">
                 ${billingInfo?.monthlyPrice || 99}/mo
               </div>
-              <p className="text-sm text-slate-500">+ 6% billing engine (optional)</p>
+              <p className="text-sm text-slate-500">+ 5% billing engine (optional)</p>
               {subscriptionInfo?.hasSubscription && subscriptionInfo.currentPeriodEnd && !subscriptionInfo.cancelAtPeriodEnd && (
                 <p className="text-xs text-slate-400 mt-1">
                   Next billing: {new Date(subscriptionInfo.currentPeriodEnd).toLocaleDateString()}

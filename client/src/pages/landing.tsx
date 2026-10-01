@@ -589,7 +589,7 @@ export default function Landing() {
               Simple, Transparent Pricing
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              Flat monthly fee for practice management. 6% of collections for AI billing. No contracts. Cancel anytime.
+              Flat monthly fee for practice management. 5% of collections for AI billing. No contracts. Cancel anytime.
             </p>
           </div>
 

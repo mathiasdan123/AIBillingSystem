@@ -113,7 +113,7 @@ const billingFeatures = [
 ];
 
 const comparisonRows = [
-  { label: "Billing fee", us: "6% of collections", them: "7\u20139% of collections" },
+  { label: "Billing fee", us: "5% of collections", them: "7\u20139% of collections" },
   { label: "Practice management software", us: "Included", them: "$79\u2013189/mo (additional cost)" },
   { label: "AI claim review & denial prediction", us: "Included", them: "Not available" },
   { label: "AI-narrated insight reports", us: "Daily + weekly executive summary", them: "Not available" },
@@ -131,7 +131,7 @@ const faqs = [
     a: "Yes. 30 days, no credit card required. You get full access to the entire platform \u2014 scheduling, SOAP notes, portal, analytics, and the complete billing workflow. During the trial, claims run in sandbox mode: the AI reviews your claims for accuracy and you experience the full submission workflow, but nothing is sent to payers. This means you can keep using your current billing system during the trial with zero risk of duplicate claims. When you're ready to go live, we switch you to production and you start submitting real claims.",
   },
   {
-    q: "When does the 6% billing fee apply?",
+    q: "When does the 5% billing fee apply?",
     a: "Only after your trial ends and you go live. The fee is applied to insurance payments posted through the platform \u2014 you pay when you get paid. No minimums, no monthly billing fee for the billing engine.",
   },
   {
@@ -148,7 +148,7 @@ const faqs = [
   },
   {
     q: "What does patient payment processing cost?",
-    a: "Standard Stripe rates (2.9% + 30\u00A2 for cards, 0.8% for ACH). The 6% billing fee applies to insurance collections only, not patient payments.",
+    a: "Standard Stripe rates (2.9% + 30\u00A2 for cards, 0.8% for ACH). The 5% billing fee applies to insurance collections only, not patient payments.",
   },
   {
     q: "Is it HIPAA compliant?",
@@ -321,7 +321,7 @@ export default function Pricing() {
 
           <Card className="max-w-3xl mx-auto border-2 border-blue-100">
             <CardHeader className="text-center">
-              <div className="text-5xl font-bold text-slate-900">6%</div>
+              <div className="text-5xl font-bold text-slate-900">5%</div>
               <div className="text-lg text-slate-600 mt-1">of insurance collections</div>
               <p className="text-sm text-slate-500 mt-3 max-w-lg mx-auto">
                 Applied to insurance payments posted through the platform. No minimums. No setup fee.

@@ -205,7 +205,7 @@ export async function runBillingEngineForMonth(
   for (const practice of realPractices) {
     try {
       const collectionsCents = await collectionsCentsForPeriod(practice.id, periodMonth, periodEnd);
-      const percentage = Number(practice.billingPercentage ?? 6);
+      const percentage = Number(practice.billingPercentage ?? 5);
       const feeCents = feeForCollections(collectionsCents, percentage);
 
       // Has this month already been invoiced? Never bill it twice.
