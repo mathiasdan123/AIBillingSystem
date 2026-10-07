@@ -123,7 +123,10 @@ async function submitTestClaim(
 }
 
 describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
-  const runId = Date.now();
+  // Base36 keeps every patient control number under the payer's 20-char cap
+  // (code 33 rejection seen live on run 37628919406: "E2E-PAID-<13 digits>"
+  // is 22 chars). "E2E-PAID-<8 chars>" fits with room to spare.
+  const runId = Date.now().toString(36);
   const submittedAt = new Date();
 
   it('submits a professional claim to the Stedi Test Payer and is accepted', async () => {
