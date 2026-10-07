@@ -38,7 +38,11 @@ function controlNumber(): string {
 /** Minimal valid 837P mirroring stediService's schema quirks (CCYYMMDD dates,
  * digits-only employerId, string diagnosis pointers, serviceLines nested in
  * claimInformation). Fictional data throughout. */
-function testClaimPayload(patientControlNumber: string, memberId = 'STEDI_PAID_E2E01') {
+function testClaimPayload(
+  patientControlNumber: string,
+  memberId = 'STEDI_PAID_E2E01',
+  chargeAmount = '175.00'
+) {
   return {
     controlNumber: controlNumber(),
     usageIndicator: 'T',
@@ -75,7 +79,7 @@ function testClaimPayload(patientControlNumber: string, memberId = 'STEDI_PAID_E
     claimInformation: {
       claimFilingCode: 'CI',
       patientControlNumber,
-      claimChargeAmount: '175.00',
+      claimChargeAmount: chargeAmount,
       placeOfServiceCode: '11',
       claimFrequencyCode: '1',
       signatureIndicator: 'Y',
@@ -89,7 +93,7 @@ function testClaimPayload(patientControlNumber: string, memberId = 'STEDI_PAID_E
           professionalService: {
             procedureIdentifier: 'HC',
             procedureCode: '97530',
-            lineItemChargeAmount: '175.00',
+            lineItemChargeAmount: chargeAmount,
             measurementUnit: 'UN',
             serviceUnitCount: '1',
             compositeDiagnosisCodePointers: { diagnosisCodePointers: ['1'] },
@@ -100,18 +104,22 @@ function testClaimPayload(patientControlNumber: string, memberId = 'STEDI_PAID_E
   };
 }
 
-async function submitTestClaim(patientControlNumber: string, memberId?: string): Promise<void> {
+async function submitTestClaim(
+  patientControlNumber: string,
+  memberId?: string,
+  chargeAmount?: string
+): Promise<void> {
   const res = await fetch(`${BASE}${SUBMIT_PATH}`, {
     method: 'POST',
     headers: { Authorization: `Key ${TEST_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(testClaimPayload(patientControlNumber, memberId)),
+    body: JSON.stringify(testClaimPayload(patientControlNumber, memberId, chargeAmount)),
   });
   const body: any = await res.json();
-  expect(res.ok, `submission failed (${res.status}): ${JSON.stringify(body).slice(0, 400)}`).toBe(true);
+  expect(res.ok, `submission failed (${res.status}): ${JSON.stringify(body).slice(0, 1500)}`).toBe(true);
   // A usable acceptance carries a claim reference and no rejection errors.
   expect(body.claimReference ?? body.controlNumber).toBeTruthy();
   const errors = body.errors ?? body.failure ?? null;
-  expect(errors, `claim rejected: ${JSON.stringify(errors).slice(0, 400)}`).toBeFalsy();
+  expect(errors, `claim rejected: ${JSON.stringify(errors).slice(0, 1500)}`).toBeFalsy();
 }
 
 describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
@@ -119,7 +127,10 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
   const submittedAt = new Date();
 
   it('submits a professional claim to the Stedi Test Payer and is accepted', async () => {
-    await submitTestClaim(`E2E-${runId}`);
+    // Unique member id per run/submission: near-identical claims (same
+    // subscriber, charge, and service date) submitted seconds apart trip the
+    // test payer's duplicate-claim rejection (seen live 2026-10-07).
+    await submitTestClaim(`E2E-${runId}`, `STEDI_PAID_FAST${runId}`);
   }, 60_000);
 
   it.skipIf(!FULL)(
@@ -129,13 +140,15 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
       // gets a distinct patient control number, which the payer echoes back
       // as CLP01 (lineItems[].claimReference) — the same key eraAutoMatchService
       // matches on in production.
+      // Unique member ids and distinct charge amounts: identical-looking
+      // claims submitted together trip the test payer's duplicate detection.
       const scenarios = [
-        { name: 'paid', pcn: `E2E-PAID-${runId}`, memberId: 'STEDI_PAID_E2E01' },
-        { name: 'partial', pcn: `E2E-PART-${runId}`, memberId: 'STEDI_PARTIALLY_PAID_E2E01' },
-        { name: 'denied', pcn: `E2E-DENY-${runId}`, memberId: 'STEDI_DENIED_E2E01' },
+        { name: 'paid', pcn: `E2E-PAID-${runId}`, memberId: `STEDI_PAID_${runId}`, charge: 175 },
+        { name: 'partial', pcn: `E2E-PART-${runId}`, memberId: `STEDI_PARTIALLY_PAID_${runId}`, charge: 150 },
+        { name: 'denied', pcn: `E2E-DENY-${runId}`, memberId: `STEDI_DENIED_${runId}`, charge: 125 },
       ] as const;
       for (const s of scenarios) {
-        await submitTestClaim(s.pcn, s.memberId);
+        await submitTestClaim(s.pcn, s.memberId, s.charge.toFixed(2));
       }
 
       // Poll the same code path production uses until every scenario's 835
@@ -168,7 +181,7 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
       ).toEqual(scenarios.map((s) => s.pcn).sort());
 
       const paid = lineByPcn.get(`E2E-PAID-${runId}`)!;
-      expect(paid.chargedAmount).toBe(175);
+      expect(paid.chargedAmount).toBe(scenarios[0].charge);
       expect(paid.paidAmount).toBe(paid.chargedAmount);
 
       const partial = lineByPcn.get(`E2E-PART-${runId}`)!;
