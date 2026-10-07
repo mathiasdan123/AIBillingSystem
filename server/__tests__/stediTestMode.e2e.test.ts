@@ -12,9 +12,13 @@
  * test 277CA and test 835 within minutes.
  *
  * Fast path (always, with key): submit a claim, assert acceptance.
- * Full path (STEDI_E2E_FULL=1): poll until the test 835 lands, fetch the
- * report, and run it through our normalizer — the exact pipeline production
- * uses for money data.
+ * Full path (STEDI_E2E_FULL=1): submit three claims — paid, partially paid,
+ * and denied, selected via Stedi's member-id prefixes (STEDI_PAID_,
+ * STEDI_PARTIALLY_PAID_, STEDI_DENIED_; changelog 2026-10) — poll until each
+ * test 835 lands, and run every one through our normalizer: the exact
+ * pipeline production uses for money data. Before this, test ERAs were
+ * always paid-in-full, so denial and partial-payment handling had no
+ * end-to-end coverage.
  */
 import { describe, expect, it } from 'vitest';
 import { fetch835Report, is835, pollTransactions } from '../services/stediEraService';
@@ -34,7 +38,7 @@ function controlNumber(): string {
 /** Minimal valid 837P mirroring stediService's schema quirks (CCYYMMDD dates,
  * digits-only employerId, string diagnosis pointers, serviceLines nested in
  * claimInformation). Fictional data throughout. */
-function testClaimPayload(patientControlNumber: string) {
+function testClaimPayload(patientControlNumber: string, memberId = 'STEDI_PAID_E2E01') {
   return {
     controlNumber: controlNumber(),
     usageIndicator: 'T',
@@ -45,7 +49,7 @@ function testClaimPayload(patientControlNumber: string) {
     },
     receiver: { organizationName: 'Stedi Test Payer' },
     subscriber: {
-      memberId: 'STEDITEST01',
+      memberId,
       paymentResponsibilityLevelCode: 'P',
       firstName: 'Testparent',
       lastName: 'Example',
@@ -96,48 +100,95 @@ function testClaimPayload(patientControlNumber: string) {
   };
 }
 
+async function submitTestClaim(patientControlNumber: string, memberId?: string): Promise<void> {
+  const res = await fetch(`${BASE}${SUBMIT_PATH}`, {
+    method: 'POST',
+    headers: { Authorization: `Key ${TEST_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(testClaimPayload(patientControlNumber, memberId)),
+  });
+  const body: any = await res.json();
+  expect(res.ok, `submission failed (${res.status}): ${JSON.stringify(body).slice(0, 400)}`).toBe(true);
+  // A usable acceptance carries a claim reference and no rejection errors.
+  expect(body.claimReference ?? body.controlNumber).toBeTruthy();
+  const errors = body.errors ?? body.failure ?? null;
+  expect(errors, `claim rejected: ${JSON.stringify(errors).slice(0, 400)}`).toBeFalsy();
+}
+
 describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
-  const patientControlNumber = `E2E-${Date.now()}`;
+  const runId = Date.now();
   const submittedAt = new Date();
 
   it('submits a professional claim to the Stedi Test Payer and is accepted', async () => {
-    const res = await fetch(`${BASE}${SUBMIT_PATH}`, {
-      method: 'POST',
-      headers: { Authorization: `Key ${TEST_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(testClaimPayload(patientControlNumber)),
-    });
-    const body: any = await res.json();
-    expect(res.ok, `submission failed (${res.status}): ${JSON.stringify(body).slice(0, 400)}`).toBe(true);
-    // A usable acceptance carries a claim reference and no rejection errors.
-    expect(body.claimReference ?? body.controlNumber).toBeTruthy();
-    const errors = body.errors ?? body.failure ?? null;
-    expect(errors, `claim rejected: ${JSON.stringify(errors).slice(0, 400)}`).toBeFalsy();
+    await submitTestClaim(`E2E-${runId}`);
   }, 60_000);
 
   it.skipIf(!FULL)(
-    'produces a test 835 that our poller detects and our normalizer parses',
+    'paid, partially paid, and denied test 835s all flow through our normalizer correctly',
     async () => {
-      // Poll the same code path production uses until the simulated ERA lands.
-      const deadline = Date.now() + 270_000;
-      let eraTransactionId: string | null = null;
-      while (Date.now() < deadline && !eraTransactionId) {
+      // One claim per outcome, selected by Stedi's member-id prefix. Each
+      // gets a distinct patient control number, which the payer echoes back
+      // as CLP01 (lineItems[].claimReference) — the same key eraAutoMatchService
+      // matches on in production.
+      const scenarios = [
+        { name: 'paid', pcn: `E2E-PAID-${runId}`, memberId: 'STEDI_PAID_E2E01' },
+        { name: 'partial', pcn: `E2E-PART-${runId}`, memberId: 'STEDI_PARTIALLY_PAID_E2E01' },
+        { name: 'denied', pcn: `E2E-DENY-${runId}`, memberId: 'STEDI_DENIED_E2E01' },
+      ] as const;
+      for (const s of scenarios) {
+        await submitTestClaim(s.pcn, s.memberId);
+      }
+
+      // Poll the same code path production uses until every scenario's 835
+      // has landed (they arrive independently), normalizing each report once.
+      const deadline = Date.now() + 500_000;
+      const seenTransactions = new Set<string>();
+      const lineByPcn = new Map<string, import('../services/stedi835Normalizer').NormalizedLineItem>();
+      while (Date.now() < deadline && lineByPcn.size < scenarios.length) {
         const page = await pollTransactions({
           apiKey: TEST_KEY,
           startDateTime: submittedAt.toISOString(),
         });
-        const era = page.transactions.find(is835);
-        if (era) eraTransactionId = era.transactionId;
-        else await new Promise((r) => setTimeout(r, 10_000));
+        for (const txn of page.transactions.filter(is835)) {
+          if (seenTransactions.has(txn.transactionId)) continue;
+          seenTransactions.add(txn.transactionId);
+          const report = await fetch835Report({ apiKey: TEST_KEY, transactionId: txn.transactionId });
+          const normalized = normalizeStedi835(report);
+          expect(normalized.payerName).toBeTruthy();
+          for (const line of normalized.lineItems) {
+            if (line.claimReference && line.claimReference.includes(String(runId))) {
+              lineByPcn.set(line.claimReference, line);
+            }
+          }
+        }
+        if (lineByPcn.size < scenarios.length) await new Promise((r) => setTimeout(r, 10_000));
       }
-      expect(eraTransactionId, 'no test 835 appeared within the polling window').toBeTruthy();
+      expect(
+        [...lineByPcn.keys()].sort(),
+        'not every scenario produced a test 835 within the polling window'
+      ).toEqual(scenarios.map((s) => s.pcn).sort());
 
-      const report = await fetch835Report({ apiKey: TEST_KEY, transactionId: eraTransactionId! });
-      const normalized = normalizeStedi835(report);
-      expect(normalized.payerName).toBeTruthy();
-      expect(Number(normalized.totalPaymentAmount)).not.toBeNaN();
-      expect(normalized.lineItems.length).toBeGreaterThan(0);
+      const paid = lineByPcn.get(`E2E-PAID-${runId}`)!;
+      expect(paid.chargedAmount).toBe(175);
+      expect(paid.paidAmount).toBe(paid.chargedAmount);
+
+      const partial = lineByPcn.get(`E2E-PART-${runId}`)!;
+      expect(partial.paidAmount).toBeGreaterThan(0);
+      expect(partial.paidAmount).toBeLessThan(partial.chargedAmount);
+      // The shortfall must be visible as structured data, not silently lost:
+      // adjustments and/or patient responsibility account for the gap.
+      const partialAccounted =
+        partial.adjustmentAmount + (partial.patientResponsibility ?? 0) +
+        (partial.contractualAdjustment ?? 0);
+      expect(partialAccounted, 'partial payment shortfall carries no adjustment data').toBeGreaterThan(0);
+
+      const denied = lineByPcn.get(`E2E-DENY-${runId}`)!;
+      expect(denied.paidAmount).toBe(0);
+      expect(
+        denied.adjustmentReasonCodes.length,
+        'denial carries no CAS reason codes — the denial pipeline would show an unexplained $0'
+      ).toBeGreaterThan(0);
     },
-    300_000,
+    540_000,
   );
 });
 

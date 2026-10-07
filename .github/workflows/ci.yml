@@ -5,6 +5,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Full Stedi 835 lifecycle (paid / partially paid / denied test ERAs):
+  # weekly, plus on demand from the Actions tab.
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      stedi_e2e_full:
+        description: 'Run the full Stedi 835 lifecycle (slow: polls for test ERAs)'
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -58,4 +68,5 @@ jobs:
       - name: Stedi test-mode end-to-end
         env:
           STEDI_TEST_API_KEY: ${{ secrets.STEDI_TEST_API_KEY }}
+          STEDI_E2E_FULL: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.stedi_e2e_full)) && '1' || '' }}
         run: npm run test:stedi-e2e
