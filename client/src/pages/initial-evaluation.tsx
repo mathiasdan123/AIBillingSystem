@@ -5,12 +5,20 @@
  * (creates a draft prefilled from the patient record, then redirects to
  * /evaluations/:id).
  *
- * Three stages on one page:
- *  1. Structured input sections ("boxes to input") the therapist fills in.
+ * Stages on one page:
+ *  1. Structured input sections ("boxes to input") the therapist fills in,
+ *     plus an AI-drafted parent interview outline (three sections of
+ *     caregiver questions drawn from the patient's intake data) — the
+ *     therapist's notes against it ground the subjective write-up.
  *  2. AI-composed SOAP-style write-up — a DRAFT, fully editable.
- *  3. AI-proposed plan of care + goals — Accept / Edit / Reject per card.
- *     Accepted items land in the existing treatment plan + goal model, so
- *     accepted goals chart on the patient's Progress tab.
+ *  3. AI-proposed plan of care + goal PAIRS — every plan is 45-minute 1:1
+ *     sessions at 1x/2x weekly over a 6-month default; goals come as
+ *     long-term/short-term pairs per underlying skill. Accept / Edit /
+ *     Reject per card (plus accept-pair). Accepted items land in the
+ *     existing treatment plan + goal model, so accepted goals chart on the
+ *     patient's Progress tab.
+ *  4. A suggested OT evaluation CPT complexity code (97165/97166/97167) the
+ *     treating therapist reviews and decides. Not wired into claims yet.
  *
  * The AI assists with documentation accuracy only; the therapist reviews,
  * edits, and approves every clinical decision.
@@ -24,6 +32,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -32,6 +43,7 @@ import {
 
 interface ProposedPlan {
   sessionsPerWeek: number;
+  sessionLengthMinutes?: number; // always 45
   durationWeeks: number;
   startDate: string;
   endDate: string;
@@ -39,12 +51,41 @@ interface ProposedPlan {
   status: "proposed" | "accepted" | "rejected";
 }
 
-interface ProposedGoal extends Omit<ProposedPlan, "sessionsPerWeek"> {
+interface ProposedGoal extends Omit<ProposedPlan, "sessionsPerWeek" | "sessionLengthMinutes"> {
   skillArea: string;
   goalText: string;
   term: "short_term" | "long_term";
   acceptedGoalId?: number;
+  pairIndex?: number;
 }
+
+interface OutlineQuestion {
+  question: string;
+  notes: string;
+}
+
+interface OutlineSection {
+  key: string;
+  title: string;
+  questions: OutlineQuestion[];
+}
+
+interface InterviewOutline {
+  sections: OutlineSection[];
+  generatedAt?: string;
+}
+
+interface EvalCodeSuggestion {
+  code: string;
+  rationale: string;
+  suggestedAt?: string;
+}
+
+const EVAL_CODE_OPTIONS: Array<[string, string]> = [
+  ["97165", "97165 — OT evaluation, low complexity"],
+  ["97166", "97166 — OT evaluation, moderate complexity"],
+  ["97167", "97167 — OT evaluation, high complexity"],
+];
 
 interface Evaluation {
   id: number;
@@ -59,8 +100,11 @@ interface Evaluation {
   assessmentResults: string | null;
   skillAreas: string | null;
   aiWriteUp: Record<string, string> | null;
+  interviewOutline: InterviewOutline | null;
   proposedPlan: ProposedPlan | null;
   proposedGoals: ProposedGoal[] | null;
+  evalCodeSuggestion: EvalCodeSuggestion | null;
+  evalCodeFinal: string | null;
   treatmentPlanId: number | null;
 }
 
@@ -172,6 +216,8 @@ export default function InitialEvaluationPage() {
   const [assessmentResults, setAssessmentResults] = useState("");
   const [skillAreas, setSkillAreas] = useState("");
   const [writeUp, setWriteUp] = useState<Record<string, string>>({});
+  const [outlineSections, setOutlineSections] = useState<OutlineSection[]>([]);
+  const [evalCode, setEvalCode] = useState("");
   const loadedIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -186,12 +232,24 @@ export default function InitialEvaluationPage() {
     setAssessmentResults(evaluation.assessmentResults ?? "");
     setSkillAreas(evaluation.skillAreas ?? "");
     setWriteUp((evaluation.aiWriteUp ?? {}) as Record<string, string>);
+    setOutlineSections(evaluation.interviewOutline?.sections ?? []);
+    setEvalCode(evaluation.evalCodeFinal ?? evaluation.evalCodeSuggestion?.code ?? "");
   }, [evaluation]);
 
   // Keep the editable write-up in sync after compose
   useEffect(() => {
     if (evaluation?.aiWriteUp) setWriteUp(evaluation.aiWriteUp as Record<string, string>);
   }, [evaluation?.aiWriteUp]);
+
+  // Keep the editable outline in sync after an AI draft
+  useEffect(() => {
+    if (evaluation?.interviewOutline?.sections) setOutlineSections(evaluation.interviewOutline.sections);
+  }, [evaluation?.interviewOutline]);
+
+  // Default the final-code selector to the suggestion until the therapist chooses
+  useEffect(() => {
+    if (evaluation) setEvalCode(evaluation.evalCodeFinal ?? evaluation.evalCodeSuggestion?.code ?? "");
+  }, [evaluation?.evalCodeFinal, evaluation?.evalCodeSuggestion]);
 
   // ---- mutations ----
   const saveSectionsMutation = useMutation({
@@ -317,6 +375,85 @@ export default function InitialEvaluationPage() {
     },
   });
 
+  // Accept-pair convenience: both goals of a pair, through the same
+  // per-goal decision endpoint (same validation, same audit trail).
+  const acceptPairMutation = useMutation({
+    mutationFn: async (indexes: number[]) => {
+      for (const index of indexes) {
+        await apiRequest("POST", `/api/evaluations/${evaluationId}/goals/${index}/decision`, { action: "accept" });
+      }
+    },
+    onSuccess: () => {
+      invalidate();
+      toast({
+        title: "Goal pair accepted",
+        description: "Both goals added to the treatment plan — they will chart on the Progress tab.",
+      });
+    },
+    onError: (err: unknown) => {
+      invalidate();
+      toast({ title: "Accept pair failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    },
+  });
+
+  const draftOutlineMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/evaluations/${evaluationId}/interview-outline`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Interview outline drafted", description: "Review and edit the questions, then capture the caregiver's answers as notes." });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Outline draft failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    },
+  });
+
+  const saveOutlineMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/evaluations/${evaluationId}/interview-outline`, {
+        sections: outlineSections,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Interview outline saved" });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Save failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    },
+  });
+
+  const suggestCodeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/evaluations/${evaluationId}/suggest-eval-code`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Evaluation code suggested", description: "Review the rationale — you make the final coding decision." });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Suggestion failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    },
+  });
+
+  const saveCodeMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await apiRequest("PATCH", `/api/evaluations/${evaluationId}/eval-code`, { code });
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Evaluation code saved" });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Save failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    },
+  });
+
   // ---- per-card edit state for proposals ----
   const [editingPlan, setEditingPlan] = useState(false);
   const [planEdits, setPlanEdits] = useState<Partial<ProposedPlan>>({});
@@ -347,6 +484,34 @@ export default function InitialEvaluationPage() {
   const plan = evaluation.proposedPlan;
   const goals = evaluation.proposedGoals ?? [];
 
+  // Group paired goals (long-term + short-term per underlying skill) for
+  // visually linked rendering; pre-pair proposals render ungrouped.
+  const pairGroups = new Map<number, number[]>();
+  const unpairedIndexes: number[] = [];
+  goals.forEach((g, i) => {
+    if (g.pairIndex != null) {
+      const group = pairGroups.get(g.pairIndex) ?? [];
+      group.push(i);
+      pairGroups.set(g.pairIndex, group);
+    } else {
+      unpairedIndexes.push(i);
+    }
+  });
+  const orderedPairs = Array.from(pairGroups.entries()).sort(([a], [b]) => a - b);
+
+  const updateOutlineQuestion = (
+    sectionIndex: number,
+    questionIndex: number,
+    patch: Partial<OutlineQuestion>,
+  ) =>
+    setOutlineSections((sections) =>
+      sections.map((s, si) =>
+        si === sectionIndex
+          ? { ...s, questions: s.questions.map((q, qi) => (qi === questionIndex ? { ...q, ...patch } : q)) }
+          : s,
+      ),
+    );
+
   const textField = (
     id: string,
     label: string,
@@ -365,6 +530,91 @@ export default function InitialEvaluationPage() {
         onChange={(e) => onChange(e.target.value)}
       />
     </div>
+  );
+
+  // One proposed-goal card; rendered inside its pair wrapper (or standalone
+  // for pre-pair proposals). Accept/Edit/Reject stays per goal.
+  const renderGoalCard = (goal: ProposedGoal, i: number) => (
+    <Card key={i} className="border-amber-200" data-testid={`goal-card-${i}`}>
+      <CardContent className="pt-4 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">
+            Goal {i + 1}: {goal.skillArea}
+            <span className="ml-2 text-xs text-muted-foreground">
+              {goal.term === "short_term" ? "Short-term" : "Long-term"} · {goal.durationWeeks} wks · {goal.startDate} to {goal.endDate}
+            </span>
+          </p>
+          <Badge variant={goal.status === "accepted" ? "default" : goal.status === "rejected" ? "destructive" : "secondary"} data-testid={`goal-status-${i}`}>
+            {goal.status}
+          </Badge>
+        </div>
+        {editingGoalIndex === i ? (
+          <div className="space-y-2">
+            <div>
+              <Label>Goal text</Label>
+              <Textarea rows={3} data-testid={`edit-goal-text-${i}`}
+                value={goalEdits.goalText ?? goal.goalText}
+                onChange={(e) => setGoalEdits({ ...goalEdits, goalText: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>Skill area</Label>
+                <Input data-testid={`edit-goal-skill-${i}`}
+                  value={goalEdits.skillArea ?? goal.skillArea}
+                  onChange={(e) => setGoalEdits({ ...goalEdits, skillArea: e.target.value })} />
+              </div>
+              <div>
+                <Label>Duration (weeks)</Label>
+                <Input type="number" min={1} data-testid={`edit-goal-duration-${i}`}
+                  value={String(goalEdits.durationWeeks ?? goal.durationWeeks)}
+                  onChange={(e) => setGoalEdits({ ...goalEdits, durationWeeks: Number(e.target.value) })} />
+              </div>
+              <div>
+                <Label>Start date</Label>
+                <Input type="date" data-testid={`edit-goal-start-${i}`}
+                  value={goalEdits.startDate ?? goal.startDate}
+                  onChange={(e) => setGoalEdits({ ...goalEdits, startDate: e.target.value })} />
+              </div>
+              <div>
+                <Label>End date</Label>
+                <Input type="date" data-testid={`edit-goal-end-${i}`}
+                  value={goalEdits.endDate ?? goal.endDate}
+                  onChange={(e) => setGoalEdits({ ...goalEdits, endDate: e.target.value })} />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm" data-testid={`goal-text-${i}`}>{goal.goalText}</p>
+        )}
+        <p className="text-xs text-muted-foreground">Grounding: {goal.rationale}</p>
+        {goal.status === "proposed" && !finalized && (
+          <div className="flex gap-2">
+            <Button size="sm" data-testid={`button-accept-goal-${i}`}
+              disabled={goalDecisionMutation.isPending}
+              onClick={() => goalDecisionMutation.mutate({ index: i, action: "accept", edits: editingGoalIndex === i ? goalEdits : undefined })}>
+              <Check className="w-3 h-3 mr-1" /> Accept{editingGoalIndex === i ? " with edits" : ""}
+            </Button>
+            <Button size="sm" variant="outline" data-testid={`button-edit-goal-${i}`}
+              onClick={() => {
+                setEditingGoalIndex(editingGoalIndex === i ? null : i);
+                setGoalEdits({});
+              }}>
+              <Pencil className="w-3 h-3 mr-1" /> {editingGoalIndex === i ? "Cancel edit" : "Edit"}
+            </Button>
+            <Button size="sm" variant="ghost" data-testid={`button-reject-goal-${i}`}
+              disabled={goalDecisionMutation.isPending}
+              onClick={() => goalDecisionMutation.mutate({ index: i, action: "reject" })}>
+              <X className="w-3 h-3 mr-1" /> Reject
+            </Button>
+          </div>
+        )}
+        {goal.status === "accepted" && (
+          <p className="text-xs text-green-700 dark:text-green-400">
+            Added to the treatment plan — progress charts on the Progress tab (starts at 0%).
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 
   return (
@@ -458,6 +708,70 @@ export default function InitialEvaluationPage() {
         </CardContent>
       </Card>
 
+      {/* ---- AI-drafted parent interview outline (editable; notes feed the write-up) ---- */}
+      <Card data-testid="section-interview-outline">
+        <CardHeader>
+          <CardTitle>Parent interview outline</CardTitle>
+          <CardDescription>
+            AI-drafted caregiver questions from this patient's intake data — patient history,
+            referral information, and parent concerns. Edit the questions freely; the answers you
+            capture as notes ground the subjective narrative of the write-up.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!finalized && (
+            <Button
+              variant="outline"
+              onClick={() => draftOutlineMutation.mutate()}
+              disabled={draftOutlineMutation.isPending}
+              data-testid="button-draft-outline"
+            >
+              {draftOutlineMutation.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Drafting…</>
+              ) : (
+                <><Sparkles className="w-4 h-4 mr-1" /> {outlineSections.length ? "Redraft interview outline (AI draft)" : "Draft interview outline (AI draft)"}</>
+              )}
+            </Button>
+          )}
+          {outlineSections.map((section, si) => (
+            <div key={section.key} className="space-y-3" data-testid={`outline-section-${section.key}`}>
+              <p className="text-sm font-medium">{section.title}</p>
+              <ul className="space-y-3 list-disc pl-5">
+                {section.questions.map((q, qi) => (
+                  <li key={qi} className="space-y-1">
+                    <Input
+                      data-testid={`outline-question-${section.key}-${qi}`}
+                      value={q.question}
+                      disabled={finalized}
+                      onChange={(e) => updateOutlineQuestion(si, qi, { question: e.target.value })}
+                    />
+                    <Textarea
+                      data-testid={`outline-notes-${section.key}-${qi}`}
+                      placeholder="Caregiver's answer / notes"
+                      value={q.notes}
+                      rows={2}
+                      disabled={finalized}
+                      onChange={(e) => updateOutlineQuestion(si, qi, { notes: e.target.value })}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          {outlineSections.length > 0 && !finalized && (
+            <Button
+              variant="outline"
+              onClick={() => saveOutlineMutation.mutate()}
+              disabled={saveOutlineMutation.isPending}
+              data-testid="button-save-outline"
+            >
+              {saveOutlineMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Save outline and notes
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
       <Card data-testid="section-free-text">
         <CardHeader>
           <CardTitle>4-7. Session documentation</CardTitle>
@@ -540,9 +854,10 @@ export default function InitialEvaluationPage() {
             <CardTitle>Proposed plan of care and goals</CardTitle>
             <CardDescription>
               Drafted from the documented concerns, observations, and milestones (assessment
-              scores as supporting rationale only). All sessions are individual (1:1). Accept,
-              edit, or reject each proposal — only accepted items become part of the treatment
-              plan.
+              scores as supporting rationale only). All sessions are 45-minute individual (1:1)
+              sessions, 1x or 2x weekly, over a 6-month default you can re-date. Goals come as
+              long-term/short-term pairs per underlying skill. Accept, edit, or reject each
+              proposal — only accepted items become part of the treatment plan.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -565,7 +880,9 @@ export default function InitialEvaluationPage() {
               <Card className="border-amber-200" data-testid="plan-card">
                 <CardContent className="pt-4 space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Plan of care (individual, 1:1)</p>
+                    <p className="text-sm font-medium" data-testid="plan-title">
+                      Plan of care — 45-minute individual (1:1) sessions
+                    </p>
                     <Badge variant={plan.status === "accepted" ? "default" : plan.status === "rejected" ? "destructive" : "secondary"} data-testid="plan-status">
                       {plan.status}
                     </Badge>
@@ -573,10 +890,19 @@ export default function InitialEvaluationPage() {
                   {editingPlan ? (
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <Label>Sessions per week</Label>
-                        <Input type="number" min={1} max={7} data-testid="edit-plan-sessions"
+                        <Label>Frequency</Label>
+                        <Select
                           value={String(planEdits.sessionsPerWeek ?? plan.sessionsPerWeek)}
-                          onChange={(e) => setPlanEdits({ ...planEdits, sessionsPerWeek: Number(e.target.value) })} />
+                          onValueChange={(v) => setPlanEdits({ ...planEdits, sessionsPerWeek: Number(v) })}
+                        >
+                          <SelectTrigger data-testid="edit-plan-sessions">
+                            <SelectValue placeholder="Sessions per week" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">1x per week</SelectItem>
+                            <SelectItem value="2">2x per week</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div>
                         <Label>Duration (weeks)</Label>
@@ -631,93 +957,117 @@ export default function InitialEvaluationPage() {
               </Card>
             )}
 
-            {/* ----- Goal cards ----- */}
-            {goals.map((goal, i) => (
-              <Card key={i} className="border-amber-200" data-testid={`goal-card-${i}`}>
-                <CardContent className="pt-4 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium">
-                      Goal {i + 1}: {goal.skillArea}
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {goal.term === "short_term" ? "Short-term" : "Long-term"} · {goal.durationWeeks} wks · {goal.startDate} to {goal.endDate}
-                      </span>
-                    </p>
-                    <Badge variant={goal.status === "accepted" ? "default" : goal.status === "rejected" ? "destructive" : "secondary"} data-testid={`goal-status-${i}`}>
-                      {goal.status}
-                    </Badge>
-                  </div>
-                  {editingGoalIndex === i ? (
-                    <div className="space-y-2">
-                      <div>
-                        <Label>Goal text</Label>
-                        <Textarea rows={3} data-testid={`edit-goal-text-${i}`}
-                          value={goalEdits.goalText ?? goal.goalText}
-                          onChange={(e) => setGoalEdits({ ...goalEdits, goalText: e.target.value })} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <Label>Skill area</Label>
-                          <Input data-testid={`edit-goal-skill-${i}`}
-                            value={goalEdits.skillArea ?? goal.skillArea}
-                            onChange={(e) => setGoalEdits({ ...goalEdits, skillArea: e.target.value })} />
-                        </div>
-                        <div>
-                          <Label>Duration (weeks)</Label>
-                          <Input type="number" min={1} data-testid={`edit-goal-duration-${i}`}
-                            value={String(goalEdits.durationWeeks ?? goal.durationWeeks)}
-                            onChange={(e) => setGoalEdits({ ...goalEdits, durationWeeks: Number(e.target.value) })} />
-                        </div>
-                        <div>
-                          <Label>Start date</Label>
-                          <Input type="date" data-testid={`edit-goal-start-${i}`}
-                            value={goalEdits.startDate ?? goal.startDate}
-                            onChange={(e) => setGoalEdits({ ...goalEdits, startDate: e.target.value })} />
-                        </div>
-                        <div>
-                          <Label>End date</Label>
-                          <Input type="date" data-testid={`edit-goal-end-${i}`}
-                            value={goalEdits.endDate ?? goal.endDate}
-                            onChange={(e) => setGoalEdits({ ...goalEdits, endDate: e.target.value })} />
-                        </div>
-                      </div>
+            {/* ----- Goal pair cards: LT + ST per underlying skill ----- */}
+            {orderedPairs.map(([pairIndex, indexes]) => {
+              const pairGoals = indexes.map((index) => ({ goal: goals[index], index }));
+              const bothProposed =
+                pairGoals.length === 2 && pairGoals.every(({ goal }) => goal.status === "proposed");
+              return (
+                <Card key={`pair-${pairIndex}`} className="border-amber-300" data-testid={`goal-pair-${pairIndex}`}>
+                  <CardContent className="pt-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold" data-testid={`goal-pair-skill-${pairIndex}`}>
+                        Goal pair {pairIndex + 1}: {pairGoals[0]?.goal.skillArea}
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                          Long-term goal + short-term step-down (same underlying skill)
+                        </span>
+                      </p>
+                      {bothProposed && !finalized && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          data-testid={`button-accept-pair-${pairIndex}`}
+                          disabled={acceptPairMutation.isPending || goalDecisionMutation.isPending}
+                          onClick={() => acceptPairMutation.mutate(indexes)}
+                        >
+                          <Check className="w-3 h-3 mr-1" /> Accept pair
+                        </Button>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-sm" data-testid={`goal-text-${i}`}>{goal.goalText}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">Grounding: {goal.rationale}</p>
-                  {goal.status === "proposed" && !finalized && (
-                    <div className="flex gap-2">
-                      <Button size="sm" data-testid={`button-accept-goal-${i}`}
-                        disabled={goalDecisionMutation.isPending}
-                        onClick={() => goalDecisionMutation.mutate({ index: i, action: "accept", edits: editingGoalIndex === i ? goalEdits : undefined })}>
-                        <Check className="w-3 h-3 mr-1" /> Accept{editingGoalIndex === i ? " with edits" : ""}
-                      </Button>
-                      <Button size="sm" variant="outline" data-testid={`button-edit-goal-${i}`}
-                        onClick={() => {
-                          setEditingGoalIndex(editingGoalIndex === i ? null : i);
-                          setGoalEdits({});
-                        }}>
-                        <Pencil className="w-3 h-3 mr-1" /> {editingGoalIndex === i ? "Cancel edit" : "Edit"}
-                      </Button>
-                      <Button size="sm" variant="ghost" data-testid={`button-reject-goal-${i}`}
-                        disabled={goalDecisionMutation.isPending}
-                        onClick={() => goalDecisionMutation.mutate({ index: i, action: "reject" })}>
-                        <X className="w-3 h-3 mr-1" /> Reject
-                      </Button>
-                    </div>
-                  )}
-                  {goal.status === "accepted" && (
-                    <p className="text-xs text-green-700 dark:text-green-400">
-                      Added to the treatment plan — progress charts on the Progress tab (starts at 0%).
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+                    {pairGoals.map(({ goal, index }) => renderGoalCard(goal, index))}
+                  </CardContent>
+                </Card>
+              );
+            })}
+
+            {/* Goals proposed before the pair refinement render individually. */}
+            {unpairedIndexes.map((i) => renderGoalCard(goals[i], i))}
 
             {plan && goals.some((g) => g.status === "proposed") && !evaluation.treatmentPlanId && (
               <p className="text-xs text-muted-foreground">
                 Accept the plan of care first — accepted goals are filed under it.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ==================== SUGGESTED EVALUATION CODE ==================== */}
+      {evaluation.aiWriteUp && (
+        <Card data-testid="section-eval-code">
+          <CardHeader>
+            <CardTitle>Evaluation code</CardTitle>
+            <CardDescription>
+              TherapyBill AI assists with billing accuracy by suggesting an OT evaluation
+              complexity code based on the documented diagnosis, caregiver report, and clinical
+              observations. All coding decisions must be reviewed and approved by the treating
+              provider. (Not yet applied to claims — billing wiring is a follow-up.)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!finalized && (
+              <Button
+                variant="outline"
+                onClick={() => suggestCodeMutation.mutate()}
+                disabled={suggestCodeMutation.isPending}
+                data-testid="button-suggest-eval-code"
+              >
+                {suggestCodeMutation.isPending ? (
+                  <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Suggesting…</>
+                ) : (
+                  <><Sparkles className="w-4 h-4 mr-1" /> {evaluation.evalCodeSuggestion ? "Re-suggest evaluation code (AI)" : "Suggest evaluation code (AI)"}</>
+                )}
+              </Button>
+            )}
+            {evaluation.evalCodeSuggestion && (
+              <div className="rounded-md border border-amber-200 p-3 space-y-1" data-testid="eval-code-suggestion">
+                <p className="text-sm font-medium" data-testid="eval-code-suggested">
+                  Suggested: {EVAL_CODE_OPTIONS.find(([code]) => code === evaluation.evalCodeSuggestion?.code)?.[1] ?? evaluation.evalCodeSuggestion.code}
+                </p>
+                <p className="text-xs text-muted-foreground" data-testid="eval-code-rationale">
+                  {evaluation.evalCodeSuggestion.rationale}
+                </p>
+              </div>
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-64">
+                <Label>Final evaluation code (your decision)</Label>
+                <Select value={evalCode} onValueChange={setEvalCode} disabled={finalized}>
+                  <SelectTrigger data-testid="select-eval-code">
+                    <SelectValue placeholder="Choose 97165 / 97166 / 97167" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EVAL_CODE_OPTIONS.map(([code, label]) => (
+                      <SelectItem key={code} value={code}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {!finalized && (
+                <Button
+                  variant="outline"
+                  onClick={() => evalCode && saveCodeMutation.mutate(evalCode)}
+                  disabled={!evalCode || saveCodeMutation.isPending}
+                  data-testid="button-save-eval-code"
+                >
+                  {saveCodeMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                  Save code
+                </Button>
+              )}
+            </div>
+            {evaluation.evalCodeFinal && (
+              <p className="text-xs text-muted-foreground" data-testid="eval-code-final">
+                Final code on record: {evaluation.evalCodeFinal}
               </p>
             )}
           </CardContent>
