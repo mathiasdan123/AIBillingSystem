@@ -81,6 +81,9 @@ const PHI_ROUTE_PATTERNS = [
   // Initial evaluations: health history, caregiver concerns, clinical
   // observations — PHI on par with soap-notes/treatment-plans.
   /^\/api\/evaluations/,
+  // Progress Notes: per-goal clinical commentary, present-level narrative —
+  // PHI on par with soap-notes/evaluations.
+  /^\/api\/progress-notes/,
 ];
 
 // Export route patterns require MFA

@@ -5036,3 +5036,62 @@ export const initialEvaluations = pgTable("initial_evaluations", {
 export const insertInitialEvaluationSchema = createInsertSchema(initialEvaluations).omit({ id: true, createdAt: true, updatedAt: true });
 export type InitialEvaluation = typeof initialEvaluations.$inferSelect;
 export type InsertInitialEvaluation = z.infer<typeof insertInitialEvaluationSchema>;
+
+// ==================== PROGRESS NOTES ====================
+// Formal Progress Notes (Wonder Kids pilot — Megan). A progress note reviews
+// EVERY treatment goal on the plan: interventions utilized to target it,
+// assistance levels required, and current ability — plus a Present Level of
+// Functioning narrative, annual goals, and recommendations. Due every 10
+// completed sessions or 90 days, whichever comes first; due-ness is computed
+// at read time (no scheduler jobs). The AI drafts the commentary and
+// narratives grounded ONLY in signed SOAP notes in the window, the goal
+// records, per-activity assist data, and therapist-entered inputs; the
+// progress % per goal is PURE THERAPIST JUDGMENT (assistance level + trials
+// vs the goal's criteria) — entered by the therapist, never auto-computed.
+// Draft → finalized lifecycle: finalized notes lock, following the eval
+// module's pattern. Additive only.
+export const progressNotes = pgTable("progress_notes", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  status: varchar("status").default("draft").notNull(), // draft, finalized
+  // Reporting window the note covers (anchor date → note date).
+  windowStart: date("window_start"),
+  windowEnd: date("window_end"),
+  sessionsReviewed: integer("sessions_reviewed"),
+  // One entry per treatment goal (the goal table + per-goal commentary):
+  // [{goalId, goalText, goalTerm, durationWeeks, startDate, endDate,
+  //   progressPercent (THERAPIST-ENTERED, never auto-computed),
+  //   interventions, assistanceLevels, currentAbility}]
+  // goalTerm/durationWeeks/startDate mirror treatment_goals and stay null
+  // for legacy goals that predate that metadata.
+  goalEntries: jsonb("goal_entries"),
+  // Narrative sections (AI-drafted, therapist-edited).
+  presentLevel: text("present_level"),
+  annualGoals: text("annual_goals"),
+  recommendations: text("recommendations"),
+  // One-click plan extension: offering it is free, selecting it REQUIRES a
+  // therapist-written rationale (why the extension is appropriate and why
+  // continued treatment remains medically necessary) — documented, not
+  // optional. Applied to the plan's target end date on finalize.
+  extensionRequested: boolean("extension_requested").default(false),
+  extensionNewEndDate: date("extension_new_end_date"),
+  extensionRationale: text("extension_rationale"),
+  extensionAppliedAt: timestamp("extension_applied_at"),
+  // Set when finalize also wrote the therapist-entered % back onto
+  // treatment_goals.progressPercentage (optional, therapist's choice).
+  goalProgressSyncedAt: timestamp("goal_progress_synced_at"),
+  generatedAt: timestamp("generated_at"),
+  finalizedAt: timestamp("finalized_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_progress_notes_patient").on(table.patientId),
+  index("idx_progress_notes_practice").on(table.practiceId),
+]);
+
+export const insertProgressNoteSchema = createInsertSchema(progressNotes).omit({ id: true, createdAt: true, updatedAt: true });
+export type ProgressNote = typeof progressNotes.$inferSelect;
+export type InsertProgressNote = z.infer<typeof insertProgressNoteSchema>;

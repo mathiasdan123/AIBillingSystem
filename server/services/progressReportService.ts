@@ -9,6 +9,10 @@
  * Same anti-fabrication charter as SOAP generation: it summarizes ONLY the
  * documented sessions and recorded goal progress, never invents measurements
  * or progress, and fails loudly rather than faking a report.
+ *
+ * NOTE: the Progress tab UI now uses the full Progress Notes feature
+ * (progressNoteService + routes/progress-notes.ts). This service and
+ * POST /api/ai/progress-report are retained working for API compatibility.
  */
 import { storage } from '../storage';
 import { assertPhiAiAllowed } from '../utils/phiAiGuard';
