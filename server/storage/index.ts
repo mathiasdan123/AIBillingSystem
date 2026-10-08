@@ -19,6 +19,7 @@ export * from "./insurance";
 export * from "./analytics";
 export * from "./audit";
 export * from "./blancheConversations";
+export * from "./progressNotes";
 
 // Re-export all domain functions as methods on a storage object for backwards compatibility
 import * as userFns from "./users";
@@ -36,6 +37,7 @@ import * as goalTemplateFns from "./goalTemplates";
 import * as pdms2Fns from "./pdms2";
 import * as auditFns from "./audit";
 import * as blancheConversationFns from "./blancheConversations";
+import * as progressNoteFns from "./progressNotes";
 
 export const storage = {
   // ==================== BLANCHE CHAT ====================
@@ -299,6 +301,15 @@ export const storage = {
   getInitialEvaluation: clinicalFns.getInitialEvaluation,
   getPatientInitialEvaluations: clinicalFns.getPatientInitialEvaluations,
   updateInitialEvaluation: clinicalFns.updateInitialEvaluation,
+  // ==================== PROGRESS NOTES ====================
+  createProgressNote: progressNoteFns.createProgressNote,
+  getProgressNote: progressNoteFns.getProgressNote,
+  getProgressNotesForPatient: progressNoteFns.getProgressNotesForPatient,
+  updateProgressNote: progressNoteFns.updateProgressNote,
+  getLastFinalizedProgressNote: progressNoteFns.getLastFinalizedProgressNote,
+  countCompletedSessionsSince: progressNoteFns.countCompletedSessionsSince,
+  getFirstCompletedSessionDate: progressNoteFns.getFirstCompletedSessionDate,
+  getSignedSoapNotesInRange: progressNoteFns.getSignedSoapNotesInRange,
   createTreatmentGoal: clinicalFns.createTreatmentGoal,
   getTreatmentGoals: clinicalFns.getTreatmentGoals,
   getTreatmentGoal: clinicalFns.getTreatmentGoal,
