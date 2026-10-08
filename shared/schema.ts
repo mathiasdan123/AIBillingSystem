@@ -4924,3 +4924,47 @@ export const activityProgressLog = pgTable("activity_progress_log", {
 
 export const insertActivityProgressLogSchema = createInsertSchema(activityProgressLog).omit({ id: true, createdAt: true });
 export type ActivityProgressLog = typeof activityProgressLog.$inferSelect;
+
+// ==================== PDMS-2 STRUCTURED SCORING ====================
+// Structured item-level PDMS-2 scoring workflow (outcome-measures feature).
+// COPYRIGHT: stores only therapist-entered item scores and manual lookups.
+// No normative tables, item text, or mastery criteria are stored anywhere —
+// conversions come from the therapist's own PDMS-2 Examiner's Manual.
+export const pdms2Assessments = pgTable("pdms2_assessments", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  administeredBy: varchar("administered_by").references(() => users.id),
+  assessmentDate: timestamp("assessment_date").defaultNow(),
+  // Chronological age at testing — drives Gross Motor composition (Reflexes
+  // under 12 months vs Object Manipulation at 12+) and age-applicability warnings.
+  ageInMonths: integer("age_in_months").notNull(),
+  // Per-subtest data: sparse entered item scores (only administered items),
+  // chosen entry item, and manual lookups (standard score, percentile rank,
+  // age equivalent) from the therapist's Examiner's Manual.
+  // Shape validated by pdms2SubtestsSchema in shared/pdms2.ts.
+  subtests: jsonb("subtests").notNull().default({}),
+  // Server-computed scoring state (basal/ceiling/raw per subtest + domain
+  // sums) — recomputed on every save; persisted for display and audit.
+  computed: jsonb("computed"),
+  // Quotients looked up manually in the normative tables from the displayed sums.
+  grossMotorQuotient: integer("gross_motor_quotient"),
+  fineMotorQuotient: integer("fine_motor_quotient"),
+  totalMotorQuotient: integer("total_motor_quotient"),
+  // Therapist observations feeding the narrative.
+  tasksWentWell: text("tasks_went_well"),
+  tasksChallenging: text("tasks_challenging"),
+  // AI-drafted, therapist-edited narrative summary.
+  narrative: text("narrative"),
+  narrativeGeneratedAt: timestamp("narrative_generated_at"),
+  status: varchar("status").default("in_progress"), // in_progress, completed
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_pdms2_assessments_patient").on(table.patientId),
+  index("idx_pdms2_assessments_practice").on(table.practiceId),
+]);
+
+export const insertPdms2AssessmentSchema = createInsertSchema(pdms2Assessments).omit({ id: true, createdAt: true, updatedAt: true });
+export type Pdms2Assessment = typeof pdms2Assessments.$inferSelect;
+export type InsertPdms2Assessment = z.infer<typeof insertPdms2AssessmentSchema>;

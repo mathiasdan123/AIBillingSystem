@@ -14,7 +14,7 @@ import {
   messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter, claimStatusReaperRouter, costDashboardRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter, aiAppealDebugRouter,
-  aiRouter, insuranceRouter, bookingRouter, clinicalRouter, referralsRouter,
+  aiRouter, insuranceRouter, bookingRouter, clinicalRouter, pdms2Router, referralsRouter,
   paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
   reconciliationRouter, plaidWebhookRouter, supportRouter,
   documentsRouter, followUpsRouter, revenueAtRiskRouter, schedulingRouter, eligibilityRouter, payerIntelRouter,
@@ -312,6 +312,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Clinical routes: /api/treatment-plans/*, /api/goals/*, /api/objectives/*, /api/interventions/*,
   //   /api/outcome-measures/*, /api/assessment-schedules/*, /api/patients/:id/progress-notes/*
   app.use('/api', clinicalRouter);
+  // PDMS-2 structured scoring routes: /api/pdms2-assessments/*
+  app.use('/api', pdms2Router);
   // Referral routes: /api/referral-sources/*, /api/referrals/*
   app.use('/api', referralsRouter);
   // Payment routes: /api/payment-settings, /api/payment-methods/*, /api/payment-transactions/*,
