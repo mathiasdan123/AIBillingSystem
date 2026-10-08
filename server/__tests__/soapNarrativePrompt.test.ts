@@ -52,6 +52,56 @@ describe('buildUserPrompt — narrative-first Objective input', () => {
   });
 });
 
+describe('buildUserPrompt — active treatment goals as grounded context', () => {
+  const goals = [
+    {
+      goalNumber: 1,
+      description: 'Will don jacket independently in 4/5 trials',
+      status: 'in_progress',
+      progressPercentage: 40,
+      goalTerm: 'short_term',
+      durationWeeks: 12,
+      startDate: '2026-08-01',
+      baselineMeasure: 'Max assist for all fasteners',
+      targetMeasure: '4/5 trials independent',
+      currentMeasure: 'Mod assist with zipper',
+    },
+    // Legacy row: the #377 columns are nullable — must render without them.
+    { description: 'Improve bilateral coordination for ball skills', status: 'in_progress' },
+  ];
+
+  it('includes active goals with their fields, framed as CONTEXT ONLY with the anti-fabrication rule', () => {
+    const prompt = buildUserPrompt(baseRequest(), patient, 3, null, undefined, goals as any);
+    expect(prompt).toContain('ACTIVE TREATMENT GOALS (CONTEXT ONLY');
+    // Grounding rule travels with the data, not just the system prompt.
+    expect(prompt).toContain('NEVER claim progress toward a goal');
+    expect(prompt).toContain('Goal 1: Will don jacket independently in 4/5 trials');
+    expect(prompt).toContain('status: in_progress');
+    expect(prompt).toContain('term: short_term');
+    expect(prompt).toContain('duration: 12 weeks');
+    expect(prompt).toContain('started: 2026-08-01');
+    expect(prompt).toContain('baseline: Max assist for all fasteners');
+    expect(prompt).toContain('target: 4/5 trials independent');
+    // Legacy goal renders from description + status alone.
+    expect(prompt).toContain('Improve bilateral coordination for ball skills (status: in_progress)');
+  });
+
+  it('omits the goals section when there are no active goals', () => {
+    const prompt = buildUserPrompt(baseRequest(), patient, 3, null, undefined, []);
+    expect(prompt).not.toContain('ACTIVE TREATMENT GOALS');
+  });
+});
+
+describe('buildUserPrompt — per-activity CPT pairing output contract', () => {
+  it('requires an activityCptPairings array consistent with the aggregate codes', () => {
+    const prompt = buildUserPrompt(baseRequest(), patient, 3, null);
+    expect(prompt).toContain('"activityCptPairings"');
+    expect(prompt).toContain('EXACTLY ONE entry per activity');
+    expect(prompt).toContain('consistent with cptCodes[].activitiesAssigned');
+    expect(prompt).toContain('conservative default 97530');
+  });
+});
+
 describe('buildUserPrompt — prior session context', () => {
   it('includes prior session summaries as the sanctioned comparison source', () => {
     const prompt = buildUserPrompt(

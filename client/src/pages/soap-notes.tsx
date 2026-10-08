@@ -31,6 +31,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
+import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
+import ActivityCptPairingEditor from "@/components/ActivityCptPairingEditor";
 
 // ============================================
 // FEATURE FLAGS
@@ -333,6 +335,12 @@ export default function SoapNotes() {
       reimbursement: number;
       activitiesAssigned?: string[];
     }>;
+    /**
+     * One suggested CPT code per documented activity — the Objective pairing.
+     * Single source of truth: editing a pairing re-derives cptCodes/timeBlocks
+     * via reconcileCptCodesWithPairings so the two views never contradict.
+     */
+    activityCptPairings?: ActivityCptPairing[];
     timeBlocks?: Array<{
       blockNumber: number;
       startMinute: number;
@@ -386,6 +394,7 @@ export default function SoapNotes() {
           assessment: draft.assessment ?? "",
           plan: draft.plan ?? "",
           cptCodes: [],
+          activityCptPairings: [],
           totalReimbursement: 0,
           billingRationale: "",
           auditNotes: [],
@@ -947,6 +956,64 @@ export default function SoapNotes() {
     return { pct, label: 'Needs work', bar: 'bg-red-500', text: 'text-red-700' };
   };
 
+  /**
+   * Therapist changed a per-activity CPT code (Kelli's hard condition: every
+   * suggested code is editable). The pairings are the single source of truth,
+   * so the aggregate billing codes, time blocks, and total are re-derived
+   * from them — the Objective pairing and the billing output can never
+   * contradict each other.
+   */
+  const updateActivityPairingCode = (activity: string, newCode: string) => {
+    setGeneratedNote((prev) => {
+      if (!prev || !prev.activityCptPairings) return prev;
+      const catalogEntry = cptCodes?.find((c) => c.code === newCode);
+      const pairings = prev.activityCptPairings.map((p) =>
+        p.activity === activity
+          ? {
+              ...p,
+              code: newCode,
+              name: cptNameFor(newCode, catalogEntry?.description ?? undefined),
+              rationale: "Code selected by the treating therapist.",
+              source: "therapist" as const,
+            }
+          : p,
+      );
+      const totalUnits =
+        (prev.cptCodes || []).reduce((sum, c) => sum + c.units, 0) ||
+        Math.max(Math.floor(duration / 15), 1);
+      const reconciled = reconcileCptCodesWithPairings(
+        pairings,
+        prev.cptCodes || [],
+        ratePerUnit,
+        totalUnits,
+      );
+      // Rebuild the per-15-minute blocks from the reconciled aggregate.
+      const timeBlocks: NonNullable<typeof prev.timeBlocks> = [];
+      let blockNumber = 1;
+      for (const code of reconciled) {
+        for (let i = 0; i < code.units; i++) {
+          timeBlocks.push({
+            blockNumber,
+            startMinute: (blockNumber - 1) * 15,
+            endMinute: blockNumber * 15,
+            code: code.code,
+            codeName: code.name,
+            rate: ratePerUnit,
+            activities: code.activitiesAssigned.slice(0, 3),
+          });
+          blockNumber++;
+        }
+      }
+      return {
+        ...prev,
+        activityCptPairings: pairings,
+        cptCodes: reconciled,
+        timeBlocks,
+        totalReimbursement: reconciled.reduce((sum, c) => sum + c.reimbursement, 0),
+      };
+    });
+  };
+
   const updateActivityResponse = (activityName: string, value: string) => {
     setSelectedActivities(prev =>
       prev.map(a => a.name === activityName ? { ...a, response: value } : a)
@@ -1060,6 +1127,7 @@ export default function SoapNotes() {
               reimbursement: number;
               activitiesAssigned?: string[];
             }>;
+            activityCptPairings?: ActivityCptPairing[];
             timeBlocks: Array<{
               blockNumber: number;
               startMinute: number;
@@ -1081,6 +1149,7 @@ export default function SoapNotes() {
               assessment: aiResponse.assessment || "",
               plan: aiResponse.plan || "",
               cptCodes: aiResponse.cptCodes || [],
+              activityCptPairings: aiResponse.activityCptPairings || [],
               timeBlocks: aiResponse.timeBlocks || [],
               totalReimbursement: aiResponse.totalReimbursement || 0,
               billingRationale: aiResponse.billingRationale || "",
@@ -2636,6 +2705,17 @@ export default function SoapNotes() {
                     <div>
                       <Label className="text-xs font-semibold text-green-600">OBJECTIVE</Label>
                       <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.objective}</p>
+                      {/* Per-activity CPT pairing (Megan's ask, Kelli-approved):
+                          activity description and billing code live together in
+                          the Objective; every code is therapist-editable and
+                          edits re-derive the billing codes above. */}
+                      {generatedNote.activityCptPairings && generatedNote.activityCptPairings.length > 0 && (
+                        <ActivityCptPairingEditor
+                          pairings={generatedNote.activityCptPairings}
+                          catalog={cptCodes?.map((c) => ({ id: c.id, code: c.code, description: c.description }))}
+                          onCodeChange={updateActivityPairingCode}
+                        />
+                      )}
                     </div>
                     <Separator />
                     <div>
