@@ -63,6 +63,7 @@ const PayerContracts = lazy(() => import("@/pages/payer-contracts"));
 const RemittancePage = lazy(() => import("@/pages/remittance"));
 const DepositsPage = lazy(() => import("@/pages/deposits"));
 const TreatmentPlans = lazy(() => import("@/pages/treatment-plans"));
+const InitialEvaluation = lazy(() => import("@/pages/initial-evaluation"));
 const AiInsights = lazy(() => import("@/pages/ai-insights"));
 const TherapistProductivity = lazy(() => import("@/pages/therapist-productivity"));
 const Onboarding = lazy(() => import("@/pages/onboarding"));
@@ -329,6 +330,7 @@ function Router() {
               <Route path="/outcome-measures" component={OutcomeMeasures} />
               <Route path="/surveys" component={Surveys} />
               <Route path="/treatment-plans" component={TreatmentPlans} />
+              <Route path="/evaluations/:id" component={InitialEvaluation} />
               {isAdmin && <Route path="/accounting" component={Accounting} />}
               {isAdmin && <Route path="/analytics" component={Analytics} />}
               {isAdmin && <Route path="/benchmarking" component={Benchmarking} />}

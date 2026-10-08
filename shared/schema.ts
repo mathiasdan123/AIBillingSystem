@@ -2597,6 +2597,12 @@ export const treatmentGoals = pgTable("treatment_goals", {
   baselineMeasure: text("baseline_measure"), // Starting point
   targetMeasure: text("target_measure"), // Goal criteria for achievement
   currentMeasure: text("current_measure"), // Current status
+  // Initial-evaluation goal metadata (expand-only, nullable — added for the
+  // eval module so accepted goals carry term/duration/start date in the
+  // EXISTING goal model rather than a parallel one; legacy goals keep null).
+  goalTerm: varchar("goal_term"), // short_term | long_term
+  durationWeeks: integer("duration_weeks"),
+  startDate: date("start_date"),
   // Timestamps
   achievedAt: timestamp("achieved_at"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -4968,3 +4974,65 @@ export const pdms2Assessments = pgTable("pdms2_assessments", {
 export const insertPdms2AssessmentSchema = createInsertSchema(pdms2Assessments).omit({ id: true, createdAt: true, updatedAt: true });
 export type Pdms2Assessment = typeof pdms2Assessments.$inferSelect;
 export type InsertPdms2Assessment = z.infer<typeof insertPdms2AssessmentSchema>;
+// ==================== INITIAL EVALUATIONS ====================
+// Initial Evaluation module (Wonder Kids pilot request — Megan). One row per
+// evaluation: the therapist's structured input sections ("boxes to input"),
+// an AI-composed SOAP-style write-up (always editable — the AI drafts, the
+// therapist reviews and approves), and the AI-PROPOSED plan of care + goals,
+// held here as proposals until the therapist accepts each one. Accepting the
+// plan creates a row in the EXISTING treatment_plans table; accepting a goal
+// creates a row in the EXISTING treatment_goals table under that plan, so
+// accepted goals chart on the Progress tab through the existing
+// soap_note_goal_progress pipeline. No parallel goal/plan model. Additive.
+export const initialEvaluations = pgTable("initial_evaluations", {
+  id: serial("id").primaryKey(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  therapistId: varchar("therapist_id").references(() => users.id),
+  evaluationDate: date("evaluation_date"),
+  status: varchar("status").default("draft").notNull(), // draft, composed, finalized
+  // --- Structured input sections ---
+  // 1. Personal info — prefilled from the patient record, editable.
+  //    {childName, dateOfBirth, age, caregiverPresent, referringPhysician,
+  //     primaryDiagnosis, school, gradeClassroom}
+  personalInfo: jsonb("personal_info"),
+  // 2. Health history — {medicalHistory, birthHistory, developmentalMilestones,
+  //    diagnoses, medications, allergies, visionHearing, previousTherapies,
+  //    hospitalizations, dailyFunction, other}
+  healthHistory: jsonb("health_history"),
+  // 3. Parent/caregiver interview — {primaryConcerns, difficultActivities,
+  //    sensoryResponses, attentionConcerns, fineMotorConcerns,
+  //    enjoysAndStrengths, otGoalsForChild}
+  caregiverConcerns: jsonb("caregiver_concerns"),
+  // 4-7. Free-text sections. Deep outcome-measure scoring (PDMS-2 etc.) is a
+  //      separate build — assessmentResults here is deliberately plain text.
+  subjectiveComments: text("subjective_comments"),
+  objectiveActivities: text("objective_activities"),
+  assessmentResults: text("assessment_results"),
+  skillAreas: text("skill_areas"),
+  // --- AI step 1: composed write-up (editable before finalizing) ---
+  // {patientHistory, reasonForEvaluation, observations, assessmentResults,
+  //  proposedPlanOfCare, goals}
+  aiWriteUp: jsonb("ai_write_up"),
+  composedAt: timestamp("composed_at"),
+  // --- AI step 2: proposals (therapist accepts/edits/rejects each) ---
+  // proposedPlan: {sessionsPerWeek, durationWeeks, startDate, endDate,
+  //   rationale, status: proposed|accepted|rejected}
+  proposedPlan: jsonb("proposed_plan"),
+  // proposedGoals: [{skillArea, goalText, term, durationWeeks, startDate,
+  //   endDate, rationale, status: proposed|accepted|rejected, acceptedGoalId}]
+  proposedGoals: jsonb("proposed_goals"),
+  proposedAt: timestamp("proposed_at"),
+  // The existing-model plan the accepted proposals landed in.
+  treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id),
+  finalizedAt: timestamp("finalized_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_initial_evaluations_patient").on(table.patientId),
+  index("idx_initial_evaluations_practice").on(table.practiceId),
+]);
+
+export const insertInitialEvaluationSchema = createInsertSchema(initialEvaluations).omit({ id: true, createdAt: true, updatedAt: true });
+export type InitialEvaluation = typeof initialEvaluations.$inferSelect;
+export type InsertInitialEvaluation = z.infer<typeof insertInitialEvaluationSchema>;

@@ -294,6 +294,11 @@ export const storage = {
   getTreatmentPlanWithDetails: clinicalFns.getTreatmentPlanWithDetails,
   getPatientTreatmentPlans: clinicalFns.getPatientTreatmentPlans,
   getActiveTreatmentPlan: clinicalFns.getActiveTreatmentPlan,
+  // ==================== INITIAL EVALUATIONS ====================
+  createInitialEvaluation: clinicalFns.createInitialEvaluation,
+  getInitialEvaluation: clinicalFns.getInitialEvaluation,
+  getPatientInitialEvaluations: clinicalFns.getPatientInitialEvaluations,
+  updateInitialEvaluation: clinicalFns.updateInitialEvaluation,
   createTreatmentGoal: clinicalFns.createTreatmentGoal,
   getTreatmentGoals: clinicalFns.getTreatmentGoals,
   getTreatmentGoal: clinicalFns.getTreatmentGoal,

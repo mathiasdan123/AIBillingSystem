@@ -16,6 +16,7 @@ import {
   referralCommunications,
   therapyBank,
   exerciseBank,
+  initialEvaluations,
   users,
   type SoapNote,
   type InsertSoapNote,
@@ -49,6 +50,8 @@ import {
   type InsertTherapyBank,
   type ExerciseBank,
   type InsertExerciseBank,
+  type InitialEvaluation,
+  type InsertInitialEvaluation,
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, isNull, inArray, sql, or } from "drizzle-orm";
@@ -1137,4 +1140,43 @@ export async function createExerciseBankEntry(entry: InsertExerciseBank): Promis
 
 export async function deleteExerciseBankEntry(id: number): Promise<void> {
   await db.delete(exerciseBank).where(eq(exerciseBank.id, id));
+}
+
+// ==================== INITIAL EVALUATIONS ====================
+// Initial Evaluation module (eval record + AI write-up + proposals). The
+// practiceId is stored on the row and every read takes the caller's
+// practiceId so cross-tenant ids simply return undefined/[] (fail closed).
+
+export async function createInitialEvaluation(evaluation: InsertInitialEvaluation): Promise<InitialEvaluation> {
+  const [created] = await db.insert(initialEvaluations).values(evaluation).returning();
+  return created;
+}
+
+export async function getInitialEvaluation(id: number, practiceId: number): Promise<InitialEvaluation | undefined> {
+  const [row] = await db
+    .select()
+    .from(initialEvaluations)
+    .where(and(eq(initialEvaluations.id, id), eq(initialEvaluations.practiceId, practiceId)));
+  return row;
+}
+
+export async function getPatientInitialEvaluations(patientId: number, practiceId: number): Promise<InitialEvaluation[]> {
+  return await db
+    .select()
+    .from(initialEvaluations)
+    .where(and(eq(initialEvaluations.patientId, patientId), eq(initialEvaluations.practiceId, practiceId)))
+    .orderBy(desc(initialEvaluations.createdAt));
+}
+
+export async function updateInitialEvaluation(
+  id: number,
+  practiceId: number,
+  updates: Partial<InsertInitialEvaluation>,
+): Promise<InitialEvaluation | undefined> {
+  const [updated] = await db
+    .update(initialEvaluations)
+    .set({ ...stripImmutable(updates), updatedAt: new Date() })
+    .where(and(eq(initialEvaluations.id, id), eq(initialEvaluations.practiceId, practiceId)))
+    .returning();
+  return updated;
 }

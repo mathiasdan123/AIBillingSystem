@@ -10,7 +10,8 @@ import { ToastAction } from "@/components/ui/toast";
 import { openBlanche } from "@/lib/blancheControl";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, Send, ExternalLink, CreditCard, Pencil } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, ClipboardList, Send, ExternalLink, CreditCard, Pencil } from "lucide-react";
+import { useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -569,6 +570,7 @@ export default function Patients() {
   const practiceIsOon = practiceData?.networkStatus === 'out_of_network';
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [practiceId] = useState(user?.practiceId || 1);
   const [searchTerm, setSearchTerm] = useState("");
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
@@ -1501,6 +1503,17 @@ export default function Patients() {
                 >
                   <ExternalLink className="w-4 h-4 mr-1" />
                   Preview Portal
+                </Button>
+                {/* Initial Evaluation entry point (Megan: "Is there a
+                    possibility to input a client for an initial evaluation?") */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLocation(`/evaluations/new?patientId=${selectedPatient.id}`)}
+                  data-testid="button-new-evaluation"
+                >
+                  <ClipboardList className="w-4 h-4 mr-1" />
+                  New Evaluation
                 </Button>
               </div>
             </DialogHeader>
