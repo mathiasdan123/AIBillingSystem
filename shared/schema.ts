@@ -2555,6 +2555,10 @@ export const treatmentPlans = pgTable("treatment_plans", {
   treatmentModality: varchar("treatment_modality"), // CBT, DBT, EMDR, psychodynamic, etc.
   frequency: varchar("frequency"), // weekly, bi-weekly, monthly
   estimatedDuration: varchar("estimated_duration"), // 3 months, 6 months, ongoing
+  // Session length in minutes (expand-only, nullable — added for the initial
+  // evaluation module: all Wonder Kids sessions are 45 minutes; legacy plans
+  // keep null).
+  sessionLengthMinutes: integer("session_length_minutes"),
   // Status tracking
   status: varchar("status").default("active"), // draft, active, completed, discontinued
   startDate: date("start_date"),
@@ -5020,9 +5024,25 @@ export const initialEvaluations = pgTable("initial_evaluations", {
   //   rationale, status: proposed|accepted|rejected}
   proposedPlan: jsonb("proposed_plan"),
   // proposedGoals: [{skillArea, goalText, term, durationWeeks, startDate,
-  //   endDate, rationale, status: proposed|accepted|rejected, acceptedGoalId}]
+  //   endDate, rationale, status: proposed|accepted|rejected, acceptedGoalId,
+  //   pairIndex}] — goals are proposed as LONG-TERM/SHORT-TERM PAIRS per
+  //   underlying skill (Megan's follow-up); pairIndex links the two goals of
+  //   a pair. Rows proposed before the pair refinement have no pairIndex.
   proposedGoals: jsonb("proposed_goals"),
   proposedAt: timestamp("proposed_at"),
+  // --- AI-drafted parent interview outline (Megan's follow-up #3) ---
+  // {sections: [{key: patientHistory|referralInformation|parentConcerns,
+  //   title, questions: [{question, notes}]}], generatedAt}
+  // Questions are AI-drafted from the patient's intake data, fully editable;
+  // the therapist's notes captured against each question ground the
+  // subjective/caregiver portions of the composed write-up.
+  interviewOutline: jsonb("interview_outline"),
+  // --- Suggested OT evaluation CPT complexity code (Megan's follow-up #4) ---
+  // AI suggestion: {code: 97165|97166|97167, rationale, suggestedAt}. The
+  // treating therapist reviews and decides; the final choice is stored
+  // separately. NOT wired into claim creation yet (explicit follow-up).
+  evalCodeSuggestion: jsonb("eval_code_suggestion"),
+  evalCodeFinal: varchar("eval_code_final"), // 97165 | 97166 | 97167
   // The existing-model plan the accepted proposals landed in.
   treatmentPlanId: integer("treatment_plan_id").references(() => treatmentPlans.id),
   finalizedAt: timestamp("finalized_at"),

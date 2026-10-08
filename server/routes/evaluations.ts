@@ -6,9 +6,13 @@
  * - /api/evaluations/:id                  - get/update one evaluation
  * - /api/evaluations/:id/compose          - AI step 1: compose the SOAP-style write-up (draft)
  * - /api/evaluations/:id/write-up         - save the therapist-edited write-up
- * - /api/evaluations/:id/propose          - AI step 2: propose plan of care + goals (proposals)
+ * - /api/evaluations/:id/propose          - AI step 2: propose plan of care + goal PAIRS (proposals)
  * - /api/evaluations/:id/plan/decision    - accept (with edits) or reject the proposed plan
  * - /api/evaluations/:id/goals/:index/decision - accept (with edits) or reject one proposed goal
+ * - /api/evaluations/:id/interview-outline - POST: AI-draft the parent interview outline
+ *                                            PATCH: save therapist edits/notes against it
+ * - /api/evaluations/:id/suggest-eval-code - AI-suggest the OT evaluation CPT complexity code
+ * - /api/evaluations/:id/eval-code        - save the therapist's final evaluation-code choice
  * - /api/evaluations/:id/finalize         - lock the evaluation
  *
  * Every route resolves the caller's practice via getUserPracticeContext
@@ -30,8 +34,15 @@ import {
   proposePlanAndGoals,
   parsePlanProposal,
   parseGoalProposal,
+  draftInterviewOutline,
+  suggestEvaluationCode,
   WRITE_UP_SECTIONS,
+  OUTLINE_SECTIONS,
+  EVAL_CPT_CODES,
+  SESSION_LENGTH_MINUTES,
   type EvaluationWriteUp,
+  type InterviewOutline,
+  type InterviewOutlineSection,
   type ProposedGoal,
   type ProposedPlan,
 } from '../services/initialEvaluationService';
@@ -314,9 +325,11 @@ router.post('/evaluations/:id/plan/decision', isAuthenticated, async (req: any, 
       therapistId: evaluation.therapistId || context.userId,
       title: `Initial Evaluation Plan of Care — ${evaluation.evaluationDate ?? plan.startDate}`,
       diagnosis: personalInfo.primaryDiagnosis || null,
-      // All Wonder Kids sessions are individual — no group option exists.
+      // All Wonder Kids sessions are individual — no group option exists —
+      // and every session is 45 minutes (validated by parsePlanProposal).
       treatmentModality: 'Individual (1:1)',
       frequency: `${plan.sessionsPerWeek}x/week`,
+      sessionLengthMinutes: plan.sessionLengthMinutes ?? SESSION_LENGTH_MINUTES,
       estimatedDuration: `${plan.durationWeeks} weeks`,
       status: 'active',
       startDate: plan.startDate,
@@ -400,6 +413,139 @@ router.post('/evaluations/:id/goals/:index/decision', isAuthenticated, async (re
     const message = error instanceof Error ? error.message : String(error);
     logger.error('Error deciding on proposed goal', { error: message });
     res.status(message.includes('validation') ? 400 : 500).json({ message: message.includes('validation') ? message : 'Failed to record goal decision' });
+  }
+});
+
+// ==================== PARENT INTERVIEW OUTLINE ====================
+
+// POST /api/evaluations/:id/interview-outline — AI-draft the outline from
+// the patient's intake data. A draft the therapist reviews and edits.
+router.post('/evaluations/:id/interview-outline', isAuthenticated, async (req: any, res) => {
+  try {
+    const context = await requireContext(req, res);
+    if (!context) return;
+    const evaluation = await loadEvaluation(req, res, context);
+    if (!evaluation) return;
+
+    const { outline } = await draftInterviewOutline({
+      evaluationId: evaluation.id,
+      practiceId: context.practiceId,
+    });
+
+    const updated = await storage.updateInitialEvaluation(evaluation.id, context.practiceId, {
+      interviewOutline: outline,
+    });
+    res.json(updated);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('Error drafting interview outline', { error: message });
+    res.status(message.includes('not found') ? 404 : 422).json({ message });
+  }
+});
+
+/**
+ * Validate a therapist-edited outline payload: exactly the three fixed
+ * sections, each with at least one question; notes are free text.
+ */
+function parseOutlineEdits(body: any): InterviewOutline | null {
+  if (!Array.isArray(body?.sections) || body.sections.length !== OUTLINE_SECTIONS.length) return null;
+  const sections: InterviewOutlineSection[] = [];
+  for (let i = 0; i < OUTLINE_SECTIONS.length; i++) {
+    const [key, title] = OUTLINE_SECTIONS[i];
+    const section = body.sections[i];
+    if (!section || section.key !== key || !Array.isArray(section.questions) || section.questions.length === 0) {
+      return null;
+    }
+    const questions = [];
+    for (const q of section.questions) {
+      if (typeof q?.question !== 'string' || !q.question.trim()) return null;
+      if (q.notes !== undefined && typeof q.notes !== 'string') return null;
+      questions.push({ question: q.question, notes: typeof q.notes === 'string' ? q.notes : '' });
+    }
+    sections.push({ key, title, questions });
+  }
+  return { sections };
+}
+
+// PATCH /api/evaluations/:id/interview-outline — save the therapist's edits
+// to the questions and the notes captured against them. The notes ground
+// the subjective portions of the composed write-up.
+router.patch('/evaluations/:id/interview-outline', isAuthenticated, async (req: any, res) => {
+  try {
+    const context = await requireContext(req, res);
+    if (!context) return;
+    const evaluation = await loadEvaluation(req, res, context);
+    if (!evaluation) return;
+    if (evaluation.status === 'finalized') {
+      return res.status(409).json({ message: 'Evaluation is finalized and can no longer be edited' });
+    }
+
+    const edited = parseOutlineEdits(req.body ?? {});
+    if (!edited) {
+      return res.status(400).json({ message: 'Interview outline must contain the three sections (patient history, referral information, parent concerns), each with at least one question' });
+    }
+    const current = evaluation.interviewOutline as InterviewOutline | null;
+    const updated = await storage.updateInitialEvaluation(evaluation.id, context.practiceId, {
+      interviewOutline: { ...edited, generatedAt: current?.generatedAt },
+    });
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error saving interview outline', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to save interview outline' });
+  }
+});
+
+// ==================== SUGGESTED EVALUATION CPT CODE ====================
+
+// POST /api/evaluations/:id/suggest-eval-code — AI-suggest 97165/97166/97167
+// with a documented-data-only rationale. A suggestion the treating therapist
+// reviews and decides; NOT wired into claim creation (follow-up).
+router.post('/evaluations/:id/suggest-eval-code', isAuthenticated, async (req: any, res) => {
+  try {
+    const context = await requireContext(req, res);
+    if (!context) return;
+    const evaluation = await loadEvaluation(req, res, context);
+    if (!evaluation) return;
+
+    const { suggestion } = await suggestEvaluationCode({
+      evaluationId: evaluation.id,
+      practiceId: context.practiceId,
+    });
+
+    const updated = await storage.updateInitialEvaluation(evaluation.id, context.practiceId, {
+      evalCodeSuggestion: suggestion,
+    });
+    res.json(updated);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('Error suggesting evaluation code', { error: message });
+    res.status(message.includes('not found') ? 404 : 422).json({ message });
+  }
+});
+
+// PATCH /api/evaluations/:id/eval-code { code } — the treating therapist's
+// final coding decision, from the same three OT evaluation codes.
+router.patch('/evaluations/:id/eval-code', isAuthenticated, async (req: any, res) => {
+  try {
+    const context = await requireContext(req, res);
+    if (!context) return;
+    const evaluation = await loadEvaluation(req, res, context);
+    if (!evaluation) return;
+    if (evaluation.status === 'finalized') {
+      return res.status(409).json({ message: 'Evaluation is finalized and can no longer be edited' });
+    }
+
+    const code = req.body?.code;
+    if (!(EVAL_CPT_CODES as readonly string[]).includes(code)) {
+      return res.status(400).json({ message: 'code must be one of 97165, 97166, 97167' });
+    }
+    const updated = await storage.updateInitialEvaluation(evaluation.id, context.practiceId, {
+      evalCodeFinal: code,
+    });
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error saving evaluation code', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to save evaluation code' });
   }
 });
 
