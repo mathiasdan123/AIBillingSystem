@@ -9,7 +9,7 @@ import insuranceDataRoutes from "./routes/insuranceDataRoutes";
 import {
   authRouter, analyticsRouter, soapNotesRouter, soapDraftsRouter, patientsRouter, claimsRouter,
   appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter,
-  treatmentPlansRouter, locationsRouter, aiInsightsRouter, customReportsRouter, cannedReportsRouter,
+  treatmentPlansRouter, evaluationsRouter, locationsRouter, aiInsightsRouter, customReportsRouter, cannedReportsRouter,
   exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
   messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter, claimStatusReaperRouter, costDashboardRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
@@ -255,6 +255,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/sso', ssoRouter);
   // Treatment Plans routes (patient-scoped): /api/patients/:id/treatment-plans
   app.use('/api', treatmentPlansRouter);
+  // Initial Evaluation routes: /api/patients/:id/evaluations, /api/evaluations/*
+  app.use('/api', evaluationsRouter);
   // Locations routes: /api/locations/*
   app.use('/api/locations', locationsRouter);
   // AI Insights routes: /api/ai-insights/*

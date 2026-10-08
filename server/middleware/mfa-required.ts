@@ -78,6 +78,9 @@ const PHI_ROUTE_PATTERNS = [
   /^\/api\/appeals/,
   /^\/api\/treatment-plans/,
   /^\/api\/assessments/,
+  // Initial evaluations: health history, caregiver concerns, clinical
+  // observations — PHI on par with soap-notes/treatment-plans.
+  /^\/api\/evaluations/,
 ];
 
 // Export route patterns require MFA
