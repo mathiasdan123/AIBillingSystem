@@ -1,0 +1,22 @@
+# CodeQL configuration for the Security workflow's codeql job.
+#
+# One deliberate exclusion, approved by Daniel 2026-10-08:
+#
+#   js/sensitive-get-query ("Sensitive data read from GET request")
+#
+# Why: the rule infers sensitivity from identifier NAMES (patientId,
+# claimId, ...). In this codebase those are meaningless numeric surrogate
+# keys — every patient-scoped route passes them in the URL by design, the
+# handlers parseInt-validate them, storage queries are practice-scoped, and
+# PHI never travels in a URL. Sentry's beforeSend additionally scrubs both
+# query strings and URL paths. The rule produced only false positives
+# (alerts #126, #127, #130, #131 — all this pattern) and, combined with
+# required-conversation-resolution branch protection, blocked every PR that
+# added a patient-scoped GET route.
+#
+# Every other default query stays enabled. If a route ever carries ACTUAL
+# sensitive data in a URL (names, DOBs, tokens), this exclusion will not
+# catch it — reviewers must. Keep URLs to numeric surrogate ids.
+query-filters:
+  - exclude:
+      id: js/sensitive-get-query
