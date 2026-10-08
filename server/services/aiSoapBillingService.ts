@@ -3,6 +3,14 @@ import { createAiClient, isAiConfigured } from './aiProvider';
 import { storage } from "../storage";
 import { assertPhiAiAllowed } from "../utils/phiAiGuard";
 import logger from "./logger";
+import {
+  type ActivityCptPairing,
+  CONSERVATIVE_DEFAULT_CPT_CODE,
+  CONSERVATIVE_DEFAULT_CPT_NAME,
+  CONSERVATIVE_DEFAULT_RATIONALE,
+  normalizeActivityCptPairings,
+  reconcileCptCodesWithPairings,
+} from "@shared/activityCpt";
 
 // Lazy initialization of Anthropic client (only when API key is present)
 let anthropicClient: Anthropic | null = null;
@@ -108,6 +116,15 @@ export interface AiSoapBillingResponse {
   assessment: string;
   plan: string;
   cptCodes: GeneratedCptCode[];
+  /**
+   * One suggested CPT code per documented activity (Objective pairing).
+   * SINGLE SOURCE OF TRUTH for which activities support which code: the
+   * aggregate cptCodes above are re-derived from these pairings (see
+   * shared/activityCpt.ts), so the two views cannot contradict each other.
+   * Suggestions only — the therapist can change every code; unclear
+   * activities conservatively default to 97530 Therapeutic Activities.
+   */
+  activityCptPairings: ActivityCptPairing[];
   timeBlocks: TimeBlock[]; // Individual 15-min blocks for insurers requiring per-block codes
   totalReimbursement: number;
   billingRationale: string;
@@ -181,16 +198,23 @@ export async function generateSoapNoteAndBilling(
   let treatmentGoals: any[] = [];
   try {
     // Try to get active treatment plan first
-    treatmentPlan = await storage.getActiveTreatmentPlan(request.patientId);
+    const activePlan = await storage.getActiveTreatmentPlan(request.patientId);
+    treatmentPlan = activePlan ?? null;
     if (!treatmentPlan) {
-      // Fall back to any treatment plan
+      // Fall back to any treatment plan (diagnosis context only — goals are
+      // included only from the ACTIVE plan, per the approved design)
       const plans = await storage.getPatientTreatmentPlans(request.patientId);
       if (plans && plans.length > 0) {
         treatmentPlan = plans[0];
       }
     }
-    if (treatmentPlan) {
-      treatmentGoals = await storage.getTreatmentGoals(treatmentPlan.id);
+    if (activePlan) {
+      // Active goals only: a goal that was achieved/met or discontinued is
+      // no longer treatment context for today's session.
+      const allGoals = await storage.getTreatmentGoals(activePlan.id);
+      treatmentGoals = (allGoals ?? []).filter(
+        (g: any) => !['achieved', 'met', 'discontinued'].includes(String(g?.status ?? '')),
+      );
     }
   } catch (e) {
     // No treatment plan available
@@ -420,6 +444,15 @@ is a compliance and liability issue, not just a stylistic preference.
    must be proportional to the input. No caregiver report = one sentence
    stating that. Brief caregiver report = a sentence or two. Detailed
    caregiver report = a fuller paragraph. NEVER pad to fill a section.
+
+9. **TREATMENT GOALS ARE CONTEXT, NOT CONTENT.** When active treatment
+   goals are provided, you MAY connect the documented activities to the
+   goals they target and use goal-consistent terminology — but you must
+   NEVER claim progress toward a goal, or any performance, that the
+   therapist's entered session data does not state. Goals never supply
+   observations: no "progressing toward goal", no goal-percentage
+   movement, no "closer to target" unless the therapist's own session
+   input says so.
 ==========================================================================
 
 ==========================================================================
@@ -627,6 +660,22 @@ Only assign a code the documentation defensibly supports. If support is thin,
 use fewer codes; it is safer to omit a code than to bill one the note can't
 justify.
 
+PER-ACTIVITY CPT PAIRING (CONSERVATIVE):
+In addition to the aggregate code list, suggest EXACTLY ONE CPT code for EACH
+documented activity (the activityCptPairings array), so each activity in the
+Objective is paired with its billing code.
+- CONSERVATIVE DEFAULT: when an activity does not CLEARLY map to a more
+  specific code by its documented skilled objective, suggest 97530
+  Therapeutic Activities. Some payers only reimburse one type of code, and
+  Therapeutic Activities is the defensible conservative choice — never
+  stretch for a more specific code the documentation does not support.
+- CONSISTENCY: the pairings and the aggregate cptCodes must tell the same
+  story — every activity listed in a cptCodes entry's activitiesAssigned must
+  be paired with that same code in activityCptPairings.
+- These are SUGGESTIONS for accuracy review, never final: the treating
+  therapist reviews and can change every per-activity code and makes every
+  coding decision.
+
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
 fabricated specifics.
@@ -691,11 +740,27 @@ PATIENT INFORMATION:
     prompt += `\n\nDIAGNOSIS: ${treatmentPlan.diagnosis}`;
   }
 
-  // Add treatment goals if available
+  // Add active treatment goals if available — CONTEXT ONLY, so the model can
+  // connect documented activities to the goals they target and keep the
+  // note's vocabulary goal-consistent. Grounding rule 9 (system prompt)
+  // forbids inventing goal progress from this data.
   if (treatmentGoals && treatmentGoals.length > 0) {
-    prompt += `\n\nACTIVE TREATMENT GOALS:`;
+    prompt += `\n\nACTIVE TREATMENT GOALS (CONTEXT ONLY — connect today's documented
+activities to the goals they target and use goal-consistent terminology, but
+NEVER claim progress toward a goal, or performance, that the session data
+above/below does not state):`;
     for (const goal of treatmentGoals) {
-      prompt += `\n- ${goal.description} (Status: ${goal.status}, Progress: ${goal.currentProgress || 'N/A'})`;
+      const parts: string[] = [];
+      if (goal.status) parts.push(`status: ${goal.status}`);
+      if (goal.goalTerm) parts.push(`term: ${goal.goalTerm}`);
+      if (goal.durationWeeks != null) parts.push(`duration: ${goal.durationWeeks} weeks`);
+      if (goal.startDate) parts.push(`started: ${String(goal.startDate).slice(0, 10)}`);
+      if (goal.progressPercentage != null) parts.push(`documented progress: ${goal.progressPercentage}%`);
+      if (goal.baselineMeasure) parts.push(`baseline: ${goal.baselineMeasure}`);
+      if (goal.targetMeasure) parts.push(`target: ${goal.targetMeasure}`);
+      if (goal.currentMeasure) parts.push(`last recorded: ${goal.currentMeasure}`);
+      const numberPrefix = goal.goalNumber != null ? `Goal ${goal.goalNumber}: ` : '';
+      prompt += `\n- ${numberPrefix}${goal.description}${parts.length ? ` (${parts.join('; ')})` : ''}`;
     }
   }
 
@@ -801,6 +866,13 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
       "activitiesAssigned": ["Activity 1", "Activity 2"]
     }
   ],
+  "activityCptPairings": [
+    {
+      "activity": "Activity name EXACTLY as it appears in the activities list above",
+      "code": "97530",
+      "rationale": "Why this code fits this activity's documented skilled objective (or that 97530 is the conservative default because nothing more specific is clearly supported)"
+    }
+  ],
   "billingRationale": "Explanation of code assignment strategy",
   "auditNotes": ["Documentation points supporting the billing codes"]
 }
@@ -811,7 +883,8 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 3. Include quantified data (trial counts, timings, scores, assistance percentages) ONLY when the input actually provides it. Do NOT manufacture numbers, standardized scores, primitive-reflex patterns, or prior-session comparisons to look thorough — fabricated specifics are the #1 audit/denial risk.
 4. The medical-necessity statement must be CUSTOMIZED to this session's documented skilled interventions and observed deficits — not a generic boilerplate sentence repeated across notes. If the documentation doesn't support a skilled-necessity claim (thin note, no documented deficits), OMIT the statement entirely and simply describe what was done in functional terms — a generic necessity sentence weakens the note more than leaving it out (clinical reviewer guidance).
 5. Frame sensory-based work by its functional/neuromuscular objective (postural control, motor planning, bilateral coordination, regulation supporting participation), NOT as "sensory play" or "sensory diet".
-6. Distribute units only across codes the documentation supports (see BILLING CODE ASSIGNMENT). It is correct to use fewer codes/units than available if the documentation doesn't support more.`;
+6. Distribute units only across codes the documentation supports (see BILLING CODE ASSIGNMENT). It is correct to use fewer codes/units than available if the documentation doesn't support more.
+7. activityCptPairings must contain EXACTLY ONE entry per activity in the activities list (same spelling), consistent with cptCodes[].activitiesAssigned; when unclear, use the conservative default 97530 (see PER-ACTIVITY CPT PAIRING).`;
 
   return prompt;
 }
@@ -825,8 +898,8 @@ function validateAndEnhanceResponse(
   // Use manual rate override if provided, otherwise use default $289/unit
   const unitRate = request.ratePerUnit || DEFAULT_UNIT_RATE;
 
-  // Calculate reimbursements
-  const cptCodes: GeneratedCptCode[] = (aiResponse.cptCodes || []).map((code: any) => {
+  // Raw AI aggregate (units + clinical rationales), before reconciliation.
+  const aiAggregate: GeneratedCptCode[] = (aiResponse.cptCodes || []).map((code: any) => {
     const codeInfo = CPT_CODE_INFO[code.code as keyof typeof CPT_CODE_INFO];
     // Use the override rate or the code-specific rate
     const rate = request.ratePerUnit || codeInfo?.rate || DEFAULT_UNIT_RATE;
@@ -840,13 +913,27 @@ function validateAndEnhanceResponse(
     };
   });
 
-  // Note any unit shortfall WITHOUT redistributing to the highest-paying code.
-  // Padding leftover units onto a code purely because it reimburses more is
-  // exactly the optimization behavior we're removing — and it can attach units
-  // to a code the documentation doesn't support. We leave the AI's
-  // documentation-driven distribution as-is; under-using available units is a
-  // safe, defensible outcome (the provider can adjust on review).
-  const totalUnits = cptCodes.reduce((sum, c) => sum + c.units, 0);
+  // Per-activity pairing (Objective) — one suggested code per documented
+  // activity; anything missing/unclear conservatively defaults to 97530.
+  const activityCptPairings = normalizeActivityCptPairings(
+    request.activities,
+    aiResponse.activityCptPairings,
+  );
+
+  // SINGLE SOURCE OF TRUTH: re-derive the aggregate billing codes from the
+  // per-activity pairings so the Objective pairing and the billing output can
+  // never contradict each other. Unit totals stay documentation-driven (the
+  // AI's own distribution total, never padded up to the available units —
+  // under-using available units is a safe, defensible outcome the provider
+  // can adjust on review; padding onto a code is exactly the optimization
+  // behavior we removed).
+  const aiTotalUnits = aiAggregate.reduce((sum, c) => sum + c.units, 0);
+  const cptCodes: GeneratedCptCode[] = reconcileCptCodesWithPairings(
+    activityCptPairings,
+    aiAggregate,
+    unitRate,
+    aiTotalUnits > 0 ? Math.min(aiTotalUnits, Math.max(billingUnits, 1)) : Math.max(billingUnits, 1),
+  );
 
   const totalReimbursement = cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
 
@@ -875,6 +962,7 @@ function validateAndEnhanceResponse(
     assessment: aiResponse.assessment || "",
     plan: aiResponse.plan || "",
     cptCodes,
+    activityCptPairings,
     timeBlocks,
     totalReimbursement,
     billingRationale: aiResponse.billingRationale || "",
@@ -902,70 +990,63 @@ function fallbackGeneration(
   // code (97533) — which payers deny as developmental/non-specific.
   const neuromuscularKeywords = ["swing", "crash", "weighted", "body sock", "trampoline", "compression", "vestibular", "proprioceptive", "balance", "foam beam", "one-leg", "ladder", "scooter", "yoga"];
   const functionalKeywords = ["obstacle", "pegboard", "puzzle", "cutting", "writing", "ADL", "lacing", "buttoning", "feeding", "rice bin", "tactile", "brushing"];
+  const exerciseKeywords = ["strength", "endurance", "exercise", "putty", "resistance", "wall push", "animal walk"];
 
-  const functionalActivities = request.activities.filter(a =>
-    functionalKeywords.some(k => a.toLowerCase().includes(k))
+  // Per-activity pairing first — one suggested code per documented activity.
+  // An activity no keyword clearly maps conservatively defaults to 97530
+  // Therapeutic Activities (clinician guidance: some payers only reimburse
+  // one type of code, and Therapeutic Activities is the defensible default).
+  const activityCptPairings: ActivityCptPairing[] = request.activities.map((a) => {
+    const lower = a.toLowerCase();
+    if (functionalKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+      return {
+        activity: a,
+        code: "97530",
+        name: "Therapeutic Activities",
+        rationale: "Functional/dynamic activity for participation — therapeutic activities. Suggestion only; the treating provider makes the final coding decision.",
+        source: "ai" as const,
+      };
+    }
+    if (neuromuscularKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+      return {
+        activity: a,
+        code: "97112",
+        name: "Neuromuscular Re-education",
+        rationale: "Balance/postural control/motor planning objective — neuromuscular re-education. Suggestion only; the treating provider makes the final coding decision.",
+        source: "ai" as const,
+      };
+    }
+    if (exerciseKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+      return {
+        activity: a,
+        code: "97110",
+        name: "Therapeutic Exercise",
+        rationale: "Strengthening/endurance objective — therapeutic exercise. Suggestion only; the treating provider makes the final coding decision.",
+        source: "ai" as const,
+      };
+    }
+    // Unclear mapping ⇒ conservative default (97530).
+    return {
+      activity: a,
+      code: CONSERVATIVE_DEFAULT_CPT_CODE,
+      name: CONSERVATIVE_DEFAULT_CPT_NAME,
+      rationale: CONSERVATIVE_DEFAULT_RATIONALE,
+      source: "default" as const,
+    };
+  });
+
+  // Aggregate billing codes derived from the pairings (single source of
+  // truth), units distributed across the paired codes by documentation.
+  const cptCodes: GeneratedCptCode[] = reconcileCptCodesWithPairings(
+    activityCptPairings,
+    [
+      { code: "97112", rationale: `Neuromuscular re-education targeting postural control, balance, and motor planning via the documented activities.` },
+      { code: "97530", rationale: `Therapeutic activities for functional participation across the documented activities.` },
+      { code: "97110", rationale: `Therapeutic exercise for strength and endurance across the documented activities.` },
+    ],
+    unitRate,
+    Math.max(billingUnits, 1),
   );
-  const neuromuscularActivities = request.activities.filter(a =>
-    neuromuscularKeywords.some(k => a.toLowerCase().includes(k)) && !functionalActivities.includes(a)
-  );
-  const exerciseActivities = request.activities.filter(a =>
-    !functionalActivities.includes(a) && !neuromuscularActivities.includes(a)
-  );
-
-  const cptCodes: GeneratedCptCode[] = [];
-  let remainingUnits = billingUnits;
-
-  // Assign by documented skilled objective (order is clinical, not rate-based).
-  if (neuromuscularActivities.length > 0 && remainingUnits > 0) {
-    const units = Math.min(Math.ceil(billingUnits * 0.4), remainingUnits);
-    cptCodes.push({
-      code: "97112",
-      name: "Neuromuscular Re-education",
-      units,
-      rationale: `Neuromuscular re-education targeting postural control, balance, and motor planning via: ${neuromuscularActivities.slice(0, 3).join(", ")}`,
-      reimbursement: unitRate * units,
-      activitiesAssigned: neuromuscularActivities
-    });
-    remainingUnits -= units;
-  }
-
-  if (functionalActivities.length > 0 && remainingUnits > 0) {
-    const units = Math.min(Math.ceil(billingUnits * 0.3), remainingUnits);
-    cptCodes.push({
-      code: "97530",
-      name: "Therapeutic Activities",
-      units,
-      rationale: `Therapeutic activities for functional participation: ${functionalActivities.slice(0, 3).join(", ")}`,
-      reimbursement: unitRate * units,
-      activitiesAssigned: functionalActivities
-    });
-    remainingUnits -= units;
-  }
-
-  if (remainingUnits > 0) {
-    const activities = exerciseActivities.length > 0 ? exerciseActivities : request.activities.slice(0, 3);
-    cptCodes.push({
-      code: "97110",
-      name: "Therapeutic Exercise",
-      units: remainingUnits,
-      rationale: `Therapeutic exercises: ${activities.slice(0, 3).join(", ")}`,
-      reimbursement: unitRate * remainingUnits,
-      activitiesAssigned: activities
-    });
-  }
-
-  // Fallback if no codes assigned
-  if (cptCodes.length === 0) {
-    cptCodes.push({
-      code: "97530",
-      name: "Therapeutic Activities",
-      units: billingUnits,
-      rationale: "General OT intervention",
-      reimbursement: unitRate * billingUnits,
-      activitiesAssigned: request.activities
-    });
-  }
 
   const totalReimbursement = cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
   const patientName = patient.firstName;
@@ -1032,6 +1113,7 @@ function fallbackGeneration(
     assessment,
     plan,
     cptCodes,
+    activityCptPairings,
     timeBlocks,
     totalReimbursement,
     billingRationale: "Billing codes assigned using rule-based accuracy checks. AI unavailable.",
