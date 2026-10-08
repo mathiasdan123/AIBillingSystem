@@ -56,6 +56,7 @@ export { default as aiAppealDebugRouter } from './ai-appeal-debug';
 export { default as insuranceRouter } from './insurance';
 export { default as bookingRouter } from './booking';
 export { default as clinicalRouter } from './clinical';
+export { default as pdms2Router } from './pdms2';
 export { default as referralsRouter } from './referrals';
 export { default as paymentsRouter } from './payments';
 export { default as notificationsRouter } from './notifications';

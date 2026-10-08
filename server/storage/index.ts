@@ -13,6 +13,7 @@ export * from "./patients";
 export * from "./claims";
 export * from "./payments";
 export * from "./clinical";
+export * from "./pdms2";
 export * from "./appointments";
 export * from "./insurance";
 export * from "./analytics";
@@ -32,6 +33,7 @@ import * as analyticsFns from "./analytics";
 import * as recoveryLedgerFns from "./recoveryLedger";
 import * as billerCockpitFns from "./billerCockpit";
 import * as goalTemplateFns from "./goalTemplates";
+import * as pdms2Fns from "./pdms2";
 import * as auditFns from "./audit";
 import * as blancheConversationFns from "./blancheConversations";
 
@@ -332,6 +334,11 @@ export const storage = {
   updatePatientAssessment: clinicalFns.updatePatientAssessment,
   getPracticeAssessments: clinicalFns.getPracticeAssessments,
   getPatientAssessmentHistory: clinicalFns.getPatientAssessmentHistory,
+  // PDMS-2 structured scoring
+  createPdms2Assessment: pdms2Fns.createPdms2Assessment,
+  getPdms2Assessment: pdms2Fns.getPdms2Assessment,
+  getPdms2AssessmentsForPatient: pdms2Fns.getPdms2AssessmentsForPatient,
+  updatePdms2Assessment: pdms2Fns.updatePdms2Assessment,
   createAssessmentSchedule: clinicalFns.createAssessmentSchedule,
   getPatientAssessmentSchedules: clinicalFns.getPatientAssessmentSchedules,
   getAssessmentSchedule: clinicalFns.getAssessmentSchedule,

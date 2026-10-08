@@ -47,7 +47,11 @@ import {
   FileText,
   ChevronsUpDown,
   Check,
+  ListChecks,
 } from "lucide-react";
+import Pdms2ScoringWorkflow, {
+  type Pdms2AssessmentRecord,
+} from "@/components/pdms2/Pdms2ScoringWorkflow";
 
 interface OutcomeMeasureTemplate {
   id: number;
@@ -102,6 +106,9 @@ export default function OutcomeMeasures() {
   const [assessmentResponses, setAssessmentResponses] = useState<Record<string, number>>({});
   const [assessmentNotes, setAssessmentNotes] = useState("");
   const [detailSheet, setDetailSheet] = useState<PatientAssessment | null>(null);
+  // PDMS-2 structured scoring workflow: null = closed; { existing } = open
+  // (existing assessment to resume, or null to start a new one).
+  const [pdms2Workflow, setPdms2Workflow] = useState<{ existing: Pdms2AssessmentRecord | null } | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -113,6 +120,17 @@ export default function OutcomeMeasures() {
   // Fetch patients
   const { data: patients = [] } = useQuery<Patient[]>({
     queryKey: ["/api/patients"],
+  });
+
+  // Fetch structured PDMS-2 assessments for the selected patient
+  const { data: pdms2Assessments = [] } = useQuery<Pdms2AssessmentRecord[]>({
+    queryKey: ["/api/pdms2-assessments", selectedPatient],
+    queryFn: async () => {
+      if (!selectedPatient) return [];
+      const res = await fetch(`/api/pdms2-assessments?patientId=${selectedPatient}`);
+      return res.json();
+    },
+    enabled: !!selectedPatient,
   });
 
   // Fetch assessments for selected patient
@@ -711,6 +729,20 @@ export default function OutcomeMeasures() {
         </CardContent>
       </Card>
 
+      {pdms2Workflow && selectedPatient ? (
+        <Pdms2ScoringWorkflow
+          patientId={selectedPatient}
+          patientName={(() => {
+            const p = patients.find((p) => p.id === selectedPatient);
+            return p ? `${p.firstName} ${p.lastName}` : undefined;
+          })()}
+          existing={pdms2Workflow.existing}
+          onClose={() => {
+            setPdms2Workflow(null);
+            queryClient.invalidateQueries({ queryKey: ["/api/pdms2-assessments", selectedPatient] });
+          }}
+        />
+      ) : (
       <Tabs defaultValue="administer" className="space-y-6">
         <TabsList>
           <TabsTrigger value="administer">
@@ -729,6 +761,75 @@ export default function OutcomeMeasures() {
 
         {/* Administer Tab */}
         <TabsContent value="administer">
+          {/* PDMS-2 structured scoring workflow (item-level, basal/ceiling automation) */}
+          <Card className="mb-4 border-primary/40" data-testid="card-pdms2-workflow">
+            <CardHeader>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">PDMS-2</Badge>
+                    <Badge className="bg-blue-100 text-blue-800">Structured Scoring</Badge>
+                  </div>
+                  <CardTitle className="text-lg mt-2">PDMS-2 Item-Level Scoring Workflow</CardTitle>
+                  <CardDescription>
+                    Score all six subtests item by item with automatic basal/ceiling detection and
+                    credited raw scores. Standard scores, percentiles, age equivalents, and quotients
+                    are entered from your own PDMS-2 Examiner's Manual normative tables.
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => {
+                    if (!selectedPatient) {
+                      toast({ title: "Select Patient", description: "Please select a patient first.", variant: "destructive" });
+                      return;
+                    }
+                    setPdms2Workflow({ existing: null });
+                  }}
+                  disabled={!selectedPatient}
+                  data-testid="button-start-pdms2-workflow"
+                >
+                  <ListChecks className="w-4 h-4 mr-2" />
+                  Start Structured Scoring
+                </Button>
+              </div>
+            </CardHeader>
+            {selectedPatient && pdms2Assessments.length > 0 && (
+              <CardContent>
+                <div className="text-sm font-medium mb-2">Previous structured assessments</div>
+                <div className="space-y-2">
+                  {pdms2Assessments.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between text-sm border rounded-md px-3 py-2"
+                      data-testid={`pdms2-assessment-row-${a.id}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span>
+                          {a.assessmentDate ? new Date(a.assessmentDate).toLocaleDateString() : "—"}
+                        </span>
+                        <span className="text-muted-foreground">{a.ageInMonths} months</span>
+                        {a.status === "completed" ? (
+                          <Badge className="bg-green-100 text-green-800">Completed</Badge>
+                        ) : (
+                          <Badge variant="outline">In progress</Badge>
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPdms2Workflow({ existing: a })}
+                        data-testid={`button-open-pdms2-${a.id}`}
+                      >
+                        Open
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            )}
+          </Card>
+
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {displayTemplates.map((template) => (
               <Card key={template.id} className="hover:shadow-md transition-shadow">
@@ -977,6 +1078,7 @@ export default function OutcomeMeasures() {
           )}
         </TabsContent>
       </Tabs>
+      )}
 
       {/* New Assessment Dialog */}
       <Dialog open={showNewAssessment} onOpenChange={setShowNewAssessment}>
