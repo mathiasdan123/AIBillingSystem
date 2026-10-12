@@ -22,6 +22,7 @@ import { registerAppealTools } from './tools/appeals';
 import { registerDenialTools } from './tools/denials';
 import { registerBillingTools } from './tools/billing';
 import { registerSoapTools } from './tools/soap';
+import { registerClinicalDocTools } from './tools/clinical';
 import { registerNotificationTools } from './tools/notifications';
 
 export function createMcpServer(context: McpPracticeContext): McpServer {
@@ -68,6 +69,9 @@ export function createMcpServer(context: McpPracticeContext): McpServer {
   registerDenialTools(server, context);
   registerBillingTools(server, context);
   registerSoapTools(server, context);
+
+  // Clinical documentation: initial evaluations + formal progress notes (PHI, DB)
+  registerClinicalDocTools(server, context);
 
   // Practice configuration (no PHI)
   registerNotificationTools(server, context);

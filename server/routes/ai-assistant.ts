@@ -15,6 +15,14 @@ import { getUserPracticeContext } from '../services/practiceContext';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import { reviewDeniedClaims, suggestClaimCorrection } from '../services/denialReviewService';
 import { reviewUnderpayments, draftUnderpaymentDispute } from '../services/underpaymentReviewService';
+import {
+  listPatientEvaluationsForAssistant,
+  getEvaluationForAssistant,
+  createDraftInitialEvaluationForAssistant,
+  listPatientProgressNotesForAssistant,
+  getProgressNoteForAssistant,
+  getProgressNoteCadenceForAssistant,
+} from '../services/clinicalDocAssistantTools';
 import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import { decryptField } from '../services/phiEncryptionService';
@@ -108,6 +116,11 @@ const MUTATION_TOOLS = new Set<string>([
   'create_invoice',
   'send_patient_payment_link',
   'generate_soap_note',
+  // Clinical documentation — starting a draft initial evaluation writes a
+  // real row, so it always goes through the Confirm card. (Reads on the
+  // eval/progress-note tools are NOT here; and there are deliberately no
+  // tools that accept/finalize clinical content — see blancheToolParity.)
+  'create_initial_evaluation',
   // Phase 5 — demo / practice mode
   'enable_demo_mode',
   'clear_demo_data',
@@ -225,6 +238,8 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
       return `Get prior session notes for patient ${args.patientId ?? ''} (limit ${args.limit ?? 5})`.trim();
     case 'generate_soap_note':
       return `Generate & save SOAP note${name ? ` for ${name}` : ''}`;
+    case 'create_initial_evaluation':
+      return `Start a draft initial evaluation for patient ${args.patientId ?? ''}${args.evaluationDate ? ` dated ${args.evaluationDate}` : ''} (prefilled from the patient record; composing, proposals, and finalizing stay in the app)`.trim();
     case 'enable_demo_mode':
       return 'Enable demo mode (creates 8 DEMO- patients, 5 appointments across yesterday/today/tomorrow, and 5 claims across draft/submitted/paid/denied/held — enough variety to demo the full revenue cycle)';
     case 'clear_demo_data':
@@ -889,6 +904,16 @@ Demo and real data live side-by-side — they can't be confused because every de
 If a user mentions they have OLD test/demo/seed patients from before demo mode existed (or they want to use existing patients as "showcase data" when demoing the product to prospects), use find_legacy_demo_candidates to spot them by their telltales (@example.* email domains, 555 area codes, DEMO/TEST/SAMPLE in name). Show the list to the user, let THEM pick which IDs to mark, then call mark_patients_as_demo with the chosen IDs. The mark cascades to those patients' appointments and claims so the firewall stays consistent. If the user accidentally marks the wrong patient, unmark_demo_patients undoes it cleanly.
 
 None of this applies inside the DEMO practice itself (the "Try Free Demo" sandbox). There, isolation is at the practice level and the records are deliberately left un-tagged so the demo's own dashboard shows real-looking numbers — its patients only LOOK like legacy demo data because they're named Sample/Demo/Example. enable_demo_mode, find_legacy_demo_candidates, and mark_patients_as_demo all refuse there. Don't offer them; if the user asks for demo data, tell them they're already in it.
+
+## Initial Evaluations & Progress Notes
+You have read tools for the two formal clinical documents. NEVER answer about a specific patient's evaluation or progress note from memory or from earlier conversation — call the tool and ground your answer in the result:
+
+1. **"Does Sarah have an eval?" / "What's the status of her initial evaluation?"** → get_patient_evaluations (list), then get_initial_evaluation for the content of one: its sections, AI write-up, proposed plan + goal pairs with the therapist's decisions, and the eval CPT code suggestion vs. final choice.
+2. **"What did her progress note say?" / "What % is goal 2 at?"** → get_patient_progress_notes (list), then get_progress_note. The progress % per goal is the therapist's entered judgment — if it's null, say it hasn't been entered yet; never estimate one.
+3. **"Is a progress note due for Aaron?" / "Who needs a progress note?"** → get_progress_note_cadence (per patient: due now, what tripped it, sessions/days remaining).
+4. **"Start an eval for the new kid"** → create_initial_evaluation (a mutation — Confirm card). It only creates the prefilled draft; the therapist does the rest in the app.
+
+Scope limit, state it plainly when asked: you can read these documents and start a draft evaluation, but accepting proposed plans/goals, entering progress percentages, and finalizing an evaluation or progress note are done in the app only — that is the treating therapist's clinical sign-off, made where the full record is visible. Offer to navigate them to the patient's page instead.
 
 ## Action Confirmation — STRICT RULES (read carefully)
 
@@ -1979,6 +2004,73 @@ const assistantTools: Anthropic.Tool[] = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: 'get_patient_evaluations',
+    description: 'List a patient\'s initial evaluations: id, evaluation date, lifecycle status (draft → composed → finalized), linked treatment plan id, and the final evaluation CPT code if chosen. Use when a user asks whether a patient has an initial evaluation, its status, or when it was done. For the content of one evaluation, follow up with get_initial_evaluation.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID (resolve via search_patients if you only have a name)' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
+    name: 'get_initial_evaluation',
+    description: 'Get one initial evaluation\'s content: the structured input sections (personal info, health history, caregiver concerns, free-text findings), the parent-interview outline, the AI-composed write-up, the proposed plan of care and goal pairs with the therapist\'s accept/reject decisions, and the evaluation CPT code suggestion plus the therapist\'s final choice (97165/97166/97167). Long text sections are trimmed. Read-only: accepting proposals and finalizing happen in the app — offer to navigate the user there for those steps.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        evaluationId: { type: 'number' as const, description: 'Initial evaluation ID (from get_patient_evaluations)' },
+      },
+      required: ['evaluationId'],
+    },
+  },
+  {
+    name: 'create_initial_evaluation',
+    description: 'Start a DRAFT initial evaluation for a patient, with section 1 (personal info) prefilled from the patient record — the same prefill the app\'s New Evaluation button does. Use when a therapist says "start an eval for Sarah" or "set up the initial evaluation". This creates the draft only: the therapist completes the sections, composes the write-up, and reviews every AI proposal in the app. Never guess the patientId — resolve it with search_patients first (Rule 7).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID to start the evaluation for' },
+        evaluationDate: { type: 'string' as const, description: 'Evaluation date (YYYY-MM-DD, defaults to today)' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
+    name: 'get_patient_progress_notes',
+    description: 'List a patient\'s formal progress notes (the every-10-sessions/90-days goal-review notes — NOT per-session SOAP notes; for those use get_prior_session_notes): id, reporting window, lifecycle status (draft → finalized), sessions reviewed, and whether a plan extension was requested. For one note\'s content, follow up with get_progress_note.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID (resolve via search_patients if you only have a name)' },
+      },
+      required: ['patientId'],
+    },
+  },
+  {
+    name: 'get_progress_note',
+    description: 'Get one formal progress note: the per-goal entries (interventions utilized, assistance levels, current ability, and the therapist-entered progress % — null until the therapist enters it; it is pure clinical judgment, never computed or estimated), the narrative sections (present level of functioning, annual goals, recommendations), and plan-extension info (requested, new end date, written rationale). Read-only: editing, entering progress %, and finalizing happen in the app.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        noteId: { type: 'number' as const, description: 'Progress note ID (from get_patient_progress_notes)' },
+      },
+      required: ['noteId'],
+    },
+  },
+  {
+    name: 'get_progress_note_cadence',
+    description: 'Is a formal progress note due for this patient? Computes the cadence — due every 10 completed sessions or 90 days, whichever comes first, counted from the later of the plan start and the last finalized note. Returns due-or-not, what tripped it, sessions/days since the anchor, and sessions/days remaining. Use when a user asks "is a progress note due", "when is her progress note due", or before offering to start one.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        patientId: { type: 'number' as const, description: 'Patient ID (resolve via search_patients if you only have a name)' },
+      },
+      required: ['patientId'],
     },
   },
   {
@@ -5461,6 +5553,49 @@ async function executeToolForPractice(
           providerCount: providers.length,
           providers,
         });
+      }
+
+      // ── Clinical documentation: initial evaluations + progress notes ──
+      // Shapes and tenant guards live in services/clinicalDocAssistantTools
+      // and are shared verbatim with the MCP surface (mcp/tools/clinical.ts).
+      case 'get_patient_evaluations': {
+        const result = await listPatientEvaluationsForAssistant(Number(args.patientId), practiceId);
+        return JSON.stringify(result);
+      }
+
+      case 'get_initial_evaluation': {
+        const result = await getEvaluationForAssistant(Number(args.evaluationId), practiceId);
+        return JSON.stringify(result);
+      }
+
+      case 'create_initial_evaluation': {
+        // Mutation — only reaches here after the user clicks Confirm on the
+        // proposal card (MUTATION_TOOLS gate in the chat loop).
+        if (!userId) {
+          return JSON.stringify({ error: 'Cannot create an evaluation without an authenticated user.' });
+        }
+        const result = await createDraftInitialEvaluationForAssistant({
+          patientId: Number(args.patientId),
+          practiceId,
+          therapistId: userId,
+          evaluationDate: typeof args.evaluationDate === 'string' ? args.evaluationDate : undefined,
+        });
+        return JSON.stringify(result);
+      }
+
+      case 'get_patient_progress_notes': {
+        const result = await listPatientProgressNotesForAssistant(Number(args.patientId), practiceId);
+        return JSON.stringify(result);
+      }
+
+      case 'get_progress_note': {
+        const result = await getProgressNoteForAssistant(Number(args.noteId), practiceId);
+        return JSON.stringify(result);
+      }
+
+      case 'get_progress_note_cadence': {
+        const result = await getProgressNoteCadenceForAssistant(Number(args.patientId), practiceId);
+        return JSON.stringify(result);
       }
 
       default:

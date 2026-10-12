@@ -77,6 +77,20 @@ function extractMcpToolNames(): Set<string> {
  * SURFACE_ONLY_REASONS below.
  */
 const PARITY_TOOLS: ReadonlySet<string> = new Set([
+  // ── Clinical documentation (initial evaluations + formal progress notes) ──
+  // Read tools plus create_initial_evaluation (mutation-gated on both
+  // surfaces). Deliberately NOT tools on EITHER surface — so not listed
+  // anywhere in this file — are the clinical sign-off actions: accepting
+  // proposed plans/goals, entering a goal progress %, and finalizing an
+  // evaluation or progress note. Those stay UI-only on purpose: sign-off
+  // belongs in the app where the treating therapist sees the full record.
+  'get_patient_evaluations',
+  'get_initial_evaluation',
+  'create_initial_evaluation',
+  'get_patient_progress_notes',
+  'get_progress_note',
+  'get_progress_note_cadence',
+
   'add_claim_line_item',
   'batch_eligibility_check',
   'bulk_eligibility_by_filter',
