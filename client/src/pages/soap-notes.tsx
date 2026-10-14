@@ -615,7 +615,7 @@ export default function SoapNotes() {
   });
 
   // Fetch current user's signature for SOAP note signing
-  const { data: therapistSignature } = useQuery<{ signature: string; name: string; credentials: string } | null>({
+  const { data: therapistSignature } = useQuery<{ signature: string | null; name: string; credentials: string } | null>({
     queryKey: ["/api/therapists", user?.id, "signature"],
     queryFn: async () => {
       if (!user?.id) return null;

@@ -685,12 +685,15 @@ router.get('/therapists/:id/signature', isAuthenticated, async (req: any, res) =
     const therapistId = req.params.id;
     const user = await storage.getUser(therapistId);
 
-    if (!user || !user.digitalSignature) {
-      return res.status(404).json({ message: "Signature not found" });
+    if (!user) {
+      return res.status(404).json({ message: "Therapist not found" });
     }
 
+    // A therapist without a saved signature is a normal state (they simply
+    // haven't uploaded one yet), not an error — return 200 with a null
+    // signature so the client doesn't log a 404 on every SOAP page load.
     res.json({
-      signature: user.digitalSignature,
+      signature: user.digitalSignature || null,
       name: `${user.firstName} ${user.lastName}`,
       credentials: user.credentials
     });

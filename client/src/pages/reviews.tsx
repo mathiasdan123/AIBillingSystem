@@ -33,6 +33,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import {
   Star,
   Send,
@@ -173,6 +174,8 @@ const RESPONSE_STATUS_COLORS: Record<string, string> = {
 export default function ReviewsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const practiceId = user?.practiceId;
   const [selectedReview, setSelectedReview] = useState<GoogleReview | null>(null);
   const [selectedFeedback, setSelectedFeedback] = useState<PatientFeedback | null>(null);
   const [isAddReviewOpen, setIsAddReviewOpen] = useState(false);
@@ -251,11 +254,14 @@ export default function ReviewsPage() {
     },
   });
 
-  // Fetch practice settings (for Google Review URL)
+  // Fetch practice settings (for Google Review URL). The practice id comes
+  // from the logged-in user — a hardcoded /api/practices/1 404s (tenant
+  // isolation) for every user outside practice 1.
   const { data: practice } = useQuery<{ id: number; name: string; googleReviewUrl?: string }>({
-    queryKey: ["/api/practices/1"],
+    queryKey: ["/api/practices", practiceId],
+    enabled: !!practiceId,
     queryFn: async () => {
-      const res = await fetch("/api/practices/1");
+      const res = await fetch(`/api/practices/${practiceId}`);
       if (!res.ok) throw new Error("Failed to fetch practice");
       return res.json();
     },
@@ -269,7 +275,8 @@ export default function ReviewsPage() {
   // Update Google Review URL mutation
   const updateGoogleUrl = useMutation({
     mutationFn: async (url: string) => {
-      const res = await fetch("/api/practices/1", {
+      if (!practiceId) throw new Error("No practice");
+      const res = await fetch(`/api/practices/${practiceId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ googleReviewUrl: url }),
@@ -278,7 +285,7 @@ export default function ReviewsPage() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/practices/1"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/practices", practiceId] });
       toast({ title: "Google Review URL saved!" });
     },
     onError: () => {
