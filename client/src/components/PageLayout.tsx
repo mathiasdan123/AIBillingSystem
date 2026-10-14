@@ -42,7 +42,7 @@ export default function PageLayout({
   children,
 }: PageLayoutProps) {
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="min-w-0">
           {backTo && (

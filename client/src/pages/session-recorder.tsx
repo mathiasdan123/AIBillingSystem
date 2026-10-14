@@ -323,7 +323,7 @@ export default function SessionRecorder() {
   const selectedPatientData = patients?.find(p => p.id === parseInt(selectedPatient));
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
+    <div className="p-6 pt-20 md:pt-6">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">

@@ -525,7 +525,7 @@ export default function InsuranceRates() {
   }, {} as Record<string, InsuranceRate[]>) || {};
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
+    <div className="p-6 pt-20 md:pt-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

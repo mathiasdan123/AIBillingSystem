@@ -1035,7 +1035,7 @@ export default function Patients() {
 
   if (isLoading || patientsLoading) {
     return (
-      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
         {/* Header skeleton */}
         <div className="flex items-center justify-between mb-6 md:mb-8">
           <div>
@@ -1098,7 +1098,7 @@ export default function Patients() {
   };
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       <div className="flex items-center justify-between mb-6 md:mb-8 gap-3">
         <div className="min-w-0">
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Patient Management</h1>

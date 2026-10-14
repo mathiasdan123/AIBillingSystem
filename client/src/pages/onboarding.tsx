@@ -302,7 +302,7 @@ export default function OnboardingWizard() {
   };
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       <div className="max-w-3xl mx-auto">
         {/* Progress Bar */}
         <div className="mb-8">

@@ -252,7 +252,7 @@ export default function AiInsightsPage() {
   }
 
   return (
-    <div className="md:ml-64 p-4 md:p-6 pt-20 md:pt-6 pb-24 md:pb-6 max-w-7xl">
+    <div className="p-4 md:p-6 pt-20 md:pt-6 pb-24 md:pb-6 max-w-7xl">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">

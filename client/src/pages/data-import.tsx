@@ -1210,7 +1210,7 @@ export default function DataImport() {
   // ==================== Render ====================
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64 max-w-5xl mx-auto space-y-6">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 max-w-5xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-3">

@@ -17,7 +17,7 @@ export default function McpSetup() {
   };
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64 max-w-4xl">
+    <div className="p-6 pt-20 md:pt-6 max-w-4xl">
       {/* Back button */}
       <Button
         variant="ghost"

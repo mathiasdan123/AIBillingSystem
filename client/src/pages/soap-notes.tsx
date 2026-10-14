@@ -1313,7 +1313,7 @@ export default function SoapNotes() {
 
   if (patientsLoading) {
     return (
-      <div className="md:ml-64 min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-600" />
           <p className="text-muted-foreground">Loading...</p>
@@ -1324,7 +1324,7 @@ export default function SoapNotes() {
 
   if (!patients || patients.length === 0) {
     return (
-      <div className="md:ml-64 min-h-screen bg-slate-50 p-8">
+      <div className="min-h-screen bg-slate-50 p-8">
         <Card className="max-w-md mx-auto">
           <CardHeader>
             <CardTitle>No Patients Found</CardTitle>
@@ -1343,7 +1343,7 @@ export default function SoapNotes() {
   const totalReimbursement = generatedNote?.cptCodes?.reduce((sum, c) => sum + c.reimbursement, 0) || 0;
 
   return (
-    <div className="md:ml-64 min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="p-6 max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between">

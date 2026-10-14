@@ -271,7 +271,7 @@ export default function BillingTasksPage() {
   };
 
   return (
-    <div className="md:ml-64 p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2">Billing Tasks</h1>

@@ -108,7 +108,7 @@ export default function InsightsReport() {
   const isError: boolean = view === "daily" ? dailyQuery.isError : weeklyQuery.isError;
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64 print:ml-0 print:p-4">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 print:ml-0 print:p-4">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-4">
         <div>

@@ -222,7 +222,7 @@ export default function Benchmarking() {
   })).filter((g) => g.items.length > 0);
 
   return (
-    <div className="md:ml-64 p-4 md:p-8 mt-14 md:mt-0 mb-20 md:mb-0 max-w-7xl">
+    <div className="p-4 md:p-8 mt-14 md:mt-0 mb-20 md:mb-0 max-w-7xl">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>

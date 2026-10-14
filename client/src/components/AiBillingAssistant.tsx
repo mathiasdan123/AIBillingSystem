@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, streamRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -197,34 +197,32 @@ export default function AiBillingAssistant() {
   // still sees the welcome even if a coworker already dismissed it.
   // Legacy boolean GREETED_KEY/DISMISSED_KEY are ignored — users on those
   // Onboarding state — drives the proactive opener and gates the greeting
-  // popup. Fetched once when the user is authenticated. Null while loading /
-  // on error (falls back to the existing version-gated greeting behavior).
-  const [onboardingStatus, setOnboardingStatus] = useState<{
-    step: number;
-    completed: boolean;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await apiRequest('GET', '/api/onboarding/status');
-        if (cancelled) return;
-        const data = await res.json();
-        setOnboardingStatus({
-          step: typeof data?.step === 'number' ? data.step : 0,
-          completed: !!data?.completed,
-        });
-      } catch {
-        // Non-blocking — leave onboardingStatus null and fall through to the
-        // existing version-gated greeting behavior below.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
+  // popup. Null while loading / on error (falls back to the existing
+  // version-gated greeting behavior). Shares the ['/api/onboarding/status']
+  // React Query cache entry with the dashboard and onboarding pages — this
+  // used to be a separate direct apiRequest, so every full page load fired a
+  // duplicate /api/onboarding/status alongside the dashboard's own query
+  // (2026-10-14 audit). Onboarding progress changes rarely and the wizard
+  // invalidates the key on every step, so a long staleTime is safe.
+  const { data: onboardingData } = useQuery<{ step?: number; completed?: boolean }>({
+    queryKey: ['/api/onboarding/status'],
+    enabled: isAuthenticated,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  // Memoized: onboardingStatus is a dependency of the greeting / auto-open
+  // effects below — a fresh object identity every render would re-arm their
+  // timers on each re-render.
+  const onboardingStatus = useMemo(
+    () =>
+      onboardingData
+        ? {
+            step: typeof onboardingData.step === 'number' ? onboardingData.step : 0,
+            completed: !!onboardingData.completed,
+          }
+        : null,
+    [onboardingData],
+  );
 
   // will see 2026.04.1 on their next load, which is the intended behavior.
   // Phase 3: also suppress for established practices whose setup is complete —
@@ -326,17 +324,32 @@ export default function AiBillingAssistant() {
     return () => clearTimeout(id);
   }, [isOpen]);
 
-  // One-shot: fetch the server-persisted conversation when the signed-in
-  // user becomes known. We replace the local seeded state with the server
+  // Privacy guard: if the signed-in user changes (sign-out + sign-in as
+  // someone else on the same tab), drop the previous user's in-memory
+  // messages immediately — even while the panel is closed — so nothing can
+  // flash on the next open before the lazy fetch below replaces it.
+  useEffect(() => {
+    if (loadedForUserId !== null && userId !== loadedForUserId) {
+      setMessages([]);
+      setLoadedForUserId(null);
+    }
+  }, [userId, loadedForUserId]);
+
+  // Lazy one-shot: fetch the server-persisted conversation the first time the
+  // panel is actually OPENED for this user — not on mount. The history is
+  // encrypted PHI that the server decrypts per call, and most page views
+  // never open Blanche; fetching it eagerly meant every full page load of
+  // every user paid for a decryption round-trip they never looked at
+  // (2026-10-14 audit). We replace the local seeded state with the server
   // copy so a sign-in on a different browser still picks up history. If the
   // server has nothing (new user) but localStorage had legacy state, we keep
   // the local state — the next POST /api/ai/assistant turn will persist it.
   useEffect(() => {
-    if (!isAuthenticated || !userId) return;
+    if (!isOpen || !isAuthenticated || !userId) return;
     if (loadedForUserId === userId) return;
-    // The user just changed (or this is the first load). Clear any in-memory
-    // state from the previous user before fetching — otherwise their messages
-    // would briefly be visible to the new user while the fetch is in flight.
+    // Clear any in-memory state from a previous user before fetching —
+    // otherwise their messages would briefly be visible to the new user
+    // while the fetch is in flight.
     setMessages([]);
     try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch {}
     let cancelled = false;
@@ -355,7 +368,7 @@ export default function AiBillingAssistant() {
       }
     })();
     return () => { cancelled = true; };
-  }, [isAuthenticated, userId, loadedForUserId]);
+  }, [isOpen, isAuthenticated, userId, loadedForUserId]);
 
   // Focus input when opening
   useEffect(() => {
