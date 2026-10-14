@@ -425,7 +425,7 @@ export default function PayerContractsPage() {
   // ==================== RENDER ====================
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64 space-y-6">
+    <div className="p-6 pt-20 md:pt-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Payer Contracts</h1>

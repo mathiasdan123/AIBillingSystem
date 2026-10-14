@@ -654,7 +654,7 @@ export default function OutcomeMeasures() {
   const displayTemplates = templates.length > 0 ? templates : defaultTemplates;
 
   return (
-    <div className="md:ml-64 p-6">
+    <div className="p-6">
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Outcome Measures</h1>
         <p className="text-muted-foreground mt-1">

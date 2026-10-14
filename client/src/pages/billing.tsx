@@ -313,7 +313,7 @@ export default function Billing() {
   }
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64 max-w-6xl">
+    <div className="p-6 pt-20 md:pt-6 max-w-6xl">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900">Billing & Subscription</h1>
         <p className="text-slate-600">Manage your subscription and payment methods</p>

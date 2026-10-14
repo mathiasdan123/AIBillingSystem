@@ -15,7 +15,7 @@ function Skeleton({
 
 function DashboardSkeleton() {
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
+    <div className="p-6 pt-20 md:pt-6">
       {/* Header */}
       <div className="mb-8">
         <Skeleton className="h-8 w-64 mb-2" />

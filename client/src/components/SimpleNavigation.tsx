@@ -415,6 +415,10 @@ export default function SimpleNavigation() {
   }, [location]);
 
   // ---- Location switcher data ----
+  // Practice locations change rarely (adding an office is an admin action that
+  // invalidates ['/api/locations'] on mutation), so keep the cache warm for a
+  // long time instead of refetching on remounts — part of trimming the
+  // per-page-load request overhead found in the 2026-10-14 audit.
   const { data: practiceLocations = [] } = useQuery<Array<{ id: number; name: string; isMainLocation: boolean }>>({
     queryKey: ['/api/locations'],
     queryFn: async () => {
@@ -422,6 +426,7 @@ export default function SimpleNavigation() {
       if (!res.ok) return [];
       return res.json();
     },
+    staleTime: 15 * 60_000,
   });
   const [selectedLocationId, setSelectedLocationId] = useState<string>('all');
 

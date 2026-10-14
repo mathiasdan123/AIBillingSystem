@@ -243,7 +243,7 @@ export default function TherapistProductivity() {
   );
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>

@@ -291,7 +291,7 @@ export default function MessagesPage() {
   };
 
   return (
-    <div className="md:ml-64 min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="h-screen flex">
         {/* Conversations List */}
         <div

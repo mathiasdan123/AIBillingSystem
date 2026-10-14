@@ -222,7 +222,7 @@ export default function Analytics() {
 
   if (isLoading || statsLoading) {
     return (
-      <div className="p-6 pt-20 md:pt-6 md:ml-64 space-y-6">
+      <div className="p-6 pt-20 md:pt-6 space-y-6">
         <div>
           <div className="h-8 w-56 bg-muted animate-pulse rounded" />
           <div className="h-4 w-80 bg-muted animate-pulse rounded mt-2" />
@@ -296,7 +296,7 @@ export default function Analytics() {
   ];
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64">
+    <div className="p-6 pt-20 md:pt-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Analytics Dashboard</h1>

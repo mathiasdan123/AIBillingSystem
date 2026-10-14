@@ -260,7 +260,20 @@ function Router() {
       <IdleTimeoutWarning />
       <NewVersionBanner />
       <MaintenanceWindowBanner />
-      <main id="main-content">
+      {/*
+       * md:ml-64 — the one place the fixed sidebar's width is compensated for.
+       * SimpleNavigation renders `fixed left-0 w-64` from the md breakpoint up,
+       * so everything routed below must clear those 256px. This used to be each
+       * page's job (a per-page `md:ml-64`), and pages that forgot it (e.g.
+       * /evaluations/:id, /support-tickets) rendered partially UNDER the
+       * sidebar — left edges of cards and buttons were hidden and unclickable
+       * at md+ widths (reported at 1024px in the 2026-10-14 live audit).
+       * Owning the offset here means new pages are correct by default; do NOT
+       * re-add md:ml-64 inside pages (it would double the offset — a source
+       * check in __tests__/layout-offset.test.ts guards this).
+       * print:ml-0 keeps printed reports (e.g. /insights-report) full-width.
+       */}
+      <main id="main-content" className="md:ml-64 print:ml-0">
         <ErrorBoundary>
           <Suspense fallback={<PageLoader />}>
             <Switch>

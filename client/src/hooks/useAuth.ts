@@ -36,10 +36,21 @@ export function useAuth() {
     // "session expired" toast on public pages.
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
-    staleTime: 0, // Always fetch fresh auth state
-    gcTime: 0, // Don't cache auth data
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
+    // One cache entry shared by every useAuth() caller (Router, the sidebar,
+    // and most pages). This used to be staleTime: 0 / gcTime: 0 ("always
+    // fetch fresh auth state"), which made every page-component mount refetch
+    // /api/auth/user — two requests on first load (Router mounts → fetch;
+    // page mounts once loading clears → refetch) and one more on EVERY route
+    // change (2026-10-14 audit). Auth state doesn't need per-navigation
+    // freshness: every flow that changes it already forces a refetch
+    // regardless of staleTime — login/logout and the MFA challenge do a full
+    // page reload, MFA setup invalidates ['/api/auth/user'], and the global
+    // 401/403 handlers in queryClient.ts invalidate + hard-redirect when the
+    // server says the session/MFA window lapsed mid-use.
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    refetchOnMount: true, // refetches only when older than staleTime
+    refetchOnWindowFocus: true, // stale tabs re-validate auth on refocus
   });
 
   // Only authenticated if we have user data (not null) and no error

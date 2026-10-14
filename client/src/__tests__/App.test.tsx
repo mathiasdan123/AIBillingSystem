@@ -84,6 +84,35 @@ describe('App component', () => {
     expect(document.body).toBeTruthy();
   });
 
+  it('offsets the authenticated layout for the fixed sidebar (md:ml-64 on <main>)', async () => {
+    const { useAuth } = await import('@/hooks/useAuth');
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      isAdmin: false,
+      hasFinancialAccess: false,
+      user: { id: '1', email: 'a@b.com' } as any,
+      currentRole: 'therapist' as const,
+      actualRole: 'therapist' as const,
+      needsMfaSetup: false,
+      needsMfaChallenge: false,
+    });
+
+    // Keep every data query pending so page components stay in their initial
+    // state — this test only cares about the layout wrapper.
+    vi.mocked(global.fetch).mockImplementation(() => new Promise(() => {}));
+
+    render(<App />);
+
+    // The sidebar is `fixed w-64` at md+ (SimpleNavigation); the single place
+    // that clears it is the authenticated <main> wrapper. Pages used to carry
+    // their own md:ml-64 and the ones that forgot rendered UNDER the sidebar
+    // (live audit 2026-10-14, /evaluations/:id at 1024px).
+    const main = document.querySelector('main#main-content');
+    expect(main).toBeTruthy();
+    expect(main!.className).toContain('md:ml-64');
+  });
+
   it('gates to the MFA challenge page when enrolled but this session has not verified', async () => {
     const { useAuth } = await import('@/hooks/useAuth');
     vi.mocked(useAuth).mockReturnValue({

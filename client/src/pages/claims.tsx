@@ -1979,7 +1979,7 @@ export default function Claims() {
 
   if (isLoading || claimsLoading) {
     return (
-      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64 space-y-6">
+      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <div className="h-8 w-40 bg-muted animate-pulse rounded" />
@@ -2259,7 +2259,7 @@ export default function Claims() {
   };
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       {isSandboxMode && (
         <Alert variant="destructive" className="mb-4" data-testid="alert-sandbox-mode">
           <ShieldAlert className="h-4 w-4" />

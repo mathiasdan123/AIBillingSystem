@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 
 /**
- * Polls /api/health and compares the deployed git SHA against the SHA that
+ * Polls /api/release and compares the deployed git SHA against the SHA that
  * was baked into this client bundle at build time. Returns true when they
  * differ — i.e. the user is running a stale tab against a newer server.
+ *
+ * Uses /api/release, NOT /api/health: health pings the database and Redis
+ * server-side on every call, which is far too expensive for a per-tab
+ * version probe (the 2026-10-14 audit found this firing on every page load
+ * of every user). /api/release exists for exactly this — it returns the
+ * same `release` field and touches nothing.
  *
  * Caveats:
  *   - Returns false in dev (VITE_RELEASE_SHA is undefined/"unknown") so we
@@ -25,7 +31,7 @@ export function useVersionCheck(intervalMs: number = 5 * 60 * 1000): boolean {
 
     const check = async () => {
       try {
-        const res = await fetch("/api/health", {
+        const res = await fetch("/api/release", {
           credentials: "include",
           cache: "no-store",
         });

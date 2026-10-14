@@ -189,7 +189,7 @@ export default function StediReadiness() {
   }
   if (error) {
     return (
-      <div className="p-6 pt-20 md:pt-6 md:ml-64 max-w-3xl">
+      <div className="p-6 pt-20 md:pt-6 max-w-3xl">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-destructive">
@@ -224,7 +224,7 @@ export default function StediReadiness() {
       : 'not configured';
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64 max-w-5xl space-y-6">
+    <div className="p-6 pt-20 md:pt-6 max-w-5xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Activity className="h-6 w-6" />

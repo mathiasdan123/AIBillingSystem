@@ -53,11 +53,11 @@ export default function CostDashboard() {
   });
 
   if (isLoading) {
-    return <div className="p-6 pt-20 md:pt-6 md:ml-64 text-muted-foreground">Loading cost data…</div>;
+    return <div className="p-6 pt-20 md:pt-6 text-muted-foreground">Loading cost data…</div>;
   }
   if (error || !summary) {
     return (
-      <div className="p-6 pt-20 md:pt-6 md:ml-64">
+      <div className="p-6 pt-20 md:pt-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-destructive">
@@ -81,7 +81,7 @@ export default function CostDashboard() {
   const totalCacheReads = cacheEfficiency.reduce((a, b) => a + b.cacheReadTokens, 0);
 
   return (
-    <div className="p-6 pt-20 md:pt-6 md:ml-64 space-y-6">
+    <div className="p-6 pt-20 md:pt-6 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">AI Cost Dashboard</h1>
         <p className="text-sm text-muted-foreground">

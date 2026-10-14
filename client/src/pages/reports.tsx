@@ -440,7 +440,7 @@ export default function Reports() {
   const statusOptions = reportType === "appointments" ? APPOINTMENT_STATUS_OPTIONS : STATUS_OPTIONS;
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       <div className="mb-6 md:mb-8">
         <div className="flex items-center justify-between">
           <div>

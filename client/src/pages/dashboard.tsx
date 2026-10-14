@@ -86,9 +86,13 @@ export default function Dashboard() {
     },
   });
 
+  // Shares its cache entry with Blanche (AiBillingAssistant) and the
+  // onboarding wizard; the wizard invalidates the key on every step, so a
+  // long staleTime just stops route changes from refetching it.
   const { data: onboardingStatus } = useQuery<{ step: number; completed: boolean }>({
     queryKey: ['/api/onboarding/status'],
     enabled: isAuthenticated,
+    staleTime: 5 * 60_000,
   });
 
   const { data: onboardingChecklist } = useQuery<{ progress: number; completedRequired: number; totalRequired: number }>({
@@ -131,7 +135,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 md:ml-64">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       <div className="mb-6 md:mb-8">
         <h1 className="text-xl md:text-2xl font-bold text-foreground mb-1 md:mb-2">
           {t('dashboard.welcomeBack', { name: user?.firstName || 'User' })}

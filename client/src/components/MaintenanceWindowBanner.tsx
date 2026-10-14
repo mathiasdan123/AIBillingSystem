@@ -51,9 +51,12 @@ function formatCountdown(endsAt: string, nowMs: number): string {
 export default function MaintenanceWindowBanner() {
   const { data: windows } = useQuery<MaintenanceWindow[]>({
     queryKey: ["/api/maintenance-windows/active"],
+    // The 60s poll is the freshness mechanism; staleTime matches it so
+    // remounts and refocus inside a poll window reuse the cached answer
+    // instead of firing an extra request (2026-10-14 audit).
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
-    staleTime: 30_000,
+    staleTime: 60_000,
     retry: false,
   });
 
