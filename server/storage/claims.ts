@@ -41,7 +41,7 @@ import {
   type InsertClaimOutcome,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, or, gte, lte, isNull, inArray, sql, count, sum, ilike } from "drizzle-orm";
+import { eq, desc, and, or, gte, lte, isNull, inArray, sql, count, sum, ilike, type SQL } from "drizzle-orm";
 import { stripImmutable } from "../utils/sanitizeUpdate";
 import { cache, CacheKeys } from "../services/cacheService";
 
@@ -778,25 +778,52 @@ export async function getDeniedClaimsWithDetails(practiceId: number, startDate: 
 
 // ==================== INSURANCE RATES ====================
 
-export async function getInsuranceRates(insuranceProvider?: string): Promise<InsuranceRate[]> {
-  if (insuranceProvider) {
+/**
+ * The practice whose legacy rows predate tenant scoping. insurance_rates had
+ * no practice_id column until the 2026-10 role-gating audit (F1): every row
+ * written before then has practice_id NULL, and all of them were created by
+ * practice 1 — the only real practice that existed. So NULL rows are treated
+ * as practice 1's data, for practice 1 ONLY; every other practice sees and
+ * touches only rows explicitly stamped with its own practice_id.
+ */
+export const LEGACY_INSURANCE_RATES_PRACTICE_ID = 1;
+
+/**
+ * Tenant-scope condition for insurance_rates reads/writes/deletes.
+ * practice 1: own rows OR legacy NULL rows. Everyone else: own rows only.
+ */
+export function insuranceRateScope(practiceId: number): SQL {
+  if (practiceId === LEGACY_INSURANCE_RATES_PRACTICE_ID) {
+    // or() with arguments never returns undefined; the ! narrows drizzle's type.
+    return or(eq(insuranceRates.practiceId, practiceId), isNull(insuranceRates.practiceId))!;
+  }
+  return eq(insuranceRates.practiceId, practiceId);
+}
+
+export async function getInsuranceRates(insuranceProvider?: string, practiceId?: number): Promise<InsuranceRate[]> {
+  const conditions = [];
+  if (insuranceProvider) conditions.push(eq(insuranceRates.insuranceProvider, insuranceProvider));
+  if (practiceId != null) conditions.push(insuranceRateScope(practiceId));
+  if (conditions.length > 0) {
     return await db
       .select()
       .from(insuranceRates)
-      .where(eq(insuranceRates.insuranceProvider, insuranceProvider))
-      .orderBy(insuranceRates.cptCode);
+      .where(and(...conditions))
+      .orderBy(insuranceRates.insuranceProvider, insuranceRates.cptCode);
   }
   return await db.select().from(insuranceRates).orderBy(insuranceRates.insuranceProvider, insuranceRates.cptCode);
 }
 
-export async function getInsuranceRateByCode(insuranceProvider: string, cptCode: string): Promise<InsuranceRate | undefined> {
+export async function getInsuranceRateByCode(insuranceProvider: string, cptCode: string, practiceId?: number): Promise<InsuranceRate | undefined> {
+  const conditions = [
+    eq(insuranceRates.insuranceProvider, insuranceProvider),
+    eq(insuranceRates.cptCode, cptCode),
+  ];
+  if (practiceId != null) conditions.push(insuranceRateScope(practiceId));
   const [rate] = await db
     .select()
     .from(insuranceRates)
-    .where(and(
-      eq(insuranceRates.insuranceProvider, insuranceProvider),
-      eq(insuranceRates.cptCode, cptCode)
-    ));
+    .where(and(...conditions));
   return rate;
 }
 
@@ -814,12 +841,22 @@ export async function updateInsuranceRate(id: number, updates: Partial<InsertIns
   return updated;
 }
 
-export async function deleteInsuranceRate(id: number): Promise<void> {
-  await db.delete(insuranceRates).where(eq(insuranceRates.id, id));
+export async function deleteInsuranceRate(id: number, practiceId?: number): Promise<void> {
+  const condition = practiceId != null
+    ? and(eq(insuranceRates.id, id), insuranceRateScope(practiceId))
+    : eq(insuranceRates.id, id);
+  await db.delete(insuranceRates).where(condition);
 }
 
 export async function upsertInsuranceRate(rate: InsertInsuranceRate): Promise<InsuranceRate> {
-  const existing = await getInsuranceRateByCode(rate.insuranceProvider, rate.cptCode);
+  // Match the existing row within the caller-practice's scope so one
+  // practice's upsert can never overwrite another practice's rate for the
+  // same payer/code pair.
+  const existing = await getInsuranceRateByCode(
+    rate.insuranceProvider,
+    rate.cptCode,
+    rate.practiceId ?? undefined,
+  );
   if (existing) {
     const [updated] = await db
       .update(insuranceRates)
@@ -831,11 +868,13 @@ export async function upsertInsuranceRate(rate: InsertInsuranceRate): Promise<In
   return createInsuranceRate(rate);
 }
 
-export async function getUniqueInsuranceProviders(): Promise<string[]> {
-  const result = await db
+export async function getUniqueInsuranceProviders(practiceId?: number): Promise<string[]> {
+  const base = db
     .selectDistinct({ provider: insuranceRates.insuranceProvider })
-    .from(insuranceRates)
-    .orderBy(insuranceRates.insuranceProvider);
+    .from(insuranceRates);
+  const result = practiceId != null
+    ? await base.where(insuranceRateScope(practiceId)).orderBy(insuranceRates.insuranceProvider)
+    : await base.orderBy(insuranceRates.insuranceProvider);
   return result.map((r: any) => r.provider);
 }
 

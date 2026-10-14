@@ -440,7 +440,8 @@ If a rate is not specified, use null. Be precise with the numbers found in the d
  * Save parsed contract rates to the database
  */
 export async function saveContractRates(
-  parseResult: ContractParseResult
+  parseResult: ContractParseResult,
+  practiceId?: number,
 ): Promise<{ saved: number; errors: string[] }> {
   const errors: string[] = [];
   let saved = 0;
@@ -448,6 +449,9 @@ export async function saveContractRates(
   for (const rate of parseResult.rates) {
     try {
       await storage.upsertInsuranceRate({
+        // Tenant scoping (role-gating audit F1): new rate rows always carry
+        // the caller-practice's id so they are never visible cross-tenant.
+        practiceId: practiceId ?? null,
         insuranceProvider: parseResult.insuranceProvider,
         cptCode: rate.cptCode,
         inNetworkRate: rate.inNetworkRate?.toString() || null,

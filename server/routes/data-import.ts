@@ -23,6 +23,23 @@ import { CONSENT_MAPPINGS } from '../services/consentTypes';
 
 const router = Router();
 
+// Admin check on req.userRole, which isAuthenticated loads from the DB —
+// same source of truth as the practices mcp-settings admin check.
+const isAdmin = (req: any, res: Response, next: () => void) => {
+  if (!req.user?.claims?.sub) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admin role required.' });
+  }
+  next();
+};
+
+// Role-gating audit F13: bulk import creates/overwrites patient records and
+// migrates consents — admin-only (the nav entry was already adminOnly: true;
+// this is the enforcement layer). Applied router-wide at the mount.
+router.use(isAuthenticated, isAdmin);
+
 // ==================== Types ====================
 
 interface UploadedFileData {

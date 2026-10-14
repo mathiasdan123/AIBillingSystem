@@ -6,7 +6,7 @@
  * trading partner IDs for claim submission routing.
  */
 
-import { Router } from 'express';
+import { Router, type Response, type NextFunction } from 'express';
 import { isAuthenticated } from '../replitAuth';
 import { getDb } from '../db';
 import { payerCrosswalk } from '@shared/schema';
@@ -14,6 +14,25 @@ import { eq, ilike, or, desc } from 'drizzle-orm';
 import logger from '../services/logger';
 
 const router = Router();
+
+// Admin check on req.userRole, which isAuthenticated loads from the DB —
+// same source of truth as the practices mcp-settings admin check.
+const isAdmin = (req: any, res: Response, next: NextFunction) => {
+  if (!req.user?.claims?.sub) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admin role required.' });
+  }
+  next();
+};
+
+// Role-gating audit F2: the crosswalk is GLOBAL claim-routing configuration
+// (payer name → clearinghouse trading partner id). Rows carry no practiceId
+// and are not per-practice-shaped — they intentionally apply to every
+// practice's claim routing — so there is nothing to tenant-scope; instead the
+// whole surface is admin-only, matching its /api/admin/* mount.
+router.use(isAuthenticated, isAdmin);
 
 // GET /api/admin/payer-crosswalk - List all crosswalk entries
 router.get('/', isAuthenticated, async (req: any, res) => {

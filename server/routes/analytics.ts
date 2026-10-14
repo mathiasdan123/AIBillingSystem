@@ -381,8 +381,13 @@ router.get('/cancellations/trend', isAuthenticated, async (req: any, res) => {
 
 // ==================== THERAPIST PRODUCTIVITY ====================
 
-// Therapist productivity metrics
-router.get('/therapist-productivity', isAuthenticated, async (req: any, res) => {
+// Therapist productivity metrics.
+// Role-gating audit F5: rows carry totalBilled / totalCollected /
+// averageRevenuePerSession — practice money. Hard-gated to admin/billing
+// (not stripped per-field) to stay consistent with Blanche, whose
+// get_provider_productivity tool is in FINANCIAL_TOOLS and fully withheld
+// from therapists. The nav entry is financial: true to match.
+router.get('/therapist-productivity', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const therapistId = req.query.therapistId as string | undefined;
@@ -625,7 +630,8 @@ router.get('/session-log', isAuthenticated, async (req: any, res) => {
   }
 });
 
-router.get('/therapist-productivity/trends', isAuthenticated, async (req: any, res) => {
+// Role-gating audit F5: same money fields as /therapist-productivity above.
+router.get('/therapist-productivity/trends', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const therapistId = req.query.therapistId as string | undefined;

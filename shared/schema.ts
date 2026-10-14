@@ -1835,6 +1835,13 @@ export const appealsRelations = relations(appeals, ({ one }) => ({
 // Insurance reimbursement rates table
 export const insuranceRates = pgTable("insurance_rates", {
   id: serial("id").primaryKey(),
+  // Tenant scoping (role-gating audit F1). Nullable because the table
+  // predates multi-tenancy: rows with NULL practice_id are legacy data
+  // created when practice 1 was the only real practice, and are treated as
+  // practice 1's (see insuranceRateScope in server/storage/claims.ts).
+  // All NEW writes set practiceId. Additive-only: NOT NULL would break
+  // rolling deploys and legacy rows (see CLAUDE.md migration safety).
+  practiceId: integer("practice_id").references(() => practices.id),
   insuranceProvider: varchar("insurance_provider", { length: 100 }).notNull(),
   cptCode: varchar("cpt_code", { length: 10 }).notNull(),
   inNetworkRate: decimal("in_network_rate", { precision: 8, scale: 2 }),

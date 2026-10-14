@@ -14,7 +14,7 @@
  * isActive override applied if any.
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Response, type NextFunction } from 'express';
 import { eq, and, or, isNull, sql } from 'drizzle-orm';
 import { isAuthenticated } from '../replitAuth';
 import { db, dbReady } from '../db';
@@ -22,6 +22,21 @@ import { soapInterventionTemplates } from '@shared/schema';
 import logger from '../services/logger';
 
 const router = Router();
+
+// Role-gating audit F15: the template library is practice-level
+// configuration — editing it is an admin action. GET stays open to every
+// authenticated role because the SOAP form's activity picker needs it.
+// Admin check on req.userRole, which isAuthenticated loads from the DB —
+// same source of truth as the practices mcp-settings admin check.
+const isAdmin = (req: any, res: Response, next: NextFunction) => {
+  if (!req.user?.claims?.sub) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admin role required.' });
+  }
+  next();
+};
 
 const getAuthorizedPracticeId = (req: any): number => {
   if (req.authorizedPracticeId) return req.authorizedPracticeId;
@@ -132,7 +147,7 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
  * Passing isActive:false with the same category+name as a system default
  * creates the "shadow" row that hides that default for this practice.
  */
-router.post('/', isAuthenticated, async (req: any, res: Response) => {
+router.post('/', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
@@ -164,7 +179,7 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
  * practice doesn't use; the practice creates a "shadow" row first via
  * POST with the same name and then disables it).
  */
-router.patch('/:id', isAuthenticated, async (req: any, res: Response) => {
+router.patch('/:id', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
@@ -203,7 +218,7 @@ router.patch('/:id', isAuthenticated, async (req: any, res: Response) => {
 });
 
 /** DELETE /:id — only practice-owned rows. System defaults can't be deleted. */
-router.delete('/:id', isAuthenticated, async (req: any, res: Response) => {
+router.delete('/:id', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);

@@ -31,9 +31,35 @@ import {
   patientConsents,
 } from '@shared/schema';
 import { eq, and, gte, lte, sql, count, sum, avg, desc } from 'drizzle-orm';
+import { FINANCIAL_ROLES } from '../middleware/financial-access';
 import logger from '../services/logger';
 
 const router = Router();
+
+/**
+ * Role-gating audit F4: report types whose output is practice money —
+ * claim charges/paid amounts, payment revenue, payer collection rates.
+ * These run only for admin/billing; the clinical/operational/compliance/
+ * patients/appointments report types stay available to therapists (the
+ * report builder page is not nav-hidden from them).
+ */
+const FINANCIAL_REPORT_TYPES = new Set(['claims', 'revenue', 'payer_performance']);
+
+/**
+ * Returns true (and sends the 403) when the caller's role may not run this
+ * report type. Mirrors requireFinancialRole, but per report type rather than
+ * per route, because generate/run/export serve both money and clinical types.
+ */
+async function deniedFinancialReport(req: any, res: any, reportType: string | undefined): Promise<boolean> {
+  if (!reportType || !FINANCIAL_REPORT_TYPES.has(reportType)) return false;
+  const userId = req.user?.claims?.sub;
+  const user = userId ? await storage.getUser(userId) : undefined;
+  if (user && FINANCIAL_ROLES.includes(user.role as any)) return false;
+  res.status(403).json({
+    message: 'Access denied. Admin or billing role required for financial reports.',
+  });
+  return true;
+}
 
 // Helper to get authorized practiceId from request
 const getAuthorizedPracticeId = (req: any): number => {
@@ -119,6 +145,7 @@ router.post('/generate', isAuthenticated, async (req: any, res) => {
     if (!reportType) {
       return res.status(400).json({ message: 'Report type is required' });
     }
+    if (await deniedFinancialReport(req, res, reportType)) return;
 
     const { startDate, endDate } = parseDateRange(filters);
     let result: { data: any[]; summary: any; chartData: any[] };
@@ -253,6 +280,7 @@ router.get('/saved/:id/run', isAuthenticated, async (req: any, res) => {
     if (!report) {
       return res.status(404).json({ message: 'Report not found' });
     }
+    if (await deniedFinancialReport(req, res, report.reportType)) return;
 
     const { startDate, endDate } = parseDateRange(report.filters);
     let result: { data: any[]; summary: any; chartData: any[] };
@@ -311,6 +339,7 @@ router.get('/export/:format', isAuthenticated, async (req: any, res) => {
     if (!reportType) {
       return res.status(400).json({ message: 'Report type is required' });
     }
+    if (await deniedFinancialReport(req, res, reportType)) return;
 
     let filters: any = {};
     if (filtersJson) {

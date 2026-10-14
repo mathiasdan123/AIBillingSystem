@@ -381,13 +381,20 @@ router.post('/ai/progress-report', isAuthenticated, async (req: any, res) => {
     const { generateProgressReport } = await import('../services/progressReportService');
     const { storage } = await import('../storage');
     const user = await storage.getUser(req.user.claims.sub);
+    // Role-gating audit F18: practiceId is REQUIRED. A caller with no
+    // practice must not be able to pull any patient's signed notes — with
+    // practiceId undefined the service used to skip its tenant check and
+    // summarize cross-practice PHI by patientId alone.
+    if (!user?.practiceId) {
+      return res.status(403).json({ error: 'User not assigned to a practice' });
+    }
     const { patientId, from, to } = req.body ?? {};
     if (!patientId || !from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       return res.status(400).json({ error: 'patientId, from and to (YYYY-MM-DD) are required' });
     }
     const result = await generateProgressReport({
       patientId,
-      practiceId: user?.practiceId ?? undefined,
+      practiceId: user.practiceId,
       from: String(from),
       to: String(to),
     });
