@@ -10,7 +10,7 @@ import {
   authRouter, analyticsRouter, soapNotesRouter, soapDraftsRouter, patientsRouter, claimsRouter,
   appointmentsRouter, payerContractsRouter, remittanceRouter, ssoRouter,
   treatmentPlansRouter, evaluationsRouter, locationsRouter, aiInsightsRouter, customReportsRouter, cannedReportsRouter,
-  exportRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
+  exportRouter, expensesRouter, onboardingRouter, practicesRouter, billingRouter, telehealthRouter,
   messagesRouter, surveysRouter, waitlistRouter, appealsRouter, adminRouter, claimStatusReaperRouter, costDashboardRouter,
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter, aiAppealDebugRouter,
@@ -220,6 +220,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // gate exists to hide — but were never added to this block.
   app.use('/api/daily-report', requireFinancialRole);
   app.use('/api/practice-analytics', requireFinancialRole);
+  // Gaps found by the 2026-10 role-gating audit (F1, F6-F9, F11 + expenses):
+  // contracted rates, statements, billing worklists, payment plans and
+  // reimbursement analysis are all practice financials, but none of these
+  // prefixes were in this block.
+  app.use('/api/insurance-rates', requireFinancialRole);     // F1 — fee schedule CRUD
+  app.use('/api/reimbursement', requireFinancialRole);       // F11 — payer rate summaries
+  app.use('/api/benchmarking', requireFinancialRole);        // F6 — revenue/collection benchmarks
+  app.use('/api/patient-statements', requireFinancialRole);  // F7 — balances + dunning
+  app.use('/api/billing-tasks', requireFinancialRole);       // F8 — denial/underpayment worklist
+  app.use('/api/billing-documents', requireFinancialRole);   // F8 — appeal letters / fax covers
+  app.use('/api/claim-corrections', requireFinancialRole);   // F8 — claim fix analysis
+  app.use('/api/follow-ups', requireFinancialRole);          // F8 — claim follow-up queue
+  app.use('/api/payment-plans', requireFinancialRole);       // F9 — patient payment plans
+  app.use('/api/installments', requireFinancialRole);        // F9 — installment schedule/pay
+  app.use('/api/payment-settings', requireFinancialRole);    // F9 — Stripe/payment config
+  app.use('/api/expenses', requireFinancialRole);            // practice expenses (new route)
 
   // Auth routes: /api/auth/*, /api/users/*, /api/mfa/*, /api/invites/*, /api/therapists/*
   app.use('/api', authRouter);
@@ -270,6 +286,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/onboarding', onboardingRouter);
   // Data Export routes: /api/export/*
   app.use('/api/export', exportRouter);
+  // Expense routes: /api/expenses/* (financial-gated above)
+  app.use('/api/expenses', expensesRouter);
   // Practice management routes: /api/practices/*
   app.use('/api/practices', practicesRouter);
   // Billing routes: /api/billing/*, /api/webhooks/stripe

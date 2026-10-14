@@ -10,9 +10,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   FINANCIAL_TOOLS,
+  ADMIN_TOOLS,
+  ADMIN_OR_BILLING_TOOLS,
   canUseFinancialTools,
+  canUseAdminTools,
   canUseTool,
   financialToolDenial,
+  toolDenial,
   redactRateFields,
   toolsForRole,
 } from '../services/assistantToolAccess';
@@ -76,6 +80,78 @@ describe('assistant financial-tool access', () => {
     expect(denial).toMatch(/do not estimate or infer/i);
     expect(denial).toMatch(/admin and billing roles/i);
     expect(denial).toMatch(/admin or biller can answer/i);
+  });
+});
+
+describe('admin-only tools (role-gating audit)', () => {
+  const DEMO_TOOLS = [
+    'enable_demo_mode',
+    'clear_demo_data',
+    'mark_patients_as_demo',
+    'unmark_demo_patients',
+  ];
+
+  it('demo-data tools are admin-only — billing and therapist are refused', () => {
+    for (const tool of DEMO_TOOLS) {
+      expect(ADMIN_TOOLS.has(tool), tool).toBe(true);
+      expect(canUseTool(tool, 'admin'), tool).toBe(true);
+      expect(canUseTool(tool, 'billing'), tool).toBe(false);
+      expect(canUseTool(tool, 'therapist'), tool).toBe(false);
+      expect(canUseTool(tool, undefined), tool).toBe(false);
+    }
+  });
+
+  it('update_notification_template matches the isAdminOrBilling HTTP gate', () => {
+    expect(ADMIN_OR_BILLING_TOOLS.has('update_notification_template')).toBe(true);
+    expect(canUseTool('update_notification_template', 'admin')).toBe(true);
+    expect(canUseTool('update_notification_template', 'billing')).toBe(true);
+    expect(canUseTool('update_notification_template', 'therapist')).toBe(false);
+  });
+
+  it('canUseAdminTools is admin-only, case-insensitive, fail closed', () => {
+    expect(canUseAdminTools('admin')).toBe(true);
+    expect(canUseAdminTools('ADMIN')).toBe(true);
+    expect(canUseAdminTools('billing')).toBe(false);
+    expect(canUseAdminTools(undefined)).toBe(false);
+    expect(canUseAdminTools(null)).toBe(false);
+  });
+
+  it('denials name who can act, and never leak through financial wording', () => {
+    const adminDenial = toolDenial('enable_demo_mode');
+    expect(JSON.parse(adminDenial).error).toBe('not_permitted_for_role');
+    expect(adminDenial).toMatch(/practice admin/i);
+
+    const configDenial = toolDenial('update_notification_template');
+    expect(JSON.parse(configDenial).error).toBe('not_permitted_for_role');
+    expect(configDenial).toMatch(/admin or biller/i);
+
+    // Financial tools keep the original wording.
+    expect(toolDenial('get_ar_aging')).toBe(financialToolDenial('get_ar_aging'));
+  });
+
+  it('toolsForRole hides admin tools from billing and everything gated from a therapist', () => {
+    const tools = [
+      { name: 'search_patients' },
+      { name: 'enable_demo_mode' },
+      { name: 'update_notification_template' },
+      { name: 'get_ar_aging', cache_control: { type: 'ephemeral' } },
+    ];
+
+    expect(toolsForRole(tools, 'admin').map((t) => t.name)).toEqual([
+      'search_patients', 'enable_demo_mode', 'update_notification_template', 'get_ar_aging',
+    ]);
+
+    const billing = toolsForRole(tools, 'billing');
+    expect(billing.map((t) => t.name)).toEqual([
+      'search_patients', 'update_notification_template', 'get_ar_aging',
+    ]);
+    // Cache breakpoint stays on exactly the last offered tool.
+    expect(billing.filter((t: any) => t.cache_control)).toHaveLength(1);
+    expect((billing[billing.length - 1] as any).cache_control).toEqual({ type: 'ephemeral' });
+
+    const therapist = toolsForRole(tools, 'therapist');
+    expect(therapist.map((t) => t.name)).toEqual(['search_patients']);
+    expect((therapist[therapist.length - 1] as any).cache_control).toEqual({ type: 'ephemeral' });
   });
 });
 

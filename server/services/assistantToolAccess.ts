@@ -67,12 +67,41 @@ export const RATE_FIELDS_BY_TOOL: Readonly<Record<string, readonly string[]>> = 
   list_cpt_codes: ['baseRate'],
 };
 
+/**
+ * Tools that create, tag or destroy demo data practice-wide. These mirror
+ * admin-only HTTP surfaces (practice provisioning / data hygiene): a
+ * therapist must not be able to seed fake patients into the practice or
+ * wipe records by asking Blanche (role-gating audit).
+ */
+export const ADMIN_TOOLS: ReadonlySet<string> = new Set([
+  'enable_demo_mode',
+  'clear_demo_data',
+  'mark_patients_as_demo',
+  'unmark_demo_patients',
+]);
+
+/**
+ * Tools that change practice-level configuration admins and billers share.
+ * update_notification_template mirrors the /api/notification-templates
+ * routes, which are isAdminOrBilling — same roles as FINANCIAL_ROLES, but
+ * kept as its own set because the denial wording differs (config, not money).
+ */
+export const ADMIN_OR_BILLING_TOOLS: ReadonlySet<string> = new Set([
+  'update_notification_template',
+]);
+
 export function canUseFinancialTools(role?: string | null): boolean {
   return FINANCIAL_ROLES.includes((role ?? '').toLowerCase());
 }
 
+export function canUseAdminTools(role?: string | null): boolean {
+  return (role ?? '').toLowerCase() === 'admin';
+}
+
 /** True if this role may call this tool. Fail closed: an unknown role gets the clinical set. */
 export function canUseTool(toolName: string, role?: string | null): boolean {
+  if (ADMIN_TOOLS.has(toolName)) return canUseAdminTools(role);
+  if (ADMIN_OR_BILLING_TOOLS.has(toolName)) return canUseFinancialTools(role);
   return !FINANCIAL_TOOLS.has(toolName) || canUseFinancialTools(role);
 }
 
@@ -88,6 +117,33 @@ export function financialToolDenial(toolName: string): string {
       'Billing rates, claim charges, revenue and A/R are visible to admin and billing roles. ' +
       'Tell the user their practice admin or biller can answer this, and do not estimate or infer the figures.',
   });
+}
+
+/**
+ * Role-appropriate denial for any blocked tool. Same phrasing contract as
+ * financialToolDenial: never imply the user did something wrong, point at
+ * the person who can do it.
+ */
+export function toolDenial(toolName: string): string {
+  if (ADMIN_TOOLS.has(toolName)) {
+    return JSON.stringify({
+      error: 'not_permitted_for_role',
+      message:
+        `This account cannot run practice-admin actions, so ${toolName} is unavailable. ` +
+        'Demo-data setup and cleanup are reserved for the practice admin. ' +
+        'Tell the user their practice admin can do this, and do not attempt it another way.',
+    });
+  }
+  if (ADMIN_OR_BILLING_TOOLS.has(toolName)) {
+    return JSON.stringify({
+      error: 'not_permitted_for_role',
+      message:
+        `This account cannot change practice-level configuration, so ${toolName} is unavailable. ` +
+        'Notification templates are managed by admin and billing roles. ' +
+        'Tell the user their practice admin or biller can make this change.',
+    });
+  }
+  return financialToolDenial(toolName);
 }
 
 /**
@@ -135,9 +191,12 @@ export function toolsForRole<T extends { name: string; cache_control?: unknown }
   tools: readonly T[],
   role?: string | null
 ): T[] {
-  if (canUseFinancialTools(role)) return tools as T[];
+  // Admins see everything; billing sees everything except the admin-only
+  // tools; everyone else additionally loses the financial set.
+  if (canUseAdminTools(role)) return tools as T[];
 
-  const allowed = tools.filter((t) => !FINANCIAL_TOOLS.has(t.name));
+  const allowed = tools.filter((t) => canUseTool(t.name, role));
+  if (canUseFinancialTools(role) && allowed.length === tools.length) return tools as T[];
   if (allowed.length === 0) return allowed;
 
   return allowed.map((tool, i) => {

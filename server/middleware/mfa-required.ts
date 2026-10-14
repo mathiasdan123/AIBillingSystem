@@ -84,6 +84,9 @@ const PHI_ROUTE_PATTERNS = [
   // Progress Notes: per-goal clinical commentary, present-level narrative —
   // PHI on par with soap-notes/evaluations.
   /^\/api\/progress-notes/,
+  // PDMS-2 structured assessments: per-child motor scores, clinical notes
+  // and AI narratives — PHI on par with evaluations (role-gating audit).
+  /^\/api\/pdms2-assessments/,
 ];
 
 // Export route patterns require MFA
@@ -108,6 +111,10 @@ const ADMIN_ROUTE_PATTERNS = [
   /^\/api\/baa/,
   /^\/api\/breach/,
   /^\/api\/hard-delete/,
+  // Support ticket admin queue: tickets can quote PHI and the queue is an
+  // admin surface, but it lives at /api/support/reports rather than
+  // /api/admin/* so the first pattern never matched it (role-gating audit).
+  /^\/api\/support\/reports/,
 ];
 
 /**

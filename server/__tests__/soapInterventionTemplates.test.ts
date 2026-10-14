@@ -250,4 +250,29 @@ describe('SOAP Intervention Templates Routes', () => {
       expect(mockDb.delete).not.toHaveBeenCalled();
     });
   });
+
+  // Role-gating audit F15: POST/PATCH/DELETE are admin-only; GET stays open
+  // because the SOAP form's activity picker needs the library.
+  describe('therapist role gating (F15)', () => {
+    it('therapist gets 403 on every write', async () => {
+      currentUserRole = 'therapist';
+      const app = buildApp();
+
+      expect((await request(app).post('/api/soap-intervention-templates').send({ category: 'ADLs', name: 'X' })).status).toBe(403);
+      expect((await request(app).patch('/api/soap-intervention-templates/1').send({ name: 'Y' })).status).toBe(403);
+      expect((await request(app).delete('/api/soap-intervention-templates/1')).status).toBe(403);
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockDb.delete).not.toHaveBeenCalled();
+      currentUserRole = 'admin';
+    });
+
+    it('therapist can still GET the library', async () => {
+      currentUserRole = 'therapist';
+      dbState.selectResult = [];
+      const res = await request(buildApp()).get('/api/soap-intervention-templates');
+      expect(res.status).toBe(200);
+      currentUserRole = 'admin';
+    });
+  });
 });

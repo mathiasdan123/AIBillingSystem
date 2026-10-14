@@ -145,6 +145,12 @@ router.patch('/:id', isAuthenticated, async (req: any, res) => {
     if (isNaN(practiceId)) {
       return res.status(400).json({ message: 'Invalid practice ID' });
     }
+    // Role-gating audit F12: practice identity/config (name, NPI, taxId,
+    // license dates...) is admin-owned — same check the mcp-settings route
+    // below uses. PROTECTED_PRACTICE_FIELDS stays as a second layer on top.
+    if (req.userRole !== 'admin') {
+      return res.status(403).json({ message: 'Access denied. Admin role required.' });
+    }
     // Tenant isolation: a user may only edit their OWN practice. Fail closed
     // when practice context is missing.
     if (!req.userPracticeId || req.userPracticeId !== practiceId) {

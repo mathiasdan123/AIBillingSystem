@@ -257,6 +257,13 @@ router.post('/setup/make-admin', isAuthenticated, async (req: any, res) => {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
+    // Role-gating audit F16: this endpoint exists for TRUE bootstrap only —
+    // the very first user of a fresh install promoting themselves. It must
+    // refuse the moment any admin exists anywhere (global check), and —
+    // defense in depth should the global check ever be relaxed for
+    // multi-tenant installs — the moment the caller's own practice already
+    // has an admin.
+    const caller = await storage.getUser(userId);
     const allUsers = await storage.getAllUsers();
     const existingAdmin = allUsers.find(u => u.role === 'admin');
 
@@ -266,7 +273,24 @@ router.post('/setup/make-admin', isAuthenticated, async (req: any, res) => {
       });
     }
 
+    const practiceAdmin = caller?.practiceId
+      ? allUsers.find(u => u.role === 'admin' && u.practiceId === caller.practiceId)
+      : undefined;
+    if (practiceAdmin) {
+      return res.status(400).json({
+        message: "An admin already exists. Use the User Management settings to change roles."
+      });
+    }
+
     const updatedUser = await storage.updateUserRole(userId, 'admin');
+    // Loud by design: self-promotion to admin is a bootstrap-only event, and
+    // any occurrence outside first-run setup is a security signal.
+    logger.warn('SECURITY: /api/setup/make-admin used — user self-promoted to admin (bootstrap)', {
+      userId,
+      email: updatedUser?.email,
+      practiceId: caller?.practiceId ?? null,
+      ip: req.ip,
+    });
     res.json({
       message: "You are now an admin!",
       user: {
@@ -641,6 +665,19 @@ router.patch('/therapists/:id', isAuthenticated, async (req: any, res) => {
 
     if (therapistId !== currentUserId && userRole !== 'admin') {
       return res.status(403).json({ message: "Can only edit your own profile" });
+    }
+
+    // Role-gating audit F17: an admin may only edit therapists in their OWN
+    // practice (platform admins excepted). Without this, any practice admin
+    // could rewrite another practice's provider credentials/NPI/signature.
+    if (therapistId !== currentUserId && !req.isPlatformAdmin) {
+      const target = await storage.getUser(therapistId);
+      if (!target) {
+        return res.status(404).json({ message: "Therapist not found" });
+      }
+      if (!req.userPracticeId || target.practiceId !== req.userPracticeId) {
+        return res.status(403).json({ message: "Cannot edit a therapist in another practice" });
+      }
     }
 
     const { credentials, licenseNumber, licenseExpirationDate, npiNumber, taxonomyCode, digitalSignature } = req.body;

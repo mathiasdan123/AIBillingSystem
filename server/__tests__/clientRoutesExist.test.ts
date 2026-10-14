@@ -206,7 +206,6 @@ describe('every client API call has a server route', () => {
     // via the prefix rule (server route is .../me; the client omits /me). The
     // matcher cannot see wrong-suffix bugs — only wholly missing routes.
     const KNOWN_MISSING = new Set<string>([
-      '/api/expenses',                    // ExpenseTracker component — no expenses route anywhere
       '/api/eligibility-checks',          // analytics page still calls the endpoint retired with the dead Stedi paths
       '/api/patient-portal/notification-preferences', // portal profile — route never existed
       '/api/patients/*/assessments/trends', // outcome-measures page; server has /api/surveys/patient/:id/history

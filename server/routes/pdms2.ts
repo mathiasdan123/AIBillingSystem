@@ -24,17 +24,42 @@ import logger from "../services/logger";
 
 const router = Router();
 
-// Same authorization helper pattern as the clinical router.
+/**
+ * Thrown when the request carries no usable practice context — mapped to a
+ * 400 in every route's catch (never a silent fallback).
+ */
+class PracticeContextError extends Error {}
+
+// Same authorization helper pattern as the clinical router, EXCEPT the
+// platform-admin fallback: the shared copies end that branch with
+// `|| 1`, which silently reads practice 1's PHI when a platform admin has
+// no practice and names none. Role-gating audit: new code fails with a 400
+// instead. (The older copies of this helper are a follow-up sweep.)
 const getAuthorizedPracticeId = (req: any): number => {
   if (req.authorizedPracticeId) return req.authorizedPracticeId;
   const userPracticeId = req.userPracticeId;
   const userRole = req.userRole;
   const requestedPracticeId = req.query.practiceId ? parseInt(req.query.practiceId as string) : undefined;
-  if (userRole === 'admin' && req.isPlatformAdmin) return requestedPracticeId || userPracticeId || 1;
-  if (!userPracticeId) throw new Error('User not assigned to a practice.');
+  if (userRole === 'admin' && req.isPlatformAdmin) {
+    const resolved = requestedPracticeId || userPracticeId;
+    if (!resolved) {
+      throw new PracticeContextError('practiceId is required: specify ?practiceId=<id>.');
+    }
+    return resolved;
+  }
+  if (!userPracticeId) throw new PracticeContextError('User not assigned to a practice.');
   if (requestedPracticeId && requestedPracticeId !== userPracticeId) return userPracticeId;
   return requestedPracticeId || userPracticeId;
 };
+
+/** Map a PracticeContextError to a 400; returns true when handled. */
+function handlePracticeContextError(error: unknown, res: any): boolean {
+  if (error instanceof PracticeContextError) {
+    res.status(400).json({ message: error.message });
+    return true;
+  }
+  return false;
+}
 
 const quotientSchema = z.number().int().min(1).max(200).nullable().optional();
 
@@ -79,6 +104,7 @@ router.get("/pdms2-assessments", isAuthenticated, async (req: any, res) => {
     const assessments = await storage.getPdms2AssessmentsForPatient(patientId, practiceId);
     res.json(assessments);
   } catch (error) {
+    if (handlePracticeContextError(error, res)) return;
     logger.error("Error fetching PDMS-2 assessments", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch PDMS-2 assessments" });
   }
@@ -90,6 +116,7 @@ router.get("/pdms2-assessments/:id", isAuthenticated, async (req: any, res) => {
     if (!assessment) return;
     res.json(assessment);
   } catch (error) {
+    if (handlePracticeContextError(error, res)) return;
     logger.error("Error fetching PDMS-2 assessment", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch PDMS-2 assessment" });
   }
@@ -136,6 +163,7 @@ router.post("/pdms2-assessments", isAuthenticated, async (req: any, res) => {
     });
     res.status(201).json(assessment);
   } catch (error) {
+    if (handlePracticeContextError(error, res)) return;
     logger.error("Error creating PDMS-2 assessment", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to create PDMS-2 assessment" });
   }
@@ -170,6 +198,7 @@ router.patch("/pdms2-assessments/:id", isAuthenticated, async (req: any, res) =>
     const updated = await storage.updatePdms2Assessment(assessment.id, updates as any);
     res.json(updated);
   } catch (error) {
+    if (handlePracticeContextError(error, res)) return;
     logger.error("Error updating PDMS-2 assessment", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to update PDMS-2 assessment" });
   }
@@ -187,6 +216,7 @@ router.post("/pdms2-assessments/:id/narrative", isAuthenticated, async (req: any
     // Returned as a DRAFT only — the therapist edits and saves it via PATCH.
     res.json(result);
   } catch (error: any) {
+    if (handlePracticeContextError(error, res)) return;
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("unavailable") || msg.includes("not configured") || msg.includes("disabled")) {
       return res.status(503).json({ message: "Narrative generation is unavailable right now." });

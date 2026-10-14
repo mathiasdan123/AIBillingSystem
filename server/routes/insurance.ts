@@ -226,11 +226,18 @@ router.post('/insurances', isAuthenticated, requireFinancialRole, async (req: an
 });
 
 // ==================== INSURANCE RATES / FEE SCHEDULES ====================
+// Role-gating audit F1: contracted rates are practice financials —
+// requireFinancialRole on every route (defense in depth; routes.ts also
+// gates the /api/insurance-rates prefix), and every read/write is scoped to
+// the caller's practice. Legacy rows with NULL practice_id are visible to
+// practice 1 only (they were created when it was the only real practice —
+// see insuranceRateScope in server/storage/claims.ts).
 
-router.get('/insurance-rates', isAuthenticated, async (req: any, res) => {
+router.get('/insurance-rates', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
+    const practiceId = getAuthorizedPracticeId(req);
     const { provider } = req.query;
-    const rates = await storage.getInsuranceRates(provider);
+    const rates = await storage.getInsuranceRates(provider, practiceId);
     res.json(rates);
   } catch (error) {
     logger.error('Error fetching insurance rates', { error: error instanceof Error ? error.message : String(error) });
@@ -238,9 +245,10 @@ router.get('/insurance-rates', isAuthenticated, async (req: any, res) => {
   }
 });
 
-router.get('/insurance-rates/providers', isAuthenticated, async (req: any, res) => {
+router.get('/insurance-rates/providers', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
-    const providers = await storage.getUniqueInsuranceProviders();
+    const practiceId = getAuthorizedPracticeId(req);
+    const providers = await storage.getUniqueInsuranceProviders(practiceId);
     res.json(providers);
   } catch (error) {
     logger.error('Error fetching providers', { error: error instanceof Error ? error.message : String(error) });
@@ -248,9 +256,12 @@ router.get('/insurance-rates/providers', isAuthenticated, async (req: any, res) 
   }
 });
 
-router.post('/insurance-rates', isAuthenticated, async (req: any, res) => {
+router.post('/insurance-rates', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
-    const rate = await storage.upsertInsuranceRate(req.body);
+    const practiceId = getAuthorizedPracticeId(req);
+    // New writes always carry the caller-practice's id — the client cannot
+    // stamp a rate onto another practice.
+    const rate = await storage.upsertInsuranceRate({ ...req.body, practiceId });
     res.json(rate);
   } catch (error) {
     logger.error('Error saving insurance rate', { error: error instanceof Error ? error.message : String(error) });
@@ -258,9 +269,10 @@ router.post('/insurance-rates', isAuthenticated, async (req: any, res) => {
   }
 });
 
-router.delete('/insurance-rates/:id', isAuthenticated, async (req: any, res) => {
+router.delete('/insurance-rates/:id', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
-    await storage.deleteInsuranceRate(parseInt(req.params.id));
+    const practiceId = getAuthorizedPracticeId(req);
+    await storage.deleteInsuranceRate(parseInt(req.params.id), practiceId);
     res.json({ success: true });
   } catch (error) {
     logger.error('Error deleting insurance rate', { error: error instanceof Error ? error.message : String(error) });
@@ -268,7 +280,7 @@ router.delete('/insurance-rates/:id', isAuthenticated, async (req: any, res) => 
   }
 });
 
-router.post('/insurance-rates/extract-text', uploadLimiter, isAuthenticated, upload.single('file'), createFileValidator(FileValidationContexts.INSURANCE_CONTRACT), async (req: any, res) => {
+router.post('/insurance-rates/extract-text', uploadLimiter, isAuthenticated, requireFinancialRole, upload.single('file'), createFileValidator(FileValidationContexts.INSURANCE_CONTRACT), async (req: any, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
@@ -303,7 +315,7 @@ router.post('/insurance-rates/extract-text', uploadLimiter, isAuthenticated, upl
   }
 });
 
-router.post('/insurance-rates/parse-contract', isAuthenticated, async (req: any, res) => {
+router.post('/insurance-rates/parse-contract', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const { contractText, insuranceProvider } = req.body;
     if (!contractText || !insuranceProvider) {
@@ -317,9 +329,10 @@ router.post('/insurance-rates/parse-contract', isAuthenticated, async (req: any,
   }
 });
 
-router.post('/insurance-rates/save-parsed', isAuthenticated, async (req: any, res) => {
+router.post('/insurance-rates/save-parsed', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
-    const result = await saveContractRates(req.body);
+    const practiceId = getAuthorizedPracticeId(req);
+    const result = await saveContractRates(req.body, practiceId);
     res.json(result);
   } catch (error) {
     logger.error('Error saving parsed rates', { error: error instanceof Error ? error.message : String(error) });

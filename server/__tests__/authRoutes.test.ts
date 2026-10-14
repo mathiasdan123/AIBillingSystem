@@ -725,3 +725,113 @@ describe('auth routes (server/routes/auth.ts)', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Role-gating audit additions (F16 + F17)
+// ---------------------------------------------------------------------------
+import logger from '../services/logger';
+
+describe('role-gating audit — auth routes', () => {
+  let app: Express;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authenticatedUserId = 'admin-user-1';
+    authenticatedUserRole = 'admin';
+    app = buildApp();
+  });
+
+  describe('POST /api/setup/make-admin (F16 — true bootstrap only)', () => {
+    it('refuses when ANY admin exists anywhere (global check kept)', async () => {
+      mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', practiceId: 1, role: 'therapist' });
+      mockStorage.getAllUsers.mockResolvedValue([
+        { id: 'other-admin', email: 'boss@elsewhere.com', role: 'admin', practiceId: 42 },
+      ]);
+
+      const res = await request(app).post('/api/setup/make-admin').expect(400);
+      expect(res.body.message).toMatch(/admin already exists/i);
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the caller's own practice already has an admin", async () => {
+      mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', practiceId: 1, role: 'therapist' });
+      mockStorage.getAllUsers.mockResolvedValue([
+        { id: 'practice-admin', email: 'owner@practice1.com', role: 'admin', practiceId: 1 },
+      ]);
+
+      const res = await request(app).post('/api/setup/make-admin').expect(400);
+      expect(res.body.message).toMatch(/admin already exists/i);
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it('logs loudly when the bootstrap path is actually used', async () => {
+      mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', practiceId: 1, role: 'therapist' });
+      mockStorage.getAllUsers.mockResolvedValue([
+        { id: 'admin-user-1', email: 'me@example.com', role: 'therapist', practiceId: 1 },
+      ]);
+      mockStorage.updateUserRole.mockResolvedValue({ id: 'admin-user-1', email: 'me@example.com', role: 'admin' });
+
+      await request(app).post('/api/setup/make-admin').expect(200);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/make-admin/i),
+        expect.objectContaining({ userId: 'admin-user-1' }),
+      );
+    });
+  });
+
+  describe('PATCH /api/therapists/:id (F17 — tenant scope on the admin branch)', () => {
+    const TARGET_SAME = { id: 'ther-1', practiceId: 1, email: 't1@p1.com', firstName: 'T', lastName: 'One' };
+    const TARGET_OTHER = { id: 'ther-9', practiceId: 2, email: 't9@p2.com', firstName: 'T', lastName: 'Nine' };
+
+    it('refuses an admin editing a therapist in ANOTHER practice', async () => {
+      mockStorage.getUser.mockResolvedValue(TARGET_OTHER);
+
+      const res = await request(app)
+        .patch('/api/therapists/ther-9')
+        .send({ npiNumber: '1234567890' })
+        .expect(403);
+
+      expect(res.body.message).toMatch(/another practice/i);
+      expect(mockStorage.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('404s rather than updating when the target does not exist', async () => {
+      mockStorage.getUser.mockResolvedValue(undefined);
+
+      await request(app)
+        .patch('/api/therapists/ghost')
+        .send({ npiNumber: '1234567890' })
+        .expect(404);
+
+      expect(mockStorage.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin edit a therapist in their OWN practice', async () => {
+      mockStorage.getUser.mockResolvedValue(TARGET_SAME);
+      mockStorage.updateUser.mockResolvedValue({ ...TARGET_SAME, npiNumber: '1234567890' });
+
+      const res = await request(app)
+        .patch('/api/therapists/ther-1')
+        .send({ npiNumber: '1234567890' })
+        .expect(200);
+
+      expect(res.body.npiNumber).toBe('1234567890');
+      expect(mockStorage.updateUser).toHaveBeenCalledWith('ther-1', expect.objectContaining({ npiNumber: '1234567890' }));
+    });
+
+    it('still lets a therapist edit their own profile (no admin needed)', async () => {
+      authenticatedUserId = 'ther-1';
+      authenticatedUserRole = 'therapist';
+      app = buildApp();
+      mockStorage.updateUser.mockResolvedValue({ ...TARGET_SAME, credentials: 'OTR/L' });
+
+      await request(app)
+        .patch('/api/therapists/ther-1')
+        .send({ credentials: 'OTR/L' })
+        .expect(200);
+
+      expect(mockStorage.updateUser).toHaveBeenCalledWith('ther-1', expect.objectContaining({ credentials: 'OTR/L' }));
+    });
+  });
+});

@@ -120,7 +120,10 @@ export const navigationSections: NavSection[] = [
     labelKey: 'nav.sectionReports',
     items: [
       { nameKey: 'nav.analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
-      { nameKey: 'nav.productivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false },
+      // Productivity rows carry billed/collected dollars — the API is
+      // requireFinancialRole-gated (role-gating audit F5), so hide it from
+      // therapist-role users rather than render a 403.
+      { nameKey: 'nav.productivity', href: '/therapist-productivity', icon: UserCheck, adminOnly: false, financial: true },
       { nameKey: 'nav.benchmarking', href: '/benchmarking', icon: BarChart3, adminOnly: true },
       { nameKey: 'nav.reportBuilder', href: '/reports', icon: BarChart3, adminOnly: false },
     ],

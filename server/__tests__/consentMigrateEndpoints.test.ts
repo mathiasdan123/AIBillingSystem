@@ -18,12 +18,16 @@ const { mockStorage } = vi.hoisted(() => ({
 }));
 
 vi.mock('../storage', () => ({ storage: mockStorage }));
+// Mutable so each suite can pick its role: the per-patient endpoint is open
+// to billing staff, while /api/data-import/* is admin-only (role-gating
+// audit F13 mounted isAdmin router-wide).
+let currentUserRole = 'billing';
 vi.mock('../replitAuth', () => ({
   setupAuth: vi.fn(),
   isAuthenticated: (req: any, _res: any, next: any) => {
     req.user = { claims: { sub: 'staff-user-1' } };
     req.userPracticeId = 1;
-    req.userRole = 'billing';
+    req.userRole = currentUserRole;
     next();
   },
 }));
@@ -37,6 +41,7 @@ describe('POST /api/patients/:id/consents/migrate', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    currentUserRole = 'billing';
     const patientsRouter = (await import('../routes/patients')).default;
     app = express();
     app.use(express.json());
@@ -139,13 +144,15 @@ describe('POST /api/data-import/consents/migrate', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    // /api/data-import is admin-only at the mount (role-gating audit F13).
+    currentUserRole = 'admin';
     const dataImportRouter = (await import('../routes/data-import')).default;
     app = express();
     app.use(express.json());
     app.use((req: any, _res, next) => {
       req.user = { claims: { sub: 'staff-user-1' } };
       req.userPracticeId = 1;
-      req.userRole = 'billing';
+      req.userRole = 'admin';
       next();
     });
     app.use('/api/data-import', dataImportRouter);

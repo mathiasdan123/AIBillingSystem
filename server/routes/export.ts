@@ -28,6 +28,7 @@ import {
   payments,
 } from '../../shared/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
+import { requireFinancialRole } from '../middleware/financial-access';
 import logger from '../services/logger';
 import { decryptPatientRecord, decryptSoapNoteRecord, decryptTreatmentSessionRecord } from '../services/phiEncryptionService';
 
@@ -173,7 +174,10 @@ router.get('/patients', isAuthenticated, async (req: any, res) => {
 
 // ==================== CLAIMS EXPORT ====================
 
-router.get('/claims', isAuthenticated, async (req: any, res) => {
+// Role-gating audit F3: claim exports carry charges/paid amounts — the data
+// the therapist financial gate exists to hide (the /api/claims UI is gated;
+// the CSV of the same rows must be too).
+router.get('/claims', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const { startDate, endDate } = parseDateRange(req);
@@ -310,7 +314,8 @@ router.get('/appointments', isAuthenticated, async (req: any, res) => {
 
 // ==================== STATEMENTS EXPORT ====================
 
-router.get('/statements', isAuthenticated, async (req: any, res) => {
+// Role-gating audit F3: statement exports are balances/dunning — financial.
+router.get('/statements', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const { startDate, endDate } = parseDateRange(req);
@@ -347,7 +352,9 @@ router.get('/statements', isAuthenticated, async (req: any, res) => {
 
 // ==================== AUDIT LOG EXPORT ====================
 
-router.get('/audit-log', isAuthenticated, async (req: any, res) => {
+// Role-gating audit F3: the audit log is a security/compliance surface
+// (who accessed which PHI) — admin only, like /full-backup below.
+router.get('/audit-log', isAuthenticated, isAdmin, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const { startDate, endDate } = parseDateRange(req);

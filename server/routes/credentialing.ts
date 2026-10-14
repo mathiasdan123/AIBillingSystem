@@ -9,12 +9,28 @@
  * - GET    /api/credentialing/expiring    - Get credentials expiring in next 90 days
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Response, type NextFunction } from 'express';
 import { eq, and, lte, gte, or, sql } from 'drizzle-orm';
 import { isAuthenticated } from '../replitAuth';
 import { db, dbReady } from '../db';
 import { providerCredentials } from '@shared/schema';
 import logger from '../services/logger';
+
+// Role-gating audit F14: credential records (licenses, DEA numbers, payer
+// enrollment status, uploaded license documents) are managed by the practice
+// admin. Writes — create/edit/delete and document upload/delete — are
+// admin-only; reads stay open so therapists can see their own expirations.
+// Admin check on req.userRole, which isAuthenticated loads from the DB —
+// same source of truth as the practices mcp-settings admin check.
+const isAdmin = (req: any, res: Response, next: NextFunction) => {
+  if (!req.user?.claims?.sub) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admin role required.' });
+  }
+  next();
+};
 
 export interface CredentialAtRiskEntry {
   credential: any;
@@ -443,7 +459,7 @@ router.get('/', isAuthenticated, async (req: any, res: Response) => {
 });
 
 // POST / - Add new credential record
-router.post('/', isAuthenticated, async (req: any, res: Response) => {
+router.post('/', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
@@ -495,7 +511,7 @@ router.post('/', isAuthenticated, async (req: any, res: Response) => {
 });
 
 // PATCH /:id - Update status, dates, notes
-router.patch('/:id', isAuthenticated, async (req: any, res: Response) => {
+router.patch('/:id', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
@@ -547,7 +563,7 @@ router.patch('/:id', isAuthenticated, async (req: any, res: Response) => {
 });
 
 // DELETE /:id - Remove credential
-router.delete('/:id', isAuthenticated, async (req: any, res: Response) => {
+router.delete('/:id', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
@@ -642,7 +658,7 @@ router.get('/:id/documents', isAuthenticated, async (req: any, res: Response) =>
 });
 
 /** POST /:id/documents — upload one document. Body: { filename, contentType, base64 }. */
-router.post('/:id/documents', isAuthenticated, async (req: any, res: Response) => {
+router.post('/:id/documents', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);
@@ -744,7 +760,7 @@ router.get('/:id/documents/:docId', isAuthenticated, async (req: any, res: Respo
 });
 
 /** DELETE /:id/documents/:docId — remove from the array. */
-router.delete('/:id/documents/:docId', isAuthenticated, async (req: any, res: Response) => {
+router.delete('/:id/documents/:docId', isAuthenticated, isAdmin, async (req: any, res: Response) => {
   try {
     await dbReady;
     const practiceId = getAuthorizedPracticeId(req);

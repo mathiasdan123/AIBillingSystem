@@ -34,15 +34,24 @@ export interface ProgressReportResult {
 
 export async function generateProgressReport(params: {
   patientId: number;
-  practiceId?: number;
+  /**
+   * REQUIRED tenant context (role-gating audit F18). When this was optional,
+   * a missing practiceId silently skipped the tenant check below and the
+   * report summarized any patient's signed notes by id — cross-tenant PHI.
+   */
+  practiceId: number;
   from: string;
   to: string;
 }): Promise<ProgressReportResult> {
   assertPhiAiAllowed('progress report generation');
 
+  if (params.practiceId == null) {
+    throw new Error('practiceId is required for progress report generation');
+  }
+
   const patient = await storage.getPatient(params.patientId);
   if (!patient) throw new Error('Patient not found');
-  if (params.practiceId != null && (patient as any).practiceId !== params.practiceId) {
+  if ((patient as any).practiceId !== params.practiceId) {
     throw new Error('Patient not found');
   }
 

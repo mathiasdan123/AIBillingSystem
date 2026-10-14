@@ -540,7 +540,9 @@ router.get('/capacity-utilization', isAuthenticated, async (req: any, res) => {
 // responsibility on file. Credit = sum(patient payments) − sum(patient
 // responsibility from payment_postings + statement balances). Only
 // patients with a positive credit are returned.
-router.get('/patient-credits', isAuthenticated, async (req: any, res) => {
+// Role-gating audit F10: credits are payments vs. patient responsibility —
+// money, like the timely-filing and adjustments siblings above.
+router.get('/patient-credits', isAuthenticated, requireFinancialRole, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
 

@@ -108,9 +108,21 @@ describe('PATCH /api/practices/:id/mcp-settings', () => {
 });
 
 describe('PATCH /api/practices/:id — back-door hardening', () => {
-  it('cannot flip mcpPhiEnabled / mcpRequiresConfirmation / isDemo via the generic route', async () => {
-    // A non-admin sends the privileged flags through the unguarded endpoint.
+  it('rejects a non-admin entirely (role-gating audit F12)', async () => {
+    // The generic PATCH used to be only isAuthenticated; it now requires the
+    // admin role, same as /:id/mcp-settings.
     authCtx.userRole = 'therapist';
+    const res = await request(makeApp())
+      .patch('/api/practices/1')
+      .send({ name: 'Legit Rename' });
+
+    expect(res.status).toBe(403);
+    expect(storageStub.updatePractice).not.toHaveBeenCalled();
+  });
+
+  it('cannot flip mcpPhiEnabled / mcpRequiresConfirmation / isDemo via the generic route', async () => {
+    // Even an admin's privileged flags must only travel through the dedicated
+    // mcp-settings route — the generic PATCH strips them.
     const res = await request(makeApp())
       .patch('/api/practices/1')
       .send({ name: 'Legit Rename', mcpPhiEnabled: true, isDemo: true, mcpRequiresConfirmation: true });

@@ -2113,7 +2113,7 @@ import { sanitizeExternalError, sanitizeExternalErrors } from '../services/error
 import { runBulkEligibility } from '../services/bulkEligibilityService';
 import {
   canUseTool,
-  financialToolDenial,
+  toolDenial,
   redactRateFields,
   toolsForRole,
 } from '../services/assistantToolAccess';
@@ -2133,11 +2133,11 @@ export async function executeTool(
   userRole?: string | null,
 ): Promise<string> {
   if (!canUseTool(toolName, userRole)) {
-    logger.warn('Blanche financial tool blocked for role', {
+    logger.warn('Blanche role-gated tool blocked for role', {
       toolName,
       userRole: userRole ?? 'unknown',
     });
-    return financialToolDenial(toolName);
+    return toolDenial(toolName);
   }
   const result = await executeToolForPractice(toolName, args, practiceId, userId);
   // Tools a therapist still needs, whose output carries a price (list_cpt_codes).

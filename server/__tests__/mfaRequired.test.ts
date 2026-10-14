@@ -63,6 +63,10 @@ describe('MFA Required Middleware', () => {
     expect(requiresMfaEnforcement('/api/patients/1')).toBe(true);
     expect(requiresMfaEnforcement('/api/soap-notes')).toBe(true);
     expect(requiresMfaEnforcement('/api/claims')).toBe(true);
+    // PDMS-2 assessments are per-child motor scores + clinical narrative —
+    // PHI on par with evaluations (role-gating audit).
+    expect(requiresMfaEnforcement('/api/pdms2-assessments')).toBe(true);
+    expect(requiresMfaEnforcement('/api/pdms2-assessments/5')).toBe(true);
   });
 
   it('should require MFA for export routes', () => {
@@ -75,6 +79,10 @@ describe('MFA Required Middleware', () => {
     expect(requiresMfaEnforcement('/api/admin')).toBe(true);
     expect(requiresMfaEnforcement('/api/users')).toBe(true);
     expect(requiresMfaEnforcement('/api/breach')).toBe(true);
+    // Support ticket admin queue lives OUTSIDE /api/admin — it needs its own
+    // pattern (role-gating audit). Ticket intake itself stays un-listed.
+    expect(requiresMfaEnforcement('/api/support/reports')).toBe(true);
+    expect(requiresMfaEnforcement('/api/support/reports/3/replies')).toBe(true);
   });
 
   it('should NOT require MFA for non-sensitive routes', () => {

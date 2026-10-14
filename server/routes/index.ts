@@ -30,6 +30,7 @@ export { default as aiInsightsRouter } from './ai-insights';
 export { default as customReportsRouter } from './reports';
 export { default as cannedReportsRouter } from './canned-reports';
 export { default as exportRouter } from './export';
+export { default as expensesRouter } from './expenses';
 export { default as onboardingRouter } from './onboarding';
 
 export { default as practicesRouter } from './practices';
