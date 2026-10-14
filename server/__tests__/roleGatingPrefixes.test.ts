@@ -52,9 +52,14 @@ const FINANCIAL_GATED_PREFIXES = [
   '/api/expenses',           // wired with the new expenses router
 ];
 
+/** Escape every regex metacharacter (incl. backslashes), not just slashes. */
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+}
+
 function gateIndex(prefix: string): number {
   const re = new RegExp(
-    `app\\.use\\(\\s*['"\`]${prefix.replace(/\//g, '\\/')}['"\`]\\s*,\\s*requireFinancialRole\\s*\\)`,
+    `app\\.use\\(\\s*['"\`]${escapeRe(prefix)}['"\`]\\s*,\\s*requireFinancialRole\\s*\\)`,
   );
   const m = routesTs.match(re);
   return m?.index ?? -1;
@@ -63,7 +68,7 @@ function gateIndex(prefix: string): number {
 function firstMountIndex(prefix: string): number {
   // First app.use('<prefix>', <somethingElse>) that is NOT the gate itself.
   const re = new RegExp(
-    `app\\.use\\(\\s*['"\`]${prefix.replace(/\//g, '\\/')}['"\`]\\s*,\\s*(?!requireFinancialRole)[A-Za-z]`,
+    `app\\.use\\(\\s*['"\`]${escapeRe(prefix)}['"\`]\\s*,\\s*(?!requireFinancialRole)[A-Za-z]`,
     'g',
   );
   const m = re.exec(routesTs);
