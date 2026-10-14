@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { Component, type ReactNode } from 'react';
 
-// Mock Sentry before importing App (ErrorBoundary lives in App.tsx)
+// Mock Sentry before importing the boundary
 vi.mock('@sentry/react', () => ({
   captureException: vi.fn(),
   init: vi.fn(),
@@ -10,64 +9,36 @@ vi.mock('@sentry/react', () => ({
   replayIntegration: vi.fn(),
 }));
 
-// We cannot import ErrorBoundary directly (it's not exported), so we recreate it
-// faithfully from App.tsx for isolated testing.
+// Mock the reload guard so no real window.location.reload happens; the guard's
+// own behavior (sessionStorage window, vite:preloadError) is covered in
+// chunkReloadGuard.test.ts.
+vi.mock('@/lib/chunkReloadGuard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/chunkReloadGuard')>();
+  return {
+    ...actual,
+    attemptGuardedReload: vi.fn(() => true),
+  };
+});
+
 import * as Sentry from '@sentry/react';
-
-class ErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: { componentStack?: string | null }) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
-    Sentry.captureException(error, {
-      contexts: {
-        react: {
-          componentStack: errorInfo.componentStack || undefined,
-        },
-      },
-    });
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center h-64 text-center p-6" role="alert">
-          <h2 className="text-lg font-semibold text-slate-900 mb-2">Something went wrong</h2>
-          <p className="text-sm text-slate-600 mb-4">An unexpected error occurred. Please try refreshing the page.</p>
-          <button
-            onClick={() => this.setState({ hasError: false })}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            Try again
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+import { attemptGuardedReload } from '@/lib/chunkReloadGuard';
+import { RouteErrorBoundary as ErrorBoundary } from '@/components/RouteErrorBoundary';
 
 // A component that throws on render
-function ThrowingComponent({ shouldThrow = true }: { shouldThrow?: boolean }) {
+function ThrowingComponent({ shouldThrow = true, message = 'Test render error' }: { shouldThrow?: boolean; message?: string }) {
   if (shouldThrow) {
-    throw new Error('Test render error');
+    throw new Error(message);
   }
   return <div>No error</div>;
 }
 
+const CHUNK_ERROR_MESSAGE =
+  'Failed to fetch dynamically imported module: https://app.therapybillai.com/assets/settings-oldhash.js';
+
 describe('ErrorBoundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(attemptGuardedReload).mockReturnValue(true);
     // Suppress console.error noise from React error boundary logging
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -115,9 +86,6 @@ describe('ErrorBoundary', () => {
   });
 
   it('resets error state when "Try again" is clicked and re-renders children', () => {
-    // Control throwing via a ref-like flag that we can flip from the test.
-    // This avoids issues with React 18 retry-rendering the throwing subtree
-    // before the error boundary state updates.
     const flag = { shouldThrow: true };
     function ConditionalThrower() {
       if (flag.shouldThrow) {
@@ -132,23 +100,17 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     );
 
-    // Fallback is showing
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
 
-    // Flip the flag so the next render of the child won't throw
     flag.shouldThrow = false;
-
-    // Click Try again — this resets the error boundary state
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
 
-    // Force a rerender so the boundary re-renders with the reset state
     rerender(
       <ErrorBoundary>
         <ConditionalThrower />
       </ErrorBoundary>,
     );
 
-    // Children should render again
     expect(screen.getByText('Recovered successfully')).toBeInTheDocument();
     expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
   });
@@ -170,13 +132,13 @@ describe('ErrorBoundary', () => {
     );
   });
 
-  it('logs error to console.error', () => {
+  it('does not attempt a reload for ordinary errors', () => {
     render(
       <ErrorBoundary>
         <ThrowingComponent />
       </ErrorBoundary>,
     );
-    expect(console.error).toHaveBeenCalled();
+    expect(attemptGuardedReload).not.toHaveBeenCalled();
   });
 
   it('does not show fallback for non-throwing children', () => {
@@ -187,5 +149,39 @@ describe('ErrorBoundary', () => {
     );
     expect(screen.getByText('No error')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  describe('stale-deploy chunk-load errors', () => {
+    it('triggers a guarded reload and shows the reloading state instead of the error UI', () => {
+      render(
+        <ErrorBoundary>
+          <ThrowingComponent message={CHUNK_ERROR_MESSAGE} />
+        </ErrorBoundary>,
+      );
+
+      expect(attemptGuardedReload).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('status')).toBeInTheDocument();
+      expect(screen.getByText(/reloading/i)).toBeInTheDocument();
+      expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+      // Expected operational noise after a deploy — not reported to Sentry.
+      expect(Sentry.captureException).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the error UI when the reload guard suppresses the reload (broken build)', () => {
+      vi.mocked(attemptGuardedReload).mockReturnValue(false);
+
+      render(
+        <ErrorBoundary>
+          <ThrowingComponent message={CHUNK_ERROR_MESSAGE} />
+        </ErrorBoundary>,
+      );
+
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      // A second chunk failure within the guard window means the new build
+      // itself is broken — this one IS worth reporting.
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    });
   });
 });

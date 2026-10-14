@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/react";
 import { redactSensitiveUrl, redactTransactionName } from "@shared/redactSensitiveUrl";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { installChunkReloadListener } from "./lib/chunkReloadGuard";
 import "./index.css";
 import "./i18n"; // Initialize i18n before rendering
 
@@ -74,18 +75,12 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 }
 
 // Stale-tab self-healing: after a deploy, a long-lived tab still references
-// old hashed JS chunks that no longer exist on the server. Vite fires this
-// event when a lazy chunk fails to load — reload once to pick up the new
-// bundle instead of leaving buttons silently dead.
-window.addEventListener("vite:preloadError", (event) => {
-  event.preventDefault();
-  const key = "chunk-reload-at";
-  const last = Number(sessionStorage.getItem(key) || 0);
-  if (Date.now() - last > 10_000) {
-    sessionStorage.setItem(key, String(Date.now()));
-    window.location.reload();
-  }
-});
+// old hashed JS chunks that no longer exist on the server. Vite fires
+// vite:preloadError when a lazy chunk fails to load — reload once (guarded
+// against loops) to pick up the new bundle instead of leaving the page blank.
+// The route ErrorBoundary in App.tsx covers the same failure when it surfaces
+// as a rejected React.lazy() promise instead of the Vite event.
+installChunkReloadListener();
 
 createRoot(document.getElementById("root")!).render(<App />);
 // Railway rebuild Fri Mar  6 15:28:40 EST 2026

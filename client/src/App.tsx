@@ -1,7 +1,5 @@
-import * as Sentry from "@sentry/react";
 import { Switch, Route } from "wouter";
-import { Suspense, lazy, Component, useEffect } from "react";
-import type { ReactNode, ErrorInfo } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
@@ -15,6 +13,7 @@ import IdleTimeoutWarning from "@/components/IdleTimeoutWarning";
 import MaintenanceWindowBanner from "@/components/MaintenanceWindowBanner";
 import NewVersionBanner from "@/components/NewVersionBanner";
 import NotFound from "@/pages/not-found";
+import { RouteErrorBoundary as ErrorBoundary } from "@/components/RouteErrorBoundary";
 import AiBillingAssistant from "@/components/AiBillingAssistant";
 import VersionUpdateBanner from "@/components/VersionUpdateBanner";
 import { openBlanche } from "@/lib/blancheControl";
@@ -132,50 +131,8 @@ const Pricing = lazy(() => import("@/pages/pricing"));
 const PrivacyPolicy = lazy(() => import("@/pages/privacy-policy"));
 const TermsOfService = lazy(() => import("@/pages/terms-of-service"));
 
-// Error boundary for route-level errors
-class ErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("ErrorBoundary caught an error:", error, errorInfo);
-    // Report to Sentry if initialized (no-ops if DSN was not configured)
-    Sentry.captureException(error, {
-      contexts: {
-        react: {
-          componentStack: errorInfo.componentStack || undefined,
-        },
-      },
-    });
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center h-64 text-center p-6" role="alert">
-          <h2 className="text-lg font-semibold text-slate-900 mb-2">Something went wrong</h2>
-          <p className="text-sm text-slate-600 mb-4">An unexpected error occurred. Please try refreshing the page.</p>
-          <button
-            onClick={() => this.setState({ hasError: false })}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            Try again
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+// Route-level error boundary lives in @/components/RouteErrorBoundary — it
+// also self-heals stale-deploy chunk-load failures via a guarded reload.
 
 /**
  * Global keyboard shortcut: ⌘⇧B (macOS) / Ctrl+Shift+B (Win/Linux) opens
