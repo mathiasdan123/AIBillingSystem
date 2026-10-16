@@ -19,6 +19,20 @@
 
 **Headline:** The MCP AI-assistant tool surface (47 tools) and the webhook/encryption/security-header layers are all **well-engineered and consistently correct**. The real exposure is concentrated in a handful of **older REST routes that skip the tenant-ownership check** other routes in the same files already have — classic IDOR, not a systemic design flaw. All 5 Critical/High findings are of this shape and are small, targeted fixes.
 
+**Status: F1–F7 fixed.** On approval, all 7 findings below plus one additional vulnerability discovered during remediation (see "F4a" below — not in the original scan, found while fixing F4) were fixed in 5 separate commits on this branch, each with a regression test and a scanner/test re-run to confirm:
+
+| Finding | Commit | Verified by |
+|---|---|---|
+| F1, F2 | `fix(security): close cross-tenant IDOR on patient cost-estimate and documents routes (F1, F2)` | New test: `patientsCostEstimateDocumentsTenantGuard.test.ts` (5 tests) |
+| F3 | `fix(security): close cross-tenant IDOR on plan-documents/plan-benefits/oon-predict (F3)` | New test: `insurancePlanBenefitsTenantGuard.test.ts` (9 tests) |
+| F4, F5, **F4a** | `fix(security): close cross-tenant IDOR on claim preview/check-status, and a 9-site admin-bypass bug (F4, F5 + newly found)` | New tests: `claimsAdminBypassAndPreviewCheckStatusGuard.test.ts` (6), `adminBypassTenantGuard.test.ts` (5) |
+| F6 | `fix(security): upgrade nodemailer to 10.1.2, patches SMTP/CRLF injection (F6)` | `npm audit --omit=dev`: prod high-severity count 6→5 |
+| F7 | `fix(security): encrypt WAF CloudWatch Log Group with a customer-managed KMS key (F7)` | Re-ran checkov (5/5 pass, was 4/5) and trivy (25/25 pass, was 24/25) |
+
+**F4a (new, found during remediation — not in the original scan):** While fixing F4, found that 9 separate routes/middleware across `claims.ts` (7x), `appointments.ts` (1x), and `practices.ts` (1x) used `userRole !== 'admin'` as their tenant-ownership gate. Every practice's **own** admin has `role='admin'` — not just the platform/founder admin — so any practice admin could reach any other practice's claim, appointment, or practice record by id, completely bypassing the tenant check. This is the same severity class as F1–F5 (Critical/High) and arguably broader in blast radius since it affected 9 endpoints at once, including the main `GET /api/claims/:id` and the `router.use('/:id', ...)` guard that fronts most of `claims.ts`'s sub-routes. Fixed by switching all 9 to `!req.isPlatformAdmin`, the property every other correctly-scoped route in the codebase already uses for this exact distinction.
+
+Full project `npx tsc --noEmit` is clean and the full server test suite (2,345 tests, 220 files) passes after all fixes, with only 3 pre-existing failures confirmed unrelated (verified by running them against the unmodified code via `git stash`): `ssrf.test.ts` needs real DNS resolution to `example.com` (blocked in this sandbox) and `webhookService.test.ts` has 2 timing-sensitive mock assertions.
+
 ---
 
 ## Findings
