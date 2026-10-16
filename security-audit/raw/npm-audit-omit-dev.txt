@@ -1,0 +1,203 @@
+# npm audit report
+
+@opentelemetry/core  <2.8.0
+Severity: moderate
+OpenTelemetry Core: Unbounded memory allocation in W3C Baggage propagation - https://github.com/advisories/GHSA-8988-4f7v-96qf
+fix available via `npm audit fix --force`
+Will install @sentry/node@11.8.0, which is a breaking change
+node_modules/@opentelemetry/core
+  @opentelemetry/instrumentation-amqplib  <=0.46.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-amqplib
+    @sentry/node  8.0.0-alpha.1 - 10.53.1
+    Depends on vulnerable versions of @opentelemetry/core
+    Depends on vulnerable versions of @opentelemetry/instrumentation-amqplib
+    Depends on vulnerable versions of @opentelemetry/instrumentation-connect
+    Depends on vulnerable versions of @opentelemetry/instrumentation-express
+    Depends on vulnerable versions of @opentelemetry/instrumentation-fastify
+    Depends on vulnerable versions of @opentelemetry/instrumentation-fs
+    Depends on vulnerable versions of @opentelemetry/instrumentation-hapi
+    Depends on vulnerable versions of @opentelemetry/instrumentation-http
+    Depends on vulnerable versions of @opentelemetry/instrumentation-knex
+    Depends on vulnerable versions of @opentelemetry/instrumentation-koa
+    Depends on vulnerable versions of @opentelemetry/instrumentation-mongoose
+    Depends on vulnerable versions of @opentelemetry/instrumentation-mysql
+    Depends on vulnerable versions of @opentelemetry/instrumentation-mysql2
+    Depends on vulnerable versions of @opentelemetry/instrumentation-pg
+    Depends on vulnerable versions of @opentelemetry/instrumentation-tedious
+    Depends on vulnerable versions of @opentelemetry/instrumentation-undici
+    Depends on vulnerable versions of @opentelemetry/resources
+    Depends on vulnerable versions of @opentelemetry/sdk-trace-base
+    Depends on vulnerable versions of @prisma/instrumentation
+    Depends on vulnerable versions of @sentry/opentelemetry
+    node_modules/@sentry/node
+  @opentelemetry/instrumentation-connect  <=0.43.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-connect
+  @opentelemetry/instrumentation-express  <=0.47.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-express
+  @opentelemetry/instrumentation-fastify  <=0.44.2
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-fastify
+  @opentelemetry/instrumentation-fs  <=0.19.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-fs
+  @opentelemetry/instrumentation-hapi  0.24.0 - 0.45.2
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-hapi
+  @opentelemetry/instrumentation-http  <=0.16.0 || 0.19.1-alpha.7 - 0.218.0
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-http
+  @opentelemetry/instrumentation-koa  <=0.15.0 || 0.20.0 - 0.47.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-koa
+  @opentelemetry/instrumentation-mongoose  <=0.66.0
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-mongoose
+  @opentelemetry/instrumentation-pg  <=0.72.0
+  Depends on vulnerable versions of @opentelemetry/core
+  Depends on vulnerable versions of @opentelemetry/sql-common
+  node_modules/@opentelemetry/instrumentation-pg
+  @opentelemetry/instrumentation-undici  <=0.10.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/instrumentation-undici
+  @opentelemetry/resources  0.8.0 - 2.7.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/resources
+  @opentelemetry/sdk-trace-base  <=2.7.1
+  Depends on vulnerable versions of @opentelemetry/core
+  Depends on vulnerable versions of @opentelemetry/resources
+  node_modules/@opentelemetry/sdk-trace-base
+    @prisma/instrumentation  4.14.0-dev.1 - 6.1.0-integration-expose-deserialize-raw-result.1
+    Depends on vulnerable versions of @opentelemetry/sdk-trace-base
+    node_modules/@prisma/instrumentation
+  @opentelemetry/sql-common  <=0.40.1
+  Depends on vulnerable versions of @opentelemetry/core
+  node_modules/@opentelemetry/sql-common
+    @opentelemetry/instrumentation-mysql2  <=0.66.0
+    Depends on vulnerable versions of @opentelemetry/sql-common
+    node_modules/@opentelemetry/instrumentation-mysql2
+  @sentry/opentelemetry  <=9.17.0
+  Depends on vulnerable versions of @opentelemetry/core
+  Depends on vulnerable versions of @opentelemetry/sdk-trace-base
+  node_modules/@sentry/opentelemetry
+
+@opentelemetry/instrumentation-knex  <0.65.0
+Severity: moderate
+Multiple @opentelemetry/instrumentation-* packages expose database username via unconditional db.user span attribute - https://github.com/advisories/GHSA-qqmp-wf37-98f9
+fix available via `npm audit fix --force`
+Will install @sentry/node@11.8.0, which is a breaking change
+node_modules/@opentelemetry/instrumentation-knex
+
+
+@opentelemetry/instrumentation-mysql  <0.67.0
+Severity: moderate
+Multiple @opentelemetry/instrumentation-* packages expose database username via unconditional db.user span attribute - https://github.com/advisories/GHSA-qqmp-wf37-98f9
+fix available via `npm audit fix`
+node_modules/@opentelemetry/instrumentation-mysql
+
+
+
+@opentelemetry/instrumentation-tedious  <0.40.0
+Severity: moderate
+Multiple @opentelemetry/instrumentation-* packages expose database username via unconditional db.user span attribute - https://github.com/advisories/GHSA-qqmp-wf37-98f9
+fix available via `npm audit fix`
+node_modules/@opentelemetry/instrumentation-tedious
+
+braces  *
+Severity: high
+braces vulnerable to stack-exhaustion denial of service through deeply nested patterns - https://github.com/advisories/GHSA-vfj7-8cjw-p6xm
+No fix available
+node_modules/braces
+  chokidar  2.0.0 - 3.6.0
+  Depends on vulnerable versions of braces
+  node_modules/chokidar
+    tailwindcss  <=0.0.0-oxide-insiders.ff2c25f || 0.5.0 - 3.4.19
+    Depends on vulnerable versions of chokidar
+    Depends on vulnerable versions of fast-glob
+    Depends on vulnerable versions of micromatch
+    Depends on vulnerable versions of postcss-nested
+    Depends on vulnerable versions of postcss-selector-parser
+    node_modules/tailwindcss
+      tailwindcss-animate  *
+      Depends on vulnerable versions of tailwindcss
+      node_modules/tailwindcss-animate
+  micromatch  >=0.2.0
+  Depends on vulnerable versions of braces
+  node_modules/micromatch
+    fast-glob  *
+    Depends on vulnerable versions of micromatch
+    node_modules/fast-glob
+
+esbuild  <=0.24.2 || 0.27.3 - 0.28.0
+Severity: moderate
+esbuild enables any website to send any requests to the development server and read the response - https://github.com/advisories/GHSA-67mh-4wv8-2f99
+esbuild allows arbitrary file read when running the development server on Windows - https://github.com/advisories/GHSA-g7r4-m6w7-qqqr
+fix available via `npm audit fix --force`
+Will install drizzle-kit@0.18.1, which is a breaking change
+node_modules/@esbuild-kit/core-utils/node_modules/esbuild
+node_modules/tsx/node_modules/esbuild
+  @esbuild-kit/core-utils  *
+  Depends on vulnerable versions of esbuild
+  node_modules/@esbuild-kit/core-utils
+    @esbuild-kit/esm-loader  *
+    Depends on vulnerable versions of @esbuild-kit/core-utils
+    node_modules/@esbuild-kit/esm-loader
+      drizzle-kit  0.19.0 - 1.0.0-beta.1-fd8bfcc
+      Depends on vulnerable versions of @esbuild-kit/esm-loader
+      node_modules/drizzle-kit
+
+nodemailer  <=10.0.5
+Severity: high
+Nodemailer has SMTP command injection due to unsanitized `envelope.size` parameter - https://github.com/advisories/GHSA-c7w3-x93f-qmm8
+Nodemailer Vulnerable to SMTP Command Injection via CRLF in Transport name Option (EHLO/HELO)  - https://github.com/advisories/GHSA-vvjj-xcjg-gr5g
+Nodemailer: CRLF injection in Nodemailer List-* header comments allows arbitrary message header injection - https://github.com/advisories/GHSA-268h-hp4c-crq3
+Nodemailer jsonTransport bypasses disableFileAccess and disableUrlAccess during message normalization - https://github.com/advisories/GHSA-wqvq-jvpq-h66f
+Nodemailer: Message-level raw option bypasses disableFileAccess/disableUrlAccess, enabling arbitrary file read and full-response SSRF in the delivered message - https://github.com/advisories/GHSA-p6gq-j5cr-w38f
+Nodemailer: resolveContent() on a MailMessage bypasses disableFileAccess/disableUrlAccess when called with the legacy signature - https://github.com/advisories/GHSA-8m3c-c648-2xjj
+Nodemailer: IDN/Punycode domain allow-list bypass leads to email delivery to an attacker-controlled domain - https://github.com/advisories/GHSA-wmmp-3585-3rmp
+Nodemailer: Quadratic (O(n²)) time complexity in addressparser allows remote denial of service via a crafted address list - https://github.com/advisories/GHSA-2x7j-588g-ccc2
+Nodemailer: Recipient-domain validation bypass via RFC 5322 comment mis-parsing leads to email delivery to an attacker-controlled domain - https://github.com/advisories/GHSA-cc9r-2j5m-2m83
+Nodemailer: Process-global DNS cache reuses TLS `servername` across transports, enabling cross-tenant SMTP credential disclosure - https://github.com/advisories/GHSA-6vj9-mwq6-2f5v
+Nodemailer: Nested structured recipient arrays bypass the parser depth limit and cause stack exhaustion DoS - https://github.com/advisories/GHSA-8vvx-rff5-p5rq
+Nodemailer: Quadratic backtracking in the addressparser free-text fallback allows remote denial of service - https://github.com/advisories/GHSA-v53p-9fqp-m79j
+Nodemailer: Improper TLS Certificate Validation in OAuth2 Token Fetch Enables Credential Interception - https://github.com/advisories/GHSA-r7g4-qg5f-qqm2
+fix available via `npm audit fix --force`
+Will install nodemailer@10.1.2, which is a breaking change
+node_modules/nodemailer
+
+postcss-selector-parser  <7.1.6
+Severity: moderate
+PostCSS: Quadratic complexity in flat selector parsing allows CPU exhaustion - https://github.com/advisories/GHSA-rj75-hqrm-r3gf
+No fix available
+node_modules/postcss-selector-parser
+  postcss-nested  2.0.3 - 6.2.0
+  Depends on vulnerable versions of postcss-selector-parser
+  node_modules/postcss-nested
+
+qs  2.2.5 - 6.15.3
+Severity: moderate
+qs has a remotely triggerable DoS: qs.stringify crashes with TypeError on null/undefined entries in comma-format arrays when encodeValuesOnly is set - https://github.com/advisories/GHSA-q8mj-m7cp-5q26
+qs array-limit bypass via bracket-key comma parsing - https://github.com/advisories/GHSA-x5fp-wj9c-mxmx
+qs: Denial of Service via Attacker Controlled isBuffer - https://github.com/advisories/GHSA-4mjr-xmp4-gh2g
+fix available via `npm audit fix`
+node_modules/qs
+
+uuid  <11.1.1
+Severity: moderate
+uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided - https://github.com/advisories/GHSA-w5hq-g745-h8pq
+fix available via `npm audit fix --force`
+Will install uuid@14.0.3, which is a breaking change
+node_modules/uuid
+
+37 vulnerabilities (31 moderate, 6 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues possible (including breaking changes), run:
+  npm audit fix --force
+
+Some issues need review, and may require choosing
+a different dependency.
