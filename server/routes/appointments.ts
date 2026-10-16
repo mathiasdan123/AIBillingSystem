@@ -450,7 +450,7 @@ router.post('/:id/self-pay-invoice', isAuthenticated, async (req: any, res) => {
     if (!appt) return res.status(404).json({ error: 'Appointment not found' });
     const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
     // Fail closed: a missing practice context is a deny for non-admins.
-    if (req.userRole !== 'admin' && (!userPracticeId || appt.practiceId !== userPracticeId)) {
+    if (!req.isPlatformAdmin && (!userPracticeId || appt.practiceId !== userPracticeId)) {
       return res.status(403).json({ error: 'Appointment is not in your practice' });
     }
     const patient = appt.patientId ? await storage.getPatient(appt.patientId) : null;
