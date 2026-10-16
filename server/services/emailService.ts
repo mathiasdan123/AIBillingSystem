@@ -29,9 +29,9 @@ const RETRY_BASE_DELAY_MS = 2000; // exponential backoff base
 
 // ==================== TRANSPORTER ====================
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
-function getTransporter(): nodemailer.Transporter {
+function getTransporter(): ReturnType<typeof nodemailer.createTransport> {
   if (!transporter) {
     transporter = nodemailer.createTransport(smtpConfig);
   }
