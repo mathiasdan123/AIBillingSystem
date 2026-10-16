@@ -873,10 +873,11 @@ router.get('/:id/cost-estimate', isAuthenticated, requirePatientConsent, async (
     const patientId = parseInt(req.params.id);
     const { sessionRate } = req.query;
 
-    const patient = await storage.getPatient(patientId);
-    if (!patient) {
+    const access = await verifyPatientAccess(req, patientId);
+    if (!access.authorized || !access.patient) {
       return res.status(404).json({ message: 'Patient not found' });
     }
+    const patient = access.patient;
 
     const insurance = patient.insuranceProvider || 'Unknown';
     const estimate = await getQuickEstimate(insurance, 45, parseInt(sessionRate as string) || 300);
@@ -901,6 +902,10 @@ router.get('/:id/cost-estimate', isAuthenticated, requirePatientConsent, async (
 router.get('/:id/documents', isAuthenticated, requirePatientConsent, async (req: any, res) => {
   try {
     const patientId = parseInt(req.params.id);
+    const access = await verifyPatientAccess(req, patientId);
+    if (!access.authorized) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
     const documents = await storage.getPatientDocuments(patientId);
     res.json(documents);
   } catch (error) {
