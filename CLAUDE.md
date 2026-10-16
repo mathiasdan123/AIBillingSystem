@@ -12,6 +12,11 @@
   notification, because the turn he actually reads may be the one without it. "I sent one earlier" is not an
   exception; he raised this a third time on 2026-08-25 for exactly that reason.
   The tool returning "not sent" because he is at the terminal is expected, not a failure.
+- **Send a PushNotification the moment you discover a new Critical/High-severity issue mid-task** — a vulnerability,
+  data-loss risk, or production-breaking bug found while doing something else (e.g. mid-remediation, mid-refactor) —
+  rather than only mentioning it in the final wrap-up. Finding it is itself news he'd want immediately, independent
+  of whether the turn ends with a question. Don't wait for a natural stopping point to surface it (raised 2026-10-16
+  after a 9-site tenant-isolation bypass was found and fixed but only reported at the end of a long turn).
 
 ## Project Overview
 Medical billing and practice management platform for behavioral health / therapy practices. HIPAA-compliant with PHI encryption, MFA, audit logging, and breach management.
