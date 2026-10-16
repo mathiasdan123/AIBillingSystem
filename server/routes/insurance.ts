@@ -976,6 +976,12 @@ router.get('/patients/:patientId/plan-documents', isAuthenticated, async (req: a
     const patientId = parseInt(req.params.patientId);
     if (!user?.practiceId) return res.status(400).json({ error: 'User not associated with a practice' });
     if (user.role !== 'admin') return res.status(403).json({ error: 'Only administrators can view plan documents' });
+    // Tenant isolation: an admin at another practice must not reach this
+    // patient's plan documents by guessing a sequential patientId.
+    const patient = await storage.getPatient(patientId);
+    if (!patient || patient.practiceId !== user.practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
     const documents = await storage.getPlanDocuments(patientId);
     res.json({ success: true, documents });
   } catch (error) {
@@ -991,6 +997,12 @@ router.get('/patients/:patientId/plan-benefits', isAuthenticated, async (req: an
     const patientId = parseInt(req.params.patientId);
     if (!user?.practiceId) return res.status(400).json({ error: 'User not associated with a practice' });
     if (user.role !== 'admin') return res.status(403).json({ error: 'Only administrators can view plan benefits' });
+    // Tenant isolation: an admin at another practice must not reach this
+    // patient's plan benefits by guessing a sequential patientId.
+    const patient = await storage.getPatient(patientId);
+    if (!patient || patient.practiceId !== user.practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
     const benefits = await storage.getPatientPlanBenefits(patientId);
     if (!benefits) {
       return res.json({ success: true, benefits: null, message: 'No plan benefits found. Upload a plan document to extract benefits.' });
@@ -1006,9 +1018,20 @@ router.post('/patients/:patientId/plan-benefits/:benefitsId/verify', isAuthentic
   try {
     const userId = req.user?.claims?.sub;
     const user = await storage.getUser(userId);
+    const patientId = parseInt(req.params.patientId);
     const benefitsId = parseInt(req.params.benefitsId);
     if (!user?.practiceId) return res.status(400).json({ error: 'User not associated with a practice' });
     if (user.role !== 'admin') return res.status(403).json({ error: 'Only administrators can verify benefits' });
+    // Tenant isolation: an admin at another practice must not verify this
+    // patient's benefits by guessing sequential patientId/benefitsId values.
+    const patient = await storage.getPatient(patientId);
+    if (!patient || patient.practiceId !== user.practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    const existingBenefits = await storage.getAllPatientPlanBenefits(patientId);
+    if (!existingBenefits.some((b: any) => b.id === benefitsId)) {
+      return res.status(404).json({ error: 'Plan benefits record not found for this patient' });
+    }
     const verified = await storage.verifyPlanBenefits(benefitsId, userId);
     res.json({ success: true, benefits: verified });
   } catch (error) {
@@ -1021,9 +1044,20 @@ router.patch('/patients/:patientId/plan-benefits/:benefitsId', isAuthenticated, 
   try {
     const userId = req.user?.claims?.sub;
     const user = await storage.getUser(userId);
+    const patientId = parseInt(req.params.patientId);
     const benefitsId = parseInt(req.params.benefitsId);
     if (!user?.practiceId) return res.status(400).json({ error: 'User not associated with a practice' });
     if (user.role !== 'admin') return res.status(403).json({ error: 'Only administrators can update benefits' });
+    // Tenant isolation: an admin at another practice must not update this
+    // patient's benefits by guessing sequential patientId/benefitsId values.
+    const patient = await storage.getPatient(patientId);
+    if (!patient || patient.practiceId !== user.practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    const existingBenefits = await storage.getAllPatientPlanBenefits(patientId);
+    if (!existingBenefits.some((b: any) => b.id === benefitsId)) {
+      return res.status(404).json({ error: 'Plan benefits record not found for this patient' });
+    }
     const updated = await storage.updatePlanBenefits(benefitsId, req.body);
     res.json({ success: true, benefits: updated });
   } catch (error) {
@@ -1043,9 +1077,14 @@ router.post('/patients/:patientId/oon-predict', isAuthenticated, async (req: any
     const { cptCode, billedAmount } = req.body;
     if (!cptCode || !billedAmount) return res.status(400).json({ error: 'cptCode and billedAmount are required' });
 
-    const benefits = await storage.getPatientPlanBenefits(patientId);
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    // Tenant isolation: an admin at another practice must not run OON
+    // predictions against this patient by guessing a sequential patientId.
+    if (patient.practiceId !== user.practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    const benefits = await storage.getPatientPlanBenefits(patientId);
 
     const predictionInput: OONPredictionInput = {
       cptCode,
