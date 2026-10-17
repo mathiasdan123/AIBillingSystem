@@ -1,0 +1,1024 @@
+{
+    "check_type": "cloudformation",
+    "results": {
+        "passed_checks": [
+            {
+                "check_id": "CKV_AWS_66",
+                "bc_check_id": null,
+                "check_name": "Ensure that CloudWatch Log Group specifies retention days",
+                "check_result": {
+                    "result": "PASSED",
+                    "evaluated_keys": [
+                        "Properties/RetentionInDays"
+                    ]
+                },
+                "code_block": [
+                    [
+                        43,
+                        "  WafLogGroup:\n"
+                    ],
+                    [
+                        44,
+                        "    Type: AWS::Logs::LogGroup\n"
+                    ],
+                    [
+                        45,
+                        "    Properties:\n"
+                    ],
+                    [
+                        46,
+                        "      LogGroupName: !Sub \"aws-waf-logs-therapybill-${EnvironmentName}\"\n"
+                    ],
+                    [
+                        47,
+                        "      RetentionInDays: !Ref LogRetentionDays\n"
+                    ]
+                ],
+                "file_path": "/waf-alb.yaml",
+                "file_abs_path": "infra/waf-alb.yaml",
+                "repo_file_path": "/infra/waf-alb.yaml",
+                "file_line_range": [
+                    43,
+                    47
+                ],
+                "resource": "AWS::Logs::LogGroup.WafLogGroup",
+                "evaluations": {},
+                "check_class": "checkov.cloudformation.checks.resource.aws.CloudWatchLogGroupRetention",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": null,
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null,
+                "breadcrumbs": {
+                    "LogGroupName": [
+                        {
+                            "type": "parameters",
+                            "name": "EnvironmentName",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "RetentionInDays": [
+                        {
+                            "type": "parameters",
+                            "name": "LogRetentionDays",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ]
+                }
+            },
+            {
+                "check_id": "CKV_AWS_192",
+                "bc_check_id": null,
+                "check_name": "Ensure WAF prevents message lookup in Log4j2. See CVE-2021-44228 aka log4jshell",
+                "check_result": {
+                    "result": "PASSED",
+                    "evaluated_keys": [
+                        "Properties/Rules/[4]/Statement/ManagedRuleGroupStatement/Name",
+                        "Properties/Rules/[4]/Statement/ManagedRuleGroupStatement/ExcludedRules",
+                        "Properties/Rules/[4]/OverrideAction/None"
+                    ]
+                },
+                "code_block": [
+                    [
+                        49,
+                        "  WebACL:\n"
+                    ],
+                    [
+                        50,
+                        "    Type: AWS::WAFv2::WebACL\n"
+                    ],
+                    [
+                        51,
+                        "    Properties:\n"
+                    ],
+                    [
+                        52,
+                        "      Name: !Sub \"therapybill-${EnvironmentName}-acl\"\n"
+                    ],
+                    [
+                        53,
+                        "      Scope: REGIONAL\n"
+                    ],
+                    [
+                        54,
+                        "      DefaultAction:\n"
+                    ],
+                    [
+                        55,
+                        "        Allow: {}\n"
+                    ],
+                    [
+                        56,
+                        "      Description: Consolidated WAF for TherapyBill AI ALB - managed by CloudFormation\n"
+                    ],
+                    [
+                        57,
+                        "      VisibilityConfig:\n"
+                    ],
+                    [
+                        58,
+                        "        SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        59,
+                        "        CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        60,
+                        "        MetricName: !Sub \"therapybill-${EnvironmentName}-acl\"\n"
+                    ],
+                    [
+                        61,
+                        "      Rules:\n"
+                    ],
+                    [
+                        62,
+                        "\n"
+                    ],
+                    [
+                        63,
+                        "        # -- Custom rules -----------------------------------------------------\n"
+                    ],
+                    [
+                        64,
+                        "\n"
+                    ],
+                    [
+                        65,
+                        "        # Curated scanner IP blocklist (references external IP set).\n"
+                    ],
+                    [
+                        66,
+                        "        - Name: BlockScannerIPs\n"
+                    ],
+                    [
+                        67,
+                        "          Priority: 0\n"
+                    ],
+                    [
+                        68,
+                        "          Action:\n"
+                    ],
+                    [
+                        69,
+                        "            Block: {}\n"
+                    ],
+                    [
+                        70,
+                        "          Statement:\n"
+                    ],
+                    [
+                        71,
+                        "            IPSetReferenceStatement:\n"
+                    ],
+                    [
+                        72,
+                        "              Arn: !Ref ScannerBlocklistIpSetArn\n"
+                    ],
+                    [
+                        73,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        74,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        75,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        76,
+                        "            MetricName: BlockScannerIPs\n"
+                    ],
+                    [
+                        77,
+                        "\n"
+                    ],
+                    [
+                        78,
+                        "        # Block traffic from high-risk countries. Edit CountryCodes as needed.\n"
+                    ],
+                    [
+                        79,
+                        "        - Name: GeoBlockHighRiskCountries\n"
+                    ],
+                    [
+                        80,
+                        "          Priority: 1\n"
+                    ],
+                    [
+                        81,
+                        "          Action:\n"
+                    ],
+                    [
+                        82,
+                        "            Block: {}\n"
+                    ],
+                    [
+                        83,
+                        "          Statement:\n"
+                    ],
+                    [
+                        84,
+                        "            GeoMatchStatement:\n"
+                    ],
+                    [
+                        85,
+                        "              CountryCodes: [CN, RU, KP, IR]\n"
+                    ],
+                    [
+                        86,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        87,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        88,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        89,
+                        "            MetricName: GeoBlockHighRiskCountries\n"
+                    ],
+                    [
+                        90,
+                        "\n"
+                    ],
+                    [
+                        91,
+                        "        # Reject any request whose Host header isn't the canonical app host.\n"
+                    ],
+                    [
+                        92,
+                        "        # NOTE: set to COUNT initially \u2014 this rule was never live before, so\n"
+                    ],
+                    [
+                        93,
+                        "        # confirm nothing legit hits the ALB on a different host, then flip to\n"
+                    ],
+                    [
+                        94,
+                        "        # Block by swapping Count: {} for Block: {}.\n"
+                    ],
+                    [
+                        95,
+                        "        - Name: BlockNonCanonicalHost\n"
+                    ],
+                    [
+                        96,
+                        "          Priority: 2\n"
+                    ],
+                    [
+                        97,
+                        "          Action:\n"
+                    ],
+                    [
+                        98,
+                        "            Count: {}\n"
+                    ],
+                    [
+                        99,
+                        "          Statement:\n"
+                    ],
+                    [
+                        100,
+                        "            NotStatement:\n"
+                    ],
+                    [
+                        101,
+                        "              Statement:\n"
+                    ],
+                    [
+                        102,
+                        "                ByteMatchStatement:\n"
+                    ],
+                    [
+                        103,
+                        "                  SearchString: !Ref CanonicalHost\n"
+                    ],
+                    [
+                        104,
+                        "                  FieldToMatch:\n"
+                    ],
+                    [
+                        105,
+                        "                    SingleHeader:\n"
+                    ],
+                    [
+                        106,
+                        "                      Name: host\n"
+                    ],
+                    [
+                        107,
+                        "                  PositionalConstraint: EXACTLY\n"
+                    ],
+                    [
+                        108,
+                        "                  TextTransformations:\n"
+                    ],
+                    [
+                        109,
+                        "                    - Priority: 0\n"
+                    ],
+                    [
+                        110,
+                        "                      Type: LOWERCASE\n"
+                    ],
+                    [
+                        111,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        112,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        113,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        114,
+                        "            MetricName: BlockNonCanonicalHost\n"
+                    ],
+                    [
+                        115,
+                        "\n"
+                    ],
+                    [
+                        116,
+                        "        # -- Managed rule groups ---------------------------------------------\n"
+                    ],
+                    [
+                        117,
+                        "\n"
+                    ],
+                    [
+                        118,
+                        "        - Name: AWSManagedRulesAmazonIpReputationList\n"
+                    ],
+                    [
+                        119,
+                        "          Priority: 3\n"
+                    ],
+                    [
+                        120,
+                        "          OverrideAction:\n"
+                    ],
+                    [
+                        121,
+                        "            None: {}\n"
+                    ],
+                    [
+                        122,
+                        "          Statement:\n"
+                    ],
+                    [
+                        123,
+                        "            ManagedRuleGroupStatement:\n"
+                    ],
+                    [
+                        124,
+                        "              VendorName: AWS\n"
+                    ],
+                    [
+                        125,
+                        "              Name: AWSManagedRulesAmazonIpReputationList\n"
+                    ],
+                    [
+                        126,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        127,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        128,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        129,
+                        "            MetricName: AmazonIpReputationList\n"
+                    ],
+                    [
+                        130,
+                        "\n"
+                    ],
+                    [
+                        131,
+                        "        - Name: AWSManagedRulesKnownBadInputsRuleSet\n"
+                    ],
+                    [
+                        132,
+                        "          Priority: 4\n"
+                    ],
+                    [
+                        133,
+                        "          OverrideAction:\n"
+                    ],
+                    [
+                        134,
+                        "            None: {}\n"
+                    ],
+                    [
+                        135,
+                        "          Statement:\n"
+                    ],
+                    [
+                        136,
+                        "            ManagedRuleGroupStatement:\n"
+                    ],
+                    [
+                        137,
+                        "              VendorName: AWS\n"
+                    ],
+                    [
+                        138,
+                        "              Name: AWSManagedRulesKnownBadInputsRuleSet\n"
+                    ],
+                    [
+                        139,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        140,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        141,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        142,
+                        "            MetricName: KnownBadInputs\n"
+                    ],
+                    [
+                        143,
+                        "\n"
+                    ],
+                    [
+                        144,
+                        "        - Name: AWSManagedRulesSQLiRuleSet\n"
+                    ],
+                    [
+                        145,
+                        "          Priority: 5\n"
+                    ],
+                    [
+                        146,
+                        "          OverrideAction:\n"
+                    ],
+                    [
+                        147,
+                        "            None: {}\n"
+                    ],
+                    [
+                        148,
+                        "          Statement:\n"
+                    ],
+                    [
+                        149,
+                        "            ManagedRuleGroupStatement:\n"
+                    ],
+                    [
+                        150,
+                        "              VendorName: AWS\n"
+                    ],
+                    [
+                        151,
+                        "              Name: AWSManagedRulesSQLiRuleSet\n"
+                    ],
+                    [
+                        152,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        153,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        154,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        155,
+                        "            MetricName: SQLiRuleSet\n"
+                    ],
+                    [
+                        156,
+                        "\n"
+                    ],
+                    [
+                        157,
+                        "        # CRS in COUNT for the monitoring window. SizeRestrictions_BODY is\n"
+                    ],
+                    [
+                        158,
+                        "        # overridden to Count so that when you flip the group to enforce\n"
+                    ],
+                    [
+                        159,
+                        "        # (OverrideAction -> None), that known-noisy rule stays non-blocking.\n"
+                    ],
+                    [
+                        160,
+                        "        - Name: AWSManagedRulesCommonRuleSet\n"
+                    ],
+                    [
+                        161,
+                        "          Priority: 6\n"
+                    ],
+                    [
+                        162,
+                        "          OverrideAction:\n"
+                    ],
+                    [
+                        163,
+                        "            Count: {}\n"
+                    ],
+                    [
+                        164,
+                        "          Statement:\n"
+                    ],
+                    [
+                        165,
+                        "            ManagedRuleGroupStatement:\n"
+                    ],
+                    [
+                        166,
+                        "              VendorName: AWS\n"
+                    ],
+                    [
+                        167,
+                        "              Name: AWSManagedRulesCommonRuleSet\n"
+                    ],
+                    [
+                        168,
+                        "              RuleActionOverrides:\n"
+                    ],
+                    [
+                        169,
+                        "                - Name: SizeRestrictions_BODY\n"
+                    ],
+                    [
+                        170,
+                        "                  ActionToUse:\n"
+                    ],
+                    [
+                        171,
+                        "                    Count: {}\n"
+                    ],
+                    [
+                        172,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        173,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        174,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        175,
+                        "            MetricName: CommonRuleSet\n"
+                    ],
+                    [
+                        176,
+                        "\n"
+                    ],
+                    [
+                        177,
+                        "        # BotControl. COST: ~$10/mo per web ACL + ~$1 per million requests\n"
+                    ],
+                    [
+                        178,
+                        "        # analyzed, billed whether in Count or Block. To remove, delete this\n"
+                    ],
+                    [
+                        179,
+                        "        # entire rule block.\n"
+                    ],
+                    [
+                        180,
+                        "        - Name: AWSManagedRulesBotControlRuleSet\n"
+                    ],
+                    [
+                        181,
+                        "          Priority: 7\n"
+                    ],
+                    [
+                        182,
+                        "          OverrideAction:\n"
+                    ],
+                    [
+                        183,
+                        "            Count: {}\n"
+                    ],
+                    [
+                        184,
+                        "          Statement:\n"
+                    ],
+                    [
+                        185,
+                        "            ManagedRuleGroupStatement:\n"
+                    ],
+                    [
+                        186,
+                        "              VendorName: AWS\n"
+                    ],
+                    [
+                        187,
+                        "              Name: AWSManagedRulesBotControlRuleSet\n"
+                    ],
+                    [
+                        188,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        189,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        190,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        191,
+                        "            MetricName: BotControl\n"
+                    ],
+                    [
+                        192,
+                        "\n"
+                    ],
+                    [
+                        193,
+                        "        # -- Rate limit -------------------------------------------------------\n"
+                    ],
+                    [
+                        194,
+                        "\n"
+                    ],
+                    [
+                        195,
+                        "        - Name: RateLimitPerIP\n"
+                    ],
+                    [
+                        196,
+                        "          Priority: 8\n"
+                    ],
+                    [
+                        197,
+                        "          Action:\n"
+                    ],
+                    [
+                        198,
+                        "            Block: {}\n"
+                    ],
+                    [
+                        199,
+                        "          Statement:\n"
+                    ],
+                    [
+                        200,
+                        "            RateBasedStatement:\n"
+                    ],
+                    [
+                        201,
+                        "              Limit: !Ref RateLimitPer5Min\n"
+                    ],
+                    [
+                        202,
+                        "              AggregateKeyType: IP\n"
+                    ],
+                    [
+                        203,
+                        "              EvaluationWindowSec: 300\n"
+                    ],
+                    [
+                        204,
+                        "          VisibilityConfig:\n"
+                    ],
+                    [
+                        205,
+                        "            SampledRequestsEnabled: true\n"
+                    ],
+                    [
+                        206,
+                        "            CloudWatchMetricsEnabled: true\n"
+                    ],
+                    [
+                        207,
+                        "            MetricName: RateLimitPerIP\n"
+                    ],
+                    [
+                        208,
+                        "\n"
+                    ],
+                    [
+                        209,
+                        "      Tags:\n"
+                    ],
+                    [
+                        210,
+                        "        - Key: Project\n"
+                    ],
+                    [
+                        211,
+                        "          Value: TherapyBillAI\n"
+                    ],
+                    [
+                        212,
+                        "        - Key: Environment\n"
+                    ],
+                    [
+                        213,
+                        "          Value: !Ref EnvironmentName\n"
+                    ]
+                ],
+                "file_path": "/waf-alb.yaml",
+                "file_abs_path": "infra/waf-alb.yaml",
+                "repo_file_path": "/infra/waf-alb.yaml",
+                "file_line_range": [
+                    49,
+                    213
+                ],
+                "resource": "AWS::WAFv2::WebACL.WebACL",
+                "evaluations": {},
+                "check_class": "checkov.cloudformation.checks.resource.aws.WAFACLCVE202144228",
+                "fixed_definition": null,
+                "entity_tags": {
+                    "Project": "TherapyBillAI",
+                    "Environment": "prod"
+                },
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": null,
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null,
+                "breadcrumbs": {
+                    "Tags.1.Value": [
+                        {
+                            "type": "parameters",
+                            "name": "EnvironmentName",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Tags.1": [
+                        {
+                            "type": "parameters",
+                            "name": "EnvironmentName",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Name": [
+                        {
+                            "type": "parameters",
+                            "name": "EnvironmentName",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "VisibilityConfig.MetricName": [
+                        {
+                            "type": "parameters",
+                            "name": "EnvironmentName",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.0.Statement.IPSetReferenceStatement.Arn": [
+                        {
+                            "type": "parameters",
+                            "name": "ScannerBlocklistIpSetArn",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.0.Statement.IPSetReferenceStatement": [
+                        {
+                            "type": "parameters",
+                            "name": "ScannerBlocklistIpSetArn",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.0.Statement": [
+                        {
+                            "type": "parameters",
+                            "name": "ScannerBlocklistIpSetArn",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.0": [
+                        {
+                            "type": "parameters",
+                            "name": "ScannerBlocklistIpSetArn",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.8.Statement.RateBasedStatement.Limit": [
+                        {
+                            "type": "parameters",
+                            "name": "RateLimitPer5Min",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.8.Statement.RateBasedStatement": [
+                        {
+                            "type": "parameters",
+                            "name": "RateLimitPer5Min",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.8.Statement": [
+                        {
+                            "type": "parameters",
+                            "name": "RateLimitPer5Min",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.8": [
+                        {
+                            "type": "parameters",
+                            "name": "RateLimitPer5Min",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.2.Statement.NotStatement.Statement.ByteMatchStatement.SearchString": [
+                        {
+                            "type": "parameters",
+                            "name": "CanonicalHost",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.2.Statement.NotStatement.Statement.ByteMatchStatement": [
+                        {
+                            "type": "parameters",
+                            "name": "CanonicalHost",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.2.Statement.NotStatement.Statement": [
+                        {
+                            "type": "parameters",
+                            "name": "CanonicalHost",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.2.Statement.NotStatement": [
+                        {
+                            "type": "parameters",
+                            "name": "CanonicalHost",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.2.Statement": [
+                        {
+                            "type": "parameters",
+                            "name": "CanonicalHost",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "Rules.2": [
+                        {
+                            "type": "parameters",
+                            "name": "CanonicalHost",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ]
+                }
+            }
+        ],
+        "failed_checks": [
+            {
+                "check_id": "CKV_AWS_158",
+                "bc_check_id": null,
+                "check_name": "Ensure that CloudWatch Log Group is encrypted by KMS",
+                "check_result": {
+                    "result": "FAILED",
+                    "evaluated_keys": [
+                        "Properties/KmsKeyId"
+                    ]
+                },
+                "code_block": [
+                    [
+                        43,
+                        "  WafLogGroup:\n"
+                    ],
+                    [
+                        44,
+                        "    Type: AWS::Logs::LogGroup\n"
+                    ],
+                    [
+                        45,
+                        "    Properties:\n"
+                    ],
+                    [
+                        46,
+                        "      LogGroupName: !Sub \"aws-waf-logs-therapybill-${EnvironmentName}\"\n"
+                    ],
+                    [
+                        47,
+                        "      RetentionInDays: !Ref LogRetentionDays\n"
+                    ]
+                ],
+                "file_path": "/waf-alb.yaml",
+                "file_abs_path": "infra/waf-alb.yaml",
+                "repo_file_path": "/infra/waf-alb.yaml",
+                "file_line_range": [
+                    43,
+                    47
+                ],
+                "resource": "AWS::Logs::LogGroup.WafLogGroup",
+                "evaluations": {},
+                "check_class": "checkov.cloudformation.checks.resource.aws.CloudWatchLogGroupKMSKey",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": null,
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null,
+                "breadcrumbs": {
+                    "LogGroupName": [
+                        {
+                            "type": "parameters",
+                            "name": "EnvironmentName",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ],
+                    "RetentionInDays": [
+                        {
+                            "type": "parameters",
+                            "name": "LogRetentionDays",
+                            "path": "infra/waf-alb.yaml",
+                            "attribute_key": "Default"
+                        }
+                    ]
+                }
+            }
+        ],
+        "skipped_checks": [],
+        "parsing_errors": []
+    },
+    "summary": {
+        "passed": 2,
+        "failed": 1,
+        "skipped": 0,
+        "parsing_errors": 0,
+        "resource_count": 4,
+        "checkov_version": "3.3.29"
+    },
+    "url": "Add an api key '--bc-api-key <api-key>' to see more detailed insights via https://bridgecrew.cloud"
+}

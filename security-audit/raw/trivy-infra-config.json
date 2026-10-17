@@ -1,0 +1,101 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "dev"
+  },
+  "ReportID": "01a144a3-1d5f-715f-9269-beef3e745873",
+  "CreatedAt": "2026-10-16T12:15:03.007092995Z",
+  "ArtifactName": "infra",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "waf-alb.yaml",
+      "Class": "config",
+      "Type": "cloudformation",
+      "MisconfSummary": {
+        "Successes": 24,
+        "Failures": 1
+      },
+      "Misconfigurations": [
+        {
+          "Type": "CloudFormation Security Check",
+          "ID": "AWS-0017",
+          "Title": "CloudWatch log groups should be encrypted using CMK",
+          "Description": "CloudWatch log groups are encrypted by default, however, to get the full benefit of controlling key rotation and other KMS aspects a KMS CMK should be used.\n",
+          "Message": "Log group is not encrypted.",
+          "Namespace": "builtin.aws.cloudwatch.aws0017",
+          "Query": "data.builtin.aws.cloudwatch.aws0017.deny",
+          "Resolution": "Enable CMK encryption of CloudWatch Log Groups",
+          "Severity": "LOW",
+          "PrimaryURL": "https://avd.aquasec.com/misconfig/aws-0017",
+          "References": [
+            "https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html",
+            "https://avd.aquasec.com/misconfig/aws-0017"
+          ],
+          "Status": "FAIL",
+          "CauseMetadata": {
+            "Resource": "waf-alb.yaml:43-47",
+            "Provider": "AWS",
+            "Service": "cloudwatch",
+            "StartLine": 43,
+            "EndLine": 47,
+            "Code": {
+              "Lines": [
+                {
+                  "Number": 43,
+                  "Content": "  WafLogGroup:",
+                  "IsCause": true,
+                  "Annotation": "",
+                  "Truncated": false,
+                  "Highlighted": "  \u001b[38;5;33mWafLogGroup\u001b[0m:",
+                  "FirstCause": true,
+                  "LastCause": false
+                },
+                {
+                  "Number": 44,
+                  "Content": "    Type: AWS::Logs::LogGroup",
+                  "IsCause": true,
+                  "Annotation": "",
+                  "Truncated": false,
+                  "Highlighted": "    \u001b[38;5;33mType\u001b[0m: AWS::Logs::LogGroup",
+                  "FirstCause": false,
+                  "LastCause": false
+                },
+                {
+                  "Number": 45,
+                  "Content": "    Properties:",
+                  "IsCause": true,
+                  "Annotation": "",
+                  "Truncated": false,
+                  "Highlighted": "    \u001b[38;5;33mProperties\u001b[0m:",
+                  "FirstCause": false,
+                  "LastCause": false
+                },
+                {
+                  "Number": 46,
+                  "Content": "      LogGroupName: !Sub \"aws-waf-logs-therapybill-${EnvironmentName}\"",
+                  "IsCause": true,
+                  "Annotation": "",
+                  "Truncated": false,
+                  "Highlighted": "      \u001b[38;5;33mLogGroupName\u001b[0m: !Sub \"aws-waf-logs-therapybill-${EnvironmentName}\"",
+                  "FirstCause": false,
+                  "LastCause": false
+                },
+                {
+                  "Number": 47,
+                  "Content": "      RetentionInDays: !Ref LogRetentionDays",
+                  "IsCause": true,
+                  "Annotation": "",
+                  "Truncated": false,
+                  "Highlighted": "      \u001b[38;5;33mRetentionInDays\u001b[0m: !Ref LogRetentionDays",
+                  "FirstCause": false,
+                  "LastCause": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

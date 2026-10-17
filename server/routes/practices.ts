@@ -38,7 +38,7 @@ router.get('/:id/patients-missing-plan-documents', isAuthenticated, async (req: 
       return res.status(400).json({ message: 'Invalid practice ID' });
     }
     // Fail closed: a missing practice context is a deny for non-admins.
-    if (req.userRole !== 'admin' && (!req.userPracticeId || req.userPracticeId !== practiceId)) {
+    if (!req.isPlatformAdmin && (!req.userPracticeId || req.userPracticeId !== practiceId)) {
       return res.status(403).json({ message: 'Cannot view another practice' });
     }
     if (!['admin', 'billing', 'therapist'].includes(req.userRole || '')) {

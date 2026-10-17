@@ -402,7 +402,7 @@ router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFu
   try {
     const claim = await storage.getClaim(claimId);
     if (!claim) return res.status(404).json({ message: 'Claim not found' });
-    if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+    if (!req.isPlatformAdmin && claim.practiceId !== req.userPracticeId) {
       logger.warn('Unauthorized claim access attempt', {
         userId: req.user?.claims?.sub, userPracticeId: req.userPracticeId, claimPracticeId: claim.practiceId, claimId,
       });
@@ -430,8 +430,7 @@ router.get('/:id', isAuthenticated, async (req: any, res) => {
 
     // Security: Verify user has access to this claim's practice
     const userPracticeId = req.userPracticeId;
-    const userRole = req.userRole;
-    if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+    if (!req.isPlatformAdmin && claim.practiceId !== userPracticeId) {
       logger.warn('Unauthorized claim access attempt', {
         userId: req.user?.claims?.sub,
         userPracticeId,
@@ -707,8 +706,7 @@ router.get('/:id/line-items', isAuthenticated, async (req: any, res) => {
       return res.status(404).json({ message: 'Claim not found' });
     }
     const userPracticeId = req.userPracticeId;
-    const userRole = req.userRole;
-    if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+    if (!req.isPlatformAdmin && claim.practiceId !== userPracticeId) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -757,7 +755,7 @@ function parseLineRate(value: unknown): string | null {
 async function loadEditableLineItem(req: any, claimId: number, lineItemId: number) {
   const claim = await storage.getClaim(claimId);
   if (!claim) return { error: { status: 404, message: 'Claim not found' } };
-  if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+  if (!req.isPlatformAdmin && claim.practiceId !== req.userPracticeId) {
     return { error: { status: 403, message: 'Access denied' } };
   }
   const status = (claim.status || '').toLowerCase();
@@ -885,7 +883,7 @@ router.delete('/:id', isAuthenticated, async (req: any, res) => {
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
     }
-    if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+    if (!req.isPlatformAdmin && claim.practiceId !== req.userPracticeId) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -963,7 +961,7 @@ router.post('/:id/line-items', isAuthenticated, async (req: any, res) => {
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
     }
-    if (req.userRole !== 'admin' && claim.practiceId !== req.userPracticeId) {
+    if (!req.isPlatformAdmin && claim.practiceId !== req.userPracticeId) {
       return res.status(403).json({ message: 'Access denied' });
     }
     // Draft-only, matching the PATCH/DELETE above and Blanche's tool. Adding
@@ -1516,6 +1514,13 @@ router.get('/:id/preview-payload', isAuthenticated, async (req: any, res) => {
     const claimId = parseInt(req.params.id);
     const claim = await storage.getClaim(claimId);
     if (!claim) return res.status(404).json({ message: 'Claim not found' });
+
+    // Tenant isolation: a claim id from another practice is not found, not
+    // forbidden — a distinguishable 403 would confirm the claim exists.
+    const practiceId = getAuthorizedPracticeId(req);
+    if (claim.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
 
     const [patient, practice, lineItemsRaw, insurance] = await Promise.all([
       storage.getPatient(claim.patientId),
@@ -2322,6 +2327,13 @@ router.post('/:id/check-status', isAuthenticated, async (req: any, res) => {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
+    // Tenant isolation: never query the clearinghouse (with this practice's
+    // own API key) on behalf of a claim that isn't ours.
+    const practiceId = getAuthorizedPracticeId(req);
+    if (claim.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+
     if (claim.status === 'draft') {
       return res.status(400).json({ message: 'Claim has not been submitted yet' });
     }
@@ -3061,8 +3073,7 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
 
     // Security: Verify user has access to this claim's practice
     const userPracticeId = req.userPracticeId;
-    const userRole = req.userRole;
-    if (userRole !== 'admin' && claim.practiceId !== userPracticeId) {
+    if (!req.isPlatformAdmin && claim.practiceId !== userPracticeId) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
