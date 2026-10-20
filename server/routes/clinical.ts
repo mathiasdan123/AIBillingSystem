@@ -21,6 +21,7 @@ import { Router } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { assertPhiAiAllowed } from '../utils/phiAiGuard';
 
 const router = Router();
 
@@ -545,6 +546,7 @@ router.post('/patients/:id/progress-notes', isAuthenticated, async (req: any, re
 
     if (autoGenerate && sessionId && process.env.OPENAI_API_KEY) {
       try {
+        assertPhiAiAllowed('Progress note AI generation (OpenAI)', 'openai');
         const soapNote = await storage.getSoapNoteBySession(sessionId);
         if (soapNote) {
           const OpenAI = (await import('openai')).default;
