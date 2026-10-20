@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Grants the ECS task role permission to invoke Claude on AWS Bedrock.
+  Added 2026-10 as part of closing the Anthropic direct-API BAA gap: PHI
+  flows through server-side Claude calls (see server/services/aiProvider.ts),
+  and the direct Anthropic API is not yet BAA-covered while Bedrock is,
+  under the AWS BAA this practice already has. Setting AI_PROVIDER=bedrock
+  routes those calls over Bedrock using this role's credentials - no API
+  key involved.
+
+  Does NOT create or own the task role itself (therapybill-ecs-task-role is
+  managed outside this repo); this stack only attaches one additional inline
+  policy to it, scoped to the exact Claude models this app calls
+  (BEDROCK_MODEL_MAP in aiProvider.ts), across the three regions a "us."
+  cross-region inference profile can route to.
+
+Parameters:
+  TaskRoleName:
+    Type: String
+    Default: therapybill-ecs-task-role
+    Description: Name of the existing ECS task role to attach this policy to.
+
+  PrimaryRegion:
+    Type: String
+    Default: us-east-1
+    Description: Region the inference profiles live in (matches AWS_REGION default in aiProvider.ts).
+
+Resources:
+
+  BedrockClaudeInvokePolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref TaskRoleName
+      PolicyName: BedrockClaudeInvoke
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InvokeBedrockClaudeInferenceProfiles
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub "arn:aws:bedrock:${PrimaryRegion}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+              - !Sub "arn:aws:bedrock:${PrimaryRegion}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+              - !Sub "arn:aws:bedrock:${PrimaryRegion}:${AWS::AccountId}:inference-profile/us.anthropic.claude-opus-4-7"
+              - !Sub "arn:aws:bedrock:${PrimaryRegion}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-5"
+
+          # Cross-region inference profiles additionally require permission on
+          # the underlying foundation-model resource in every region the
+          # profile may route to - granting only the inference-profile ARN
+          # above is not sufficient on its own.
+          - Sid: InvokeUnderlyingFoundationModels
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0
+              - arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0
+              - arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0
+              - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-7
+              - arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-opus-4-7
+              - arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-opus-4-7
+              - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5
+              - arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-5
+              - arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-5
+
+Outputs:
+  PolicyName:
+    Value: BedrockClaudeInvoke
+  AttachedToRole:
+    Value: !Ref TaskRoleName
