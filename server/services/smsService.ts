@@ -134,6 +134,14 @@ export async function sendSMSWithPreferenceCheck(
 
 /**
  * Send appointment reminder SMS
+ *
+ * No PHI minimization note: these messages intentionally omit the patient's
+ * name. Twilio is not a signed HIPAA Business Associate for this account, so
+ * nothing that identifies the recipient by name goes into the message body —
+ * only the fact that an appointment exists at a given time, which the
+ * practice's own send list already keys by recipient. `patientName` is still
+ * accepted (and used for notification-preference lookups) but is no longer
+ * interpolated into the text sent to Twilio.
  */
 export async function sendAppointmentReminderSMS(
   patientPhone: string,
@@ -154,7 +162,7 @@ export async function sendAppointmentReminderSMS(
     hour12: true,
   });
 
-  const message = `Hi ${patientName}! This is a reminder of your appointment at ${practiceName} on ${formattedDate} at ${formattedTime}. Reply CONFIRM to confirm or call ${practicePhone || 'us'} to reschedule.`;
+  const message = `Reminder: you have an appointment at ${practiceName} on ${formattedDate} at ${formattedTime}. Reply CONFIRM to confirm or call ${practicePhone || 'us'} to reschedule.`;
 
   return sendSMSWithPreferenceCheck(patientPhone, message, patientId, 'appointmentReminders');
 }
@@ -179,7 +187,7 @@ export async function sendAppointmentConfirmationSMS(
     hour12: true,
   });
 
-  const message = `Your appointment at ${practiceName} is confirmed for ${formattedDate} at ${formattedTime}. We look forward to seeing you, ${patientName}!`;
+  const message = `Your appointment at ${practiceName} is confirmed for ${formattedDate} at ${formattedTime}. We look forward to seeing you!`;
 
   return sendSMS(patientPhone, message);
 }
@@ -200,7 +208,7 @@ export async function sendAppointmentCancellationSMS(
     day: 'numeric',
   });
 
-  const message = `Hi ${patientName}, your appointment at ${practiceName} on ${formattedDate} has been cancelled. Please call ${practicePhone || 'us'} to reschedule.`;
+  const message = `Your appointment at ${practiceName} on ${formattedDate} has been cancelled. Please call ${practicePhone || 'us'} to reschedule.`;
 
   return sendSMS(patientPhone, message);
 }
