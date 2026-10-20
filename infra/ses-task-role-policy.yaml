@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Grants the ECS task role permission to send email via Amazon SES. HIPAA-
+  eligible under the AWS BAA this practice already has - no separate vendor
+  BAA needed, unlike raw SMTP through an unconfirmed third-party relay (see
+  server/services/emailTransportFactory.ts). Uses the task role's
+  credentials, no SMTP_USER/SMTP_PASS needed.
+
+  Does NOT create or own the task role itself (therapybill-ecs-task-role is
+  managed outside this repo); this stack only attaches one additional inline
+  policy to it. Also does NOT verify the sending identity in SES - that
+  (domain or single-address verification, plus production-access approval
+  if the SES account is still in the sandbox) has to happen separately in
+  the SES console before EMAIL_PROVIDER=aws can actually send anything.
+
+Parameters:
+  TaskRoleName:
+    Type: String
+    Default: therapybill-ecs-task-role
+    Description: Name of the existing ECS task role to attach this policy to.
+
+  SesFromDomain:
+    Type: String
+    Default: therapybillai.com
+    Description: >
+      The domain EMAIL_FROM will send from once verified in SES. Must match
+      whatever domain identity is actually verified - update this and
+      redeploy if that changes. Scopes the IAM policy to this one identity
+      rather than granting ses:SendEmail on every identity in the account.
+
+Resources:
+
+  SesSendEmailPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref TaskRoleName
+      PolicyName: SesSendEmail
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SendEmailFromVerifiedDomain
+            Effect: Allow
+            Action:
+              - ses:SendEmail
+              - ses:SendRawEmail
+            Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesFromDomain}"
+
+Outputs:
+  AttachedToRole:
+    Value: !Ref TaskRoleName
+  ScopedToIdentity:
+    Value: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesFromDomain}"
