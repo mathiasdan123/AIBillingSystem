@@ -117,8 +117,8 @@ export default function PrivacyPolicy() {
               <li><strong>Anthropic (Claude AI), via Amazon Bedrock:</strong> AI-powered billing code suggestions, clinical documentation assistance, and appeal letter generation. Processed through Amazon Bedrock and covered under our AWS Business Associate Agreement. AI outputs always require provider review.</li>
               <li><strong>OpenAI:</strong> Used for voice-to-text transcription of dictated clinical notes and an optional AI-assisted progress note summary feature. We have not executed a separate Business Associate Agreement with OpenAI for this use. We are migrating this functionality to Amazon Transcribe, covered under our existing AWS Business Associate Agreement.</li>
               <li><strong>ElevenLabs:</strong> Used for an optional text-to-speech feature that reads clinical notes and appeal letters aloud. We have not executed a separate Business Associate Agreement with ElevenLabs for this use. We are migrating this functionality to Amazon Polly, covered under our existing AWS Business Associate Agreement.</li>
-              <li><strong>Twilio:</strong> SMS appointment reminders, which may include a patient's first name and appointment time. Business Associate Agreement status: under review.</li>
-              <li><strong>Email delivery provider:</strong> Transactional email for appointment and billing notifications. Business Associate Agreement status: under review.</li>
+              <li><strong>Twilio:</strong> SMS appointment reminders, which may include a patient's first name and appointment time. We have not executed a Business Associate Agreement with Twilio for this use.</li>
+              <li><strong>Amazon SES:</strong> Transactional email for appointment reminders, billing notifications, and account-related messages (such as password resets). Migration to this service is in progress; once live, it will be covered under our AWS Business Associate Agreement.</li>
             </ul>
           </section>
 
