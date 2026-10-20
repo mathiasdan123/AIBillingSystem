@@ -3,6 +3,8 @@
  * Converts text to natural-sounding speech for accessibility and ambient documentation
  */
 
+import { assertPhiAiAllowed } from "../utils/phiAiGuard";
+
 interface ElevenLabsVoice {
   voice_id: string;
   name: string;
@@ -76,6 +78,15 @@ export async function textToSpeech(
     style?: number;
   } = {}
 ): Promise<TTSResult> {
+  try {
+    assertPhiAiAllowed("Text-to-speech (ElevenLabs)", "elevenlabs");
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Text-to-speech disabled",
+    };
+  }
+
   if (!process.env.ELEVENLABS_API_KEY) {
     return {
       success: false,

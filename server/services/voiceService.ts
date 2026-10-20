@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
+import { assertPhiAiAllowed } from "../utils/phiAiGuard";
 
 // Lazy initialization of OpenAI client for voice transcription
 let openai: OpenAI | null = null;
@@ -34,6 +35,17 @@ export async function transcribeAudio(
   audioFilePath: string,
   language: string = "en"
 ): Promise<TranscriptionResult> {
+  try {
+    assertPhiAiAllowed("Voice transcription (OpenAI Whisper)", "openai");
+  } catch (error) {
+    return {
+      text: "",
+      success: false,
+      error: error instanceof Error ? error.message : "Voice transcription disabled",
+      method: "fallback"
+    };
+  }
+
   const client = getOpenAIClient();
 
   if (!client) {
