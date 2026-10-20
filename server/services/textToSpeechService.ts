@@ -4,11 +4,23 @@
  */
 
 import { assertPhiAiAllowed } from "../utils/phiAiGuard";
+import * as awsPollyService from "./awsPollyService";
 
 interface ElevenLabsVoice {
   voice_id: string;
   name: string;
   category: string;
+}
+
+/**
+ * Set to 'aws' to route text-to-speech through Amazon Polly instead of
+ * ElevenLabs - HIPAA-eligible under the existing AWS BAA, no separate
+ * vendor BAA needed. Defaults to 'elevenlabs' so behavior is unchanged
+ * until explicitly opted in (same cutover pattern as AI_PROVIDER in
+ * aiProvider.ts).
+ */
+function useAwsPolly(): boolean {
+  return (process.env.TTS_PROVIDER || "").toLowerCase() === "aws";
 }
 
 interface TTSResult {
@@ -31,16 +43,19 @@ export const VOICE_PRESETS = {
 } as const;
 
 /**
- * Check if Eleven Labs TTS is available
+ * Check if TTS is available (ElevenLabs API key, or AWS Polly via task role)
  */
 export function isTextToSpeechAvailable(): boolean {
+  if (useAwsPolly()) {
+    return awsPollyService.isTextToSpeechAvailable();
+  }
   return !!process.env.ELEVENLABS_API_KEY;
 }
 
 /**
  * Get available voices from Eleven Labs
  */
-export async function getAvailableVoices(): Promise<ElevenLabsVoice[]> {
+async function getAvailableVoicesElevenLabs(): Promise<ElevenLabsVoice[]> {
   if (!process.env.ELEVENLABS_API_KEY) {
     return [];
   }
@@ -65,10 +80,17 @@ export async function getAvailableVoices(): Promise<ElevenLabsVoice[]> {
   }
 }
 
+export async function getAvailableVoices(): Promise<ElevenLabsVoice[]> {
+  if (useAwsPolly()) {
+    return awsPollyService.getAvailableVoices();
+  }
+  return getAvailableVoicesElevenLabs();
+}
+
 /**
  * Convert text to speech using Eleven Labs API
  */
-export async function textToSpeech(
+async function textToSpeechElevenLabs(
   text: string,
   options: {
     voiceId?: string;
@@ -164,6 +186,22 @@ export async function textToSpeech(
       error: error instanceof Error ? error.message : "Text-to-speech failed",
     };
   }
+}
+
+export async function textToSpeech(
+  text: string,
+  options: {
+    voiceId?: string;
+    modelId?: string;
+    stability?: number;
+    similarityBoost?: number;
+    style?: number;
+  } = {}
+): Promise<TTSResult> {
+  if (useAwsPolly()) {
+    return awsPollyService.textToSpeech(text, options);
+  }
+  return textToSpeechElevenLabs(text, options);
 }
 
 /**
