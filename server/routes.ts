@@ -15,7 +15,7 @@ import {
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, pdms2Router, progressNotesRouter, referralsRouter,
-  paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
+  paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter, sesNotificationsRouter,
   reconciliationRouter, plaidWebhookRouter, supportRouter,
   documentsRouter, followUpsRouter, revenueAtRiskRouter, schedulingRouter, eligibilityRouter, payerIntelRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
@@ -349,6 +349,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', sessionsRouter);
   // Webhook routes: /api/webhooks
   app.use('/api', webhooksRouter);
+  // SES bounce/complaint notifications (via SNS): /api/webhooks/ses-notifications
+  app.use('/api/webhooks', sesNotificationsRouter);
   // Document management routes: /api/documents
   app.use('/api/documents', documentsRouter);
   // Claim Follow-Up routes: /api/follow-ups/*
