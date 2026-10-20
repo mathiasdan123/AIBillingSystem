@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SNS topic + HTTPS subscription for Amazon SES bounce/complaint
+  notifications, delivered to server/routes/sesNotifications.ts. That
+  route verifies every message's AWS signature (server/services/snsVerification.ts)
+  before trusting it, and auto-confirms this subscription on first deploy.
+
+  Does NOT wire the SES identity to publish here - CloudFormation has no
+  native resource type for ses:SetIdentityNotificationTopic (a classic SES
+  v1 API call, not part of the SESv2/configuration-set model). That's a
+  one-time, idempotent CLI step, documented in the PR this ships with:
+
+    aws ses set-identity-notification-topic --identity therapybillai.com \
+      --notification-type Bounce --sns-topic <output: SesEventNotificationsTopicArn>
+    aws ses set-identity-notification-topic --identity therapybillai.com \
+      --notification-type Complaint --sns-topic <output: SesEventNotificationsTopicArn>
+
+  Deploy this stack (and run the CLI step above) only AFTER the app code
+  in PR #396's branch is live in production - the HTTPS subscription
+  confirmation handshake needs a running endpoint to succeed.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+
+  WebhookUrl:
+    Type: String
+    Default: https://app.therapybillai.com/api/webhooks/ses-notifications
+    Description: Must match the live app's SES notification webhook endpoint.
+
+Resources:
+
+  # Bounce/complaint notifications carry real patient email addresses -
+  # encrypted at rest for the same reason the WAF logs and Transcribe
+  # scratch bucket are (see infra/waf-alb.yaml, infra/transcribe-polly-task-role-policy.yaml).
+  SesEventNotificationsTopicKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "CMK for therapybill-ses-events-${EnvironmentName} SNS topic encryption"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowRootAccountFullAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: AllowSesEncrypt
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: "*"
+          - Sid: AllowSnsServiceUse
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: "*"
+
+  SesEventNotificationsTopicKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/therapybill-ses-events-${EnvironmentName}"
+      TargetKeyId: !Ref SesEventNotificationsTopicKmsKey
+
+  SesEventNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "therapybill-ses-events-${EnvironmentName}"
+      DisplayName: TherapyBill AI SES bounce/complaint notifications
+      KmsMasterKeyId: !Ref SesEventNotificationsTopicKmsKey
+      Tags:
+        - Key: Project
+          Value: TherapyBillAI
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  SesEventNotificationsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SesEventNotificationsTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowSesPublish
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SesEventNotificationsTopic
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref "AWS::AccountId"
+
+  SesEventNotificationsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SesEventNotificationsTopic
+      Protocol: https
+      Endpoint: !Ref WebhookUrl
+
+Outputs:
+  SesEventNotificationsTopicArn:
+    Value: !Ref SesEventNotificationsTopic
+    Description: >
+      Pass this as --sns-topic to the ses set-identity-notification-topic
+      CLI calls described above.

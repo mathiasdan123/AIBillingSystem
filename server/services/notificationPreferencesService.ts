@@ -7,8 +7,9 @@
  */
 
 import { db } from '../db';
-import { eq, and } from 'drizzle-orm';
-import { notificationPreferences } from '@shared/schema';
+import { eq, and, sql } from 'drizzle-orm';
+import { notificationPreferences, patients } from '@shared/schema';
+import { storage } from '../storage';
 import logger from './logger';
 
 export type NotificationType =
@@ -198,6 +199,58 @@ export async function updatePreferences(
     .returning();
 
   return updated;
+}
+
+/**
+ * Suppress future email notifications for every patient/staff record
+ * matching the given address - called from the SES bounce/complaint
+ * webhook (server/routes/sesNotifications.ts). Reuses the existing
+ * emailEnabled preference flag that sendEmailWithPreferenceCheck already
+ * honors, rather than adding a new table: a hard bounce or a spam
+ * complaint means "stop emailing this address," which is exactly what
+ * emailEnabled=false already means everywhere else in the app.
+ *
+ * An address can match more than one patient record (e.g. a parent's
+ * email shared across siblings' accounts), so every match is suppressed,
+ * not just the first.
+ */
+export async function suppressEmailForAddress(
+  email: string,
+  reason: 'bounce' | 'complaint',
+): Promise<{ patientsSuppressed: number; staffSuppressed: number }> {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const matchedPatients = await db
+    .select({ id: patients.id, practiceId: patients.practiceId })
+    .from(patients)
+    .where(sql`lower(${patients.email}) = ${normalizedEmail}`);
+
+  let patientsSuppressed = 0;
+  for (const patient of matchedPatients) {
+    const prefs = await getPatientPreferences(patient.id, patient.practiceId);
+    if (prefs.emailEnabled) {
+      await updatePreferences(prefs.id, { emailEnabled: false });
+      patientsSuppressed++;
+    }
+  }
+
+  let staffSuppressed = 0;
+  const matchedUser = await storage.getUserByEmail(normalizedEmail);
+  if (matchedUser?.practiceId) {
+    const prefs = await getStaffPreferences(matchedUser.id, matchedUser.practiceId);
+    if (prefs.emailEnabled) {
+      await updatePreferences(prefs.id, { emailEnabled: false });
+      staffSuppressed = 1;
+    }
+  }
+
+  logger.warn('Email notifications suppressed due to bounce/complaint', {
+    reason,
+    patientsSuppressed,
+    staffSuppressed,
+  });
+
+  return { patientsSuppressed, staffSuppressed };
 }
 
 /**

@@ -388,6 +388,11 @@ app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 // Plaid webhook needs raw body for signature verification - must be before JSON parser
 app.use('/api/plaid/webhook', express.raw({ type: 'application/json' }));
 
+// SNS delivers SES bounce/complaint notifications as text/plain (not
+// application/json, despite the body being JSON) - raw body needed here
+// too so the route can JSON.parse it itself after signature verification.
+app.use('/api/webhooks/ses-notifications', express.raw({ type: ['text/plain', 'application/json'] }));
+
 // Body parsing with size limits (for all other routes)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
