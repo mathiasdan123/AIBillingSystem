@@ -504,7 +504,7 @@ router.post('/waitlist/:id/notify', isAuthenticated, async (req: any, res) => {
         if (isSMSConfigured()) {
           const smsResult = await sendSMS(
             patient.phone,
-            `Hi ${patient.firstName}! An appointment slot opened at ${practiceName} on ${formattedDate} at ${time}. Reply YES to book or call us ASAP!`
+            `An appointment slot opened at ${practiceName} on ${formattedDate} at ${time}. Reply YES to book or call us ASAP!`
           );
           results.smsSent = smsResult.success;
           if (!smsResult.success) {
@@ -802,7 +802,7 @@ export async function offerSlotToFamily(
           if (isSMSConfigured()) {
             const smsResult = await sendSMS(
               patient.phone,
-              `Hi ${patient.firstName}! A slot opened at ${practiceName} on ${formattedDate} at ${startTime}. Reply within 24hrs to book!`
+              `A slot opened at ${practiceName} on ${formattedDate} at ${startTime}. Reply within 24hrs to book!`
             );
             if (smsResult.success) notificationSent = true;
           }

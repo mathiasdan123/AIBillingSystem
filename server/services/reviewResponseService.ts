@@ -349,7 +349,7 @@ export function generateFeedbackRequestMessage(
 ): { subject?: string; body: string } {
   if (channel === 'sms') {
     return {
-      body: `Hi ${patientName}! Thank you for choosing ${practiceName}. We'd love to hear about your experience! Please share your feedback: ${feedbackUrl}`,
+      body: `Thank you for choosing ${practiceName}. We'd love to hear about your experience! Please share your feedback: ${feedbackUrl}`,
     };
   }
 
@@ -404,7 +404,7 @@ export function generateGooglePostRequestMessage(
 ): { subject?: string; body: string } {
   if (channel === 'sms') {
     return {
-      body: `Hi ${patientName}! Thank you for your wonderful feedback about ${practiceName}! Would you be willing to share it publicly on Google? It would mean so much to us: ${googleReviewUrl}`,
+      body: `Thank you for your wonderful feedback about ${practiceName}! Would you be willing to share it publicly on Google? It would mean so much to us: ${googleReviewUrl}`,
     };
   }
 
