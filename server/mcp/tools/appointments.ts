@@ -89,7 +89,7 @@ export function registerAppointmentTools(
           ? new Date(appt.startTime).toISOString().split('T')[0]
           : '';
         const description = input.description
-          || `${appt.title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+          || stripeService.neutralAppointmentPaymentDescription(appt.id, startTimeIso || undefined);
         const paymentLink = await stripeService.createPatientPaymentLink({
           amount: Math.round(amountDollars * 100),
           patientName: `${patient.firstName} ${patient.lastName}`,
@@ -121,7 +121,7 @@ export function registerAppointmentTools(
     {
       appointmentId: z.number().describe('The appointment to bill self-pay'),
       amount: z.number().optional().describe('Override amount in dollars. If omitted, computed from appointment_type.price. Max $10,000.'),
-      description: z.string().optional().describe('Free-text invoice description. Auto-generated from session details if omitted.'),
+      description: z.string().optional().describe('Free-text invoice description. Auto-generated as a neutral appointment reference if omitted. This reaches Stripe (payment receipts and dashboard) - never include the patient\'s name or any clinical/treatment detail here.'),
     },
     (input) => createAppointmentSelfPayInvoice(input, context),
   );

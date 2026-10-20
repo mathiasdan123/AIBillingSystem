@@ -17,7 +17,7 @@ import { validate } from '../middleware/validate';
 import { createAppointmentSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
-import { chargeCopay, isStripeConfigured, createPatientPaymentLink, practiceMayCollectPatientPayments } from '../services/stripeService';
+import { chargeCopay, isStripeConfigured, createPatientPaymentLink, practiceMayCollectPatientPayments, neutralAppointmentPaymentDescription } from '../services/stripeService';
 import { getBusinessTimeZone, zonedDateString } from '../utils/timezone';
 import { zonedTimeString } from '../utils/dateOnly';
 
@@ -479,7 +479,7 @@ router.post('/:id/self-pay-invoice', isAuthenticated, async (req: any, res) => {
       : '';
     const description = typeof req.body?.description === 'string' && req.body.description.trim()
       ? req.body.description.trim()
-      : `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+      : neutralAppointmentPaymentDescription(appt.id, startTimeIso || undefined);
     if (!practiceMayCollectPatientPayments(appt.practiceId!)) {
       return res.status(409).json({
         error:
