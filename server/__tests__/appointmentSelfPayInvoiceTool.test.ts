@@ -21,6 +21,9 @@ const {
     mockStripe: {
       isStripeConfigured: vi.fn(() => true),
       createPatientPaymentLink: mockCreatePatientPaymentLink,
+      neutralAppointmentPaymentDescription: vi.fn(
+        (id: number, dateIso?: string) => `Appointment Payment — #${id}${dateIso ? ` (${dateIso})` : ''}`,
+      ),
     },
     mockCreatePatientPaymentLink,
   };
@@ -76,7 +79,10 @@ describe('create_appointment_self_pay_invoice tool', () => {
     expect(call.amount).toBe(17500); // cents
     expect(call.patientName).toBe('Sarah Chen');
     expect(call.practiceId).toBe(PRACTICE_ID);
-    expect(call.description).toMatch(/OT Session.*2026-05-29/);
+    // Never the appointment title/type or "Therapy session" - that's the
+    // exact PHI-to-Stripe leak this default was fixed to avoid.
+    expect(call.description).toBe(`Appointment Payment — #${APPT_ID} (2026-05-29)`);
+    expect(call.description.toLowerCase()).not.toMatch(/ot eval|therapy|session/);
   });
 
   it('explicit amount overrides the appointment-type price', async () => {

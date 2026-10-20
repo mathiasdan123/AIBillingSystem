@@ -4847,7 +4847,7 @@ async function executeToolForPractice(
           ? new Date((appt as any).startTime).toISOString().split('T')[0]
           : '';
         const description = (args.description as string)
-          || `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+          || stripeService.neutralAppointmentPaymentDescription(appt.id, startTimeIso || undefined);
         const paymentLink = await stripeService.createPatientPaymentLink({
           amount: Math.round(amountDollars * 100), // cents
           patientName: `${apptPatient.firstName} ${apptPatient.lastName}`,
@@ -4974,13 +4974,13 @@ async function executeToolForPractice(
               return JSON.stringify({ error: 'Invoice is for a different patient.' });
             }
             chargeAmountCents = intent.amount;
-            resolvedDescription = (args.message as string) || intent.description || `Payment for ${patient.firstName} ${patient.lastName}`;
+            resolvedDescription = (args.message as string) || intent.description || stripeService.neutralPatientPaymentDescription(patientId);
           } catch (err) {
             return JSON.stringify({ error: `Could not retrieve invoice ${invoiceId}: ${err instanceof Error ? err.message : 'Unknown error'}` });
           }
         } else {
           chargeAmountCents = Math.round((amount as number) * 100);
-          resolvedDescription = (args.message as string) || `Payment for ${patient.firstName} ${patient.lastName}`;
+          resolvedDescription = (args.message as string) || stripeService.neutralPatientPaymentDescription(patientId);
         }
 
         const paymentLink = await stripeService.createPatientPaymentLink({

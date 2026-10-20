@@ -246,7 +246,7 @@ router.post('/billing/patient-payment-link', isAuthenticated, async (req: any, r
       patientName: `${patient.firstName} ${patient.lastName}`,
       practiceId: patient.practiceId,
       patientId: patient.id,
-      description: description || `Payment for ${patient.firstName} ${patient.lastName}`,
+      description: description || stripeService.neutralPatientPaymentDescription(patient.id),
     });
 
     res.json({ url: paymentLink.url });
