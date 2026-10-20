@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 import { assertPhiAiAllowed } from "../utils/phiAiGuard";
+import * as awsTranscribeService from "./awsTranscribeService";
 
 // Lazy initialization of OpenAI client for voice transcription
 let openai: OpenAI | null = null;
@@ -24,14 +25,24 @@ export interface TranscriptionResult {
   language?: string;
   success: boolean;
   error?: string;
-  method: "whisper" | "fallback";
+  method: "whisper" | "transcribe" | "fallback";
+}
+
+/**
+ * Set to 'aws' to route transcription through Amazon Transcribe instead of
+ * OpenAI Whisper - HIPAA-eligible under the existing AWS BAA, no separate
+ * vendor BAA needed. Defaults to 'openai' so behavior is unchanged until
+ * explicitly opted in (same cutover pattern as AI_PROVIDER in aiProvider.ts).
+ */
+function useAwsTranscribe(): boolean {
+  return (process.env.VOICE_PROVIDER || "").toLowerCase() === "aws";
 }
 
 /**
  * Transcribe audio file using OpenAI Whisper
  * Falls back to returning an error message if API key is not set
  */
-export async function transcribeAudio(
+async function transcribeAudioWhisper(
   audioFilePath: string,
   language: string = "en"
 ): Promise<TranscriptionResult> {
@@ -87,11 +98,22 @@ export async function transcribeAudio(
 /**
  * Transcribe audio from base64 encoded data
  */
-export async function transcribeAudioBase64(
+async function transcribeAudioBase64Whisper(
   base64Audio: string,
   mimeType: string = "audio/webm",
   language: string = "en"
 ): Promise<TranscriptionResult> {
+  try {
+    assertPhiAiAllowed("Voice transcription (OpenAI Whisper)", "openai");
+  } catch (error) {
+    return {
+      text: "",
+      success: false,
+      error: error instanceof Error ? error.message : "Voice transcription disabled",
+      method: "fallback"
+    };
+  }
+
   const client = getOpenAIClient();
 
   if (!client) {
@@ -112,7 +134,7 @@ export async function transcribeAudioBase64(
     fs.writeFileSync(tempPath, buffer);
 
     try {
-      const result = await transcribeAudio(tempPath, language);
+      const result = await transcribeAudioWhisper(tempPath, language);
       return result;
     } finally {
       // Clean up temp file
@@ -131,10 +153,34 @@ export async function transcribeAudioBase64(
   }
 }
 
+export async function transcribeAudio(
+  audioFilePath: string,
+  language: string = "en"
+): Promise<TranscriptionResult> {
+  if (useAwsTranscribe()) {
+    return awsTranscribeService.transcribeAudio(audioFilePath, language);
+  }
+  return transcribeAudioWhisper(audioFilePath, language);
+}
+
+export async function transcribeAudioBase64(
+  base64Audio: string,
+  mimeType: string = "audio/webm",
+  language: string = "en"
+): Promise<TranscriptionResult> {
+  if (useAwsTranscribe()) {
+    return awsTranscribeService.transcribeAudioBase64(base64Audio, mimeType, language);
+  }
+  return transcribeAudioBase64Whisper(base64Audio, mimeType, language);
+}
+
 /**
  * Check if voice transcription is available
  */
 export function isVoiceTranscriptionAvailable(): boolean {
+  if (useAwsTranscribe()) {
+    return awsTranscribeService.isVoiceTranscriptionAvailable();
+  }
   return !!process.env.OPENAI_API_KEY;
 }
 
