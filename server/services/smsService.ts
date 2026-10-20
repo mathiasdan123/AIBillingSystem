@@ -1,10 +1,15 @@
 /**
- * SMS Service using Twilio
- * Sends appointment reminders and notifications to patients.
+ * SMS Service
+ * Sends appointment reminders and notifications to patients via Twilio, or
+ * via Amazon SNS when SMS_PROVIDER=aws (HIPAA-eligible under the existing
+ * AWS BAA, no separate vendor BAA needed - Twilio quoted $1000/mo, declined
+ * 2026-10-20). Defaults to Twilio so behavior is unchanged until explicitly
+ * opted in (same cutover pattern as AI_PROVIDER/VOICE_PROVIDER/TTS_PROVIDER).
  * Respects patient notification preferences when patientId is provided.
  */
 
 import { shouldSendNotification, type NotificationType } from './notificationPreferencesService';
+import * as awsSnsSmsService from './awsSnsSmsService';
 
 interface SMSResult {
   success: boolean;
@@ -12,8 +17,23 @@ interface SMSResult {
   error?: string;
 }
 
-// Check if Twilio is configured
+function useAwsSns(): boolean {
+  return (process.env.SMS_PROVIDER || '').toLowerCase() === 'aws';
+}
+
+// Check if SMS sending is configured (Twilio credentials, or AWS SNS via the task role)
 export function isSMSConfigured(): boolean {
+  if (useAwsSns()) {
+    return awsSnsSmsService.isSnsSmsAvailable();
+  }
+  return !!(
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN &&
+    process.env.TWILIO_PHONE_NUMBER
+  );
+}
+
+function isTwilioConfigured(): boolean {
   return !!(
     process.env.TWILIO_ACCOUNT_SID &&
     process.env.TWILIO_AUTH_TOKEN &&
@@ -25,7 +45,7 @@ export function isSMSConfigured(): boolean {
 let twilioClient: any = null;
 
 async function getTwilioClient() {
-  if (!isSMSConfigured()) {
+  if (!isTwilioConfigured()) {
     return null;
   }
 
@@ -40,14 +60,8 @@ async function getTwilioClient() {
   return twilioClient;
 }
 
-/**
- * Send an SMS message
- */
-export async function sendSMS(
-  to: string,
-  message: string
-): Promise<SMSResult> {
-  if (!isSMSConfigured()) {
+async function sendSMSTwilio(to: string, message: string): Promise<SMSResult> {
+  if (!isTwilioConfigured()) {
     console.log(`[SMS Mock] To: ${to}, Message: ${message}`);
     return {
       success: true,
@@ -85,6 +99,20 @@ export async function sendSMS(
       error: error instanceof Error ? error.message : 'Failed to send SMS',
     };
   }
+}
+
+/**
+ * Send an SMS message, via Amazon SNS when SMS_PROVIDER=aws, else Twilio
+ * (or a console-logged mock when neither is configured).
+ */
+export async function sendSMS(
+  to: string,
+  message: string
+): Promise<SMSResult> {
+  if (useAwsSns()) {
+    return awsSnsSmsService.sendSMS(to, message);
+  }
+  return sendSMSTwilio(to, message);
 }
 
 /**
