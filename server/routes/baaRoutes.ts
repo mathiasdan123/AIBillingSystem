@@ -29,6 +29,20 @@ function getAuthorizedPracticeId(req: any): number | undefined {
   return userPracticeId ?? undefined;
 }
 
+// isPlatformWide makes a BAA visible to every practice's tracker and HIPAA
+// self-assessment, including future customers' - that's a platform-level
+// claim ("TherapyBill AI itself has this covered"), not something any
+// individual practice admin should be able to assert for themselves. Strips
+// the field from the body entirely unless the caller is a platform admin,
+// rather than erroring, so an ordinary admin's unrelated edit isn't blocked
+// by a field they didn't mean to touch (the client UI only shows the
+// checkbox to platform admins in the first place).
+function sanitizeBaaBody(req: any, body: any): any {
+  if (req.isPlatformAdmin) return body;
+  const { isPlatformWide, ...rest } = body;
+  return rest;
+}
+
 export function registerBaaRoutes(app: Express) {
   const requireAdmin = async (req: any, res: Response, next: NextFunction) => {
     try {
@@ -69,21 +83,46 @@ export function registerBaaRoutes(app: Express) {
       if (!practiceId) {
         return res.status(400).json({ error: 'User not assigned to a practice. Contact administrator.' });
       }
-      const record = await storage.createBaaRecord({ ...req.body, practiceId });
+      const record = await storage.createBaaRecord({ ...sanitizeBaaBody(req, req.body), practiceId });
       res.status(201).json(record);
     } catch (err) {
       res.status(500).json({ error: 'Failed to create BAA record' });
     }
   });
 
+  // A practice admin may only touch a record that's actually theirs (or, for
+  // a platform-wide record, effectively everyone's - but mutating one of
+  // those is itself a platform-level action, gated below). A platform admin
+  // may touch any record. Neither PATCH nor DELETE checked this before -
+  // any admin could modify or delete another practice's BAA record just by
+  // guessing its id.
+  async function assertCanMutateBaaRecord(req: any, id: number): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const existing = await storage.getBaaRecordById(id);
+    if (!existing) {
+      return { ok: false, status: 404, error: 'BAA record not found' };
+    }
+    if (req.isPlatformAdmin) {
+      return { ok: true };
+    }
+    if (existing.isPlatformWide) {
+      return { ok: false, status: 403, error: 'Forbidden: platform-wide BAA records can only be changed by a platform admin' };
+    }
+    const practiceId = getAuthorizedPracticeId(req);
+    if (!practiceId || existing.practiceId !== practiceId) {
+      return { ok: false, status: 404, error: 'BAA record not found' };
+    }
+    return { ok: true };
+  }
+
   // PATCH /api/baa/:id - Update BAA record
   app.patch('/api/baa/:id', isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
-      const record = await storage.updateBaaRecord(id, req.body);
-      if (!record) {
-        return res.status(404).json({ error: 'BAA record not found' });
+      const authz = await assertCanMutateBaaRecord(req, id);
+      if (!authz.ok) {
+        return res.status(authz.status).json({ error: authz.error });
       }
+      const record = await storage.updateBaaRecord(id, sanitizeBaaBody(req, req.body));
       res.json(record);
     } catch (err) {
       res.status(500).json({ error: 'Failed to update BAA record' });
@@ -94,6 +133,10 @@ export function registerBaaRoutes(app: Express) {
   app.delete('/api/baa/:id', isAuthenticated, requireAdmin, async (req: any, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
+      const authz = await assertCanMutateBaaRecord(req, id);
+      if (!authz.ok) {
+        return res.status(authz.status).json({ error: authz.error });
+      }
       await storage.deleteBaaRecord(id);
       res.json({ message: 'BAA record deleted' });
     } catch (err) {

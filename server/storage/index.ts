@@ -540,6 +540,7 @@ export const storage = {
   getAuditLogsPaginated: auditFns.getAuditLogsPaginated,
   createBaaRecord: auditFns.createBaaRecord,
   getBaaRecords: auditFns.getBaaRecords,
+  getBaaRecordById: auditFns.getBaaRecordById,
   updateBaaRecord: auditFns.updateBaaRecord,
   deleteBaaRecord: auditFns.deleteBaaRecord,
   getExpiringBaaRecords: auditFns.getExpiringBaaRecords,
