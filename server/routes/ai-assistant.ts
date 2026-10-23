@@ -856,7 +856,7 @@ You receive a page path and title. Nothing else. You do not know what columns a 
 So: NEVER write step-by-step click instructions that describe interface elements you were not explicitly told exist. If you are drafting a numbered list and find yourself writing "you should see", "columns like", "if available", "should open", or "look for the button that says" — you are guessing at an interface, and guessing is how a user ends up clicking through a screen that cannot do what you promised. Stop and do one of these instead:
 
 1. **Do it for them.** If a tool performs the task, CALL THE TOOL. This is almost always the right answer and it is the single most common mistake to avoid: writing a tutorial for something you could simply have done. A user asking "how do I add a CPT code to this claim" is asking you to add the CPT code.
-2. **Send them to the page** with navigate_user or an [Action: ...] link, and say what the page is for — not what is on it.
+2. **Send them to the page** with navigate_user or an [Action: ...] link, and say what the page is for — not what is on it. Phrase it as something the user clicks ("here's a link to Settings"), never as something already done ("I've sent you to Settings" or "you're there now") — navigate_user produces a button below your message; it does not move the user's browser by itself.
 3. **Say you can't see it.** "I can't see your screen, so I don't want to guess at the buttons — but I can do this for you directly, or point you to the right page." That is a genuinely good answer. An honest "I don't know the layout" beats a confident fabrication every time.
 
 Specifically for CPT codes on a claim: the reliable path is the add_claim_line_item tool on a draft claim (call list_cpt_codes first to resolve the code to its id — never guess the id). Do not talk users through adding codes via the New Claim dialog or the claim detail view.
@@ -2117,6 +2117,45 @@ import {
   redactRateFields,
   toolsForRole,
 } from '../services/assistantToolAccess';
+
+/**
+ * Parse a navigate_user tool result (JSON `{action, path, label}`) into a
+ * clickable suggested action, or null if the tool result isn't that shape
+ * (e.g. a role-gate denial string). Extracted as a pure function so the
+ * merge-into-suggestedActions behavior is testable without mocking the
+ * full Anthropic tool-use loop.
+ */
+export function parseNavigateActionResult(
+  toolResult: string,
+): { label: string; path: string } | null {
+  try {
+    const parsed = JSON.parse(toolResult);
+    if (parsed?.action === 'navigate' && typeof parsed.path === 'string' && typeof parsed.label === 'string') {
+      return { label: parsed.label, path: parsed.path };
+    }
+  } catch {
+    // Not JSON, or not the expected shape - nothing to surface.
+  }
+  return null;
+}
+
+/**
+ * Merge navigate_user-derived actions into the [Action: ...] text-parsed
+ * suggestedActions, deduped by path so a turn that uses both mechanisms for
+ * the same destination doesn't render two buttons.
+ */
+export function mergeSuggestedActions(
+  textActions: { label: string; path: string }[],
+  navigationActions: { label: string; path: string }[],
+): { label: string; path: string }[] {
+  const merged = [...textActions];
+  for (const navAction of navigationActions) {
+    if (!merged.some((a) => a.path === navAction.path)) {
+      merged.push(navAction);
+    }
+  }
+  return merged;
+}
 
 /**
  * Execute a tool call, enforcing the caller's role.
@@ -5840,6 +5879,13 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       args: Record<string, any>;
     }> = [];
 
+    // navigate_user's result (JSON `{action, path, label}`) only ever reached
+    // the model as a tool_result - nothing captured it for the client, so
+    // Blanche would narrate "I'm sending you there now" while the frontend
+    // did nothing. Collected here and merged into suggestedActions below,
+    // the same clickable-button path the [Action: ...] text convention uses.
+    const navigationActions: { label: string; path: string }[] = [];
+
     // Handle tool use (up to 3 rounds to avoid infinite loops)
     let toolRounds = 0;
     while (response.stop_reason === 'tool_use' && toolRounds < 3) {
@@ -5902,6 +5948,11 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
             tool_use_id: block.id,
             content: toolResult,
           });
+
+          if (block.name === 'navigate_user') {
+            const navAction = parseNavigateActionResult(toolResult);
+            if (navAction) navigationActions.push(navAction);
+          }
         }
       }
 
@@ -5983,6 +6034,10 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       }
     }
 
+    // Merge in navigate_user calls, deduped by path against anything the
+    // [Action: ...] text convention already produced for the same turn.
+    const mergedSuggestedActions = mergeSuggestedActions(suggestedActions, navigationActions);
+
     // Clean content of action tags for display
     let cleanContent = content.replace(/\[Action:\s*[^\]]+\]/g, '').trim();
 
@@ -6006,7 +6061,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Cache the response if it was a cacheable question and no tools were used
     const usedTools = toolRounds > 0;
     if (!usedTools && isCacheableQuestion(message)) {
-      cacheResponse(cacheKey, cleanContent, suggestedActions);
+      cacheResponse(cacheKey, cleanContent, mergedSuggestedActions);
     }
 
     // Log cache hit/miss for every turn so we can verify caching is actually
@@ -6061,7 +6116,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
 
     const responsePayload = {
       response: cleanContent,
-      suggestedActions,
+      suggestedActions: mergedSuggestedActions,
       // Phase 4: deferred mutations awaiting user confirmation. Empty array
       // when Blanche didn't propose anything (or only did reads). Client
       // renders each as a Confirm/Cancel card; POSTs back to /api/ai/confirm-tool.
