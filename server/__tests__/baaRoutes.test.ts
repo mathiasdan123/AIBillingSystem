@@ -17,8 +17,9 @@ const { storageStub, authContext } = vi.hoisted(() => ({
   storageStub: {
     getUser: vi.fn(),
     getBaaRecords: vi.fn(async () => []),
+    getBaaRecordById: vi.fn(),
     createBaaRecord: vi.fn(async (data: any) => ({ id: 1, ...data })),
-    updateBaaRecord: vi.fn(),
+    updateBaaRecord: vi.fn(async (id: number, data: any) => ({ id, ...data })),
     deleteBaaRecord: vi.fn(),
   },
   authContext: {
@@ -141,5 +142,105 @@ describe('BAA routes', () => {
 
     expect(res.status).toBe(400);
     expect(storageStub.createBaaRecord).not.toHaveBeenCalled();
+  });
+
+  describe('isPlatformWide', () => {
+    it('strips isPlatformWide from POST when the caller is not a platform admin', async () => {
+      const res = await request(makeApp())
+        .post('/api/baa')
+        .send({ vendorName: 'AWS', vendorType: 'cloud_provider', signedDate: '2026-01-01', expirationDate: '2027-01-01', isPlatformWide: true });
+
+      expect(res.status).toBe(201);
+      const createdWith = storageStub.createBaaRecord.mock.calls[0][0];
+      expect(createdWith).not.toHaveProperty('isPlatformWide');
+    });
+
+    it('honors isPlatformWide on POST when the caller is a platform admin', async () => {
+      authContext.current.isPlatformAdmin = true;
+
+      const res = await request(makeApp())
+        .post('/api/baa')
+        .send({ vendorName: 'AWS', vendorType: 'cloud_provider', signedDate: '2026-01-01', expirationDate: '2027-01-01', isPlatformWide: true });
+
+      expect(res.status).toBe(201);
+      expect(storageStub.createBaaRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ isPlatformWide: true }),
+      );
+    });
+  });
+
+  describe('PATCH/DELETE ownership checks (regression: previously unchecked - any admin could touch any practice\'s record by id)', () => {
+    it('PATCH 404s when the record does not exist', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue(undefined);
+
+      const res = await request(makeApp()).patch('/api/baa/999').send({ status: 'expired' });
+
+      expect(res.status).toBe(404);
+      expect(storageStub.updateBaaRecord).not.toHaveBeenCalled();
+    });
+
+    it('PATCH 404s when the record belongs to a different practice', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 999, vendorName: 'Stedi', isPlatformWide: false });
+
+      const res = await request(makeApp()).patch('/api/baa/5').send({ status: 'expired' });
+
+      expect(res.status).toBe(404);
+      expect(storageStub.updateBaaRecord).not.toHaveBeenCalled();
+    });
+
+    it('PATCH succeeds on the caller\'s own practice record', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 2, vendorName: 'Stedi', isPlatformWide: false });
+
+      const res = await request(makeApp()).patch('/api/baa/5').send({ status: 'expired' });
+
+      expect(res.status).toBe(200);
+      expect(storageStub.updateBaaRecord).toHaveBeenCalledWith(5, { status: 'expired' });
+    });
+
+    it('PATCH 403s a non-platform-admin touching a platform-wide record, even if practiceId happens to match', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 2, vendorName: 'AWS', isPlatformWide: true });
+
+      const res = await request(makeApp()).patch('/api/baa/5').send({ status: 'expired' });
+
+      expect(res.status).toBe(403);
+      expect(storageStub.updateBaaRecord).not.toHaveBeenCalled();
+    });
+
+    it('PATCH lets a platform admin touch any practice\'s record', async () => {
+      authContext.current.isPlatformAdmin = true;
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 999, vendorName: 'Stedi', isPlatformWide: false });
+
+      const res = await request(makeApp()).patch('/api/baa/5').send({ isPlatformWide: true });
+
+      expect(res.status).toBe(200);
+      expect(storageStub.updateBaaRecord).toHaveBeenCalledWith(5, { isPlatformWide: true });
+    });
+
+    it('strips isPlatformWide from PATCH when the caller is not a platform admin', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 2, vendorName: 'Stedi', isPlatformWide: false });
+
+      const res = await request(makeApp()).patch('/api/baa/5').send({ status: 'active', isPlatformWide: true });
+
+      expect(res.status).toBe(200);
+      expect(storageStub.updateBaaRecord).toHaveBeenCalledWith(5, { status: 'active' });
+    });
+
+    it('DELETE 404s when the record belongs to a different practice', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 999, vendorName: 'Stedi', isPlatformWide: false });
+
+      const res = await request(makeApp()).delete('/api/baa/5');
+
+      expect(res.status).toBe(404);
+      expect(storageStub.deleteBaaRecord).not.toHaveBeenCalled();
+    });
+
+    it('DELETE succeeds on the caller\'s own practice record', async () => {
+      storageStub.getBaaRecordById.mockResolvedValue({ id: 5, practiceId: 2, vendorName: 'Stedi', isPlatformWide: false });
+
+      const res = await request(makeApp()).delete('/api/baa/5');
+
+      expect(res.status).toBe(200);
+      expect(storageStub.deleteBaaRecord).toHaveBeenCalledWith(5);
+    });
   });
 });

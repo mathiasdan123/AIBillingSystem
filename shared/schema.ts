@@ -2279,6 +2279,15 @@ export const baaRecords = pgTable("baa_records", {
   signedDate: varchar("signed_date").notNull(),
   expirationDate: varchar("expiration_date").notNull(),
   status: varchar("status").default("active"), // active, expired, terminated
+  // True for a BAA TherapyBill AI (the platform operator) holds with a
+  // vendor that underlies every practice's infrastructure (AWS, Google
+  // Workspace) - not something any individual practice signed. These
+  // records are created under one practiceId (whichever admin entered
+  // them) but are visible to every practice's BAA tracker and HIPAA
+  // self-assessment, including the demo practice. Defaults false so
+  // existing/ordinary practice-specific BAAs (Stedi, Twilio, etc.) are
+  // unaffected. Only a platform admin may set this (see baaRoutes.ts).
+  isPlatformWide: boolean("is_platform_wide").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

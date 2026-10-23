@@ -1416,7 +1416,8 @@ export default function Settings() {
     retry: false,
   });
 
-  const [newBaa, setNewBaa] = useState({ vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '' });
+  const DEFAULT_NEW_BAA = { vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '', isPlatformWide: false };
+  const [newBaa, setNewBaa] = useState(DEFAULT_NEW_BAA);
 
   const createBaaMutation = useMutation({
     mutationFn: async (data: typeof newBaa) => {
@@ -1425,10 +1426,22 @@ export default function Settings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/baa'] });
-      setNewBaa({ vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '' });
+      setNewBaa(DEFAULT_NEW_BAA);
       toast({ title: 'BAA Created', description: 'Business Associate Agreement recorded.' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to create BAA record', variant: 'destructive' }),
+  });
+
+  const updateBaaMutation = useMutation({
+    mutationFn: async ({ id, isPlatformWide }: { id: number; isPlatformWide: boolean }) => {
+      const response = await apiRequest('PATCH', `/api/baa/${id}`, { isPlatformWide });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/baa'] });
+      toast({ title: 'Updated', description: 'BAA record updated.' });
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to update BAA record', variant: 'destructive' }),
   });
 
   const deleteBaaMutation = useMutation({
@@ -2710,6 +2723,18 @@ export default function Settings() {
                       <Input type="date" value={newBaa.expirationDate} onChange={(e) => setNewBaa({ ...newBaa, expirationDate: e.target.value })} />
                     </div>
                   </div>
+                  {user?.isPlatformAdmin && (
+                    <div className="flex items-center gap-2 mb-4">
+                      <Switch
+                        checked={newBaa.isPlatformWide}
+                        onCheckedChange={(checked) => setNewBaa({ ...newBaa, isPlatformWide: checked })}
+                        id="baa-platform-wide"
+                      />
+                      <Label htmlFor="baa-platform-wide" className="cursor-pointer">
+                        Platform-wide (TherapyBill AI&apos;s own BAA with this vendor — e.g. AWS, Google Workspace. Visible on every practice&apos;s tracker, not just this one.)
+                      </Label>
+                    </div>
+                  )}
                   <Button
                     onClick={() => createBaaMutation.mutate(newBaa)}
                     disabled={!newBaa.vendorName || !newBaa.signedDate || !newBaa.expirationDate || createBaaMutation.isPending}
@@ -2733,13 +2758,28 @@ export default function Settings() {
                       {baaRecords.map((baa: any) => (
                         <div key={baa.id} className="flex items-center justify-between p-3 border rounded-lg">
                           <div>
-                            <p className="font-medium">{baa.vendorName}</p>
+                            <p className="font-medium flex items-center gap-2">
+                              {baa.vendorName}
+                              {baa.isPlatformWide && (
+                                <Badge variant="outline" className="text-xs">Platform-wide</Badge>
+                              )}
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {baa.vendorType} | Signed: {baa.signedDate} | Expires: {baa.expirationDate}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant={baa.status === 'active' ? 'default' : 'destructive'}>{baa.status}</Badge>
+                            {user?.isPlatformAdmin && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => updateBaaMutation.mutate({ id: baa.id, isPlatformWide: !baa.isPlatformWide })}
+                                disabled={updateBaaMutation.isPending}
+                              >
+                                {baa.isPlatformWide ? 'Unmark platform-wide' : 'Mark platform-wide'}
+                              </Button>
+                            )}
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button
