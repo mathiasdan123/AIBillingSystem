@@ -19,6 +19,7 @@ import { isAuthenticated } from '../replitAuth';
 import { setMfaVerified, clearMfaVerification, isMfaSessionValid, MFA_PROTECTED_ROUTES, MFA_CONFIG } from '../middleware/mfa-required';
 import { authLimiter, mfaChallengeLimiter } from '../middleware/rate-limiter';
 import logger from '../services/logger';
+import { isPlatformAdminEmail } from '../services/platformAdmin';
 
 const router = Router();
 
@@ -88,7 +89,25 @@ router.get('/auth/user', isAuthenticated, async (req: any, res) => {
     // no way to know to route the user to /mfa-challenge, so every PHI query
     // just 403'd repeatedly and got misreported as "session expired" in a loop.
     const mfaChallengeRequired = user.mfaEnabled && !isMfaSessionValid(req.session, userId);
-    res.json({ ...user, mfaRequired, mfaChallengeRequired });
+    // SECURITY: never spread the raw user row into the response. It carries
+    // passwordHash, mfaSecret (a TOTP seed - see the mfaSecret-is-plaintext
+    // finding logged separately), mfaBackupCodes, and password/email
+    // verification tokens. This endpoint is polled on every authenticated
+    // page load, so a spread here shipped all of that to the browser on
+    // every single request. Return an explicit allowlist instead - add a
+    // field here deliberately, never by widening the spread back out.
+    res.json({
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      profileImageUrl: user.profileImageUrl,
+      role: user.role,
+      practiceId: user.practiceId,
+      isPlatformAdmin: isPlatformAdminEmail(user.email),
+      mfaRequired,
+      mfaChallengeRequired,
+    });
   } catch (error) {
     logger.error("Error fetching user", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch user" });
