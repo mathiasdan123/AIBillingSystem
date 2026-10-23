@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   CheckCircle, FileText, Users, TrendingUp, Clock, Shield, DollarSign,
-  Mic, Video, Calendar, MessageSquare, ClipboardList, BarChart3, Star,
+  Mic, Calendar, MessageSquare, ClipboardList, BarChart3, Star,
   Brain, Zap, Lock, ArrowRight, Mail, Phone, Send, Monitor
 } from "lucide-react";
 import { AuthModal } from "@/components/AuthModal";
@@ -178,7 +178,6 @@ export default function Landing() {
             {[
               { icon: Users, label: "Patient Intake", color: "blue" },
               { icon: Calendar, label: "Scheduling", color: "green" },
-              { icon: Video, label: "Telehealth", color: "purple" },
               { icon: Mic, label: "Voice Notes", color: "orange" },
               { icon: ClipboardList, label: "SOAP Notes", color: "teal" },
               { icon: FileText, label: "Auto-Billing", color: "blue" },
@@ -307,18 +306,6 @@ export default function Landing() {
                 <CardTitle>Smart Scheduling</CardTitle>
                 <CardDescription>
                   Online booking, waitlist management, and automated reminders
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mb-4">
-                  <Video className="w-6 h-6 text-purple-600" />
-                </div>
-                <CardTitle>Telehealth</CardTitle>
-                <CardDescription>
-                  Built-in video sessions with waiting room, no extra software needed
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -644,7 +631,7 @@ export default function Landing() {
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
-                    <span>Telehealth + full analytics</span>
+                    <span>Full analytics</span>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
