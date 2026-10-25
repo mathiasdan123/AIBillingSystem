@@ -26,7 +26,7 @@ import {
 import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import { decryptField } from '../services/phiEncryptionService';
-import { getRedisClient, isRedisReady } from '../services/redisClient';
+import { getRedisClient, isRedisConfigured } from '../services/redisClient';
 import { zonedInstant, zonedDateString, getBusinessTimeZone } from '../utils/timezone';
 import {
   claims,
@@ -271,6 +271,20 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
  * 2026-05-18. Redis fixes it.
  *
  * Falls back to in-memory Map when Redis isn't configured (local dev, tests).
+ *
+ * 2026-10-25: this recurred even with REDIS_URL configured. createProposal
+ * and takeProposal each independently gated on isRedisReady(), which flips
+ * false on any transient Redis 'error'/'close' event (a single dropped
+ * connection ioredis's own retry recovers from), not just a real outage —
+ * so a proposal created while Redis read "ready" could be looked up a
+ * minute later during a brief reconnect blip, read "not ready", and get
+ * checked against the (empty, this-process-only) in-memory Map instead of
+ * ever touching Redis, where it actually still was. Switched both sites to
+ * isRedisConfigured() (is there a client at all, independent of live
+ * connection state) — ioredis queues commands through a reconnect by
+ * default, so an attempt here either succeeds once reconnected or throws
+ * into the existing catch-and-fall-back, instead of skipping Redis on a
+ * stale readiness flag.
  */
 interface StoredProposal {
   id: string;
@@ -308,7 +322,7 @@ async function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 's
     createdAt: Date.now(),
   };
   try {
-    if (isRedisReady()) {
+    if (isRedisConfigured()) {
       const redis = getRedisClient()!;
       await redis.set(
         PROPOSAL_REDIS_PREFIX + id,
@@ -329,7 +343,7 @@ async function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 's
 
 async function takeProposal(id: string): Promise<StoredProposal | null> {
   try {
-    if (isRedisReady()) {
+    if (isRedisConfigured()) {
       const redis = getRedisClient()!;
       // Use GETDEL when available (Redis 6.2+) for atomicity; fall back to
       // GET then DEL on older Redis. A double-confirm race window of <1ms is
