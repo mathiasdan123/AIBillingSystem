@@ -18,7 +18,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import logger from '../services/logger';
-import { getRedisClient, isRedisReady } from '../services/redisClient';
+import { getRedisClient, isRedisReady, isRedisConfigured } from '../services/redisClient';
 
 /**
  * Configuration for a rate limiter
@@ -499,7 +499,16 @@ let inMemoryGlobalFailures = { count: 0, resetAt: 0 };
  */
 export async function incrementGlobalFailedAuth(): Promise<number> {
   const redis = getRedisClient();
-  if (redis && isRedisReady()) {
+  // isRedisConfigured(), not isRedisReady() -- this counter is written here
+  // and read in isSiegeMode() below from a SEPARATE request, possibly on a
+  // different ECS task. isRedisReady() flaps false on any transient
+  // error/close event; if it differs between this write and that read, the
+  // read silently checks the wrong store and undercounts failed logins,
+  // delaying siege-mode activation during exactly the kind of connection
+  // instability that an attack can also cause (same bug class as the
+  // 2026-10-25 Blanche proposal store fix -- see isRedisConfigured() in
+  // services/redisClient.ts for the full explanation).
+  if (redis && isRedisConfigured()) {
     try {
       const pipeline = redis.pipeline();
       pipeline.incr(BRUTE_FORCE_REDIS_KEY);
@@ -555,7 +564,8 @@ export async function incrementGlobalFailedAuth(): Promise<number> {
  */
 export async function isSiegeMode(): Promise<boolean> {
   const redis = getRedisClient();
-  if (redis && isRedisReady()) {
+  // isRedisConfigured() -- see the matching comment in incrementGlobalFailedAuth above.
+  if (redis && isRedisConfigured()) {
     try {
       const count = await redis.get(BRUTE_FORCE_REDIS_KEY);
       return count !== null && parseInt(count, 10) >= BRUTE_FORCE_THRESHOLD;

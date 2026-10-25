@@ -86,9 +86,35 @@ export function getRedisClient(): RedisClientType | null {
 
 /**
  * Returns true if the Redis client is connected and ready to accept commands.
+ *
+ * `redisReady` flips to false on every 'error'/'close' event, including a
+ * single dropped connection that ioredis's own retryStrategy immediately
+ * recovers from - it only flips back on the next 'ready' event. A caller
+ * that uses this as a hard gate (skip Redis, use something else instead)
+ * can silently switch stores mid-blip: e.g. a value written to Redis a
+ * moment before a transient error, then looked up again a moment after,
+ * while this still reads false. Use it only to choose between two
+ * Redis-dependent behaviors (e.g. "degrade this response" instead of
+ * failing it) - never to pick which BACKING STORE to read from or write
+ * to, where isRedisConfigured() below is the correct check (see
+ * createProposal/takeProposal in ai-assistant.ts for the bug this caused).
  */
 export function isRedisReady(): boolean {
   return redisReady && redisClient !== null;
+}
+
+/**
+ * Returns true if Redis is configured (REDIS_URL set, client object
+ * created) - independent of its live connection state. ioredis queues
+ * commands through a brief disconnect/reconnect by default (not an
+ * immediate failure), so a caller that always attempts Redis when this is
+ * true, and only falls back to another store in the catch block of a
+ * failed attempt, won't flap between two stores on a blip. Prefer this
+ * over isRedisReady() whenever the choice is "which store did I write
+ * this to / read this from", not "should I degrade gracefully right now".
+ */
+export function isRedisConfigured(): boolean {
+  return redisClient !== null;
 }
 
 /**
