@@ -191,6 +191,33 @@ describe('PHI Encryption Service', () => {
     expect(decrypted!.npiNumber).toBe('1234567890');
   });
 
+  it('should encrypt and decrypt a user record mfaSecret (TOTP seed)', async () => {
+    const { encryptUserRecord, decryptUserRecord } = await loadModule();
+    const user = { id: 'u1', mfaSecret: 'JBSWY3DPEHPK3PXP', mfaBackupCodes: ['hash1', 'hash2'] };
+
+    const encrypted = encryptUserRecord(user);
+    expect(typeof encrypted.mfaSecret).toBe('object');
+    expect(encrypted.mfaSecret.ciphertext).not.toBe('JBSWY3DPEHPK3PXP');
+    // Backup codes are already one-way hashed — not touched by field encryption.
+    expect(encrypted.mfaBackupCodes).toEqual(['hash1', 'hash2']);
+
+    const decrypted = decryptUserRecord(encrypted);
+    expect(decrypted!.mfaSecret).toBe('JBSWY3DPEHPK3PXP');
+  });
+
+  it('should pass through a legacy plaintext mfaSecret unchanged (pre-encryption rows)', async () => {
+    const { decryptUserRecord } = await loadModule();
+    const decrypted = decryptUserRecord({ id: 'u1', mfaSecret: 'JBSWY3DPEHPK3PXP' });
+    expect(decrypted!.mfaSecret).toBe('JBSWY3DPEHPK3PXP');
+  });
+
+  it('should leave a null/undefined mfaSecret alone on encrypt and decrypt', async () => {
+    const { encryptUserRecord, decryptUserRecord } = await loadModule();
+    expect(encryptUserRecord({ id: 'u1', mfaSecret: null }).mfaSecret).toBeNull();
+    expect(encryptUserRecord({ id: 'u1' }).mfaSecret).toBeUndefined();
+    expect(decryptUserRecord({ id: 'u1', mfaSecret: null })!.mfaSecret).toBeNull();
+  });
+
   it('should encrypt and decrypt a practice record', async () => {
     const { encryptPracticeRecord, decryptPracticeRecord } = await loadModule();
     const practice = {
