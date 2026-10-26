@@ -6,6 +6,8 @@
 # `node -e` — the same mechanism the deploy workflow's migration step uses.
 # See scripts/repair-anthem-crosswalk-payer-id.ts for the full background.
 #
+# VERIFIED 2026-10-26 — see repair-anthem-crosswalk-payer-id.ts header.
+#
 # Usage:
 #   scripts/run-anthem-crosswalk-repair.sh --dry-run   # transaction rolled back
 #   scripts/run-anthem-crosswalk-repair.sh

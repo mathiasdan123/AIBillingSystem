@@ -10,6 +10,8 @@
  *
  * All statements run in one transaction. DRY_RUN=1 in the environment rolls
  * the transaction back instead of committing.
+ *
+ * VERIFIED 2026-10-26 — see repair-anthem-crosswalk-payer-id.ts header.
  */
 const { Client } = require('pg');
 function sk(s) { return ['anthem ' + s, 'anthem blue cross ' + s, 'anthem blue cross blue shield ' + s, 'anthem blue cross and blue shield ' + s]; }
