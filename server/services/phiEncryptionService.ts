@@ -189,6 +189,19 @@ const USER_PHI_STRING_FIELDS = [
   'licenseNumber', 'npiNumber', 'digitalSignature',
 ] as const;
 
+// MFA TOTP seed. jsonb column — unlike USER_PHI_STRING_FIELDS (varchar/text,
+// not JSON-stringified before storage; see encryptUserRecord/decryptUserRecord
+// callers for that distinction), the EncryptedField object is stored here
+// directly, same as the jsonb fields elsewhere in this file. Was written and
+// read as a raw, unencrypted string despite the schema comment claiming
+// encryption (2026-10 finding) — existing enrollments were force-reset
+// (scripts/force-mfa-reenrollment*) rather than migrated in place, so
+// decryptField's legacy-plaintext fallback below is a safety net for any row
+// that slips through that reset, not the primary migration path.
+const USER_PHI_JSONB_FIELDS = [
+  'mfaSecret',
+] as const;
+
 // Practice sensitive fields - tax IDs, API keys, contact info
 const PRACTICE_PHI_STRING_FIELDS = [
   'taxId', 'phone', 'stediApiKey', 'stediPartnerId',
@@ -462,6 +475,11 @@ export function encryptUserRecord(user: Record<string, any>): Record<string, any
       encrypted[field] = encryptField(encrypted[field] as string);
     }
   }
+  for (const field of USER_PHI_JSONB_FIELDS) {
+    if (encrypted[field] !== undefined && encrypted[field] !== null) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
   return encrypted;
 }
 
@@ -469,6 +487,11 @@ export function decryptUserRecord(user: Record<string, any> | null | undefined):
   if (!user) return null;
   const decrypted = { ...user };
   for (const field of USER_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  for (const field of USER_PHI_JSONB_FIELDS) {
     if (decrypted[field] !== undefined && decrypted[field] !== null) {
       decrypted[field] = decryptField(decrypted[field]);
     }

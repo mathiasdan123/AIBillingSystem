@@ -243,9 +243,10 @@ export async function updateUser(id: string, updates: Partial<{
 // ==================== MFA ====================
 
 export async function updateUserMfa(userId: string, data: { mfaEnabled?: boolean; mfaSecret?: any; mfaBackupCodes?: any }): Promise<User | undefined> {
+  const encrypted = encryptUserRecord(data as any);
   const [updated] = await db
     .update(users)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...encrypted, updatedAt: new Date() })
     .where(eq(users.id, userId))
     .returning();
   return updated ? decryptUserRecord(updated) as User : undefined;
