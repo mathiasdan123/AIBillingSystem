@@ -1,22 +1,25 @@
-name: SOAP Plan Fabrication Eval
+name: SOAP Generation Fabrication Eval
 
-# Live-model regression check for scripts/eval-plan-fabrication.ts. Guards
-# against the specific fabrication pattern that resurfaced four times
-# (PR #421-#424) despite each prompt fix explicitly naming the prior one:
-# every other automated check tests the PROMPT we send, never the OUTPUT the
-# model actually returns. This calls the real Anthropic API against a fixed
-# set of adversarial scenarios and asserts on the response.
+# Live-model regression check for scripts/eval-soap-generation.ts. Guards
+# against the fabrication pattern that resurfaced across #421-#425 despite
+# each prompt fix explicitly naming the prior one: every other automated
+# check tests the PROMPT we send, never the OUTPUT the model actually
+# returns. This calls the real Anthropic API against a fixed set of
+# adversarial scenarios (a brand-new patient with no history, blank optional
+# fields) and asserts the raw output -- deterministically for known-bad
+# strings, and via a second real-model call (the semantic judge) that must
+# quote the exact offending sentence, so a reworded defect still fails.
 #
-# Runs only on PRs that touch the Plan prompt itself (path filter below), and
-# only does anything if the ANTHROPIC_API_KEY secret is configured — without
-# it, eval-plan-fabrication.ts self-skips and this step passes in seconds
-# (same convention as the Stedi test-mode e2e step in ci.yml). Add the
-# secret in repo Settings -> Secrets and variables -> Actions to turn this
-# from a no-op into a real gate.
+# Runs only on PRs that touch the generation prompt itself (path filter
+# below), and only does anything if the ANTHROPIC_API_KEY secret is
+# configured — without it, eval-soap-generation.ts self-skips and this step
+# passes in seconds (same convention as the Stedi test-mode e2e step in
+# ci.yml). Add the secret in repo Settings -> Secrets and variables ->
+# Actions to turn this from a no-op into a real gate.
 #
-# Makes real, billed API calls (3 samples x 3 scenarios by default) — that's
-# why this is its own path-filtered workflow rather than part of every push
-# in ci.yml.
+# Makes real, billed API calls (10 samples per scenario by default, plus one
+# judge call per sample) — that's why this is its own path-filtered workflow
+# rather than part of every push in ci.yml.
 
 on:
   pull_request:
@@ -41,7 +44,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Plan fabrication eval against the live model
+      - name: Run SOAP generation fabrication eval against the live model
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npm run eval:plan-fabrication
+        run: npm run eval:soap-generation
+
+      - name: Upload eval results for replay
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-soap-generation-results
+          path: .eval-results/
+          if-no-files-found: ignore

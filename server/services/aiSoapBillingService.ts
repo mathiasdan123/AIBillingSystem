@@ -448,12 +448,17 @@ is a compliance and liability issue, not just a stylistic preference.
    - Qualitative clinical language grounded in the observations that WERE
      provided (e.g., "Patient demonstrated mild difficulty with motor
      planning during [activity]")
-   - Explicit acknowledgment that data wasn't collected
-     (e.g., "Formal caregiver report was not obtained this session",
-     "Standardized measurements were not administered; observations were
-     qualitative")
+   - Explicit acknowledgment ONLY when you actually know the negative fact,
+     not merely that a form field was left blank (e.g., "Standardized
+     measurements were not administered; observations were qualitative" is
+     fine because an administered measure would appear elsewhere in the
+     input if one existed — but do NOT write "Caregiver report was not
+     obtained this session": a blank Caregiver Report field means the
+     therapist didn't type anything here, not that you know no report was
+     given. That's a fabricated negative, same as a fabricated positive.
    - Simple omission — it is better to write a shorter section than to
-     invent content to fill it
+     invent content to fill it, and is the correct choice whenever you
+     don't actually know the negative (see above)
 
 6. **Clinical interpretation IS allowed and expected.** Translating the
    therapist's observations into clinical language (e.g., interpreting
@@ -563,8 +568,12 @@ sentence if the input is sparse):
 Cover, USING ONLY PROVIDED DATA:
 
 1. CAREGIVER/PARENT REPORT:
-   - If no caregiver report was provided, write exactly one sentence:
-     "Caregiver report was not obtained this session."
+   - If no caregiver report was provided, OMIT any sentence about it
+     entirely. "Caregiver report was not obtained this session" is itself
+     a fabrication -- the field being blank in this form does not mean no
+     caregiver was present or that nothing was asked; it only means the
+     therapist didn't type anything here. Do not assert the negative any
+     more than you'd assert a positive you don't have.
    - If a caregiver report WAS provided, reflect ONLY that content.
      Do NOT expand brief inputs into multi-sentence elaborations.
      A one-word report ("anxious") becomes a one-sentence output
@@ -810,7 +819,7 @@ ${request.therapistName ? `- Treating Therapist: ${request.therapistName}` : ''}
 
 SUBJECTIVE DATA:
 - Mood/Presentation: ${request.mood || "(not recorded — do not state a mood or presentation; omit this detail entirely)"}
-- Caregiver Report: ${request.caregiverReport || "(none provided — state that it was not obtained; do not invent one)"}
+- Caregiver Report: ${request.caregiverReport || "(not provided — omit any caregiver-report sentence entirely; do not state that it 'was not obtained', which itself asserts something not known)"}
 
 ACTIVITIES/EXERCISES PERFORMED:
 ${request.activities.map(a => {
@@ -889,7 +898,7 @@ the input is rich — never pad to reach them, and never invent specifics
 (trial counts, scores, prior-session comparisons, equipment adjectives) to
 fill space. The anti-fabrication rules above OVERRIDE every example here.
 {
-  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: reflect ONLY what the caregiver actually reported (or state it wasn't obtained). Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.",
+  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: ONLY if the Caregiver Report field above has a real value (not the marker), write it as 'Caregiver reported: [that value].' If the field is the marker, OMIT any caregiver-report sentence entirely -- do NOT write 'Caregiver report was not obtained this session' or anything asserting that no report was given; the field being blank in this form means the therapist didn't type anything here, not that you know a report wasn't obtained. Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.",
 
   "objective": "Scaled to the richness of the input (120-300 words when rich; shorter when sparse). Structure:\\n\\nSession conducted in [location] for [duration] minutes. Standardized measures: include scores ONLY if the input explicitly states a measure was administered and gives the value; otherwise write 'Standardized measurements were not administered; observations were qualitative.'\\n\\nActivities & performance:\\n- [Activity from the activities list]: describe with the assistance level the therapist provided and qualitative performance. Do NOT invent trial counts (e.g. '8/10 trials'), timings, or percentages that weren't provided.\\n\\nAssistance levels: use the assistance field. Standard terms (Independent / Modified Independent / Supervision / Min / Mod / Max Assist / Dependent). Cue types (verbal/visual/tactile/hand-over-hand) when they describe how an activity was supported — no invented cue counts.\\n\\nEquipment/materials: name ONLY items in the activities list, with ONLY the adjectives the therapist used (no '55cm', 'medium resistance', '2 lb' unless stated).\\n\\nSkilled interventions: describe the techniques corresponding to the activities, framed by their skilled/functional objective (e.g. neuromuscular re-education for postural control; graded vestibular-proprioceptive input to support motor planning).",
 
@@ -976,7 +985,7 @@ export function stripUnsupportedPlanClosing(
   return stripped;
 }
 
-async function validateAndEnhanceResponse(
+export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
   billingUnits: number,
@@ -1100,7 +1109,7 @@ async function validateAndEnhanceResponse(
 /**
  * Fallback generation if AI is unavailable
  */
-function fallbackGeneration(
+export function fallbackGeneration(
   request: AiSoapBillingRequest,
   patient: any,
   billingUnits: number
@@ -1199,11 +1208,16 @@ function fallbackGeneration(
   // Build subjective section — input-proportional, no fabrication. Reflect
   // ONLY the caregiver report and mood that were actually provided; do not
   // invent home-program compliance, medication/sleep inquiries, or
-  // prior-session comparisons.
+  // prior-session comparisons. A blank field is OMITTED, never asserted as
+  // a negative ("was not obtained") -- the form being blank means the
+  // therapist didn't type anything, not that we know nothing happened.
   const caregiverLine = request.caregiverReport
     ? `Caregiver reported: ${request.caregiverReport}.`
-    : "Caregiver report was not obtained this session.";
-  const subjective = `${caregiverLine}\n\n${patientName} presented as ${request.mood.toLowerCase()} during today's session.`;
+    : "";
+  const moodLine = request.mood
+    ? `${patientName} presented as ${request.mood.toLowerCase()} during today's session.`
+    : "";
+  const subjective = [caregiverLine, moodLine].filter(Boolean).join('\n\n');
 
   // Build objective section — grounded ONLY in the provided activities and
   // assessment fields. No invented trials, cue counts, equipment specifics, or
@@ -1226,7 +1240,12 @@ function fallbackGeneration(
   const necessityParagraph = hasDocumentedDeficits
     ? `\n\nSkilled OT was required to grade and adapt the above activities to the patient's documented deficits in the areas noted above, supporting safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
     : '';
-  const assessment = `${patientName} presented as ${request.mood.toLowerCase()} and participated in skilled occupational therapy with ${request.assessment.assistance.toLowerCase()} assistance. Skilled clinical analysis and therapist-directed adaptation were provided to support performance across the documented activities.\n\nFunctional performance this session: ${request.assessment.performance}. Strength/endurance: ${request.assessment.strength}. Motor planning: ${request.assessment.motorPlanning}. Sensory regulation: ${request.assessment.sensoryRegulation}.${necessityParagraph}`;
+  // Same blank-field rule as the Subjective section: an unset mood is
+  // omitted, never defaulted into a sentence that would otherwise read
+  // "presented as  and participated..." (literal double space) or assert a
+  // presentation that was never documented.
+  const presentedAsClause = request.mood ? `presented as ${request.mood.toLowerCase()} and ` : '';
+  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy with ${request.assessment.assistance.toLowerCase()} assistance. Skilled clinical analysis and therapist-directed adaptation were provided to support performance across the documented activities.\n\nFunctional performance this session: ${request.assessment.performance}. Strength/endurance: ${request.assessment.strength}. Motor planning: ${request.assessment.motorPlanning}. Sensory regulation: ${request.assessment.sensoryRegulation}.${necessityParagraph}`;
 
   // Build plan section. Home-program wording follows the reviewer's guidance:
   // when no new home program was provided, do not invent one or imply parent

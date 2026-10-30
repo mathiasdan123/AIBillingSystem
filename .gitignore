@@ -156,6 +156,10 @@ openapi.json
 # scratch dir for scripts/lint-schema-diff.sh
 .schema-lint-tmp/
 
+# scripts/eval-soap-generation.ts run logs (fixture + full output + run ID,
+# for replaying a failure) -- local/CI artifacts, not checked in
+.eval-results/
+
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
