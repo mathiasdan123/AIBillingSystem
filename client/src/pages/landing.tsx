@@ -682,7 +682,7 @@ export default function Landing() {
                 AI Billing Engine
               </Badge>
               <div className="mt-2">
-                <span className="text-5xl font-bold text-slate-900">6%</span>
+                <span className="text-5xl font-bold text-slate-900">5%</span>
                 <span className="text-lg text-slate-600 ml-2">of insurance collections</span>
               </div>
               <p className="text-slate-600 mt-3 max-w-lg mx-auto">
