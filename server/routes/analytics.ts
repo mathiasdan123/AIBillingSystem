@@ -132,13 +132,36 @@ router.get('/revenue', isAuthenticated, requireFinancialRole, async (req: any, r
   try {
     const practiceId = getAuthorizedPracticeId(req);
     const timeRange = req.query.timeRange as string || '12months';
-    const months = { '3months': 3, '6months': 6, '12months': 12 }[timeRange] || 12;
-    const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - months);
+
+    // Custom range: explicit start/end dates instead of a canned month count.
+    const customStart = req.query.start as string | undefined;
+    const customEnd = req.query.end as string | undefined;
+    let startDate: Date;
+    let endDate: Date;
+    let cacheKey: string;
+    if (timeRange === 'custom' && customStart && customEnd) {
+      startDate = new Date(customStart);
+      endDate = new Date(customEnd);
+      endDate.setHours(23, 59, 59, 999);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid start or end date.' });
+      }
+      if (startDate > endDate) {
+        return res.status(400).json({ message: 'start must be on or before end.' });
+      }
+      cacheKey = `custom:${customStart}:${customEnd}`;
+    } else {
+      const months = { '3months': 3, '6months': 6, '12months': 12 }[timeRange] || 12;
+      startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - months);
+      endDate = new Date();
+      cacheKey = timeRange;
+    }
+
     const data = await cache.wrap(
-      CacheKeys.revenue(practiceId, timeRange),
+      CacheKeys.revenue(practiceId, cacheKey),
       CacheTTL.ANALYTICS,
-      () => storage.getRevenueByMonth(practiceId, startDate, new Date())
+      () => storage.getRevenueByMonth(practiceId, startDate, endDate)
     );
     res.json(data);
   } catch (error) {
