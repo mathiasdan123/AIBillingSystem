@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // import time); the prompt builder under test never touches it.
 vi.mock('../storage', () => ({ storage: {} }));
 
-import { buildUserPrompt } from '../services/aiSoapBillingService';
+import { buildUserPrompt, fallbackGeneration, validateAndEnhanceResponse } from '../services/aiSoapBillingService';
 
 const patient = { firstName: 'Test', lastName: 'Child', dateOfBirth: '2019-03-01' };
 
@@ -169,4 +169,92 @@ describe('buildUserPrompt — patient age from dateOfBirth', () => {
       expect(prompt).not.toMatch(/- Age: \d+ years/);
     });
   }
+});
+
+describe('buildUserPrompt — blank caregiver report is omitted, not asserted as a negative', () => {
+  // A blank caregiverReport field means the therapist didn't type anything
+  // here, not that we know no caregiver report was obtained. Asserting
+  // "Caregiver report was not obtained this session" is itself a
+  // fabrication -- the same pattern as the Plan-section fixes, applied to
+  // Subjective.
+  it('no longer instructs the model to assert caregiver report "was not obtained"', () => {
+    const prompt = buildUserPrompt(baseRequest({ caregiverReport: undefined }), patient, 3, null);
+    // The old instruction told the model to STATE the negative; the field
+    // hint must no longer say that (the prohibition text elsewhere
+    // legitimately quotes the banned phrase to explain what NOT to write,
+    // same pattern as the Plan-section fixes -- so this checks the old
+    // instructional framing specifically, not the substring's bare absence).
+    expect(prompt).not.toContain('state that it was not obtained');
+    expect(prompt).toContain('omit any caregiver-report sentence entirely');
+  });
+
+  it('still reflects a real caregiver report when one is provided', () => {
+    const prompt = buildUserPrompt(baseRequest({ caregiverReport: 'anxious this morning' }), patient, 3, null);
+    expect(prompt).toContain('anxious this morning');
+  });
+});
+
+describe('fallbackGeneration — blank mood/caregiver report are omitted, not fabricated', () => {
+  const fallbackPatient = { firstName: 'Fallback', lastName: 'Child' };
+
+  it('omits both lines when mood and caregiverReport are blank, rather than asserting a negative or writing broken prose', () => {
+    const response = fallbackGeneration(
+      baseRequest({ mood: '', caregiverReport: undefined }),
+      fallbackPatient,
+      3,
+    );
+    expect(response.subjective).not.toContain('was not obtained');
+    expect(response.subjective).not.toContain('presented as');
+    // The old bug: `${mood.toLowerCase()}` with mood === '' produced
+    // "presented as  during today's session" (double space, broken prose).
+    expect(response.subjective).not.toMatch(/presented as\s+during/);
+    // Same bug, second occurrence: the Assessment section also inserted
+    // mood unconditionally ("presented as  and participated...").
+    expect(response.assessment).not.toContain('presented as');
+    expect(response.assessment).not.toMatch(/presented as\s+and/);
+  });
+
+  it('includes a real mood and a real caregiver report when both are provided', () => {
+    const response = fallbackGeneration(
+      baseRequest({ mood: 'Cooperative', caregiverReport: 'anxious this morning' }),
+      fallbackPatient,
+      3,
+    );
+    expect(response.subjective).toContain('presented as cooperative');
+    expect(response.subjective).toContain('Caregiver reported: anxious this morning.');
+    expect(response.assessment).toContain('presented as cooperative and participated');
+  });
+});
+
+describe('validateAndEnhanceResponse — billing arithmetic consistency', () => {
+  // Server-side regression guard for the class of bug PR #419 fixed on the
+  // client (a time-block footer recomputed independently and diverged from
+  // the real per-code total). The client bug is covered by
+  // client/src/__tests__/timeBlocks.test.ts; this is the server-side
+  // invariant those client totals are built from, so it can never silently
+  // drift again on this side either.
+  it('totalReimbursement equals both the summed cptCodes reimbursement and the summed timeBlocks rate', async () => {
+    const aiResponse = {
+      subjective: 's', objective: 'o', assessment: 'a', plan: 'p',
+      cptCodes: [
+        { code: '97530', name: 'Therapeutic Activities', units: 2, rationale: 'r', activitiesAssigned: ['Obstacle Course'] },
+        { code: '97112', name: 'Neuromuscular Re-education', units: 1, rationale: 'r', activitiesAssigned: ['Swing'] },
+      ],
+      activityCptPairings: [
+        { activity: 'Obstacle Course', code: '97530', rationale: 'r' },
+        { activity: 'Swing', code: '97112', rationale: 'r' },
+      ],
+      billingRationale: 'br',
+      auditNotes: [],
+    };
+    const result = await validateAndEnhanceResponse(
+      aiResponse,
+      baseRequest({ activities: ['Obstacle Course', 'Swing'] }),
+      3,
+    );
+    const cptCodesSum = result.cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
+    const timeBlocksSum = result.timeBlocks.reduce((sum, b) => sum + b.rate, 0);
+    expect(result.totalReimbursement).toBeCloseTo(cptCodesSum, 2);
+    expect(result.totalReimbursement).toBeCloseTo(timeBlocksSum, 2);
+  });
 });

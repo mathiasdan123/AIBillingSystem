@@ -26,6 +26,7 @@ import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient, streamRequest } from "@/lib/queryClient";
 import { parsePlanSuggestion } from "@/lib/planSuggestion";
 import { extractSoapPreview } from "@/lib/soapPreview";
+import { sumTimeBlockRates } from "@/lib/timeBlocks";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
@@ -2685,7 +2686,7 @@ export default function SoapNotes() {
                                 setGeneratedNote({
                                   ...generatedNote,
                                   timeBlocks: updatedBlocks,
-                                  totalReimbursement: updatedBlocks.reduce((sum, b) => sum + b.rate, 0)
+                                  totalReimbursement: sumTimeBlockRates(updatedBlocks)
                                 });
                               }}
                             >
@@ -2719,13 +2720,14 @@ export default function SoapNotes() {
                                 instead of summing the blocks' own rates --
                                 reproducing a flat-rate total here even after
                                 the main total elsewhere was fixed to use
-                                real per-code rates. Sum the blocks instead so
-                                both totals in this view agree. */}
+                                real per-code rates. sumTimeBlockRates is the
+                                one place this is computed now, so both call
+                                sites in this view can't drift apart again. */}
                             <span className="text-muted-foreground">
                               {generatedNote.timeBlocks.length} block{generatedNote.timeBlocks.length === 1 ? '' : 's'}
                             </span>
                             <span className="font-bold text-green-700">
-                              Total: ${generatedNote.timeBlocks.reduce((sum, b) => sum + b.rate, 0).toFixed(2)}
+                              Total: ${sumTimeBlockRates(generatedNote.timeBlocks).toFixed(2)}
                             </span>
                           </div>
                         </>
