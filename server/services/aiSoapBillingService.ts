@@ -942,13 +942,27 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 const SKILLED_OT_CONTINUATION_CLOSING =
   /(?:^|(?<=[.!?]\s))[^.!?\n]*\bcontinue (?:to|\w+ to) (?:benefit from|participate in|receive)\b[^.!?\n]*\bskilled\b[^.!?\n]*\b(?:occupational therapy|OT)\b[^.!?\n]*[.!?]/gi;
 
+/**
+ * Detection only (no mutation) — exposed so callers like the fabrication
+ * eval harness (scripts/eval-plan-fabrication.ts) can assert on whether raw
+ * AI output needed the backstop, without duplicating the regex or fighting
+ * its `g` flag's statefulness.
+ */
+export function hasUnsupportedPlanClosing(plan: string): boolean {
+  if (!plan) return false;
+  SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  const result = SKILLED_OT_CONTINUATION_CLOSING.test(plan);
+  SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  return result;
+}
+
 export function stripUnsupportedPlanClosing(
   plan: string,
   hasMostRecentPlanContext: boolean,
   hasActiveGoalsContext: boolean,
 ): string {
   if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
-  if (!SKILLED_OT_CONTINUATION_CLOSING.test(plan)) return plan;
+  if (!hasUnsupportedPlanClosing(plan)) return plan;
   SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
   const stripped = plan
     .replace(SKILLED_OT_CONTINUATION_CLOSING, "")

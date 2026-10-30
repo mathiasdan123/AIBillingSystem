@@ -20,7 +20,8 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "docs:api": "node --import=tsx scripts/generate-openapi.ts",
-    "test:stedi-e2e": "vitest run server/__tests__/stediTestMode.e2e.test.ts"
+    "test:stedi-e2e": "vitest run server/__tests__/stediTestMode.e2e.test.ts",
+    "eval:plan-fabrication": "DATABASE_URL=postgresql://unused:unused@localhost:5432/unused node --import=tsx scripts/eval-plan-fabrication.ts"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.32.0",

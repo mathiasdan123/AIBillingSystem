@@ -1,0 +1,47 @@
+name: SOAP Plan Fabrication Eval
+
+# Live-model regression check for scripts/eval-plan-fabrication.ts. Guards
+# against the specific fabrication pattern that resurfaced four times
+# (PR #421-#424) despite each prompt fix explicitly naming the prior one:
+# every other automated check tests the PROMPT we send, never the OUTPUT the
+# model actually returns. This calls the real Anthropic API against a fixed
+# set of adversarial scenarios and asserts on the response.
+#
+# Runs only on PRs that touch the Plan prompt itself (path filter below), and
+# only does anything if the ANTHROPIC_API_KEY secret is configured — without
+# it, eval-plan-fabrication.ts self-skips and this step passes in seconds
+# (same convention as the Stedi test-mode e2e step in ci.yml). Add the
+# secret in repo Settings -> Secrets and variables -> Actions to turn this
+# from a no-op into a real gate.
+#
+# Makes real, billed API calls (3 samples x 3 scenarios by default) — that's
+# why this is its own path-filtered workflow rather than part of every push
+# in ci.yml.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/services/aiSoapBillingService.ts'
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Plan fabrication eval against the live model
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run eval:plan-fabrication

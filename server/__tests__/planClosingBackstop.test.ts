@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // import time); the function under test never touches it.
 vi.mock('../storage', () => ({ storage: {} }));
 
-import { stripUnsupportedPlanClosing } from '../services/aiSoapBillingService';
+import { hasUnsupportedPlanClosing, stripUnsupportedPlanClosing } from '../services/aiSoapBillingService';
 
 // Deterministic backstop for a fabrication that recurred three times despite
 // prompt-level prohibition across #421-#424: a generic "[Patient] will
@@ -55,5 +55,28 @@ describe('stripUnsupportedPlanClosing', () => {
 
   it('handles empty input', () => {
     expect(stripUnsupportedPlanClosing('', noPlanContext, noGoalsContext)).toBe('');
+  });
+});
+
+// Exposed so the live-model eval harness (scripts/eval-plan-fabrication.ts)
+// can assert on raw AI output directly, without duplicating the regex.
+describe('hasUnsupportedPlanClosing', () => {
+  it('detects the pattern regardless of hasMostRecentPlanContext/hasActiveGoalsContext', () => {
+    const fabricated =
+      'Patient will continue to participate in skilled occupational therapy to address identified deficits.';
+    expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
+  });
+
+  it('returns false for legitimate content', () => {
+    expect(hasUnsupportedPlanClosing('Continue current treatment frequency.')).toBe(false);
+    expect(hasUnsupportedPlanClosing('')).toBe(false);
+  });
+
+  it('gives a consistent answer across repeated calls (regex g-flag statefulness)', () => {
+    const fabricated =
+      'Patient will continue to participate in skilled occupational therapy to address identified deficits.';
+    expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
+    expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
+    expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
   });
 });
