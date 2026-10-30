@@ -5,12 +5,29 @@
 # laptop). Feeds scripts/reconcile-demo-practice-payload.cjs to the app
 # container as `node -e` — the same mechanism the deploy workflow's
 # migration step uses.
-# See scripts/reconcile-demo-practice-payload.cjs for the full background
-# (responds to the "therapybill-demo-path-broken" CloudWatch alarm).
 #
-# Deletes patients/appointments/claims/etc. for the demo practice only —
-# never touches a real practice. ensureDemoPractice() reseeds the canonical
-# 6 demo patients automatically on the next demo-login afterward.
+# WHY: responds to the "therapybill-demo-path-broken" CloudWatch alarm
+# (synthetic canary: health -> demo-login -> patients==6). Root cause:
+# server/services/demoPractice.ts's ensureDemoPractice() seeds exactly 6
+# canonical patients, but only reseeds when the practice has ZERO patients
+# -- it never reconciles a non-zero count back to canonical. Live demos to
+# prospects mutate this shared sandbox (adding/deleting patients mid-pitch),
+# so once the count drifts away from 6 it stays drifted and the canary
+# alarms on every subsequent run until someone intervenes.
+#
+# WHAT THIS DOES: deletes patients/appointments/claims/etc. for the demo
+# practice only (scoped by practices.is_demo=true) -- never a real practice.
+# Reuses the same FK-safe deletion order server/routes/admin.ts's existing
+# reset-demo-data route already uses (that route is scoped to a caller's
+# own practiceId and reseeds via a different, older path -- not reused
+# directly here). Does NOT reseed: ensureDemoPractice()'s existing "seed if
+# empty" logic does that automatically on the next demo-login.
+#
+# The payload .cjs is kept deliberately terse (short labels, no inline
+# comments) because AWS ECS caps a RunTask container override at 8192
+# bytes serialized -- this script's first version (12KB with full
+# documentation inline) hit "Container Overrides length must be at most
+# 8192" and had to be slimmed down. Put any new explanation here instead.
 #
 # Usage:
 #   scripts/run-reconcile-demo-practice.sh --dry-run   # transaction rolled back
