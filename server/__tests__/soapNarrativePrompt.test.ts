@@ -145,3 +145,28 @@ describe('buildUserPrompt — plan carry-forward (Phase 3)', () => {
     expect(prompt).not.toContain('MOST RECENT PLAN (carry-forward baseline');
   });
 });
+
+describe('buildUserPrompt — patient age from dateOfBirth', () => {
+  it('computes a real age when dateOfBirth is a valid date', () => {
+    const prompt = buildUserPrompt(baseRequest(), { ...patient, dateOfBirth: '2019-03-01' }, 3, null);
+    expect(prompt).toMatch(/- Age: \d+ years/);
+    expect(prompt).not.toContain('Age: unknown');
+  });
+
+  // Regression test: new Date(null) silently resolves to the Unix epoch
+  // (1970-01-01) rather than an Invalid Date, so a patient with no DOB on
+  // file previously got a fabricated age (56, as of this test suite's era)
+  // fed into the prompt as if it were real patient data. Confirmed in
+  // production against a patient created with DOB left blank.
+  for (const [label, dob] of [
+    ['null', null],
+    ['undefined', undefined],
+    ['empty string', ''],
+  ] as const) {
+    it(`does not fabricate an epoch-derived age when dateOfBirth is ${label}`, () => {
+      const prompt = buildUserPrompt(baseRequest(), { ...patient, dateOfBirth: dob }, 3, null);
+      expect(prompt).toContain('- Age: unknown (date of birth not on file -- do not guess or assume an age)');
+      expect(prompt).not.toMatch(/- Age: \d+ years/);
+    });
+  }
+});
