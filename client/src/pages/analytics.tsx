@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +18,9 @@ export default function Analytics() {
   const { toast } = useToast();
   const [practiceId] = useState(user?.practiceId || 1);
   const [timeRange, setTimeRange] = useState("12months");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const hasCustomRange = timeRange === "custom" && !!customStartDate && !!customEndDate;
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -38,9 +43,12 @@ export default function Analytics() {
     retry: false,
   }) as any;
 
+  const revenueUrl = hasCustomRange
+    ? `/api/analytics/revenue?timeRange=custom&start=${customStartDate}&end=${customEndDate}`
+    : `/api/analytics/revenue?timeRange=${timeRange}`;
   const { data: revenueData, isLoading: revenueLoading } = useQuery({
-    queryKey: [`/api/analytics/revenue?timeRange=${timeRange}`],
-    enabled: isAuthenticated,
+    queryKey: [revenueUrl],
+    enabled: isAuthenticated && (timeRange !== "custom" || hasCustomRange),
     retry: false,
   }) as any;
 
@@ -302,16 +310,45 @@ export default function Analytics() {
           <h1 className="text-2xl font-bold text-foreground">Analytics Dashboard</h1>
           <p className="text-muted-foreground">Track your practice performance and billing insights</p>
         </div>
-        <Select value={timeRange} onValueChange={setTimeRange}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="3months">Last 3 months</SelectItem>
-            <SelectItem value="6months">Last 6 months</SelectItem>
-            <SelectItem value="12months">Last 12 months</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-end gap-3">
+          <Select value={timeRange} onValueChange={setTimeRange}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="3months">Last 3 months</SelectItem>
+              <SelectItem value="6months">Last 6 months</SelectItem>
+              <SelectItem value="12months">Last 12 months</SelectItem>
+              <SelectItem value="custom">Custom range</SelectItem>
+            </SelectContent>
+          </Select>
+          {timeRange === "custom" && (
+            <div className="flex items-end gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Start</Label>
+                <Input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  max={customEndDate || undefined}
+                  className="w-36"
+                />
+              </div>
+              <span className="text-muted-foreground pb-2">to</span>
+              <div className="space-y-1">
+                <Label className="text-xs">End</Label>
+                <Input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  min={customStartDate || undefined}
+                  max={new Date().toISOString().split("T")[0]}
+                  className="w-36"
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="overview" className="space-y-6">
