@@ -342,7 +342,13 @@ export async function generateSoapNoteAndBilling(
 
   } catch (error) {
     console.error("AI generation error:", error);
-    // Fallback to rule-based generation if AI fails
+    // Fallback to rule-based generation if AI fails. NOTE (known gap, not
+    // fixed as of #427): fallbackGeneration's Plan section unconditionally
+    // opens with "Continue occupational therapy to address current
+    // treatment goals" -- the #421 continuity-fabrication pattern, with no
+    // CASE A/B check. This call site is how a brand-new patient could hit
+    // that gap for real: not just "AI unavailable," but any transient AI
+    // error (network blip, malformed JSON) for a patient with zero history.
     return fallbackGeneration(request, patient, billingUnits);
   }
 }
