@@ -1303,13 +1303,17 @@ export default function SoapNotes() {
     onSuccess: (result) => {
       const hasClaim = result?.claim && !result.claim.error;
       const sb = result?.superbillDetails;
+      // Multi-code claims (sb.lineItems) have no single cptCode/units/rate to
+      // name -- summarize by procedure count instead.
+      const claimNumber = result?.claim?.claimNumber;
+      const claimDescription = sb?.lineItems?.length > 1
+        ? `Claim ${claimNumber}: ${sb.lineItems.length} procedure codes (${sb.lineItems.map((li: any) => li.cptCode).join(', ')}) totaling $${sb.totalAmount}. Ready for submission.`
+        : sb
+          ? `Claim ${claimNumber}: ${sb.units} unit(s) of ${sb.cptCode} at $${Number(sb.rate).toFixed(2)}/unit = $${sb.totalAmount}. Ready for submission.`
+          : `Claim ${claimNumber} created for $${result?.claim?.totalAmount}. Ready for submission.`;
       toast({
         title: hasClaim ? "SOAP Note Saved & Claim Created" : "SOAP Note Saved",
-        description: hasClaim
-          ? sb
-            ? `Claim ${result.claim.claimNumber}: ${sb.units} unit(s) of ${sb.cptCode} at $${Number(sb.rate).toFixed(2)}/unit = $${sb.totalAmount}. Ready for submission.`
-            : `Claim ${result.claim.claimNumber} created for $${result.claim.totalAmount}. Ready for submission.`
-          : "Session documented. Claim can be generated from the Claims page.",
+        description: hasClaim ? claimDescription : "Session documented. Claim can be generated from the Claims page.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
@@ -1688,7 +1692,13 @@ export default function SoapNotes() {
                   </div>
                 )}
 
-                {/* Billing Summary - Admin Only */}
+                {/* Billing Summary - Admin Only. This is a rough pre-generation
+                    guide only -- a flat rate over the full session duration,
+                    before the AI has determined the actual codes/units for
+                    this visit (which may split across multiple codes at their
+                    own practice rates, or use fewer units than available).
+                    The accurate, per-code total appears in "Suggested Billing
+                    Codes" below after generation. */}
                 {isAdmin && (
                   <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
                     <div className="flex items-center justify-between text-sm">
@@ -1696,9 +1706,12 @@ export default function SoapNotes() {
                         {Math.floor(duration / 15)} units × ${ratePerUnit.toFixed(2)}/unit
                       </span>
                       <span className="font-bold text-green-700">
-                        Est. Total: ${(Math.floor(duration / 15) * ratePerUnit).toFixed(2)}
+                        Rough Est.: ${(Math.floor(duration / 15) * ratePerUnit).toFixed(2)}
                       </span>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      A starting guide based on full session duration -- the actual billed amount (per code, at your practice's configured rates) will appear after you generate the note.
+                    </p>
                   </div>
                 )}
 

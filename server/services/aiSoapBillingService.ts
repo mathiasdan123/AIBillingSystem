@@ -330,7 +330,7 @@ export async function generateSoapNoteAndBilling(
     const aiResponse = JSON.parse(jsonStr);
 
     // Validate and enhance the response
-    return validateAndEnhanceResponse(aiResponse, request, billingUnits);
+    return await validateAndEnhanceResponse(aiResponse, request, billingUnits);
 
   } catch (error) {
     console.error("AI generation error:", error);
@@ -904,11 +904,11 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
   return prompt;
 }
 
-function validateAndEnhanceResponse(
+async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
   billingUnits: number
-): AiSoapBillingResponse {
+): Promise<AiSoapBillingResponse> {
 
   // Use manual rate override if provided, otherwise use default $289/unit
   const unitRate = request.ratePerUnit || DEFAULT_UNIT_RATE;
@@ -950,6 +950,38 @@ function validateAndEnhanceResponse(
     aiTotalUnits > 0 ? Math.min(aiTotalUnits, Math.max(billingUnits, 1)) : Math.max(billingUnits, 1),
   );
 
+  // Reconciliation above distributes UNITS across codes using the flat
+  // unitRate for simplicity -- it's not about dollar amounts. Now correct
+  // each code's shown reimbursement to the practice's actual configured fee
+  // for that CPT code where one exists, instead of leaving every code priced
+  // at the one flat estimate rate. Without this, a multi-code visit's shown
+  // total systematically diverges from the real claim amount (which bills
+  // each code at its own practice rate), even though both now cover the
+  // same codes/units -- exactly the "estimate doesn't match the claim, no
+  // explanation" gap this was built to close.
+  const perCodeRates = new Map<string, number>();
+  if (request.practiceId) {
+    try {
+      const catalog = await storage.getCptCodes();
+      for (const code of cptCodes) {
+        const cpt = catalog.find((c: any) => c.code === code.code);
+        if (!cpt) continue;
+        const rateStr = await storage.resolvePracticeCptRate(request.practiceId, cpt.id);
+        if (rateStr !== null) perCodeRates.set(code.code, parseFloat(rateStr));
+      }
+    } catch (e) {
+      // Practice rate lookup is a display refinement, not a hard requirement
+      // -- fall back to the flat estimate rate for every code on any error.
+      logger.warn('Per-code practice rate lookup failed for SOAP billing estimate', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  for (const code of cptCodes) {
+    const realRate = perCodeRates.get(code.code);
+    if (realRate !== undefined) code.reimbursement = realRate * code.units;
+  }
+
   const totalReimbursement = cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
 
   // Generate individual timeblocks for insurers requiring per-block codes
@@ -957,6 +989,7 @@ function validateAndEnhanceResponse(
   let blockNumber = 1;
 
   for (const cptCode of cptCodes) {
+    const blockRate = perCodeRates.get(cptCode.code) ?? unitRate;
     for (let i = 0; i < cptCode.units; i++) {
       timeBlocks.push({
         blockNumber,
@@ -964,7 +997,7 @@ function validateAndEnhanceResponse(
         endMinute: blockNumber * 15,
         code: cptCode.code,
         codeName: cptCode.name,
-        rate: unitRate,
+        rate: blockRate,
         activities: cptCode.activitiesAssigned.slice(0, 3) // Show up to 3 activities per block
       });
       blockNumber++;
