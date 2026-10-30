@@ -128,11 +128,35 @@ export async function generateFromAppointment(
     }
   }
 
-  // Build procedure codes from session's CPT code
+  // Build procedure codes. A session stores one "primary" CPT code, but its
+  // SOAP note may have recorded several AI-suggested codes for the visit
+  // (e.g. 97530 + 97112) -- the same multi-code data used by claim
+  // generation (server/routes/sessions.ts generate-claim). Use all of them
+  // here too so a multi-code visit isn't under-billed on the superbill.
   const procedureCodes: ProcedureCodeEntry[] = [];
   let totalAmount = '0.00';
+  let totalAmountNum = 0;
 
-  if (session?.cptCodeId) {
+  const [soapNoteRaw] = session
+    ? await db.select().from(soapNotes).where(eq(soapNotes.sessionId, session.id))
+    : [undefined];
+  const suggestedCodes = Array.isArray((soapNoteRaw as any)?.aiSuggestedCptCodes)
+    ? ((soapNoteRaw as any).aiSuggestedCptCodes as any[]).filter(
+        (s) => s && typeof s.code === 'string' && Number.isFinite(Number(s.units)) && Number(s.units) > 0,
+      )
+    : [];
+
+  if (suggestedCodes.length > 1) {
+    for (const s of suggestedCodes) {
+      const [cpt] = await db.select().from(cptCodes).where(eq(cptCodes.code, s.code));
+      if (!cpt) continue;
+      const fee = cpt.baseRate ? String(cpt.baseRate) : '0.00';
+      const units = Number(s.units);
+      procedureCodes.push({ code: cpt.code, description: cpt.description || cpt.code, units, fee });
+      totalAmountNum += parseFloat(fee) * units;
+    }
+    totalAmount = totalAmountNum.toFixed(2);
+  } else if (session?.cptCodeId) {
     const [cpt] = await db
       .select()
       .from(cptCodes)

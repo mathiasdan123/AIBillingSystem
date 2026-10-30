@@ -531,6 +531,70 @@ router.post('/sessions/:id/generate-claim', isAuthenticated, async (req: any, re
     if (existingClaim) return res.status(400).json({ message: 'Session already has a claim', claim: existingClaim });
 
     const cptCodes = await storage.getCptCodes();
+
+    // A session stores exactly one "primary" CPT code, but the AI may have
+    // suggested several for this visit (e.g. 97530 + 97112) -- that full
+    // breakdown is saved on the session's SOAP note (aiSuggestedCptCodes)
+    // even though only the primary code ever reached the session row.
+    // When there's more than one, bill each as its own claim line item
+    // instead of collapsing the visit onto a single code.
+    const soapNote = await storage.getSoapNoteBySession(sessionId);
+    const suggestedRaw = Array.isArray((soapNote as any)?.aiSuggestedCptCodes)
+      ? (soapNote as any).aiSuggestedCptCodes as any[]
+      : [];
+    const suggested = suggestedRaw.filter(
+      (s) => s && typeof s.code === 'string' && Number.isFinite(Number(s.units)) && Number(s.units) > 0,
+    );
+
+    if (suggested.length > 1) {
+      // Resolve every suggested code before creating anything -- a claim
+      // silently missing one of its procedures because that code's charge
+      // wasn't configured would be exactly the kind of quiet under-billing
+      // this flow should never produce. All codes must resolve, or none do.
+      const resolved: Array<{ cptCodeId: number; code: string; description: string; units: number; rate: number }> = [];
+      const unresolvedCodes: string[] = [];
+      for (const s of suggested) {
+        const cpt = cptCodes.find((c: any) => c.code === s.code);
+        if (!cpt) { unresolvedCodes.push(s.code); continue; }
+        const rateStr = await storage.resolvePracticeCptRate(practiceId, cpt.id);
+        if (rateStr === null) { unresolvedCodes.push(s.code); continue; }
+        resolved.push({ cptCodeId: cpt.id, code: cpt.code, description: (cpt as any).description, units: Number(s.units), rate: parseFloat(rateStr) });
+      }
+
+      if (unresolvedCodes.length > 0) {
+        return res.status(400).json({
+          message: `No charge is set for CPT ${unresolvedCodes.join(', ')}. Set your charge under Insurance Rates → Your Charges before billing this session.`,
+          code: 'RATE_NOT_SET',
+        });
+      }
+
+      const totalAmount = resolved.reduce((sum, r) => sum + r.rate * r.units, 0);
+      const claimNumber = generateSecureClaimNumber("CLM");
+
+      const claim = await storage.createClaimWithLineItems(
+        { practiceId, patientId: session.patientId, sessionId, insuranceId: insuranceId || null, claimNumber, totalAmount: totalAmount.toFixed(2), status: 'draft' },
+        resolved.map((r) => ({
+          cptCodeId: r.cptCodeId,
+          icd10CodeId: session.icd10CodeId || null,
+          units: r.units,
+          rate: r.rate.toFixed(2),
+          amount: (r.rate * r.units).toFixed(2),
+          dateOfService: session.sessionDate,
+        })),
+      );
+
+      return res.json({
+        message: 'Claim generated successfully', claim,
+        lineItems: resolved.map((r) => ({ cptCodeId: r.cptCodeId, units: r.units, rate: r.rate.toFixed(2), amount: (r.rate * r.units).toFixed(2), cptCode: { code: r.code, description: r.description } })),
+        superbillDetails: {
+          dateOfService: session.sessionDate,
+          totalAmount: totalAmount.toFixed(2),
+          lineItems: resolved.map((r) => ({ cptCode: r.code, cptDescription: r.description, units: r.units, rate: r.rate, amount: r.rate * r.units })),
+        },
+      });
+    }
+
+    // Single-code fallback: no SOAP note, or it recorded zero/one code.
     const cptCode = cptCodes.find((c: any) => c.id === session.cptCodeId);
     if (!cptCode) return res.status(400).json({ message: 'Session has no valid CPT code' });
 
