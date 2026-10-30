@@ -594,6 +594,11 @@ Return a JSON object with this exact structure:
 Only include ADDITIONAL issues not already in the rule-based list. Set riskScore considering BOTH rule-based and your additional findings.`;
 
   try {
+    // No timeout here used to mean this call (which gates the Submit
+    // button's pre-flight risk check on the client) could hang indefinitely
+    // if Anthropic was slow -- the button would spin forever with no error,
+    // and the real submit endpoint was never even reached. 25s keeps a
+    // clean margin under the 30s global request-timeout middleware.
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
@@ -611,7 +616,7 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
         },
       ],
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { timeout: 25000 });
 
     const textBlock = response.content.find(
       (b): b is Anthropic.TextBlock => b.type === "text"

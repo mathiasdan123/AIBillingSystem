@@ -1086,19 +1086,27 @@ export default function SoapNotes() {
           activityAssessments: selectedActivities, // Full activity objects with assessments
           additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
           interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
-          mood: mood || "Cooperative",
+          // Do NOT substitute plausible-sounding defaults for blank fields here
+          // (e.g. motorPlanning: "Mild Difficulty" when the therapist left it
+          // unset). The AI prompt can't tell a real observation from a client
+          // placeholder -- it faithfully narrates whatever arrives as fact,
+          // so a fake default here becomes a fabricated clinical finding in
+          // the generated note. Send blanks as empty strings; the prompt
+          // builder (aiSoapBillingService.ts) turns an empty field into an
+          // explicit "not assessed" instruction instead of a stated fact.
+          mood: mood,
           caregiverReport: caregiverReport || undefined,
           duration,
           sessionType,
           location,
           assessment: {
-            performance: assessment.performance || "Stable",
-            assistance: assessment.assistance || "Minimal Assist",
-            strength: assessment.strength || "Adequate",
-            motorPlanning: assessment.motorPlanning || "Mild Difficulty",
-            sensoryRegulation: assessment.sensoryRegulation || "Needed Minimal Supports"
+            performance: assessment.performance,
+            assistance: assessment.assistance,
+            strength: assessment.strength,
+            motorPlanning: assessment.motorPlanning,
+            sensoryRegulation: assessment.sensoryRegulation
           },
-          planNextSteps: planNextSteps || "Continue Current Goals",
+          planNextSteps: planNextSteps,
           nextSessionFocus: nextSessionFocus,
           homeProgram: homeProgram || undefined,
           ratePerUnit: ratePerUnit // Manual rate override
@@ -1210,6 +1218,16 @@ export default function SoapNotes() {
 
       const primaryCode = generatedNote.cptCodes[0]?.code || "97530";
 
+      // A treatment session row stores exactly one CPT code, but the AI may
+      // suggest several (e.g. 97530 + 97112). Only this primary code's own
+      // units are billed -- summing every suggested code's units onto this
+      // one code would bill units that were actually performed under a
+      // DIFFERENT procedure, inflating this code's billed count beyond what
+      // was done. That's a real billing-accuracy/upcoding risk, not just a
+      // display mismatch, so the conservative fix is to bill only what this
+      // code's own units support, not the combined total across all codes.
+      // (The other suggested codes' time isn't billed by this flow today --
+      // see the generate-claim follow-up for making that explicit to the user.)
       const sessionData = {
         patientId,
         therapistId: user?.id || "",
@@ -1217,7 +1235,7 @@ export default function SoapNotes() {
         duration,
         cptCodeId: cptCodes?.find(c => c.code === primaryCode)?.id || 1,
         icd10CodeId: 1,
-        units: (generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0),
+        units: generatedNote.cptCodes?.[0]?.units || 1,
         notes: `SUBJECTIVE:\n${generatedNote.subjective}\n\nOBJECTIVE:\n${generatedNote.objective}\n\nASSESSMENT:\n${generatedNote.assessment}\n\nPLAN:\n${generatedNote.plan}`,
         status: "completed",
         dataSource: "ai_generated",
@@ -1269,20 +1287,28 @@ export default function SoapNotes() {
       // Auto-generate claim for the session
       try {
         const claimResponse = await apiRequest("POST", `/api/sessions/${session.id}/generate-claim`, {});
-        const claim = await claimResponse.json();
-        return { session, claim, savedSoapNote };
+        // The endpoint returns { message, claim, lineItems, superbillDetails }
+        // -- the claim itself is nested under .claim, not the response body
+        // directly. Reading claimNumber/totalAmount off the unwrapped body
+        // (as this used to) silently rendered "Claim undefined created for
+        // $undefined" in the success toast below.
+        const claimResult = await claimResponse.json();
+        return { session, claim: claimResult.claim, superbillDetails: claimResult.superbillDetails, savedSoapNote };
       } catch (claimError) {
         // Claim generation failed but SOAP note saved - return session only
         console.error("Auto-claim generation failed:", claimError);
-        return { session, claim: null, savedSoapNote };
+        return { session, claim: null, superbillDetails: null, savedSoapNote };
       }
     },
     onSuccess: (result) => {
       const hasClaim = result?.claim && !result.claim.error;
+      const sb = result?.superbillDetails;
       toast({
         title: hasClaim ? "SOAP Note Saved & Claim Created" : "SOAP Note Saved",
         description: hasClaim
-          ? `Claim ${result.claim.claimNumber} created for $${result.claim.totalAmount}. Ready for submission.`
+          ? sb
+            ? `Claim ${result.claim.claimNumber}: ${sb.units} unit(s) of ${sb.cptCode} at $${Number(sb.rate).toFixed(2)}/unit = $${sb.totalAmount}. Ready for submission.`
+            : `Claim ${result.claim.claimNumber} created for $${result.claim.totalAmount}. Ready for submission.`
           : "Session documented. Claim can be generated from the Claims page.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });

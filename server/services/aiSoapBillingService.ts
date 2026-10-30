@@ -357,6 +357,16 @@ is a compliance and liability issue, not just a stylistic preference.
    next steps, and optionally a caregiver report, home program, treatment
    plan, and treatment goals. You may NOT invent anything outside this data.
 
+   Any field below whose value is literally "(not assessed)", "(not
+   recorded...)", or "(not specified...)" means the therapist left it
+   blank -- it is a marker, not a clinical fact. Treat it exactly like a
+   field that was never mentioned at all: do not state a level, finding,
+   or conclusion for it, including indirectly through billing/clinical
+   vocabulary (e.g. do not write "praxis difficulties" because motor
+   planning was blank, or "sensory regulation was adequate" because
+   sensory regulation was blank). Omit the topic, or say plainly that the
+   therapist did not document it this session.
+
 2. **DO NOT ELABORATE BRIEF INPUTS.** This is a very common failure mode.
    If the caregiver report is a single word ("anxious") or a short phrase,
    the output MUST reflect ONLY that content. Do NOT expand it into
@@ -774,7 +784,7 @@ SESSION DETAILS:
 ${request.therapistName ? `- Treating Therapist: ${request.therapistName}` : ''}
 
 SUBJECTIVE DATA:
-- Mood/Presentation: ${request.mood}
+- Mood/Presentation: ${request.mood || "(not recorded — do not state a mood or presentation; omit this detail entirely)"}
 - Caregiver Report: ${request.caregiverReport || "(none provided — state that it was not obtained; do not invent one)"}
 
 ACTIVITIES/EXERCISES PERFORMED:
@@ -792,12 +802,17 @@ functional change — using ONLY the facts in the account. Where an account and
 a structured rating disagree, the account wins. Activities without an account
 get the standard treatment from the structured fields alone.` : ''}
 
-CLINICAL OBSERVATIONS:
-- Overall Performance: ${request.assessment.performance}
-- Assistance Level Required: ${request.assessment.assistance}
-- Core Strength/Endurance: ${request.assessment.strength}
-- Motor Planning: ${request.assessment.motorPlanning}
-- Sensory Regulation: ${request.assessment.sensoryRegulation}`;
+CLINICAL OBSERVATIONS (any field below reading "not assessed" was left blank by
+the therapist -- it is NOT a real observation. Do not state a finding, level,
+or conclusion for it anywhere in the note, including implicitly through billing
+language like "praxis difficulties" or "sensory regulation was adequate". Omit
+it, or if the note's structure requires addressing the area, say the therapist
+did not document an assessment of it this session):
+- Overall Performance: ${request.assessment.performance || "(not assessed)"}
+- Assistance Level Required: ${request.assessment.assistance || "(not assessed)"}
+- Core Strength/Endurance: ${request.assessment.strength || "(not assessed)"}
+- Motor Planning: ${request.assessment.motorPlanning || "(not assessed)"}
+- Sensory Regulation: ${request.assessment.sensoryRegulation || "(not assessed)"}`;
 
   // Add enhanced observations if provided
   if (request.assessment.posturalControl) {
@@ -838,7 +853,7 @@ ONLY sanctioned source for progress comparisons; cite nothing beyond it):`;
   prompt += `
 
 PLAN NOTES:
-- Next Steps: ${request.planNextSteps}
+- Next Steps: ${request.planNextSteps || "(not specified by the therapist — base the plan on nextSessionFocus/homeProgram/treatment-plan data below instead of inventing next steps)"}
 - Next Session Focus: ${request.nextSessionFocus || "(none specified — continue current goals)"}
 - Home Program: ${request.homeProgram || "(none provided this session — use the no-change continuation wording; do not invent exercises or imply parent education)"}
 
