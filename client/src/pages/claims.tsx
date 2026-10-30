@@ -1513,6 +1513,14 @@ export default function Claims() {
   // date. Exists because the first claim a practice ever files was otherwise
   // also the first real test of the submission path.
   const dryRunMutation = useMutation({
+    // The app-wide default (queryClient.ts) auto-retries a failed mutation up
+    // to 2 more times with backoff. Combined with the 25s client timeout
+    // below, a single slow/hung attempt silently became three -- turning a
+    // ~70s hang into ~4 minutes, worse than having no timeout at all. A
+    // user-visible retry (clicking the button again) is the right recovery
+    // here, not an invisible automatic one stacked on top of an already-slow
+    // external call.
+    retry: false,
     mutationFn: async (claimId: number) => {
       // The server's own Stedi call is capped at 20s, but nothing here
       // bounded the client's wait on top of that -- if anything upstream
@@ -1597,6 +1605,12 @@ export default function Claims() {
   });
 
   const submitClaimMutation = useMutation({
+    // See dryRunMutation above: the app-wide default auto-retry stacked on
+    // top of a slow external call turns one hang into three. Especially
+    // wrong for a real submission -- an invisible auto-retry is exactly the
+    // duplicate-submission risk the timeout's own error message warns
+    // against, before the user ever sees that warning.
+    retry: false,
     mutationFn: async (claimId: number) => {
       // Same client-side bound as dryRunMutation above -- the server's own
       // Stedi call is capped at 20s, but nothing stopped this button from
