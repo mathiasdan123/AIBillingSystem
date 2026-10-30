@@ -330,7 +330,15 @@ export async function generateSoapNoteAndBilling(
     const aiResponse = JSON.parse(jsonStr);
 
     // Validate and enhance the response
-    return await validateAndEnhanceResponse(aiResponse, request, billingUnits);
+    const hasMostRecentPlanContext = !!priorSessions?.[0]?.plan;
+    const hasActiveGoalsContext = !!(treatmentGoals && treatmentGoals.length > 0);
+    return await validateAndEnhanceResponse(
+      aiResponse,
+      request,
+      billingUnits,
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
+    );
 
   } catch (error) {
     console.error("AI generation error:", error);
@@ -727,20 +735,32 @@ export function buildUserPrompt(
   treatmentGoals?: any[],
   priorSessions?: Array<{ date: string; objective?: string; assessment?: string; plan?: string }>
 ): string {
-  // Calculate patient age
-  const dob = new Date(patient.dateOfBirth);
-  const today = new Date();
-  let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-    age--;
+  // Calculate patient age. IMPORTANT: `new Date(null)` silently resolves to
+  // the Unix epoch (1970-01-01) rather than an Invalid Date -- a patient
+  // with no dateOfBirth on file (blank intake, a quick-add flow, an import
+  // gap) would otherwise get a fabricated age fed straight into the prompt
+  // as real patient data (confirmed in production: an epoch DOB computed as
+  // "56 years" for a patient with no DOB entered). Guard explicitly instead
+  // of trusting Date's coercion.
+  let ageLine = "- Age: unknown (date of birth not on file -- do not guess or assume an age)";
+  if (patient.dateOfBirth) {
+    const dob = new Date(patient.dateOfBirth);
+    if (!isNaN(dob.getTime())) {
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const monthDiff = today.getMonth() - dob.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+      ageLine = `- Age: ${age} years`;
+    }
   }
 
   let prompt = `Generate a COMPREHENSIVE, DETAILED SOAP note for this pediatric OT session.
 
 PATIENT INFORMATION:
 - Name: ${patient.firstName} ${patient.lastName}
-- Age: ${age} years`;
+${ageLine}`;
   // Minimum-necessary: the clinical note only needs name + age. Full DOB,
   // insurance provider, and policy number are not used to write the note, so
   // they are deliberately NOT sent to the model.
@@ -909,10 +929,45 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
   return prompt;
 }
 
+// Deterministic backstop for a recurring CASE A fabrication (no prior plan,
+// no active treatment goals): despite three rounds of prompt-level
+// prohibition (#421-#424) explicitly naming this failure mode, the model has
+// kept reintroducing paraphrases of a generic "[Patient] will continue to
+// benefit from/participate in skilled occupational therapy to address
+// identified deficits..." closing sentence in the Plan. There's no prior
+// documentation to ground a continuity/necessity claim in CASE A, so this
+// strips any sentence matching the pattern as a safety net independent of
+// the model actually following the prompt. Logged when triggered so
+// recurrence stays visible rather than silently "fixed."
+const SKILLED_OT_CONTINUATION_CLOSING =
+  /(?:^|(?<=[.!?]\s))[^.!?\n]*\bcontinue (?:to|\w+ to) (?:benefit from|participate in|receive)\b[^.!?\n]*\bskilled\b[^.!?\n]*\b(?:occupational therapy|OT)\b[^.!?\n]*[.!?]/gi;
+
+export function stripUnsupportedPlanClosing(
+  plan: string,
+  hasMostRecentPlanContext: boolean,
+  hasActiveGoalsContext: boolean,
+): string {
+  if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
+  if (!SKILLED_OT_CONTINUATION_CLOSING.test(plan)) return plan;
+  SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  const stripped = plan
+    .replace(SKILLED_OT_CONTINUATION_CLOSING, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  logger.warn(
+    "Stripped unsupported skilled-OT continuation closing from CASE A plan (no prior plan/goals context)",
+    { originalLength: plan.length, strippedLength: stripped.length },
+  );
+  return stripped;
+}
+
 async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
-  billingUnits: number
+  billingUnits: number,
+  hasMostRecentPlanContext: boolean = false,
+  hasActiveGoalsContext: boolean = false,
 ): Promise<AiSoapBillingResponse> {
 
   // Use manual rate override if provided, otherwise use default $289/unit
@@ -1013,7 +1068,11 @@ async function validateAndEnhanceResponse(
     subjective: aiResponse.subjective || "",
     objective: aiResponse.objective || "",
     assessment: aiResponse.assessment || "",
-    plan: aiResponse.plan || "",
+    plan: stripUnsupportedPlanClosing(
+      aiResponse.plan || "",
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
+    ),
     cptCodes,
     activityCptPairings,
     timeBlocks,
