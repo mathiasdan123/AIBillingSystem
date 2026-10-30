@@ -1697,9 +1697,13 @@ export default function SoapNotes() {
                     before the AI has determined the actual codes/units for
                     this visit (which may split across multiple codes at their
                     own practice rates, or use fewer units than available).
-                    The accurate, per-code total appears in "Suggested Billing
-                    Codes" below after generation. */}
-                {isAdmin && (
+                    Hidden once a note exists: the accurate, per-code total in
+                    "Suggested Billing Codes" below replaces it -- showing both
+                    at once left two unreconciled dollar figures on screen at
+                    the same time (a flat pre-generation guess next to the
+                    real per-code total), which is worse than showing neither
+                    until the real number exists. */}
+                {isAdmin && !generatedNote && (
                   <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
