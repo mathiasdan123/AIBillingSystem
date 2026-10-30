@@ -1,10 +1,7 @@
-// Wipe demo-practice data so ensureDemoPractice() reseeds the canonical 6
-// patients on next demo-login. Full background in run-reconcile-demo-practice.sh.
-// DRY_RUN=1 rolls back instead of committing.
+// See run-reconcile-demo-practice.sh. DRY_RUN=1 rolls back.
 const { Client } = require('pg');
 
-// Same FK-safe order as server/routes/admin.ts's reset-demo-data route,
-// rescoped to the demo practice (is_demo=true) via $1=practiceId.
+// FK-safe order, verified vs schema. $1=practiceId.
 const D = [
   ['claim_line_items', 'DELETE FROM claim_line_items WHERE claim_id IN (SELECT id FROM claims WHERE practice_id=$1)'],
   ['claim_follow_ups', 'DELETE FROM claim_follow_ups WHERE claim_id IN (SELECT id FROM claims WHERE practice_id=$1)'],
@@ -17,16 +14,16 @@ const D = [
   ['superbills', 'DELETE FROM superbills WHERE practice_id=$1'],
   ['eligibility_checks', 'DELETE FROM eligibility_checks WHERE patient_id IN (SELECT id FROM patients WHERE practice_id=$1)'],
   ['eligibility_alerts', 'DELETE FROM eligibility_alerts WHERE patient_id IN (SELECT id FROM patients WHERE practice_id=$1)'],
-  ['soap_note_goal_progress', 'DELETE FROM soap_note_goal_progress WHERE soap_note_id IN (SELECT id FROM soap_notes WHERE practice_id=$1)'],
+  ['soap_note_goal_progress', 'DELETE FROM soap_note_goal_progress WHERE soap_note_id IN (SELECT id FROM soap_notes WHERE session_id IN (SELECT id FROM treatment_sessions WHERE practice_id=$1))'],
   ['soap_note_drafts', 'DELETE FROM soap_note_drafts WHERE practice_id=$1'],
-  ['soap_notes', 'DELETE FROM soap_notes WHERE practice_id=$1'],
+  ['soap_notes', 'DELETE FROM soap_notes WHERE session_id IN (SELECT id FROM treatment_sessions WHERE practice_id=$1)'],
   ['treatment_sessions', 'DELETE FROM treatment_sessions WHERE practice_id=$1'],
-  ['goal_progress_notes', 'DELETE FROM goal_progress_notes WHERE goal_id IN (SELECT id FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1))'],
-  ['treatment_objectives', 'DELETE FROM treatment_objectives WHERE goal_id IN (SELECT id FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1))'],
-  ['treatment_interventions', 'DELETE FROM treatment_interventions WHERE goal_id IN (SELECT id FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1))'],
-  ['treatment_goals', 'DELETE FROM treatment_goals WHERE plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1)'],
+  ['goal_progress_notes', 'DELETE FROM goal_progress_notes WHERE goal_id IN (SELECT id FROM treatment_goals WHERE treatment_plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1))'],
+  ['treatment_objectives', 'DELETE FROM treatment_objectives WHERE goal_id IN (SELECT id FROM treatment_goals WHERE treatment_plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1))'],
+  ['treatment_interventions', 'DELETE FROM treatment_interventions WHERE goal_id IN (SELECT id FROM treatment_goals WHERE treatment_plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1))'],
+  ['treatment_goals', 'DELETE FROM treatment_goals WHERE treatment_plan_id IN (SELECT id FROM treatment_plans WHERE practice_id=$1)'],
   ['treatment_plans', 'DELETE FROM treatment_plans WHERE practice_id=$1'],
-  ['payment_plan_installments', 'DELETE FROM payment_plan_installments WHERE plan_id IN (SELECT id FROM payment_plans WHERE practice_id=$1)'],
+  ['payment_plan_installments', 'DELETE FROM payment_plan_installments WHERE payment_plan_id IN (SELECT id FROM payment_plans WHERE practice_id=$1)'],
   ['payment_plans', 'DELETE FROM payment_plans WHERE practice_id=$1'],
   ['payment_transactions', 'DELETE FROM payment_transactions WHERE practice_id=$1'],
   ['patient_payments', 'DELETE FROM patient_payments WHERE practice_id=$1'],
@@ -36,7 +33,7 @@ const D = [
   ['remittance_line_items', 'DELETE FROM remittance_line_items WHERE remittance_id IN (SELECT id FROM remittance_advice WHERE practice_id=$1)'],
   ['remittance_advice', 'DELETE FROM remittance_advice WHERE practice_id=$1'],
   ['expenses', 'DELETE FROM expenses WHERE practice_id=$1'],
-  ['message_notifications', 'DELETE FROM message_notifications WHERE conversation_id IN (SELECT id FROM conversations WHERE practice_id=$1)'],
+  ['message_notifications', 'DELETE FROM message_notifications WHERE message_id IN (SELECT id FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE practice_id=$1))'],
   ['messages', 'DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE practice_id=$1)'],
   ['conversations', 'DELETE FROM conversations WHERE practice_id=$1'],
   ['patient_documents', 'DELETE FROM patient_documents WHERE practice_id=$1'],
@@ -62,7 +59,7 @@ const D = [
   ['patient_feedback', 'DELETE FROM patient_feedback WHERE practice_id=$1'],
   ['appointments', 'DELETE FROM appointments WHERE practice_id=$1'],
   ['claims', 'DELETE FROM claims WHERE practice_id=$1'],
-  ['insurances', 'DELETE FROM insurances WHERE patient_id IN (SELECT id FROM patients WHERE practice_id=$1)'],
+  // (no "insurances" row: that's the global payer catalog, not per-patient)
   ['patients', 'DELETE FROM patients WHERE practice_id=$1'],
 ];
 
@@ -80,10 +77,15 @@ const D = [
     console.log(`Patients before: ${before.rows[0].count} (expected 6)`);
     let n = 0;
     for (const [label, sql] of D) {
+      await c.query('SAVEPOINT sp');
       try {
         const r = await c.query(sql, [id]);
+        await c.query('RELEASE SAVEPOINT sp');
         if (r.rowCount) { console.log(`  -${r.rowCount} ${label}`); n += r.rowCount; }
-      } catch (e) { console.log(`  err ${label}: ${e.message}`); }
+      } catch (e) {
+        await c.query('ROLLBACK TO SAVEPOINT sp');
+        console.log(`  err ${label}: ${e.message}`);
+      }
     }
     console.log(`\nTotal deleted: ${n}. Next demo-login reseeds the canonical 6.`);
     if (dryRun) { await c.query('ROLLBACK'); console.log('\nDRY RUN — rolled back, nothing changed.'); }
