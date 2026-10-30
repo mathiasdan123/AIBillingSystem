@@ -1289,7 +1289,7 @@ export default function Claims() {
       invalidateClaims();
       queryClient.invalidateQueries({ queryKey: [`/api/sessions/unbilled?practiceId=${practiceId}`] });
       toast({
-        title: "Superbill Generated",
+        title: "Claim Created",
         description: `Claim ${data.claim.claimNumber} created for $${data.superbillDetails.totalAmount}`,
       });
       setShowSessionsDialog(false);
@@ -2611,13 +2611,13 @@ export default function Claims() {
         </div>
       </div>
 
-      {/* Generate from Session Dialog */}
+      {/* Generate Claim from Session Dialog */}
       <Dialog open={showSessionsDialog} onOpenChange={setShowSessionsDialog}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Generate Superbill from Session</DialogTitle>
+            <DialogTitle>Generate Claim from Session</DialogTitle>
             <DialogDescription>
-              Select a completed session to automatically generate a claim/superbill
+              Select a completed session to automatically generate a claim
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -2697,7 +2697,7 @@ export default function Claims() {
                 <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
                 <p className="text-muted-foreground">All sessions have been billed!</p>
                 <p className="text-sm text-slate-400 mt-1">
-                  Complete a new session to generate a superbill
+                  Complete a new session to generate a claim
                 </p>
               </div>
             )}
@@ -3125,7 +3125,10 @@ export default function Claims() {
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
-                        {getPatientName(claim.patientId)} • {getInsuranceName(claim.insuranceId)}
+                        {getPatientName(claim.patientId)}
+                        {insurances?.find((i) => i.id === claim.insuranceId)?.name
+                          ? ` • ${insurances.find((i) => i.id === claim.insuranceId)!.name}`
+                          : ''}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
                         Created {new Date(claim.createdAt).toLocaleDateString()}
