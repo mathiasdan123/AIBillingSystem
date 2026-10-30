@@ -88,7 +88,10 @@ describe('buildUserPrompt — active treatment goals as grounded context', () =>
 
   it('omits the goals section when there are no active goals', () => {
     const prompt = buildUserPrompt(baseRequest(), patient, 3, null, undefined, []);
-    expect(prompt).not.toContain('ACTIVE TREATMENT GOALS');
+    // The plan field's instructions reference the section name generically
+    // (so the model can check whether it's present) -- what must never
+    // appear is the actual injected goals block itself.
+    expect(prompt).not.toContain('ACTIVE TREATMENT GOALS (CONTEXT ONLY');
   });
 });
 
