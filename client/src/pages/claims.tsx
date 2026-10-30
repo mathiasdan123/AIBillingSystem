@@ -1906,8 +1906,9 @@ export default function Claims() {
         description: error.message || "Failed to predict denial risk",
         variant: "destructive",
       });
+    } finally {
+      setPredictingDenial(false);
     }
-    setPredictingDenial(false);
   };
 
   // Mark appeal as sent
