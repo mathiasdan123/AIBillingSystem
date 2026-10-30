@@ -1514,12 +1514,31 @@ export default function Claims() {
   // also the first real test of the submission path.
   const dryRunMutation = useMutation({
     mutationFn: async (claimId: number) => {
-      const res = await fetch(`/api/claims/${claimId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun: true }),
-        credentials: "include",
-      });
+      // The server's own Stedi call is capped at 20s, but nothing here
+      // bounded the client's wait on top of that -- if anything upstream
+      // (a proxy, a stalled connection) delayed the response past what the
+      // server-side timeout alone accounts for, this button would spin
+      // indefinitely with no way out but a page reload. 25s gives the
+      // server's timeout a moment to actually return before giving up here.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/claims/${claimId}/submit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: true }),
+          credentials: "include",
+          signal: controller.signal,
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          throw new Error("Test run is taking too long. Please try again in a moment.");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (!res.ok && !data?.dryRun) {
         throw new Error(data.message || "Test run failed");
@@ -1579,12 +1598,29 @@ export default function Claims() {
 
   const submitClaimMutation = useMutation({
     mutationFn: async (claimId: number) => {
-      const res = await fetch(`/api/claims/${claimId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-        credentials: "include",
-      });
+      // Same client-side bound as dryRunMutation above -- the server's own
+      // Stedi call is capped at 20s, but nothing stopped this button from
+      // spinning indefinitely if the response took longer than that to
+      // actually arrive.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/claims/${claimId}/submit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+          credentials: "include",
+          signal: controller.signal,
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          throw new Error("Submission is taking too long. Please check the claim's status before retrying.");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (!res.ok) {
         // Attach the parsed body to the error so onError can read scrub results
