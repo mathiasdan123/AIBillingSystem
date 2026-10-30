@@ -5655,12 +5655,22 @@ async function executeToolForPractice(
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
   } catch (error) {
+    // DrizzleQueryError's own .message is just "Failed query: <sql>\nparams:
+    // <params>" -- the actual Postgres reason (constraint violated, bad
+    // type, etc.) lives on .cause, the underlying pg driver error. Prefer
+    // it so a thrown DB error carries something diagnosable instead of a
+    // useless SQL dump -- this is also what ends up (truncated) in
+    // auto-filed support tickets via the report_issue tool, so burning the
+    // character budget on the column list instead of the real reason made
+    // every such ticket undiagnosable from its own text.
+    const cause = (error as any)?.cause;
+    const reason = cause instanceof Error ? cause.message : error instanceof Error ? error.message : String(error);
     logger.error('AI assistant tool execution error', {
       tool: toolName,
-      error: error instanceof Error ? error.message : String(error),
+      error: reason,
     });
     return JSON.stringify({
-      error: `Failed to retrieve data: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      error: `Failed to retrieve data: ${reason}`,
     });
   }
 }
