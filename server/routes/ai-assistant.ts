@@ -1625,11 +1625,11 @@ const assistantTools: Anthropic.Tool[] = [
   },
   {
     name: 'report_issue',
-    description: 'File a support ticket when the user reports a bug, glitch, error message, or something in TherapyBill not working as expected — or asks how to report a problem. Capture their description faithfully (their words, plus the error text if they shared one). Use severity "urgent" only when the user cannot work at all (cannot log in, notes will not save, money numbers look wrong); otherwise "normal", or "low" for polish/requests. After filing, tell the user their ticket number and that the team was notified. Do NOT use this for how-do-I questions you can answer yourself.',
+    description: 'File a support ticket when the user reports a bug, glitch, error message, or something in TherapyBill not working as expected — or asks how to report a problem — OR when one of YOUR OWN tool calls just failed with an error. Capture the problem faithfully: the user\'s words plus any exact error text they shared, OR, if you are filing this because your own tool call failed, the COMPLETE error string that tool call returned, copied verbatim and in full — do not summarize, paraphrase, or cut it short with "...". A truncated error is useless to the team debugging it later; the full text, however long or technical-looking, is what makes the ticket diagnosable. Use severity "urgent" only when the user cannot work at all (cannot log in, notes will not save, money numbers look wrong); otherwise "normal", or "low" for polish/requests. After filing, tell the user their ticket number and that the team was notified. Do NOT use this for how-do-I questions you can answer yourself.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        description: { type: 'string' as const, description: "The problem in the user's words, including any exact error text they mentioned and what they were doing when it happened" },
+        description: { type: 'string' as const, description: "The problem, including what the user/you were doing when it happened, plus the error text verbatim and in full -- the user's exact words if they shared an error, or your own failed tool call's complete, untruncated error string if that's what triggered this ticket. Never shorten or summarize the error text itself." },
         severity: { type: 'string' as const, description: 'urgent | normal | low (default normal)' },
       },
       required: ['description'],
@@ -2995,12 +2995,27 @@ async function executeToolForPractice(
       }
 
       case 'create_appointment': {
+        // Same two checks the MCP create_appointment tool and this file's own
+        // reschedule_appointment case already do -- this handler was missing
+        // both, so a bad patientId or an unparseable date/time reached the DB
+        // insert instead of a clean error, surfacing only as an undiagnosable
+        // "database insert failed" ticket (demo-practice bug reports #2-#4).
+        const apptPatientId = args.patientId as number;
+        const apptPatient = await storage.getPatient(apptPatientId);
+        if (!apptPatient) return JSON.stringify({ error: `Patient ${apptPatientId} not found.` });
+        if ((apptPatient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient not found in this practice.' });
+        }
+
         const duration = (args.duration as number) || 60;
         const startTime = zonedInstant(String(args.date), String(args.time));
+        if (isNaN(startTime.getTime())) {
+          return JSON.stringify({ error: 'Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).' });
+        }
         const endTime = new Date(startTime.getTime() + duration * 60000);
         const appt = await storage.createAppointment({
           practiceId,
-          patientId: args.patientId as number,
+          patientId: apptPatientId,
           startTime,
           endTime,
           title: (args.type as string) || 'Therapy Session',
