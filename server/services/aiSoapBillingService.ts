@@ -985,6 +985,52 @@ export function stripUnsupportedPlanClosing(
   return stripped;
 }
 
+// Deterministic backstop for mood/presentation fabrication. The JSON-template
+// subjective-field instruction has, since #420, explicitly forbidden
+// defaulting to "a plausible-sounding word like 'cooperative' or 'engaged'"
+// when Mood/Presentation is blank -- yet confirmed in production (clean-room
+// test, Mia Example, Mood/Behavior and comments both blank): "Mia presented
+// as cooperative during today's session." The model used the EXACT banned
+// word the instruction names, proving prompt-level prohibition alone isn't
+// reliable here either, the same lesson #423/#425 already taught for the
+// Plan closing sentence. This strips the fabricated clause from every
+// section (not just Subjective -- the equivalent fallbackGeneration bug
+// leaked the same pattern into Assessment too) whenever mood is blank.
+//
+// Scoped to "presented as" specifically -- the literal phrase the prompt's
+// own template instructs ("'[Patient] presented as [that value].'") and the
+// only confirmed real example -- NOT "appeared"/"seemed", which show up in
+// legitimate OBSERVED findings unrelated to mood (e.g. "appeared to have
+// difficulty maintaining balance") and would be a real false-positive risk
+// without a second confirmed example to justify the wider net.
+const MOOD_PRESENTATION_CLAUSE =
+  /(?:^|(?<=[.!?]\s))[^.!?\n]*?\bpresented\s+as\s+[^.!?\n]+[.!?]/gi;
+
+/** Detection only (no mutation) -- mirrors hasUnsupportedPlanClosing. */
+export function hasUnsupportedMoodClause(text: string): boolean {
+  if (!text) return false;
+  MOOD_PRESENTATION_CLAUSE.lastIndex = 0;
+  const result = MOOD_PRESENTATION_CLAUSE.test(text);
+  MOOD_PRESENTATION_CLAUSE.lastIndex = 0;
+  return result;
+}
+
+export function stripUnsupportedMoodClause(text: string, hasMood: boolean): string {
+  if (hasMood || !text) return text;
+  if (!hasUnsupportedMoodClause(text)) return text;
+  MOOD_PRESENTATION_CLAUSE.lastIndex = 0;
+  const stripped = text
+    .replace(MOOD_PRESENTATION_CLAUSE, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  logger.warn(
+    "Stripped unsupported mood/presentation clause (Mood/Presentation field was blank)",
+    { originalLength: text.length, strippedLength: stripped.length },
+  );
+  return stripped;
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
@@ -1087,14 +1133,18 @@ export async function validateAndEnhanceResponse(
     }
   }
 
+  const hasMood = !!request.mood;
   return {
-    subjective: aiResponse.subjective || "",
-    objective: aiResponse.objective || "",
-    assessment: aiResponse.assessment || "",
-    plan: stripUnsupportedPlanClosing(
-      aiResponse.plan || "",
-      hasMostRecentPlanContext,
-      hasActiveGoalsContext,
+    subjective: stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
+    objective: stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
+    assessment: stripUnsupportedMoodClause(aiResponse.assessment || "", hasMood),
+    plan: stripUnsupportedMoodClause(
+      stripUnsupportedPlanClosing(
+        aiResponse.plan || "",
+        hasMostRecentPlanContext,
+        hasActiveGoalsContext,
+      ),
+      hasMood,
     ),
     cptCodes,
     activityCptPairings,
