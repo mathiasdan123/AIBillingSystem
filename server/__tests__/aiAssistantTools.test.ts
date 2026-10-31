@@ -30,6 +30,7 @@ const { mockStorage, mockStripe, mockPaymentIntentsRetrieve, mockStediCheckEligi
       getCptCodes: vi.fn(),
       createTreatmentSession: vi.fn(),
       createSoapNote: vi.fn(),
+      createAppointment: vi.fn(),
     },
     mockStripe: {
       isStripeConfigured: vi.fn(() => true),
@@ -370,5 +371,88 @@ describe('generate_soap_note', () => {
     const sentRequest = mockGenerateSoap.mock.calls[0][0];
     expect(sentRequest.mood).toBe('Anxious');
     expect(sentRequest.planNextSteps).toBe('Work on bilateral coordination');
+  });
+});
+
+// ---- 6. create_appointment: patient ownership + date/time validation ---
+//
+// Support tickets #2-#4 (demo practice, filed via blanche): appointment
+// creation through the chat assistant failed with a raw "database insert
+// failed" error instead of a clean message. This handler was missing two
+// checks that its own siblings already have -- reschedule_appointment in
+// this same file validates the parsed date/time, and the MCP server's
+// separate create_appointment implementation (server/mcp/tools/appointments.ts)
+// validates both the date/time AND that the patient exists and belongs to
+// the caller's practice before inserting. Bringing this handler to parity
+// turns a bad patientId or an unparseable date/time into a clean JSON error
+// instead of an undiagnosable DB failure.
+
+describe('create_appointment', () => {
+  beforeEach(() => {
+    mockStorage.createAppointment.mockResolvedValue({ id: 99 });
+  });
+
+  it('rejects a patientId that does not exist', async () => {
+    mockStorage.getPatient.mockResolvedValue(undefined);
+
+    const out = await executeTool(
+      'create_appointment',
+      { patientId: 404, date: '2026-11-03', time: '14:00' },
+      PRACTICE_ID,
+      'user1',
+    );
+    const parsed = JSON.parse(out);
+
+    expect(parsed.error).toMatch(/not found/i);
+    expect(mockStorage.createAppointment).not.toHaveBeenCalled();
+  });
+
+  it("rejects a patient that belongs to a different practice (no existence oracle)", async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 7, practiceId: OTHER_PRACTICE_ID, firstName: 'A', lastName: 'B' });
+
+    const out = await executeTool(
+      'create_appointment',
+      { patientId: 7, date: '2026-11-03', time: '14:00' },
+      PRACTICE_ID,
+      'user1',
+    );
+    const parsed = JSON.parse(out);
+
+    expect(parsed.error).toMatch(/not found in this practice/i);
+    expect(mockStorage.createAppointment).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unparseable date/time instead of inserting a garbage timestamp', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 7, practiceId: PRACTICE_ID, firstName: 'A', lastName: 'B' });
+
+    const out = await executeTool(
+      'create_appointment',
+      { patientId: 7, date: 'not-a-date', time: 'whenever' },
+      PRACTICE_ID,
+      'user1',
+    );
+    const parsed = JSON.parse(out);
+
+    expect(parsed.error).toMatch(/invalid date\/time/i);
+    expect(mockStorage.createAppointment).not.toHaveBeenCalled();
+  });
+
+  it('still creates the appointment for a valid, same-practice patient and date', async () => {
+    mockStorage.getPatient.mockResolvedValue({ id: 7, practiceId: PRACTICE_ID, firstName: 'A', lastName: 'B' });
+
+    const out = await executeTool(
+      'create_appointment',
+      { patientId: 7, date: '2026-11-03', time: '14:00' },
+      PRACTICE_ID,
+      'user1',
+    );
+    const parsed = JSON.parse(out);
+
+    expect(parsed.success).toBe(true);
+    expect(mockStorage.createAppointment).toHaveBeenCalledTimes(1);
+    expect(mockStorage.createAppointment.mock.calls[0][0]).toMatchObject({
+      practiceId: PRACTICE_ID,
+      patientId: 7,
+    });
   });
 });
