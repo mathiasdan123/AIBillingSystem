@@ -112,6 +112,39 @@ interface Scenario {
    * SUPPOSED to produce continuity language -- the judge's traceability
    * check doesn't know about carry-forward semantics). */
   skipJudge?: boolean;
+  /**
+   * When true, asserted at runtime before this scenario spends any API
+   * calls: treatmentPlan is null and treatmentGoals/priorSessions are
+   * empty. Nothing else enforces that a "no history" scenario's fixture
+   * actually has no history -- a scenario that uses CASE_A_DETERMINISTIC_CHECKS
+   * only passes because its own checks happen not to flag a now-populated
+   * fixture, which is exactly the fragility this guards against (see the
+   * "final verdict" trace for Scenario 11's own, separate checks). A future
+   * edit that accidentally gives Scenario 1 or 4 a treatment plan would
+   * otherwise silently stop testing CASE A at all. Scenario 11 deliberately
+   * carries history, so it leaves this unset.
+   */
+  expectCleanRoom?: boolean;
+}
+
+function assertCleanRoom(scenario: Scenario): void {
+  if (!scenario.expectCleanRoom) return;
+  const problems: string[] = [];
+  if (scenario.treatmentPlan != null) {
+    problems.push(`treatmentPlan is not null (${JSON.stringify(scenario.treatmentPlan)})`);
+  }
+  if (scenario.treatmentGoals && scenario.treatmentGoals.length > 0) {
+    problems.push(`treatmentGoals has ${scenario.treatmentGoals.length} entr${scenario.treatmentGoals.length === 1 ? 'y' : 'ies'}`);
+  }
+  if (scenario.priorSessions && scenario.priorSessions.length > 0) {
+    problems.push(`priorSessions has ${scenario.priorSessions.length} entr${scenario.priorSessions.length === 1 ? 'y' : 'ies'}`);
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `Clean-room assertion failed for "${scenario.name}": marked expectCleanRoom: true, but its fixture actually carries history -- ${problems.join('; ')}. ` +
+      `Either the fixture was edited by mistake (fix it), or this scenario is now deliberately testing CASE B (set expectCleanRoom: false/omit it, and update deterministicChecks to match CASE B behavior the way Scenario 11 does).`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +341,7 @@ const scenarios: Scenario[] = [
     priorSessions: [],
     deterministicChecks: CASE_A_DETERMINISTIC_CHECKS,
     judgeContext: CORE_JUDGE_CONTEXT,
+    expectCleanRoom: true,
   },
   {
     name: 'Scenario 4: blank date of birth',
@@ -319,6 +353,7 @@ const scenarios: Scenario[] = [
     priorSessions: [],
     deterministicChecks: [...CASE_A_DETERMINISTIC_CHECKS, noAgeAnywhere],
     judgeContext: CORE_JUDGE_CONTEXT + '\n- Date of birth: BLANK (not entered).',
+    expectCleanRoom: true,
   },
   {
     name: 'Scenario 11: real-history control (continuity SHOULD appear)',
@@ -424,6 +459,12 @@ async function main() {
     );
     process.exit(0);
   }
+
+  // Validate every scenario's fixture BEFORE spending a single API call on
+  // any of them -- a clean-room scenario with an accidentally-populated
+  // fixture should fail immediately, not after burning budget on earlier
+  // scenarios in the list.
+  for (const scenario of scenarios) assertCleanRoom(scenario);
 
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const samplesPerScenario = Number(process.env.EVAL_SAMPLES_PER_SCENARIO ?? 10);
