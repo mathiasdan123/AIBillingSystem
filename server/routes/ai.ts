@@ -576,7 +576,14 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         practiceId: soapUser.practiceId,
         activities,
         activityDetails,
-        mood: mood || 'Cooperative',
+        // Do NOT default a blank mood/planNextSteps to a plausible-sounding
+        // value here — that fabricates therapist input the service never
+        // receives as blank, silently defeating both the prompt's own
+        // "field not recorded, omit this detail" instructions and the
+        // mood-fabrication backstop (whose hasMood check trusts this value).
+        // '' (not a fabricated phrase) preserves the required `string` type
+        // while every downstream falsy check treats it as "not provided".
+        mood: mood || '',
         caregiverReport,
         duration,
         location: location || 'Clinic',
@@ -587,7 +594,7 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
           motorPlanning: 'Mild Difficulty',
           sensoryRegulation: 'Needed Minimal Supports'
         },
-        planNextSteps: planNextSteps || 'Continue Current Goals',
+        planNextSteps: planNextSteps || '',
         nextSessionFocus,
         homeProgram,
         ratePerUnit

@@ -1299,8 +1299,15 @@ export function fallbackGeneration(
 
   // Build plan section. Home-program wording follows the reviewer's guidance:
   // when no new home program was provided, do not invent one or imply parent
-  // education occurred — note continuation of current strategies.
-  const plan = `Continue occupational therapy to address current treatment goals.\n\nNext session focus:\n• ${request.planNextSteps}${request.nextSessionFocus ? `\n• ${request.nextSessionFocus}` : ''}\n\nHome program:\n${request.homeProgram ? `• ${request.homeProgram}` : '• Reviewed continuation of current home strategies; no changes to home program at this time.'}`;
+  // education occurred — note continuation of current strategies. Next
+  // session focus is similarly omitted entirely when blank, rather than
+  // rendering a bare "• " or the literal string "undefined".
+  const nextSessionBullets = [request.planNextSteps, request.nextSessionFocus]
+    .filter((item): item is string => !!item)
+    .map((item) => `• ${item}`)
+    .join('\n');
+  const nextSessionSection = nextSessionBullets ? `Next session focus:\n${nextSessionBullets}\n\n` : '';
+  const plan = `Continue occupational therapy to address current treatment goals.\n\n${nextSessionSection}Home program:\n${request.homeProgram ? `• ${request.homeProgram}` : '• Reviewed continuation of current home strategies; no changes to home program at this time.'}`;
 
   return {
     subjective,

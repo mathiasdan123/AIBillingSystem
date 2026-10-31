@@ -4020,11 +4020,17 @@ async function executeToolForPractice(
         if (activities.length === 0) return JSON.stringify({ error: 'Please provide at least one activity performed during the session.' });
 
         const soapDuration = (args.sessionDuration as number) || 60;
-        const soapMood = (args.mood as string) || 'cooperative and engaged';
+        // Do NOT default blank mood/planNextSteps to a plausible-sounding
+        // phrase — same fabrication risk as server/routes/ai.ts: it tells
+        // the model (and the mood-fabrication backstop) that real therapist
+        // input was supplied when the chat conversation never mentioned it.
+        // '' lets the service's own "not recorded, omit this detail" and
+        // "no plan specified" handling apply, same as a blank form field.
+        const soapMood = (args.mood as string) || '';
         const soapLocation = (args.location as string) || 'clinic';
         const soapPerformance = (args.performance as string) || 'fair';
         const soapAssistanceLevel = (args.assistanceLevel as string) || 'moderate assistance';
-        const soapPlanNextSteps = (args.planNextSteps as string) || 'Continue current treatment goals';
+        const soapPlanNextSteps = (args.planNextSteps as string) || '';
 
         // Call the AI SOAP note + billing generation service
         const soapResult = await generateSoapNoteAndBilling({
