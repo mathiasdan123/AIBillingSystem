@@ -27,6 +27,9 @@ const { mockStorage, mockStripe, mockPaymentIntentsRetrieve, mockStediCheckEligi
       getPractice: vi.fn(),
       getInsurance: vi.fn(),
       getAppointmentsByDateRange: vi.fn(),
+      getCptCodes: vi.fn(),
+      createTreatmentSession: vi.fn(),
+      createSoapNote: vi.fn(),
     },
     mockStripe: {
       isStripeConfigured: vi.fn(() => true),
@@ -79,6 +82,9 @@ vi.mock('../services/underpaymentAnalyzer', () => ({
 }));
 
 import { executeTool } from '../routes/ai-assistant';
+import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
+
+const mockGenerateSoap = generateSoapNoteAndBilling as unknown as ReturnType<typeof vi.fn>;
 
 const PRACTICE_ID = 1;
 const OTHER_PRACTICE_ID = 999;
@@ -313,5 +319,56 @@ describe('bulk_eligibility_by_filter', () => {
     expect(mockStorage.getPatientsByIds).not.toHaveBeenCalled();
     expect(mockStorage.getPatient).toHaveBeenCalledTimes(1);
     expect(mockStorage.getPatient).toHaveBeenCalledWith(1); // the Aetna patient
+  });
+});
+
+// ---- 5. generate_soap_note: blank mood/planNextSteps passthrough -------
+//
+// Same anti-pattern independently found in server/routes/ai.ts: this tool
+// call used to default a blank mood/planNextSteps arg to a fabricated
+// plausible-sounding value ('cooperative and engaged', 'Continue current
+// treatment goals') before calling generateSoapNoteAndBilling, which
+// defeats the service's own blank-field handling and the mood-fabrication
+// backstop exactly as it did in the main composer route.
+
+describe('generate_soap_note', () => {
+  const patient = { id: 7, practiceId: PRACTICE_ID, firstName: 'Mia', lastName: 'Example' };
+
+  beforeEach(() => {
+    mockStorage.getPatient.mockResolvedValue(patient);
+    mockStorage.getCptCodes.mockResolvedValue([]);
+    mockGenerateSoap.mockResolvedValue({
+      subjective: '', objective: '', assessment: '', plan: '',
+      cptCodes: [], timeBlocks: [], totalReimbursement: 0, billingRationale: '',
+    });
+  });
+
+  it('does not default an omitted mood/planNextSteps arg to a fabricated value', async () => {
+    await executeTool(
+      'generate_soap_note',
+      { patientId: 7, activities: ['obstacle course'] },
+      PRACTICE_ID,
+      'user1',
+    );
+
+    expect(mockGenerateSoap).toHaveBeenCalledTimes(1);
+    const sentRequest = mockGenerateSoap.mock.calls[0][0];
+    expect(sentRequest.mood).toBe('');
+    expect(sentRequest.mood).not.toBe('cooperative and engaged');
+    expect(sentRequest.planNextSteps).toBe('');
+    expect(sentRequest.planNextSteps).not.toBe('Continue current treatment goals');
+  });
+
+  it('still passes through a real, chat-supplied mood and plan unchanged', async () => {
+    await executeTool(
+      'generate_soap_note',
+      { patientId: 7, activities: ['obstacle course'], mood: 'Anxious', planNextSteps: 'Work on bilateral coordination' },
+      PRACTICE_ID,
+      'user1',
+    );
+
+    const sentRequest = mockGenerateSoap.mock.calls[0][0];
+    expect(sentRequest.mood).toBe('Anxious');
+    expect(sentRequest.planNextSteps).toBe('Work on bilateral coordination');
   });
 });
