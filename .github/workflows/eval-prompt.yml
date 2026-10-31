@@ -10,22 +10,37 @@ name: SOAP Generation Fabrication Eval
 # strings, and via a second real-model call (the semantic judge) that must
 # quote the exact offending sentence, so a reworded defect still fails.
 #
-# Runs only on PRs that touch the generation prompt itself (path filter
-# below), and only does anything if the ANTHROPIC_API_KEY secret is
-# configured — without it, eval-soap-generation.ts self-skips and this step
-# passes in seconds (same convention as the Stedi test-mode e2e step in
-# ci.yml). Add the secret in repo Settings -> Secrets and variables ->
-# Actions to turn this from a no-op into a real gate.
+# Runs on PRs that touch the generation prompt OR provider/model routing
+# (path filter below), weekly regardless of code changes (schedule, below),
+# or on demand (workflow_dispatch) -- and only does anything if the
+# ANTHROPIC_API_KEY secret is configured -- without it, eval-soap-generation.ts
+# self-skips and this step passes in seconds (same convention as the Stedi
+# test-mode e2e step in ci.yml). Add the secret in repo Settings -> Secrets
+# and variables -> Actions to turn this from a no-op into a real gate.
 #
 # Makes real, billed API calls (10 samples per scenario by default, plus one
 # judge call per sample) — that's why this is its own path-filtered workflow
 # rather than part of every push in ci.yml.
+#
+# WHY A WEEKLY SCHEDULE, NOT JUST A PATH FILTER: a path filter only fires
+# when THIS repo's code changes -- it cannot catch Anthropic silently
+# deprecating or changing the behavior of a model this code already calls.
+# That's not hypothetical: while scoping this workflow, aiSoapBillingService.ts's
+# hardcoded `claude-sonnet-4-5` turned out to already be deprecated
+# (retiring 2026-11-30), discovered by accident, not by any trigger here.
+# A scheduled run surfaces exactly that class of drift on its own, without
+# anyone needing to touch the repo first.
 
 on:
   pull_request:
     branches: [main]
     paths:
       - 'server/services/aiSoapBillingService.ts'
+      - 'server/services/aiProvider.ts'
+  schedule:
+    # Wednesdays 07:00 UTC -- a different day than ci.yml's Monday Stedi
+    # job, so scheduled AI-cost workflows don't all land on the same day.
+    - cron: '0 7 * * 3'
   workflow_dispatch:
 
 jobs:
