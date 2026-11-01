@@ -12,11 +12,15 @@ name: SOAP Generation Fabrication Eval
 #
 # Runs on PRs that touch the generation prompt OR provider/model routing
 # (path filter below), weekly regardless of code changes (schedule, below),
-# or on demand (workflow_dispatch) -- and only does anything if the
-# ANTHROPIC_API_KEY secret is configured -- without it, eval-soap-generation.ts
-# self-skips and this step passes in seconds (same convention as the Stedi
-# test-mode e2e step in ci.yml). Add the secret in repo Settings -> Secrets
-# and variables -> Actions to turn this from a no-op into a real gate.
+# or on demand (workflow_dispatch). Requires the ANTHROPIC_API_KEY secret --
+# unlike the Stedi test-mode e2e step in ci.yml (which self-skips cleanly
+# with no key, since it tests nothing security-sensitive), this is a release
+# gate: without the key, eval-soap-generation.ts now FAILS loudly rather than
+# skipping, because a gate that can pass without ever running isn't a gate.
+# Add the secret in repo Settings -> Secrets and variables -> Actions, then
+# add this workflow's check to the main branch's required status checks in
+# Settings -> Branches, to make this an actual merge-blocking gate rather
+# than an informational run.
 #
 # Makes real, billed API calls (10 samples per scenario by default, plus one
 # judge call per sample) — that's why this is its own path-filtered workflow
