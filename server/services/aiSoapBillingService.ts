@@ -999,6 +999,12 @@ export function stripUnsupportedPlanClosing(
   hasMostRecentPlanContext: boolean,
   hasActiveGoalsContext: boolean,
 ): string {
+  // DELIBERATE, TEMPORARY no-op for the pipeline-eval proof-step demo (see PR
+  // description) -- disables this backstop so a known CASE A fabrication
+  // survives into the final output, to prove the new required check
+  // (scripts/eval-soap-generation-pipeline.ts) actually catches it and
+  // blocks merge. This PR is never meant to merge; do not approve it.
+  return plan;
   if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
   if (!hasUnsupportedPlanClosing(plan)) return plan;
   SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
