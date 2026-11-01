@@ -453,11 +453,22 @@ function allFailures(record: SampleRecord): string[] {
 }
 
 async function main() {
+  // FAILS (not skips) without a key. This is a deliberate release gate: if a
+  // missing credential silently passed, a PR could merge having never
+  // actually run the eval -- "required check is green" and "the model's
+  // output was verified" would quietly stop meaning the same thing. A gate
+  // that can pass without running is not a gate. If the workflow needs to
+  // tolerate a missing key (e.g. a fork PR without repo secrets), that
+  // belongs in the workflow's own job condition, not here -- this script's
+  // job is to report the true result of trying to run, not to decide
+  // whether running was expected.
   if (!isAiConfigured()) {
-    console.log(
-      'ANTHROPIC_API_KEY (or CLAUDE_API_KEY) is not set -- skipping. This eval makes real API calls and needs a key to run.',
+    console.error(
+      'ANTHROPIC_API_KEY (or CLAUDE_API_KEY) is not set. This eval makes real API calls and needs a key to run -- ' +
+        'failing rather than skipping, because a release gate that passes without ever running is not a gate. ' +
+        'Add the secret in repo Settings -> Secrets and variables -> Actions.',
     );
-    process.exit(0);
+    process.exit(1);
   }
 
   // Validate every scenario's fixture BEFORE spending a single API call on
