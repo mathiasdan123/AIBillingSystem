@@ -1031,6 +1031,55 @@ export function stripUnsupportedMoodClause(text: string, hasMood: boolean): stri
   return stripped;
 }
 
+// Deterministic backstop for the "documentation denial" fabrication: a
+// sentence asserting that a blank field was affirmatively confirmed absent
+// ("X was not obtained/documented" or "No X was documented"), rather than
+// simply omitted. The prompt has forbidden exactly this since the original
+// caregiver-report fix ("do NOT write 'Caregiver report was not obtained
+// this session' or anything asserting that no report was given; the field
+// being blank in this form means the therapist didn't type anything here,
+// not that you know a report wasn't obtained") -- yet confirmed in a live
+// retest (Mia Example, clean room, caregiver report and mood both blank):
+// "No caregiver report or patient mood was documented this session." Same
+// lesson as the mood/plan sagas: a different SHAPE of the same banned claim
+// (an omission reframed as a confirmed absence) evades every check built for
+// the earlier shapes -- hasUnsupportedMoodClause only matches "presented
+// as", which this sentence never uses. Unconditional (no hasMood/
+// hasCaregiverReport gate): the prompt forbids this sentence shape outright,
+// regardless of field state -- asserting a field "was not documented" is
+// never a true claim this app can support, whether or not the field was
+// actually filled in.
+//
+// Scoped to the confirmed vocabulary (caregiver report / mood / presentation
+// + was/were (not) documented/obtained/provided/recorded/reported) rather
+// than a broader net, matching the discipline from the mood backstop above.
+const DOCUMENTATION_DENIAL_CLAUSE =
+  /(?:^|(?<=[.!?]\s))(?:No\s+[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b|[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\s+not\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b)[^.!?\n]*[.!?]/gi;
+
+/** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause. */
+export function hasUnsupportedDocumentationDenialClause(text: string): boolean {
+  if (!text) return false;
+  DOCUMENTATION_DENIAL_CLAUSE.lastIndex = 0;
+  const result = DOCUMENTATION_DENIAL_CLAUSE.test(text);
+  DOCUMENTATION_DENIAL_CLAUSE.lastIndex = 0;
+  return result;
+}
+
+export function stripUnsupportedDocumentationDenialClause(text: string): string {
+  if (!text || !hasUnsupportedDocumentationDenialClause(text)) return text;
+  DOCUMENTATION_DENIAL_CLAUSE.lastIndex = 0;
+  const stripped = text
+    .replace(DOCUMENTATION_DENIAL_CLAUSE, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  logger.warn(
+    "Stripped unsupported documentation-denial clause (asserted a blank field was confirmed absent)",
+    { originalLength: text.length, strippedLength: stripped.length },
+  );
+  return stripped;
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
@@ -1135,16 +1184,24 @@ export async function validateAndEnhanceResponse(
 
   const hasMood = !!request.mood;
   return {
-    subjective: stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
-    objective: stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
-    assessment: stripUnsupportedMoodClause(aiResponse.assessment || "", hasMood),
-    plan: stripUnsupportedMoodClause(
-      stripUnsupportedPlanClosing(
-        aiResponse.plan || "",
-        hasMostRecentPlanContext,
-        hasActiveGoalsContext,
+    subjective: stripUnsupportedDocumentationDenialClause(
+      stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
+    ),
+    objective: stripUnsupportedDocumentationDenialClause(
+      stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
+    ),
+    assessment: stripUnsupportedDocumentationDenialClause(
+      stripUnsupportedMoodClause(aiResponse.assessment || "", hasMood),
+    ),
+    plan: stripUnsupportedDocumentationDenialClause(
+      stripUnsupportedMoodClause(
+        stripUnsupportedPlanClosing(
+          aiResponse.plan || "",
+          hasMostRecentPlanContext,
+          hasActiveGoalsContext,
+        ),
+        hasMood,
       ),
-      hasMood,
     ),
     cptCodes,
     activityCptPairings,
