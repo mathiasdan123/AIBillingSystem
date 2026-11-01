@@ -939,17 +939,46 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 }
 
 // Deterministic backstop for a recurring CASE A fabrication (no prior plan,
-// no active treatment goals): despite three rounds of prompt-level
-// prohibition (#421-#424) explicitly naming this failure mode, the model has
-// kept reintroducing paraphrases of a generic "[Patient] will continue to
-// benefit from/participate in skilled occupational therapy to address
-// identified deficits..." closing sentence in the Plan. There's no prior
-// documentation to ground a continuity/necessity claim in CASE A, so this
-// strips any sentence matching the pattern as a safety net independent of
-// the model actually following the prompt. Logged when triggered so
-// recurrence stays visible rather than silently "fixed."
+// no active treatment goals): despite rounds of prompt-level prohibition
+// (#421-#424) explicitly naming this failure mode, the model has kept
+// reintroducing paraphrases of a continuity/necessity claim -- "[Patient]
+// will continue to benefit from/participate in skilled occupational
+// therapy...", "...remains medically necessary...", "...ongoing need for
+// skilled intervention...", "Goals: Continue working toward established
+// treatment goals..." -- in the Plan. There's no prior documentation to
+// ground any such claim in CASE A, so this strips any sentence matching the
+// pattern as a safety net independent of the model actually following the
+// prompt. Logged when triggered so recurrence stays visible rather than
+// silently "fixed."
+//
+// WIDENED 2026-11-01 after the eval harness's first live-credentials run
+// (scripts/eval-soap-generation.ts, 10 samples/scenario against the real
+// model) found the original narrow regex -- scoped to the single literal
+// phrase "continue to [benefit from|participate in|receive] ... skilled ...
+// occupational therapy" -- caught only 1 of 16 real paraphrases the model
+// produced in that one run. The model doesn't just reuse one sentence
+// shape; it freely recombines a continuity/persistence signal word
+// (continue/continued/remain/ongoing) with a therapy-necessity claim in
+// either order and many surface phrasings. Rather than chase each literal
+// wording, this now checks -- via lookaheads, order-independent -- that a
+// sentence contains BOTH a persistence-signal word AND a therapy/goals
+// reference AND a necessity/participation word, anywhere in the sentence.
+// Verified against all 16 real failures from that run (13 of the 16 fit
+// this continuity-signal shape and are now all caught, including the
+// Goals-subsection variant; the other 3 are bare, ungrounded necessity
+// claims with NO continuity word at all -- a related but structurally
+// different violation of the prompt's "don't assert necessity the
+// documentation doesn't support" rule, deliberately NOT backstopped here:
+// matching on "asserts necessity" alone with no continuity signal would
+// require matching almost any clinical-sounding sentence, an unacceptable
+// false-positive risk against legitimately grounded necessity statements)
+// and 8 negative controls including the legitimate CASE B phrases this
+// function must never touch ("Current plan remains appropriate; no changes
+// recommended.", "Reviewed continuation of current home strategies...") --
+// though the hasMostRecentPlanContext/hasActiveGoalsContext gate below
+// already keeps this function from ever running in CASE B regardless.
 const SKILLED_OT_CONTINUATION_CLOSING =
-  /(?:^|(?<=[.!?]\s))[^.!?\n]*\bcontinue (?:to|\w+ to) (?:benefit from|participate in|receive)\b[^.!?\n]*\bskilled\b[^.!?\n]*\b(?:occupational therapy|OT)\b[^.!?\n]*[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*)\b)[^.!?\n]*[.!?]/gi;
 
 /**
  * Detection only (no mutation) — exposed so callers like the fabrication
