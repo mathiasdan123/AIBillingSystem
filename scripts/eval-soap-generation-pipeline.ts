@@ -89,15 +89,22 @@ import {
 // ---------------------------------------------------------------------------
 
 type FinalNote = Pick<AiSoapBillingResponse, 'subjective' | 'objective' | 'assessment' | 'plan'>;
-type DeterministicCheck = (note: FinalNote) => string | null;
+type DeterministicCheck = (note: FinalNote, ctx: { hasMood: boolean }) => string | null;
 
-function noBackstopTripwires(note: FinalNote): string | null {
+function noBackstopTripwires(note: FinalNote, hasMood: boolean): string | null {
   const failures: string[] = [];
   if (hasUnsupportedPlanClosing(note.plan)) {
     failures.push('hasUnsupportedPlanClosing matched the FINAL plan -- stripUnsupportedPlanClosing should have removed this before generateSoapNoteAndBilling returned.');
   }
   for (const [field, text] of Object.entries(note)) {
-    if (hasUnsupportedMoodClause(text as string)) {
+    // hasUnsupportedMoodClause is a raw "presented as ..." detector, not
+    // itself aware of whether mood was supplied -- the real backstop only
+    // strips when mood is BLANK (see stripUnsupportedMoodClause's own
+    // `if (hasMood) return text;` guard). Checking it unconditionally here
+    // false-positived on P4 (mood genuinely supplied): a real,
+    // legitimately-surviving "Patient presented as cooperative..." sentence
+    // got flagged as a regression. Mirror the real gate exactly.
+    if (!hasMood && hasUnsupportedMoodClause(text as string)) {
       failures.push(`hasUnsupportedMoodClause matched the FINAL ${field} -- stripUnsupportedMoodClause should have removed this.`);
     }
     if (hasUnsupportedDocumentationDenialClause(text as string)) {
@@ -107,14 +114,14 @@ function noBackstopTripwires(note: FinalNote): string | null {
   return failures.length > 0 ? failures.join(' ') : null;
 }
 
-function noAgeAnywhere(note: FinalNote) {
+function noAgeAnywhere(note: FinalNote, _ctx: { hasMood: boolean }) {
   const combined = `${note.subjective} ${note.objective} ${note.assessment} ${note.plan}`;
   return /\b(19|20)\d{2}\b.{0,20}\b(years?[- ]old|y\.?o\.?|age)\b|\b(age(d)?\s*\d+)\b/i.test(combined)
     ? 'An age or birth-year-derived claim appeared with a blank date of birth (the epoch-age bug, #425, applies equally to the final output).'
     : null;
 }
 
-function continuityShouldAppear(note: FinalNote) {
+function continuityShouldAppear(note: FinalNote, _ctx: { hasMood: boolean }) {
   return /current plan remains appropriate|suggested update:/i.test(note.plan)
     ? null
     : 'Control (real history): a real prior plan + active goals were supplied, but the Plan carries neither the CASE B continuity opening nor a "Suggested update:" -- CASE B carry-forward may be broken in the real pipeline, not an over-correction from the CASE A backstops.';
@@ -158,9 +165,9 @@ You MUST allow, and must NOT flag:
 - Any reasonable paraphrase of a real, supplied fact. Do not require exact wording for either a fabrication check (which forbids a CONCEPT, regardless of phrasing) or an omission check (which requires a CONCEPT to survive, regardless of phrasing).
 
 Respond with ONLY this JSON:
-{"findings": [{"check": "traceability"|"mood_fabrication"|"caregiver_report_fabrication"|"mood_omission"|"caregiver_report_omission", "quote": "<the EXACT offending sentence copied verbatim from the note, or, for an omission finding, the EXACT sentence(s) that should have contained it but didn't -- if omission is note-wide, quote the full Subjective section>", "reason": "<one sentence>"}]}
+{"findings": [{"check": "traceability"|"mood_fabrication"|"caregiver_report_fabrication"|"mood_omission"|"caregiver_report_omission", "quote": "<the EXACT offending sentence copied verbatim from the note, or, for an omission finding, the EXACT sentence(s) that should have contained it but didn't -- if omission is note-wide, quote the full Subjective section>", "reason": "<one sentence stating WHY this IS a violation>"}]}
 
-If there are no violations, respond with {"findings": []}. Every finding MUST include a verbatim quote -- never paraphrase or summarize what's wrong without quoting it.`;
+Every entry in "findings" is an assertion that this IS a real violation -- never include an entry whose own reasoning concludes the content is correct, compliant, or not a violation. If you considered a sentence and decided it does NOT violate any check, leave it out of "findings" entirely; do not add it as a note or explanation. If there are no violations, respond with {"findings": []}. Every finding MUST include a verbatim quote -- never paraphrase or summarize what's wrong without quoting it.`;
 
 async function runSemanticJudge(client: Anthropic, note: FinalNote, judgeContext: string): Promise<JudgeFinding[]> {
   const userPrompt = `INPUT PROVIDED TO THE NOTE-GENERATING PIPELINE:\n${judgeContext}\n\nFINAL NOTE (after production backstops already ran):\nSUBJECTIVE: ${note.subjective}\n\nOBJECTIVE: ${note.objective}\n\nASSESSMENT: ${note.assessment}\n\nPLAN: ${note.plan}`;
@@ -411,8 +418,9 @@ async function main() {
             plan: result.plan,
           };
           record.note = note;
+          const checkCtx = { hasMood: !!scenario.request.mood };
           record.deterministicFailures = scenario.deterministicChecks
-            .map((check) => check(note))
+            .map((check) => check(note, checkCtx))
             .filter((msg): msg is string => msg !== null);
 
           if (result.generationMode === 'ai' && scenario.judge) {
