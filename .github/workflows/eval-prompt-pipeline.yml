@@ -10,21 +10,35 @@ name: SOAP Generation Pipeline Eval (release gate)
 # the raw diagnostic still flags (because it bypasses every backstop by
 # design) is NOT a failure here unless it survives the real pipeline.
 #
-# LABEL GATING (required check #6): this workflow only runs a sample on a
-# PR carrying the `ready-for-eval` label. Making this workflow's job a
-# required status check (Settings -> Branches -> branch protection rule for
-# `main` -> add "pipeline-eval" under required status checks) means:
-#   - A PR that touches a covered path (below) but has NEITHER the label
-#     NOR a run stays "Expected -- Waiting for status to be reported"
-#     forever -- pending and BLOCKED, never silently skipped-and-green.
-#   - Adding the label fires a run tied to the commit present at that
+# LABEL GATING (required check #6): spend is gated entirely by the job-level
+# `if:` below (the `ready-for-eval` label), NOT by the workflow trigger.
+#
+# FIXED 2026-11-02: the trigger originally also carried a `paths:` filter
+# (the list under TRIGGER COVERAGE below), on the theory that an unrelated
+# PR shouldn't even invoke this workflow. That broke required-status-check
+# semantics: when `pipeline-eval` is a required check and a PR's commit
+# doesn't match the path filter, GitHub's classic branch protection never
+# creates ANY run for that commit -- not even a "skipped" one -- so the
+# required check sits as "Expected -- Waiting for status to be reported"
+# FOREVER and blocks merge. Confirmed live: PR #441 (a client-only change,
+# no path-filter match) got stuck exactly this way minutes after this
+# workflow was wired in as required. A job's `if:` evaluating false
+# produces a "skipped" conclusion, which DOES satisfy a required check --
+# only the workflow-level `paths:` filter (no run created at all) causes
+# the stuck-forever failure mode. So: the workflow now triggers on every
+# PR unconditionally; the `if:` below is the only gate, for both "should
+# this actually spend money" and "does a status get reported for every
+# commit" at once.
+#
+#   - A PR that doesn't carry `ready-for-eval` gets an instant "skipped"
+#     status -- satisfies the required check, never pending-forever.
+#   - Adding the label fires a real run tied to the commit present at that
 #     moment (the `labeled` trigger below).
-#   - Any LATER push re-fires via the `synchronize` trigger (guarded by the
-#     `if:` on the job, which re-checks the label on every event) -- so a
-#     passing run is always tied to the CURRENT head commit's code AND the
-#     eval config in that same commit. A push after a passing run
-#     invalidates it; the label is never a one-time token that reuses an
-#     old result.
+#   - Any LATER push re-fires via the `synchronize` trigger (re-checked
+#     against the label by the same `if:`) -- so a passing run is always
+#     tied to the CURRENT head commit's code AND the eval config in that
+#     same commit. A push after a passing run invalidates it; the label is
+#     never a one-time token that reuses an old result.
 #   - Removing and re-adding the label (or closing the label dialog without
 #     re-adding) does not forge a pass -- GitHub's required-checks model
 #     keys a check's state to a commit SHA, not to the label's current
@@ -32,7 +46,8 @@ name: SOAP Generation Pipeline Eval (release gate)
 #     run against that SHA.
 #
 # TRIGGER COVERAGE (requirement #5): every file that can change the final
-# output is in the path filter below --
+# output still matters for deciding WHEN to label a PR `ready-for-eval` --
+# it's just no longer a workflow-level path filter (see the fix above):
 #   - server/services/aiSoapBillingService.ts   (prompt builders, every
 #                                                 backstop, the pipeline
 #                                                 function itself, final
@@ -50,37 +65,30 @@ name: SOAP Generation Pipeline Eval (release gate)
 #   - .github/workflows/eval-prompt-pipeline.yml (this workflow itself)
 #
 # COST: makes real, billed API calls (default 3 samples/scenario x 5
-# scenarios = 15 generation calls + up to 12 judge calls). See the PR
-# description this workflow shipped with for the per-run/per-month
-# estimate Daniel approved before this was wired in as required.
+# scenarios = 15 generation calls + up to 12 judge calls), ONLY on a
+# labeled PR. See the PR description this workflow shipped with for the
+# per-run/per-month estimate Daniel approved before this was wired in as
+# required.
 #
 # NOT a substitute for eval-prompt.yml's weekly schedule: that diagnostic
 # still runs on its own cadence (10 samples/scenario) to catch drift from
-# Anthropic-side model changes between PRs; this workflow only fires on a
-# labeled/re-synchronized PR or workflow_dispatch, by design, to keep
-# routine PRs that don't touch these paths from ever spending anything.
+# Anthropic-side model changes between PRs; this workflow only spends
+# anything on a labeled PR or workflow_dispatch, by design, to keep
+# routine PRs from ever costing money even though every one of them now
+# triggers (cheaply) the workflow itself.
 
 on:
   pull_request:
     branches: [main]
     types: [labeled, synchronize]
-    paths:
-      - 'server/services/aiSoapBillingService.ts'
-      - 'server/services/aiProvider.ts'
-      - 'server/utils/phiAiGuard.ts'
-      - 'server/storage/index.ts'
-      - 'scripts/eval-soap-generation-pipeline.ts'
-      - '.github/workflows/eval-prompt-pipeline.yml'
   workflow_dispatch:
 
 jobs:
   pipeline-eval:
     name: pipeline-eval
     runs-on: ubuntu-latest
-    # Re-evaluated on every triggering event (including `synchronize`), so
-    # a PR that loses the label, or never had it, correctly shows this
-    # check as not-yet-run rather than skipped-and-green when the check is
-    # marked required.
+    # The only gate, for both "should this spend money" and "does a status
+    # get reported for every commit" at once -- see FIXED 2026-11-02 above.
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready-for-eval')
     steps:
       - name: Checkout repository
