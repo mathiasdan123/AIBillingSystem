@@ -48,4 +48,34 @@ describe('QueryErrorState', () => {
     render(<QueryErrorState error={new Error('401: Unauthorized')} what="claims" />);
     expect(screen.getByRole('alert')).toBeInTheDocument();
   });
+
+  // Regression tests for the 2026-11-02 fix: MFA_SETUP_REQUIRED (no secret
+  // exists -- never enrolled, or enrollment was reset) was previously routed
+  // identically to MFA_VERIFICATION_REQUIRED (enrolled, just needs a fresh
+  // code), sending a setup-required user to /mfa-challenge -- a dead end,
+  // since there's no secret there to check a code against.
+
+  it('offers a fresh-code challenge when MFA is enrolled but this session is unverified', () => {
+    render(<QueryErrorState error={new Error('403: {"error":"MFA verification required","code":"MFA_VERIFICATION_REQUIRED"}')} what="patients" />);
+
+    expect(screen.getByText(/verify your identity/i)).toBeInTheDocument();
+    expect(screen.getByText(/are safe/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /enter verification code/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /set up two-factor/i })).not.toBeInTheDocument();
+  });
+
+  it('offers setup, not a dead-end code challenge, when no MFA secret exists yet', () => {
+    render(<QueryErrorState error={new Error('403: {"error":"MFA setup required","code":"MFA_SETUP_REQUIRED"}')} what="patients" />);
+
+    expect(screen.getByRole('heading', { name: /set up two-factor authentication/i })).toBeInTheDocument();
+    expect(screen.getByText(/are safe/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /set up two-factor authentication/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /enter verification code/i })).not.toBeInTheDocument();
+  });
+
+  it('treats MFA_NOT_ENABLED the same as MFA_SETUP_REQUIRED (setup, not challenge)', () => {
+    render(<QueryErrorState error={new Error('403: {"error":"MFA not enabled","code":"MFA_NOT_ENABLED"}')} what="claims" />);
+
+    expect(screen.getByRole('heading', { name: /set up two-factor authentication/i })).toBeInTheDocument();
+  });
 });

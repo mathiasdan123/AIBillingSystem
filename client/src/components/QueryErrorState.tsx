@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, LogIn, RefreshCw } from "lucide-react";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { isMfaGateError } from "@/lib/queryClient";
+import { isMfaGateError, isMfaSetupError } from "@/lib/queryClient";
 
 interface Props {
   /** The error from useQuery. Render this component only when it is truthy. */
@@ -35,6 +35,14 @@ export function QueryErrorState({ error, what, onRetry }: Props) {
   // first claim" on Claims; the user's own requirement: the notice must
   // carry a LINK to reauthenticate.
   const isMfaGate = isMfaGateError(message);
+  // Setup (no secret exists -- never enrolled, or enrollment was reset) needs
+  // a different destination than a per-session re-verify: /mfa-challenge
+  // only knows how to check a code against an EXISTING secret, so sending a
+  // setup-required user there is a dead end. Navigating home instead reloads
+  // /api/auth/user fresh and lets App.tsx's needsMfaSetup gate render the
+  // real enrollment (QR code) screen. Same bug, same fix as
+  // refreshAuthForMfaGate in queryClient.ts (2026-11-02).
+  const isMfaSetup = isMfaGate && isMfaSetupError(message);
   const isAuth =
     !isMfaGate && (error instanceof Error ? isUnauthorizedError(error) : /^(401|403)/.test(message));
 
@@ -46,17 +54,30 @@ export function QueryErrorState({ error, what, onRetry }: Props) {
     >
       <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
       <h3 className="text-lg font-semibold text-foreground mb-1">
-        {isMfaGate ? "Verify your identity" : isAuth ? "Your session expired" : `Couldn't load ${what}`}
+        {isMfaSetup
+          ? "Set up two-factor authentication"
+          : isMfaGate
+            ? "Verify your identity"
+            : isAuth
+              ? "Your session expired"
+              : `Couldn't load ${what}`}
       </h3>
       <p className="text-sm text-muted-foreground max-w-md mb-4">
-        {isMfaGate
-          ? `Your ${what} are safe. For security, this session needs a fresh verification code before showing them.`
-          : isAuth
-            ? `Your ${what} are safe — you just need to sign in again to see them.`
-            : `Something went wrong loading your ${what}. This is a loading problem, not missing data.`}
+        {isMfaSetup
+          ? `Your ${what} are safe. For security, this account needs two-factor authentication set up before showing them.`
+          : isMfaGate
+            ? `Your ${what} are safe. For security, this session needs a fresh verification code before showing them.`
+            : isAuth
+              ? `Your ${what} are safe — you just need to sign in again to see them.`
+              : `Something went wrong loading your ${what}. This is a loading problem, not missing data.`}
       </p>
       <div className="flex gap-2">
-        {isMfaGate ? (
+        {isMfaSetup ? (
+          <Button onClick={() => window.location.assign("/")} data-testid="button-mfa-setup-link">
+            <LogIn className="w-4 h-4 mr-2" />
+            Set up two-factor authentication
+          </Button>
+        ) : isMfaGate ? (
           <Button onClick={() => window.location.assign("/mfa-challenge")} data-testid="button-mfa-challenge-link">
             <LogIn className="w-4 h-4 mr-2" />
             Enter verification code
