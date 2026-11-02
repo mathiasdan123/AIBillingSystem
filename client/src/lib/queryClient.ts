@@ -189,6 +189,18 @@ export function isMfaGateError(msg: string): boolean {
 }
 
 /**
+ * Narrower than isMfaGateError: true only for the two codes that mean "no
+ * MFA secret exists yet" (never enrolled, or enrollment was reset), as
+ * opposed to MFA_VERIFICATION_REQUIRED ("you're enrolled, this session just
+ * needs a fresh code"). The two need different destinations: a setup case
+ * sent to /mfa-challenge is a dead end — there is no secret to generate a
+ * code against. See the 2026-11-02 fix in refreshAuthForMfaGate below.
+ */
+export function isMfaSetupError(msg: string): boolean {
+  return msg.includes('MFA_SETUP_REQUIRED') || msg.includes('MFA_NOT_ENABLED');
+}
+
+/**
  * Re-read auth state so App.tsx's needsMfaSetup / needsMfaChallenge gates
  * re-evaluate and route the user to the right page.
  *
@@ -227,7 +239,19 @@ async function refreshAuthForMfaGate(): Promise<void> {
     const res = await fetch('/api/auth/user', { credentials: 'include' });
     if (!res.ok) return;
     const user = await res.json();
-    if (user?.mfaChallengeRequired === true || user?.mfaRequired === true) {
+    // BUG FIXED 2026-11-02: this used to send BOTH cases to /mfa-challenge.
+    // mfaRequired ("no secret exists -- never enrolled, or enrollment was
+    // reset") is a different state from mfaChallengeRequired ("enrolled,
+    // this session just needs a fresh code") and needs a different
+    // destination. /mfa-challenge only knows how to check a code against an
+    // existing secret; sending a setup-required user there is a dead end --
+    // there's nothing to generate a code from. Navigate home instead, which
+    // reloads /api/auth/user fresh and lets App.tsx's needsMfaSetup gate
+    // render the real enrollment (QR code) screen. Setup takes priority:
+    // a user needing setup cannot have a meaningful per-session challenge.
+    if (user?.mfaRequired === true) {
+      window.location.assign('/');
+    } else if (user?.mfaChallengeRequired === true) {
       window.location.assign('/mfa-challenge');
     }
   } catch {
