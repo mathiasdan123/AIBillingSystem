@@ -15,8 +15,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ShieldCheck, KeyRound } from 'lucide-react';
+import { ShieldCheck, KeyRound, LogOut } from 'lucide-react';
 import { getAuthHeaders } from '@/hooks/useAuth';
+import { clearSensitiveStorage } from '@/lib/clearSensitiveStorage';
 
 interface MfaSetupResponse {
   uri: string;
@@ -152,6 +153,22 @@ export default function MfaSetupRequired() {
               </div>
             </div>
           )}
+
+          {/* This screen replaces the whole app (App.tsx gate), so without
+              this there is no way to sign out -- a trap on a shared machine,
+              and confusing for someone who did not expect to still be signed
+              in. Same logout path as the sidebar menu. */}
+          <div className="pt-2 border-t text-center">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 underline-offset-4 hover:underline"
+              onClick={() => { clearSensitiveStorage(); window.location.href = '/api/logout'; }}
+              data-testid="button-mfa-setup-sign-out"
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+              Not you? Sign out
+            </button>
+          </div>
         </CardContent>
       </Card>
     </div>

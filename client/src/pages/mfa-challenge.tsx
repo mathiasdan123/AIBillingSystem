@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getAuthHeaders } from '@/hooks/useAuth';
+import { clearSensitiveStorage } from '@/lib/clearSensitiveStorage';
+import { LogOut } from 'lucide-react';
 
 export default function MfaChallenge() {
   const [token, setToken] = useState('');
@@ -115,6 +117,21 @@ export default function MfaChallenge() {
             >
               {useBackup ? 'Use authenticator app instead' : 'Use a backup code instead'}
             </Button>
+
+            {/* App.tsx's needsMfaChallenge gate renders this page in place
+                of the whole app, so without this there is no way to sign
+                out or switch accounts. Same logout path as the sidebar. */}
+            <div className="pt-2 border-t text-center">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 underline-offset-4 hover:underline"
+                onClick={() => { clearSensitiveStorage(); window.location.href = '/api/logout'; }}
+                data-testid="button-mfa-challenge-sign-out"
+              >
+                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                Not you? Sign out
+              </button>
+            </div>
           </form>
         </CardContent>
       </Card>
