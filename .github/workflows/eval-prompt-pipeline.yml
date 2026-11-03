@@ -80,7 +80,13 @@ name: SOAP Generation Pipeline Eval (release gate)
 on:
   pull_request:
     branches: [main]
-    types: [labeled, synchronize]
+    # `opened`/`reopened` are REQUIRED here, not just labeled/synchronize
+    # (fixed 2026-11-03): a freshly opened single-commit PR fires only
+    # `opened`. Without it no run -- not even "skipped" -- was created for
+    # the PR's first commit, so the required check sat as "Expected" and
+    # blocked merge until someone pushed a second commit. PR #442 hit this
+    # the day after the paths: filter fix above for the same reason.
+    types: [opened, reopened, labeled, synchronize]
   workflow_dispatch:
 
 jobs:
