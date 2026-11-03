@@ -116,7 +116,14 @@ function loadLegacyHistoryOnce(): ChatMessage[] {
 }
 
 export default function AiBillingAssistant() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, needsMfaSetup, needsMfaChallenge } = useAuth();
+  // This component is mounted OUTSIDE App.tsx's Router gate, so it stays
+  // mounted while the MFA setup / challenge screen is showing. Any PHI-gated
+  // request it fires in that state 403s (MFA_SETUP_REQUIRED /
+  // MFA_VERIFICATION_REQUIRED) -- noise for the high-403 alarm, and on
+  // 2026-11-03 the trigger for a full-page reload loop via
+  // refreshAuthForMfaGate. Treat "authenticated but MFA-gated" as not ready.
+  const canCallPhiApis = isAuthenticated && !needsMfaSetup && !needsMfaChallenge;
   const queryClient = useQueryClient();
   const userId = (user as any)?.id ?? null;
   const { toast } = useToast();
@@ -208,7 +215,7 @@ export default function AiBillingAssistant() {
   // invalidates the key on every step, so a long staleTime is safe.
   const { data: onboardingData } = useQuery<{ step?: number; completed?: boolean }>({
     queryKey: ['/api/onboarding/status'],
-    enabled: isAuthenticated,
+    enabled: canCallPhiApis,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -354,7 +361,7 @@ export default function AiBillingAssistant() {
   // server has nothing (new user) but localStorage had legacy state, we keep
   // the local state — the next POST /api/ai/assistant turn will persist it.
   useEffect(() => {
-    if (!isOpen || !isAuthenticated || !userId) return;
+    if (!isOpen || !canCallPhiApis || !userId) return;
     if (loadedForUserId === userId) return;
     // Clear any in-memory state from a previous user before fetching —
     // otherwise their messages would briefly be visible to the new user

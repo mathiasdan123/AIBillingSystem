@@ -245,13 +245,34 @@ async function refreshAuthForMfaGate(): Promise<void> {
     // this session just needs a fresh code") and needs a different
     // destination. /mfa-challenge only knows how to check a code against an
     // existing secret; sending a setup-required user there is a dead end --
-    // there's nothing to generate a code from. Navigate home instead, which
-    // reloads /api/auth/user fresh and lets App.tsx's needsMfaSetup gate
-    // render the real enrollment (QR code) screen. Setup takes priority:
-    // a user needing setup cannot have a meaningful per-session challenge.
+    // there's nothing to generate a code from. Setup takes priority: a user
+    // needing setup cannot have a meaningful per-session challenge.
+    //
+    // RELOAD LOOP FIXED 2026-11-03: the first version of the setup branch
+    // did window.location.assign('/') unconditionally. Once PR #442 made the
+    // server actually report mfaRequired, that became a hard loop: on `/`
+    // App.tsx renders MfaSetupRequired, but components mounted OUTSIDE the
+    // Router gate (AiBillingAssistant etc.) still fire gated requests, each
+    // 403 lands here, `/` reloads `/`, and the module-level throttle above
+    // resets with every reload so it never engages. The screen "blinked like
+    // crazy". Two guards, both needed:
+    //   1. Never hard-navigate for the setup case: invalidateQueries above is
+    //      sufficient now that /api/auth/user carries mfaRequired -- the
+    //      App-level needsMfaSetup gate re-renders into the setup screen in
+    //      place, on ANY route. (The challenge case keeps its navigation; the
+    //      pathname guard above already makes that one loop-proof.)
+    //   2. A sessionStorage-persisted throttle on the remaining navigation,
+    //      because a module-level timestamp cannot survive the very reload it
+    //      is supposed to throttle.
     if (user?.mfaRequired === true) {
-      window.location.assign('/');
-    } else if (user?.mfaChallengeRequired === true) {
+      return;
+    }
+    if (user?.mfaChallengeRequired === true) {
+      const KEY = 'mfaGateRedirectAt';
+      let last = 0;
+      try { last = Number(sessionStorage.getItem(KEY) ?? 0); } catch { /* storage unavailable */ }
+      if (now - last < 10_000) return;
+      try { sessionStorage.setItem(KEY, String(now)); } catch { /* storage unavailable */ }
       window.location.assign('/mfa-challenge');
     }
   } catch {
