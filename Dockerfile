@@ -1,5 +1,5 @@
 # Stage 1: Build the application
-FROM public.ecr.aws/docker/library/node:20-slim AS builder
+FROM public.ecr.aws/docker/library/node:22-slim AS builder
 
 # Release ID for Sentry error tracking (set at build time)
 ARG SENTRY_RELEASE=development
@@ -34,7 +34,7 @@ RUN NODE_ENV=production npm run build
 RUN ! grep -q "from \"vite\"" dist/index.js || (echo "ERROR: vite import found in production build!" && exit 1)
 
 # Stage 2: Production image
-FROM public.ecr.aws/docker/library/node:20-slim AS production
+FROM public.ecr.aws/docker/library/node:22-slim AS production
 
 # Set working directory
 WORKDIR /app
@@ -85,7 +85,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["node", "dist/index.js"]
 
 # Stage 3: Migration image (includes drizzle-kit for schema push)
-FROM public.ecr.aws/docker/library/node:20-slim AS migrate
+FROM public.ecr.aws/docker/library/node:22-slim AS migrate
 
 WORKDIR /app
 

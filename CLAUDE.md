@@ -23,7 +23,7 @@ Medical billing and practice management platform for behavioral health / therapy
 
 ## Tech Stack
 - **Frontend:** React 18, TypeScript, TailwindCSS, Radix UI, Wouter (routing), React Query, React Hook Form + Zod
-- **Backend:** Express.js 4, Node.js 20+, TypeScript
+- **Backend:** Express.js 4, Node.js 22+ (LTS -- 20 went end-of-life 2026-03 and gets no security patches; the Docker image, CI, and `engines` all pin 22), TypeScript
 - **Database:** PostgreSQL via Drizzle ORM (AWS RDS in production, pg driver locally)
 - **Auth:** Passport.js local strategy, Argon2 hashing, express-session, MFA via TOTP
 - **Build:** Vite (client), esbuild (server), tsx (dev)
