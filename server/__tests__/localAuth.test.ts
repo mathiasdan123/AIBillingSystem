@@ -393,49 +393,26 @@ describe('localAuth Routes (/api/auth)', () => {
   // ---- GET /api/auth/user ----
 
   describe('GET /api/auth/user', () => {
-    it('should return 401 when not authenticated', async () => {
-      // App has req.isAuthenticated = () => false by default
-      const res = await request(app)
-        .get('/api/auth/user')
-        .expect(401);
-
-      expect(res.body.message).toBe('Not authenticated');
-    });
-
-    it('should return current user when authenticated', async () => {
-      const dbUser = {
-        id: 'user-123',
-        email: 'user@example.com',
-        firstName: 'Jane',
-        lastName: 'Doe',
-        role: 'therapist',
-        practiceId: 1,
-        emailVerified: true,
-        mfaEnabled: false,
-        profileImageUrl: null,
-      };
-
-      // Build an app that marks the user as authenticated
+    // This router is mounted at /api/auth BEFORE server/routes/auth.ts is
+    // mounted at /api, so any `/user` handler here silently shadows the real
+    // one (which carries mfaRequired / mfaChallengeRequired / isPlatformAdmin).
+    // From 2026-03 to 2026-11-03 it did exactly that and every MFA-setup user
+    // got a dead dashboard. The authenticated case is covered end-to-end, in
+    // production mount order, by authUserRouteShadowing.test.ts.
+    it('is NOT handled by the local-auth router (it belongs to routes/auth.ts)', async () => {
       const authenticatedApp = express();
       authenticatedApp.use(express.json());
       authenticatedApp.use((req: any, _res, next) => {
         req.session = {};
         req.isAuthenticated = () => true;
         req.user = { claims: { sub: 'user-123' } };
-        req.login = (u: any, cb: any) => cb(null);
-        req.logout = (cb: any) => cb(null);
         next();
       });
       authenticatedApp.use('/api/auth', localAuthRouter);
+      mockStorage.getUser.mockResolvedValue({ id: 'user-123', email: 'user@example.com' });
 
-      mockStorage.getUser.mockResolvedValue(dbUser);
-
-      const res = await request(authenticatedApp)
-        .get('/api/auth/user')
-        .expect(200);
-
-      expect(res.body.id).toBe('user-123');
-      expect(res.body.email).toBe('user@example.com');
+      await request(authenticatedApp).get('/api/auth/user').expect(404);
+      expect(mockStorage.getUser).not.toHaveBeenCalled();
     });
   });
 

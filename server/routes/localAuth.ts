@@ -756,44 +756,23 @@ router.post('/resend-verification', authLimiter, async (req, res) => {
   }
 });
 
-/**
- * GET /api/auth/user
- * Get current authenticated user
- */
-router.get('/user', async (req, res) => {
-  try {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ message: 'Not authenticated' });
-    }
-
-    const user = (req as any).user;
-    const userId = user?.claims?.sub;
-
-    if (!userId) {
-      return res.status(401).json({ message: 'Invalid session' });
-    }
-
-    const dbUser = await storage.getUser(userId);
-
-    if (!dbUser) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    res.status(200).json({
-      id: dbUser.id,
-      email: dbUser.email,
-      firstName: dbUser.firstName,
-      lastName: dbUser.lastName,
-      role: dbUser.role,
-      practiceId: dbUser.practiceId,
-      emailVerified: dbUser.emailVerified,
-      mfaEnabled: dbUser.mfaEnabled,
-      profileImageUrl: dbUser.profileImageUrl,
-    });
-  } catch (error) {
-    logger.error('Get user error', { error });
-    res.status(500).json({ message: 'Failed to get user' });
-  }
-});
+// GET /api/auth/user is deliberately NOT defined here. It lives in
+// server/routes/auth.ts, which returns the contract the client depends on
+// (mfaRequired, mfaChallengeRequired, isPlatformAdmin).
+//
+// This router is mounted at /api/auth from setupAuth(), which runs BEFORE
+// registerRoutes() mounts auth.ts at /api -- so a `/user` handler here wins
+// every request and silently shadows the real one. That is exactly what
+// happened from the local-auth migration (2026-03) until 2026-11-03: the
+// handler that used to live here returned raw `mfaEnabled`/`emailVerified`
+// and never `mfaRequired`, so useAuth()'s needsMfaSetup/needsMfaChallenge
+// gates in App.tsx were always false, every user who needed MFA setup or
+// re-verification landed on a fully-rendered dashboard whose every PHI
+// request 403'd ("Failed to load patients", "0 patients"), and the
+// refreshAuthForMfaGate() fallback in queryClient.ts -- which reads the same
+// flags -- could never rescue them. Found live on an admin account whose
+// MFA had been reset. server/__tests__/authUserRouteShadowing.test.ts
+// mounts both routers in production order and fails if a `/user` route is
+// ever added back here.
 
 export default router;
