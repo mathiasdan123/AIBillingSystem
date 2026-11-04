@@ -3,9 +3,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const ENV_KEYS = ['EMAIL_PROVIDER', 'SMTP_USER', 'SMTP_PASS', 'AWS_REGION'] as const;
 let savedEnv: Record<string, string | undefined>;
 
+// The factory imports the preferences service (and through it the db) for the
+// outbound guard; stub it so these tests need no DATABASE_URL.
+const mockGetOutboundEmailBlock = vi.fn();
+vi.mock('../services/notificationPreferencesService', () => ({
+  getOutboundEmailBlock: (...args: any[]) => mockGetOutboundEmailBlock(...args),
+}));
+vi.mock('../services/logger', () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 beforeEach(() => {
   savedEnv = {};
   for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
+  mockGetOutboundEmailBlock.mockReset();
+  mockGetOutboundEmailBlock.mockResolvedValue({ blocked: false });
   vi.resetModules();
 });
 
@@ -80,6 +92,83 @@ describe('createEmailTransporter', () => {
         SES: expect.objectContaining({ sesClient: sesClientInstance, SendEmailCommand: SendEmailCommandMock }),
       })
     );
-    expect(result).toEqual({ __kind: 'ses-transport' });
+    // The factory returns a guard wrapper whose prototype is the real transport.
+    expect((result as any).__kind).toBe('ses-transport');
+  });
+});
+
+describe('outbound guard (bounce/complaint suppression + demo isolation)', () => {
+  const smtpConfig = { host: 'smtp.example.com', port: 587, secure: false, auth: { user: 'u', pass: 'p' } };
+
+  async function buildGuarded() {
+    delete process.env.EMAIL_PROVIDER;
+    const realSendMail = vi.fn().mockResolvedValue({ messageId: 'real-id', accepted: ['x'], rejected: [] });
+    vi.doMock('nodemailer', () => ({ default: { createTransport: vi.fn().mockReturnValue({ sendMail: realSendMail }) } }));
+    const { createEmailTransporter } = await import('../services/emailTransportFactory');
+    return { transporter: createEmailTransporter(smtpConfig), realSendMail };
+  }
+
+  it('passes an unblocked recipient straight through, with the original options object', async () => {
+    const { transporter, realSendMail } = await buildGuarded();
+    const options = { to: 'ok@example.com', subject: 'Hi', text: 'hello' };
+
+    const info = await transporter.sendMail(options);
+
+    expect(mockGetOutboundEmailBlock).toHaveBeenCalledWith('ok@example.com');
+    expect(realSendMail).toHaveBeenCalledTimes(1);
+    expect(realSendMail).toHaveBeenCalledWith(options);
+    expect(info.messageId).toBe('real-id');
+  });
+
+  it('does not send at all when the only recipient is suppressed', async () => {
+    mockGetOutboundEmailBlock.mockResolvedValue({ blocked: true, reason: 'suppressed' });
+    const { transporter, realSendMail } = await buildGuarded();
+
+    const info = await transporter.sendMail({ to: 'bounced@example.com', subject: 'Hi', text: 'hello' });
+
+    expect(realSendMail).not.toHaveBeenCalled();
+    expect(info.messageId).toBeNull();
+    expect(info.rejected).toEqual(['bounced@example.com']);
+  });
+
+  it('does not send to a demo-practice patient address', async () => {
+    mockGetOutboundEmailBlock.mockResolvedValue({ blocked: true, reason: 'demo-practice' });
+    const { transporter, realSendMail } = await buildGuarded();
+
+    await transporter.sendMail({ to: 'seeded@example.net', subject: 'Reminder', text: 'x' });
+
+    expect(realSendMail).not.toHaveBeenCalled();
+  });
+
+  it('drops only the blocked recipients from a multi-recipient send', async () => {
+    mockGetOutboundEmailBlock.mockImplementation(async (addr: string) =>
+      addr === 'bad@example.com' ? { blocked: true, reason: 'suppressed' } : { blocked: false }
+    );
+    const { transporter, realSendMail } = await buildGuarded();
+
+    await transporter.sendMail({ to: 'good@example.com, bad@example.com', subject: 'Hi', text: 'x' });
+
+    expect(realSendMail).toHaveBeenCalledTimes(1);
+    expect(realSendMail.mock.calls[0][0].to).toEqual(['good@example.com']);
+  });
+
+  it('fails open when the suppression lookup throws', async () => {
+    mockGetOutboundEmailBlock.mockRejectedValue(new Error('db down'));
+    const { transporter, realSendMail } = await buildGuarded();
+
+    await transporter.sendMail({ to: 'someone@example.com', subject: 'Reset', text: 'x' });
+
+    expect(realSendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it('honours callback-style sendMail for a fully suppressed send', async () => {
+    mockGetOutboundEmailBlock.mockResolvedValue({ blocked: true, reason: 'suppressed' });
+    const { transporter, realSendMail } = await buildGuarded();
+
+    const cb = vi.fn();
+    await (transporter.sendMail as any)({ to: 'bounced@example.com', subject: 'Hi', text: 'x' }, cb);
+
+    expect(realSendMail).not.toHaveBeenCalled();
+    expect(cb).toHaveBeenCalledWith(null, expect.objectContaining({ rejected: ['bounced@example.com'] }));
   });
 });

@@ -19,6 +19,7 @@ vi.mock('../services/logger', () => ({
 
 vi.mock('../services/notificationPreferencesService', () => ({
   shouldSendNotification: vi.fn().mockResolvedValue(true),
+  getOutboundEmailBlock: vi.fn().mockResolvedValue({ blocked: false }),
 }));
 
 // We need fresh module state for each test to reset internal singletons

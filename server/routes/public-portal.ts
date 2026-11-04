@@ -817,8 +817,10 @@ router.post('/patient-portal/request-login', async (req, res) => {
       try {
         const { isEmailConfigured } = await import('../email');
         if (isEmailConfigured()) {
-          const nodemailer = await import('nodemailer');
-          const transporter = nodemailer.createTransport({
+          // Route through the shared transport factory so this send uses SES
+          // when EMAIL_PROVIDER=aws and honours bounce/complaint suppression.
+          const { createEmailTransporter } = await import('../services/emailTransportFactory');
+          const transporter = createEmailTransporter({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.SMTP_PORT || '587'),
             secure: process.env.SMTP_SECURE === 'true',

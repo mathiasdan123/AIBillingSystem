@@ -9,6 +9,34 @@ import { isEmailConfigured } from '../email';
 import logger from './logger';
 import { sendEmail } from './emailService';
 import { appointmentReminder } from './emailTemplates';
+import { shouldSendNotification } from './notificationPreferencesService';
+
+/**
+ * Whether a reminder email may go to this patient. Two gates that were
+ * missing until 2026-11-04 (masked while SES was sandboxed, live once it
+ * got production access):
+ *   - the practice is the isolated demo sandbox (practices.isDemo) -- its
+ *     seeded patients use fake or third-party addresses, and a prospect
+ *     clicking around the public demo can create a real "scheduled"
+ *     appointment for one of them;
+ *   - the patient's notification preferences say no email, which is also
+ *     how an SES hard bounce / complaint is recorded (suppressEmailForAddress).
+ * The transport-level guard (emailTransportFactory.ts) enforces the same
+ * rules as a backstop; checking here first avoids the send attempt and the
+ * misleading "reminder sent" bookkeeping.
+ */
+async function reminderEmailAllowed(
+  patient: { id: number },
+  practice: { isDemo?: boolean | null } | null | undefined,
+): Promise<boolean> {
+  if (practice?.isDemo) return false;
+  try {
+    const pref = await shouldSendNotification(patient.id, 'appointmentReminders');
+    return pref.channels.email;
+  } catch {
+    return true; // fail open: a preferences lookup error must not stop real reminders
+  }
+}
 
 interface ReminderResult {
   appointmentId: number;
@@ -163,8 +191,8 @@ export async function processAppointmentReminders(
           hour12: true,
         });
 
-        // Send email reminder if patient has email
-        if (patient.email) {
+        // Send email reminder if patient has email (and is allowed to get one)
+        if (patient.email && (await reminderEmailAllowed(patient, practice))) {
           const emailResult = await sendAppointmentReminderEmail(patient.email, {
             patientName: patient.firstName,
             appointmentDate: new Date(appointment.startTime),
@@ -297,8 +325,9 @@ export async function sendAppointmentReminders(): Promise<ReminderResult[]> {
           });
         }
 
-        // Send email reminder if SMTP is configured and patient has email
-        if (isEmailConfigured() && patient.email) {
+        // Send email reminder if SMTP is configured, patient has email, and
+        // nothing says not to (demo practice / preferences / bounce-complaint)
+        if (isEmailConfigured() && patient.email && (await reminderEmailAllowed(patient, practice))) {
           try {
             const emailResult = await sendAppointmentReminderEmail(patient.email, {
               patientName: patient.firstName,
