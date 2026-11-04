@@ -1,23 +1,34 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  SNS topic + HTTPS subscription for Amazon SES bounce/complaint
-  notifications, delivered to server/routes/sesNotifications.ts. That
-  route verifies every message's AWS signature (server/services/snsVerification.ts)
-  before trusting it, and auto-confirms this subscription on first deploy.
+Description: SNS topic + HTTPS subscription for Amazon SES bounce/complaint notifications (TherapyBill AI).
 
-  Does NOT wire the SES identity to publish here - CloudFormation has no
-  native resource type for ses:SetIdentityNotificationTopic (a classic SES
-  v1 API call, not part of the SESv2/configuration-set model). That's a
-  one-time, idempotent CLI step, documented in the PR this ships with:
-
-    aws ses set-identity-notification-topic --identity therapybillai.com \
-      --notification-type Bounce --sns-topic <output: SesEventNotificationsTopicArn>
-    aws ses set-identity-notification-topic --identity therapybillai.com \
-      --notification-type Complaint --sns-topic <output: SesEventNotificationsTopicArn>
-
-  Deploy this stack (and run the CLI step above) only AFTER the app code
-  in PR #396's branch is live in production - the HTTPS subscription
-  confirmation handshake needs a running endpoint to succeed.
+# SNS topic + HTTPS subscription for Amazon SES bounce/complaint
+# notifications, delivered to server/routes/sesNotifications.ts. That
+# route verifies every message's AWS signature (server/services/snsVerification.ts)
+# before trusting it, and auto-confirms this subscription on first deploy.
+#
+# Does NOT wire the SES identity to publish here - CloudFormation has no
+# native resource type for ses:SetIdentityNotificationTopic (a classic SES
+# v1 API call, not part of the SESv2/configuration-set model). Do that once,
+# either in the SES console (Identities -> therapybillai.com -> Notifications
+# -> Edit -> pick this topic for Bounce and Complaint) or via CLI:
+#
+#   aws ses set-identity-notification-topic --identity therapybillai.com \
+#     --notification-type Bounce --sns-topic <output: SesEventNotificationsTopicArn>
+#   aws ses set-identity-notification-topic --identity therapybillai.com \
+#     --notification-type Complaint --sns-topic <output: SesEventNotificationsTopicArn>
+#
+# Deploy this stack (and do the step above) only AFTER the webhook route is
+# live in production - the HTTPS subscription confirmation handshake needs a
+# running endpoint to succeed.
+#
+# Deploy:
+#   aws cloudformation deploy --stack-name therapybill-ses-events-prod \
+#     --template-file infra/ses-bounce-complaint-sns.yaml \
+#     --parameter-overrides EnvironmentName=prod
+#
+# Note: the stack Description above is deliberately one line. CloudFormation
+# rejects templates whose Description exceeds 1024 characters, which is what
+# kept the original version of this file from ever deploying.
 
 Parameters:
   EnvironmentName:
