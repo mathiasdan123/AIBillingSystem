@@ -1117,9 +1117,15 @@ const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => s
   [/\b(?:continued|ongoing|continuing)\s+need\s+for\b/gi, "need for"],
   [/\b(?:continued|ongoing)\s+(deficits?|limitations?|difficult(?:y|ies)|challenges?|weakness)\b/gi, "$1"],
   [/\b(?:require|requires|requiring|indicates?|indicating|suggests?|suggesting|demonstrates?|demonstrating|need\s+for|warrants?)\s+(?:continued|ongoing|further)\s+/gi, (m: string) => m.replace(/\s+(?:continued|ongoing|further)\s+$/i, " ")],
-  [/\bcontinued\s+((?:skilled\s+)?(?:therapeutic\s+)?(?:intervention|strengthening|practice|support|work|therapy))\b/gi, "$1"],
-  [/\bremains?\s+(challenging|difficult|limited|an\s+area|a\s+(?:focus|priority))\b/gi, "is $1"],
-  [/\b(?:will\s+)?continue\s+to\s+(target|address|focus\s+on|work\s+on|emphasi[sz]e|build|support|benefit)\b/gi, "will $1"],
+  [/\bcontinued\s+((?:skilled\s+|clinical\s+|graded\s+)?(?:therapeutic\s+)?(?:intervention|strengthening|practice|support|work|therapy|focus|emphasis|training|development|monitoring|attention|use|progress|exposure|participation\s+in))\b/gi, "$1"],
+  [/\bremains?\s+(challenging|difficult|limited|an\s+area|a\s+(?:focus|priority)|(?:a|an)\s+(?:clinically\s+)?(?:appropriate|relevant|primary|key|important|reasonable)|(?:clinically\s+)?(?:appropriate|indicated|relevant|important|warranted))\b/gi, "is $1"],
+  [/\b(?:will\s+)?continue\s+to\s+(target|address|focus\s+on|work\s+on|emphasi[sz]e|build|support|benefit|develop|strengthen|monitor)\b/gi, "will $1"],
+  [/\b(to\s+)?continue\s+(supporting|building|developing|addressing|targeting|working\s+on|strengthening|monitoring|emphasi[sz]ing)\b/gi, (_m: string, to: string | undefined, ing: string) => {
+    const base: Record<string, string> = { supporting: "support", building: "build", developing: "develop", addressing: "address", targeting: "target", strengthening: "strengthen", monitoring: "monitor", emphasizing: "emphasize", emphasising: "emphasise" };
+    const key = ing.toLowerCase().replace(/\s+on$/, "");
+    const verb = key === "working" ? "work on" : (base[key] ?? ing);
+    return to ? `to ${verb}` : verb;
+  }],
   [/(?:^|(?<=[.!?]\s))Continue\s+(?:targeting|to\s+target)\b/gim, "Target"],
   [/(?:^|(?<=[.!?]\s))Continue\s+((?:graded\s+|dynamic\s+)?(?:therapeutic\s+)?activities)\b/gim, "Use $1"],
 ];
@@ -1509,10 +1515,16 @@ export async function validateAndEnhanceResponse(
   // aggregate codes (normalizeActivityCptPairings fills defaults; the model's
   // own wording is what needs softening).
   const noObservations = !requestHasObservations(request);
-  const cleanRationale = (text: string) =>
-    noObservations
-      ? softenUnsupportedDeficitInRationale(softenAbsolutistCodingClaim(text))
-      : softenAbsolutistCodingClaim(text);
+  const hasMoodForRationale = !!request.mood;
+  // Rationale fields get every text backstop S/O/A/P get (pipeline eval run
+  // 2026-11-04T21-26: a documentation-denial sentence surfaced in an
+  // auditNote) plus the two rationale-only softeners.
+  const cleanRationale = (text: string) => {
+    const base = stripUnsupportedDocumentationDenialClause(
+      stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+    );
+    return noObservations ? softenUnsupportedDeficitInRationale(base) : base;
+  };
   for (const pairing of activityCptPairings) {
     if (pairing.rationale) pairing.rationale = cleanRationale(pairing.rationale);
   }

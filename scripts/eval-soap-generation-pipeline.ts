@@ -220,6 +220,49 @@ Respond with ONLY this JSON:
 
 Every entry in "findings" is an assertion that this IS a real violation -- never include an entry whose own reasoning concludes the content is correct, compliant, or not a violation. If you considered a sentence and decided it does NOT violate any check, leave it out of "findings" entirely; do not add it as a note or explanation. If there are no violations, respond with {"findings": []}. Every finding MUST include a verbatim quote -- never paraphrase or summarize what's wrong without quoting it.`;
 
+// ---------------------------------------------------------------------------
+// Judge proposes, code verifies. Three runs on 2026-11-04 showed the judge
+// does not reliably follow scoping instructions in its own prompt: it flagged
+// "required neuromuscular re-education" as coding compulsion, the definite
+// article in "the conservative choice" as exclusivity, "age-appropriate" as
+// an age claim, and present-tense necessity statements as continuity --
+// each one after being told in writing not to. So for the finding classes
+// where the rule can be stated exactly, the quoted sentence must ALSO satisfy
+// the deterministic rule or the finding is dropped (and logged as dropped,
+// so judge drift stays visible). Plan traceability keeps the judge's full
+// semantic reach: that is where paraphrased closings live and the rule
+// cannot be a regex.
+// ---------------------------------------------------------------------------
+const CONTINUITY_WORD = /\b(?:continue[sd]?|continuing|ongoing|remain(?:s|ed|ing)?|still|further)\b/i;
+const CODING_EXCLUSIVITY = /\b(?:only|sole(?:ly)?|exclusively|must\s+be\s+(?:coded|billed|assigned|reported)|no\s+other\s+code|required\s+code|mandatory)\b/i;
+
+function verifyJudgeFindings(findings: JudgeFinding[], note: FinalNote, check7Applies: boolean): { kept: JudgeFinding[]; dropped: Array<JudgeFinding & { droppedBecause: string }> } {
+  const kept: JudgeFinding[] = [];
+  const dropped: Array<JudgeFinding & { droppedBecause: string }> = [];
+  const norm = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
+  const inPlan = (quote: string) => norm(note.plan).includes(norm(quote).slice(0, 80));
+  for (const f of findings) {
+    const q = f.quote || '';
+    switch (f.check) {
+      case 'traceability':
+        if (inPlan(q) || CONTINUITY_WORD.test(q)) kept.push(f);
+        else dropped.push({ ...f, droppedBecause: 'Assessment/other sentence with no explicit continuity word (present-tense necessity, "age-appropriate", "required ... cueing" are not continuity claims).' });
+        break;
+      case 'coding_overclaim':
+        if (hasAbsolutistCodingClaim(q) || CODING_EXCLUSIVITY.test(q)) kept.push(f);
+        else dropped.push({ ...f, droppedBecause: 'No exclusivity/compulsion wording in the quote (a preference, superlative, or clinical "required" is not an overclaim).' });
+        break;
+      case 'unsupported_deficit':
+        if (check7Applies && hasUnsupportedDeficitAssertion(q)) kept.push(f);
+        else dropped.push({ ...f, droppedBecause: check7Applies ? 'Quote describes targets/demands, not an attributed deficit.' : 'Check 7 does not apply to this scenario (activity responses were supplied).' });
+        break;
+      default:
+        kept.push(f); // mood / caregiver fabrication and omission keep full semantic reach
+    }
+  }
+  return { kept, dropped };
+}
+
 async function runSemanticJudge(client: Anthropic, note: FinalNote, judgeContext: string): Promise<JudgeFinding[]> {
   const userPrompt = `INPUT PROVIDED TO THE NOTE-GENERATING PIPELINE:\n${judgeContext}\n\nFINAL NOTE (after production backstops already ran):\nSUBJECTIVE: ${note.subjective}\n\nOBJECTIVE: ${note.objective}\n\nASSESSMENT: ${note.assessment}\n\nPLAN: ${note.plan}\n\nBILLING TEXT (code rationales shown to the provider):\n${note.billingText}`;
 
@@ -434,6 +477,8 @@ interface SampleRecord {
   generationMode: AiSoapBillingResponse['generationMode'] | null;
   deterministicFailures: string[];
   judgeFindings: JudgeFinding[];
+  /** Judge proposals the deterministic verifier rejected -- kept for calibration, never counted. */
+  judgeFindingsDropped: Array<JudgeFinding & { droppedBecause: string }>;
   error: string | null;
   /** activity -> suggested CPT code, for the run-to-run consistency metric. */
   codesByActivity: Record<string, string> | null;
@@ -484,6 +529,7 @@ async function main() {
           generationMode: null,
           deterministicFailures: [],
           judgeFindings: [],
+          judgeFindingsDropped: [],
           error: null,
           codesByActivity: null,
         };
@@ -510,7 +556,13 @@ async function main() {
             .filter((msg): msg is string => msg !== null);
 
           if (result.generationMode === 'ai' && scenario.judge) {
-            record.judgeFindings = await runSemanticJudge(judgeClient, note, scenario.judge.context);
+            const raw = await runSemanticJudge(judgeClient, note, scenario.judge.context);
+            const { kept, dropped } = verifyJudgeFindings(raw, note, /CHECK 7 APPLIES/.test(scenario.judge.context));
+            record.judgeFindings = kept;
+            record.judgeFindingsDropped = dropped;
+            if (dropped.length > 0) {
+              console.log(`    judge: ${dropped.length} finding(s) dropped by deterministic verification (see JSON log)`);
+            }
           }
         } catch (e: any) {
           record.error = e?.message ?? String(e);

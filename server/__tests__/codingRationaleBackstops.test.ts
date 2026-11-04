@@ -248,3 +248,39 @@ describe('stripUnsupportedPlanClosing -- CASE B carry-overs in a CASE A plan', (
     expect(out).toContain('Obstacle course work targeted sequencing.');
   });
 });
+
+describe('removeCaseAContinuityWording -- shapes from pipeline eval run 2026-11-04T21-26', () => {
+  it('handles "continued therapeutic focus", "remains a clinically appropriate", "to continue supporting"', () => {
+    const cases: Array<[string, RegExp]> = [
+      ['Clinical analysis supports continued therapeutic focus on bilateral coordination.', /supports therapeutic focus on/],
+      ['Graded endurance training remains a clinically appropriate intervention target.', /training is a clinically appropriate intervention target/],
+      ['Skilled OT is indicated to address fatigue and to continue supporting the development of coordination.', /and to support the development of coordination/],
+    ];
+    for (const [input, expected] of cases) {
+      const out = removeCaseAContinuityWording(input, false, false);
+      expect(out, input).toMatch(expected);
+      expect(out).not.toMatch(/\b(continued|continue|remains)\b/i);
+    }
+  });
+});
+
+describe('validateAndEnhanceResponse strips a documentation-denial sentence from rationale fields', () => {
+  it('removes "No caregiver report or mood was documented" from an auditNote', async () => {
+    const aiResponse = {
+      subjective: 'No subjective information was entered for this session.',
+      objective: 'Session conducted in Sensory gym for 45 minutes.',
+      assessment: 'Activities target motor planning and endurance demands.',
+      plan: 'Next session: bilateral coordination.',
+      cptCodes: [{ code: '97530', name: 'Therapeutic Activities', units: 3, rationale: 'Functional dynamic activities.', activitiesAssigned: ['Obstacle Course', 'Trampoline'] }],
+      activityCptPairings: [
+        { activity: 'Obstacle Course', code: '97530', rationale: 'Functional task.' },
+        { activity: 'Trampoline', code: '97530', rationale: 'Targets endurance.' },
+      ],
+      billingRationale: 'Coded conservatively as 97530.',
+      auditNotes: ['No caregiver report or mood was documented this session. Activities documented with location and duration.'],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, baseRequest, 3, false, false);
+    expect((out.auditNotes as string[]).join(' ')).not.toMatch(/caregiver report or mood was documented/i);
+    expect((out.auditNotes as string[]).join(' ')).toContain('Activities documented with location and duration.');
+  });
+});
