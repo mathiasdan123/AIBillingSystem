@@ -122,3 +122,6 @@ jobs:
           name: eval-soap-generation-pipeline-results
           path: .eval-results/
           if-no-files-found: ignore
+          # .eval-results is a dot-directory; without this the step reported
+          # "No files were found" and the replay JSON was lost (run 2026-11-04).
+          include-hidden-files: true

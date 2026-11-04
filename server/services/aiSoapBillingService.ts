@@ -275,12 +275,12 @@ export async function generateSoapNoteAndBilling(
       // note). Perceived speed comes from streaming the note as it's written,
       // not from a tight cap. See the audit notes in adversarial review.
       max_tokens: 6000,
-      // 0.2, down from 0.5 (2026-11-04): a live retest generated two notes from
-      // IDENTICAL inputs that chose different codes for the same activities
-      // (97110 vs 97530) while each rationale called its own choice the "only
-      // defensible" one. Clinical documentation and code suggestions should
-      // be as repeatable as the model allows; variety has no value here.
-      temperature: 0.2,
+      // 0.5. A 0.2 trial (2026-11-04) did not make code choices repeatable
+      // (identical inputs still split 97530/97112/97110 across samples) and
+      // coincided with more continuity padding in CASE A plans, so the
+      // known-passing value stays. Repeatability is handled by the
+      // conservative-default rule and the rationale backstops instead.
+      temperature: 0.5,
       system:
         systemPrompt +
         "\n\nRespond with ONLY a valid JSON object, no markdown fencing or commentary.",
@@ -657,10 +657,14 @@ Use the "planNextSteps", "nextSessionFocus", and "homeProgram" fields.
 1. NEXT SESSION FOCUS — Use what the therapist wrote. Add 2-3 specific
    activities that would clinically align with that focus.
 2. TREATMENT FREQUENCY — Only state a frequency if one is implied or
-   stated in the treatment plan data. Otherwise write
-   "Continue current treatment frequency" without a specific cadence.
+   stated in the treatment plan data. Otherwise: with a MOST RECENT PLAN
+   on file (CASE B) write "Continue current treatment frequency" without
+   a specific cadence; on a first documented session (CASE A) OMIT the
+   frequency statement entirely -- there is no cadence to continue.
 3. HOME PROGRAM — Use the home program field if provided. If it wasn't
-   provided, write "Home program: no changes" or omit this subsection.
+   provided: CASE B "Reviewed continuation of current home strategies; no
+   changes to home program at this time."; CASE A "No home program
+   assigned this session." (never "no changes" -- nothing existed to change).
 4. GOALS — Reference ONLY the treatment goals provided in the input.
 5. REFERRALS — Only mention referrals that are clearly indicated by
    the observations. Otherwise omit.
@@ -675,7 +679,9 @@ CLINICAL TERMINOLOGY (use when supported by observations):
 - "compensatory movement strategies"
 - "proximal stability/weakness"
 - "anti-gravity positions"
-- "skilled occupational therapy services remain medically necessary"
+- "skilled occupational therapy services are medically necessary" (ONLY when
+  documented deficits support it; never "remain"/"continue to be" on a first
+  documented session -- there is no prior determination to remain in force)
 
 BILLING CODE ASSIGNMENT:
 Assign codes by the PRIMARY SKILLED OBJECTIVE the documentation supports —
@@ -1010,8 +1016,17 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 // recommended.", "Reviewed continuation of current home strategies...") --
 // though the hasMostRecentPlanContext/hasActiveGoalsContext gate below
 // already keeps this function from ever running in CASE B regardless.
+// FLAGS: `m` is load-bearing (added 2026-11-04). Every sentence regex in
+// this file anchors on `(?:^|(?<=[.!?]\s))`. Without `m`, `^` is the start
+// of the whole string and the lookbehind wants punctuation plus ONE
+// whitespace character -- so a sentence that opens a paragraph after a
+// blank line ("...session.\n\nPatient will continue to participate in
+// skilled occupational therapy...") never matched, and the backstop silently
+// did nothing for exactly the trailing-paragraph closing it was built for.
+// The pipeline eval (run 2026-11-04T20-50) showed 3/3 clean-room samples
+// with that sentence surviving as its own final paragraph.
 const SKILLED_OT_CONTINUATION_CLOSING =
-  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*)\b)[^.!?\n]*[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*)\b)[^.!?\n]*[.!?]/gim;
 
 /**
  * Detection only (no mutation) — exposed so callers like the fabrication
@@ -1027,16 +1042,25 @@ export function hasUnsupportedPlanClosing(plan: string): boolean {
   return result;
 }
 
+// CASE A only: the prompt's own CASE B default sentence, which the model
+// keeps emitting on first sessions where there is no frequency to continue.
+const CASE_A_CONTINUE_FREQUENCY =
+  /(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?Continue (?:the )?current treatment frequency[^.!?\n]*[.!?]?/gim;
+
 export function stripUnsupportedPlanClosing(
   plan: string,
   hasMostRecentPlanContext: boolean,
   hasActiveGoalsContext: boolean,
 ): string {
   if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
-  if (!hasUnsupportedPlanClosing(plan)) return plan;
+  CASE_A_CONTINUE_FREQUENCY.lastIndex = 0;
+  const hasFrequency = CASE_A_CONTINUE_FREQUENCY.test(plan);
+  CASE_A_CONTINUE_FREQUENCY.lastIndex = 0;
+  if (!hasUnsupportedPlanClosing(plan) && !hasFrequency) return plan;
   SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
   const stripped = plan
     .replace(SKILLED_OT_CONTINUATION_CLOSING, "")
+    .replace(CASE_A_CONTINUE_FREQUENCY, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -1048,6 +1072,47 @@ export function stripUnsupportedPlanClosing(
 }
 
 // Deterministic backstop for mood/presentation fabrication. The JSON-template
+// CASE A continuity-necessity claims OUTSIDE the Plan. Pipeline eval run
+// 2026-11-04T20-50: first-session notes closed the Assessment with "Skilled
+// occupational therapy services remain medically necessary..." and "These
+// observations demonstrate continued need for skilled occupational therapy
+// services..." -- the Plan backstop's banned class, one section earlier.
+// Tighter than the Plan regex on purpose: the persistence word must share
+// the sentence with a NECESSITY phrase (medically necessary / need for /
+// benefit from skilled), so an observation like "continued to participate in
+// the obstacle course with skilled cueing" is never touched. Gated to CASE A
+// by the caller exactly like stripUnsupportedPlanClosing.
+const CASE_A_CONTINUITY_NECESSITY =
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:medically\s+necessary|medical\s+necessity|need\s+for\s+(?:continued\s+|ongoing\s+)?skilled|benefit\s+from\s+(?:continued\s+|ongoing\s+)?skilled|necessit\w+)\b)[^.!?\n]*[.!?]/gim;
+
+export function hasUnsupportedContinuityNecessity(text: string): boolean {
+  if (!text) return false;
+  CASE_A_CONTINUITY_NECESSITY.lastIndex = 0;
+  const result = CASE_A_CONTINUITY_NECESSITY.test(text);
+  CASE_A_CONTINUITY_NECESSITY.lastIndex = 0;
+  return result;
+}
+
+export function stripUnsupportedContinuityNecessity(
+  text: string,
+  hasMostRecentPlanContext: boolean,
+  hasActiveGoalsContext: boolean,
+): string {
+  if (hasMostRecentPlanContext || hasActiveGoalsContext || !text) return text;
+  if (!hasUnsupportedContinuityNecessity(text)) return text;
+  CASE_A_CONTINUITY_NECESSITY.lastIndex = 0;
+  const stripped = text
+    .replace(CASE_A_CONTINUITY_NECESSITY, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  logger.warn(
+    "Stripped CASE A continuity/necessity claim outside the Plan (no prior plan or goals exist)",
+    { originalLength: text.length, strippedLength: stripped.length },
+  );
+  return stripped;
+}
+
 // subjective-field instruction has, since #420, explicitly forbidden
 // defaulting to "a plausible-sounding word like 'cooperative' or 'engaged'"
 // when Mood/Presentation is blank -- yet confirmed in production (clean-room
@@ -1066,7 +1131,7 @@ export function stripUnsupportedPlanClosing(
 // difficulty maintaining balance") and would be a real false-positive risk
 // without a second confirmed example to justify the wider net.
 const MOOD_PRESENTATION_CLAUSE =
-  /(?:^|(?<=[.!?]\s))[^.!?\n]*?\bpresented\s+as\s+[^.!?\n]+[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))[^.!?\n]*?\bpresented\s+as\s+[^.!?\n]+[.!?]/gim;
 
 /** Detection only (no mutation) -- mirrors hasUnsupportedPlanClosing. */
 export function hasUnsupportedMoodClause(text: string): boolean {
@@ -1116,7 +1181,7 @@ export function stripUnsupportedMoodClause(text: string, hasMood: boolean): stri
 // + was/were (not) documented/obtained/provided/recorded/reported) rather
 // than a broader net, matching the discipline from the mood backstop above.
 const DOCUMENTATION_DENIAL_CLAUSE =
-  /(?:^|(?<=[.!?]\s))(?:No\s+[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b|[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\s+not\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b)[^.!?\n]*[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))(?:No\s+[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b|[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\s+not\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b)[^.!?\n]*[.!?]/gim;
 
 /** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause. */
 export function hasUnsupportedDocumentationDenialClause(text: string): boolean {
@@ -1229,6 +1294,38 @@ export function hasUnsupportedDeficitAssertion(text: string): boolean {
   return UNSUPPORTED_DEFICIT_PATTERNS.some((re) => re.test(text));
 }
 
+/** True when the therapist supplied ANY observation the note could ground a deficit in. */
+export function requestHasObservations(request: AiSoapBillingRequest): boolean {
+  const a = request.assessment || ({} as AiSoapBillingRequest["assessment"]);
+  const ratingFields = [
+    a.performance, a.assistance, a.strength, a.motorPlanning, a.sensoryRegulation,
+    a.posturalControl, a.primitiveReflexes, a.fineMotor, a.grossMotor,
+    a.bilateralCoordination, a.endurance, a.engagement,
+  ];
+  if (ratingFields.some((v) => typeof v === "string" && v.trim().length > 0)) return true;
+  return (request.activityDetails || []).some((d) => d.response && d.response.trim().length > 0);
+}
+
+// Rationale fields ONLY (short, provider-facing coding text, never S/O/A/P
+// prose): when nothing was observed, "deficits" the model attributes to the
+// patient become "demands" of the activity, which is the claim the input
+// actually supports. Pipeline eval run 2026-11-04T20-50, P6 sample 3: a
+// rationale asserted deficits with every observation field blank.
+export function softenUnsupportedDeficitInRationale(text: string): string {
+  if (!text || !hasUnsupportedDeficitAssertion(text)) return text;
+  const out = text
+    .replace(/\b(underlying|patient'?s|his|her|their|identified|existing|noted|documented|observed)\s+((?:[\w/-]+\s+){0,3})deficits?\b/gi, (_m, _lead, mid) => `${mid}demands`)
+    .replace(/\baddress(es|ing)?\s+(?:the\s+)?((?:[\w/-]+\s+){0,3})deficits?\b/gi, (_m, suffix, mid) => `target${suffix ?? ""} ${mid}demands`)
+    .replace(/\bdeficits?\s+(in|with|of)\s+/gi, "demands on ")
+    .replace(/\b(weakness|decreased|reduced|poor|impaired|limited)\s+((?:[\w/-]+\s+){0,2})(strength|endurance|postural\s+control|core\s+stability|motor\s+planning|balance|coordination)\b/gi, (_m, _adj, mid, noun) => `${mid}${noun} demands`)
+    .replace(/[ \t]{2,}/g, " ");
+  logger.warn("Softened undocumented deficit language in a billing rationale (no observations supplied)", {
+    originalLength: text.length,
+    softenedLength: out.length,
+  });
+  return out;
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
@@ -1334,11 +1431,16 @@ export async function validateAndEnhanceResponse(
   // Per-activity rationales get the same suggestion-framing backstop as the
   // aggregate codes (normalizeActivityCptPairings fills defaults; the model's
   // own wording is what needs softening).
+  const noObservations = !requestHasObservations(request);
+  const cleanRationale = (text: string) =>
+    noObservations
+      ? softenUnsupportedDeficitInRationale(softenAbsolutistCodingClaim(text))
+      : softenAbsolutistCodingClaim(text);
   for (const pairing of activityCptPairings) {
-    if (pairing.rationale) pairing.rationale = softenAbsolutistCodingClaim(pairing.rationale);
+    if (pairing.rationale) pairing.rationale = cleanRationale(pairing.rationale);
   }
   for (const code of cptCodes) {
-    if (code.rationale) code.rationale = softenAbsolutistCodingClaim(code.rationale);
+    if (code.rationale) code.rationale = cleanRationale(code.rationale);
   }
 
   const hasMood = !!request.mood;
@@ -1352,7 +1454,14 @@ export async function validateAndEnhanceResponse(
       stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
     ),
     assessment: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(aiResponse.assessment || "", hasMood),
+      stripUnsupportedMoodClause(
+        stripUnsupportedContinuityNecessity(
+          aiResponse.assessment || "",
+          hasMostRecentPlanContext,
+          hasActiveGoalsContext,
+        ),
+        hasMood,
+      ),
     ),
     plan: stripUnsupportedDocumentationDenialClause(
       stripUnsupportedMoodClause(
@@ -1368,9 +1477,9 @@ export async function validateAndEnhanceResponse(
     activityCptPairings,
     timeBlocks,
     totalReimbursement,
-    billingRationale: softenAbsolutistCodingClaim(aiResponse.billingRationale || ""),
+    billingRationale: cleanRationale(aiResponse.billingRationale || ""),
     auditNotes: (aiResponse.auditNotes || []).map((n: unknown) =>
-      typeof n === "string" ? softenAbsolutistCodingClaim(n) : n,
+      typeof n === "string" ? cleanRationale(n) : n,
     ),
     generationMode: "ai",
   };

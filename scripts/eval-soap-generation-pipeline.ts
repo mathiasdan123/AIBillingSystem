@@ -77,6 +77,7 @@ import { storage } from '../server/storage';
 import {
   generateSoapNoteAndBilling,
   hasAbsolutistCodingClaim,
+  hasUnsupportedContinuityNecessity,
   hasUnsupportedDeficitAssertion,
   hasUnsupportedDocumentationDenialClause,
   hasUnsupportedMoodClause,
@@ -147,6 +148,19 @@ function noBackstopTripwires(note: FinalNote, hasMood: boolean): string | null {
   return failures.length > 0 ? failures.join(' ') : null;
 }
 
+// CASE A scenarios only (no prior plan, no goals): neither the Assessment
+// nor the Plan may carry a "remain medically necessary" / "continued need
+// for skilled" claim.
+function noContinuityNecessityInCaseA(note: FinalNote, _ctx: { hasMood: boolean }) {
+  const failures: string[] = [];
+  for (const field of ['assessment', 'plan'] as const) {
+    if (hasUnsupportedContinuityNecessity(note[field])) {
+      failures.push(`hasUnsupportedContinuityNecessity matched the FINAL ${field} -- stripUnsupportedContinuityNecessity / stripUnsupportedPlanClosing should have removed this on a first documented session.`);
+    }
+  }
+  return failures.length > 0 ? failures.join(' ') : null;
+}
+
 function noAgeAnywhere(note: FinalNote, _ctx: { hasMood: boolean }) {
   const combined = `${note.subjective} ${note.objective} ${note.assessment} ${note.plan}`;
   return /\b(19|20)\d{2}\b.{0,20}\b(years?[- ]old|y\.?o\.?|age)\b|\b(age(d)?\s*\d+)\b/i.test(combined)
@@ -184,13 +198,13 @@ const PIPELINE_JUDGE_SYSTEM_PROMPT = `You are a strict compliance reviewer check
 You will be told, for each of Mood/Presentation and Caregiver Report, whether the therapist's real input was BLANK or carried a real value (and if real, a summary of its substance). Apply the matching checks below only for the fields actually relevant to this note -- you will be told which.
 
 FABRICATION checks:
-1. TRACEABILITY (the Plan section): every clinical claim in PLAN must trace to an explicit input field you're given, or to a default you're explicitly told applies. A sentence asserting continuity with an existing plan, an established treatment frequency, a reviewed/continued home program, established treatment goals, a documented plan of care, or ongoing necessity of skilled therapy -- when no such history was provided -- is a FABRICATION, however clinically plausible it reads, regardless of exact wording.
+1. TRACEABILITY (the Plan section, and ALSO any medical-necessity or "continued need" sentence in the Assessment): every clinical claim in PLAN must trace to an explicit input field you're given, or to a default you're explicitly told applies. A sentence asserting continuity with an existing plan, an established treatment frequency, a reviewed/continued home program, established treatment goals, a documented plan of care, or ongoing necessity of skilled therapy -- when no such history was provided -- is a FABRICATION, however clinically plausible it reads, regardless of exact wording.
 2. MOOD FABRICATION: if the Mood/Presentation input was BLANK, the note must not describe the patient's mood, affect, demeanor, or presentation ANYWHERE.
-3. CAREGIVER REPORT FABRICATION: if the Caregiver Report input was BLANK, the note must make NO statement about a caregiver report in either direction -- not "a caregiver report was obtained" and not "a caregiver report was not obtained." Silence is correct.
+3. CAREGIVER REPORT FABRICATION: if the Caregiver Report input was BLANK, the note must make NO statement about a caregiver report in either direction -- not "a caregiver report was obtained" and not "a caregiver report was not obtained." Silence is correct. A sentence about the patient's mood or presentation ("Patient presented as cooperative and engaged") is a MOOD sentence, judged ONLY under checks 2/4 -- it is never a caregiver-report statement and must never be flagged under this check. The exact sentence "No subjective information was entered for this session." is the pipeline's own placeholder and is always allowed.
 
 CODING-RATIONALE checks (apply to the BILLING TEXT section of every note):
-6. CODING OVERCLAIM: a billing/code rationale that presents its code as the only defensible, only correct, required or mandatory choice -- in any wording -- is a violation. Code suggestions are for provider review; when dynamic gross-motor activities could be argued as 97530 or 97110, a rationale may prefer one but must not deny that the other exists. A rationale that names the alternative and explains its preference is CORRECT and must not be flagged.
-7. UNSUPPORTED DEFICIT: if you are told NO performance/strength/assistance/endurance observations and NO activity responses were supplied, any statement (in the Assessment, the Plan, or the billing text) that the patient HAS a deficit, weakness, decreased endurance, impaired motor planning, etc. is a fabricated clinical finding. Describing what an activity TARGETS or DEMANDS ("trampoline work targets lower-extremity strength and endurance") is allowed and must NOT be flagged. When activity responses WERE supplied (e.g. fatigue noted during an activity), an inference from that response is allowed per the inference rule below.
+6. CODING OVERCLAIM: flag ONLY wording that claims exclusivity or compulsion -- "the only defensible/correct/appropriate code", "must be coded as", "no other code applies", "required". The pipeline INSTRUCTS the model to use 97530 Therapeutic Activities as the conservative default when documentation could support more than one code and to SAY so; therefore sentences like "97530 is the conservative default when documentation supports multiple interpretations" or "97530 is the conservative choice here" are CORRECT and must NOT be flagged. A rationale that names an alternative and explains its preference is CORRECT. Preferring a code is not overclaiming; denying that any alternative exists is.
+7. UNSUPPORTED DEFICIT: apply this check ONLY when the input summary says in so many words that CHECK 7 APPLIES (no observations of any kind). When it applies: any statement that the patient HAS a deficit, weakness, decreased endurance, impaired motor planning, etc. is a fabricated clinical finding; describing what an activity TARGETS or DEMANDS ("trampoline work targets lower-extremity strength and endurance") is allowed. When the input summary says check 7 does NOT apply (activity responses were supplied), do not raise this check at all -- an inference from a supplied response (fatigue at 8 minutes -> endurance/activity tolerance) is reviewable interpretation, not fabrication. Continuity words ("continued need", "remain necessary") are check 1's business, never check 7's.
 
 OMISSION checks (only apply when told the field is NON-blank):
 4. MOOD OMISSION: if the Mood/Presentation input carried a real value, the note's Subjective/Objective/Assessment must reflect that real information SOMEWHERE, in substance -- a reasonable paraphrase is fine (e.g. "cooperative and engaged" legitimately becomes "patient demonstrated cooperative engagement throughout the session"). Flag only if the real supplied mood information is entirely absent from the note, not if the wording differs.
@@ -326,16 +340,16 @@ const scenarios: Scenario[] = [
     guards: 'Final-output equivalent of raw harness Scenario 1 -- fabrication checks against the REAL pipeline output (post-backstops).',
     request: { patientId: 900001, mood: '', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('CleanRoom'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims],
-    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.\n- Activity responses WERE supplied (see above), so an endurance inference from the trampoline fatigue note is allowed under check 7.` },
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA],
+    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.\n- Activity responses WERE supplied (see above): check 7 does NOT apply to this note.` },
   },
   {
     name: 'P2: blank date of birth',
     guards: 'Final-output equivalent of raw harness Scenario 4 -- the epoch-age bug (#425), checked on the real pipeline output.',
     request: { patientId: 900002, mood: '', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('DobBlank', null), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, noAgeAnywhere, subjectiveNotBlank, noAbsolutistCodingClaims],
-    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Date of birth: BLANK (not entered).\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.` },
+    deterministicChecks: [noBackstopTripwires, noAgeAnywhere, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA],
+    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Date of birth: BLANK (not entered).\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.\n- Activity responses WERE supplied: check 7 does NOT apply to this note.` },
   },
   {
     name: 'P3: real history + active goals (continuity SHOULD appear) -- control, no judge',
@@ -370,16 +384,16 @@ const scenarios: Scenario[] = [
     guards: 'Requirement #3: a genuinely supplied mood value must appear in the final note in substance (paraphrase allowed), checked via the omission judge.',
     request: { patientId: 900004, mood: 'Cooperative and engaged throughout the session', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('MoodControl'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims],
-    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: REAL VALUE supplied -- "Cooperative and engaged throughout the session." Apply check 4 (mood omission), not check 2.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.` },
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA],
+    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: REAL VALUE supplied -- "Cooperative and engaged throughout the session." Apply check 4 (mood omission), not check 2. A Subjective sentence restating this mood is correct.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.\n- Activity responses WERE supplied: check 7 does NOT apply to this note.` },
   },
   {
     name: 'P5: positive control -- genuine caregiver report must survive',
     guards: 'Requirement #3: a genuinely supplied caregiver report must appear in the final note in substance (paraphrase allowed), checked via the omission judge.',
     request: { patientId: 900005, mood: '', caregiverReport: 'Caregiver reports increased independence with morning self-dressing routine at home this week.', ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('CaregiverControl'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims],
-    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: REAL VALUE supplied -- "Caregiver reports increased independence with morning self-dressing routine at home this week." Apply check 5 (caregiver omission), not check 3.` },
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA],
+    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: REAL VALUE supplied -- "Caregiver reports increased independence with morning self-dressing routine at home this week." Apply check 5 (caregiver omission), not check 3.\n- Activity responses WERE supplied: check 7 does NOT apply to this note.` },
   },
   {
     name: 'P6: activities only -- no observations, no activity responses (targets, not deficits)',
@@ -397,14 +411,14 @@ const scenarios: Scenario[] = [
       planNextSteps: 'Bilateral coordination and sustained attention',
     } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('ActivitiesOnly'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noUnsupportedDeficitAssertion],
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA, noUnsupportedDeficitAssertion],
     judge: { context: `- Activities: Obstacle Course, Trampoline -- NO activity responses were entered.
 - Clinical observation ratings (performance, assistance, strength, motor planning, sensory regulation, endurance): all BLANK.
 - Plan Next Steps: "Bilateral coordination and sustained attention"
 - No prior treatment plan, goals, or session history exists for this patient (first documented session).
 - Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.
 - Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.
-- NO observations of any kind were supplied: apply check 7 strictly. Any statement that the patient HAS a deficit, weakness or decreased endurance is a fabricated finding; describing what the activities target is fine.` },
+- NO observations of any kind were supplied: CHECK 7 APPLIES to this note. Any statement that the patient HAS a deficit, weakness or decreased endurance is a fabricated finding; describing what the activities target is fine.` },
   },
 ];
 

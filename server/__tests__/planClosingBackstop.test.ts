@@ -81,8 +81,12 @@ describe('stripUnsupportedPlanClosing', () => {
   });
 
   it('does not touch legitimate CASE A content', () => {
+    // "Continue current treatment frequency." used to sit in this list. It is
+    // CASE B's sentence; on a first documented session there is no cadence
+    // to continue, and the pipeline eval (2026-11-04T20-50) flagged it as a
+    // fabricated history. It is now stripped in CASE A (see the paragraph
+    // tests below) and kept in CASE B.
     const legitimate = [
-      'Continue current treatment frequency.',
       'No home program assigned this session.',
       'Next session will focus on bilateral coordination and sustained attention through graded therapeutic activities.',
       'Continue to monitor for signs of fatigue during dynamic activities.',
@@ -120,7 +124,7 @@ describe('hasUnsupportedPlanClosing', () => {
     expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
   });
 
-  it('returns false for legitimate content', () => {
+  it('returns false for legitimate content (the frequency sentence is handled by its own CASE A rule, not this detector)', () => {
     expect(hasUnsupportedPlanClosing('Continue current treatment frequency.')).toBe(false);
     expect(hasUnsupportedPlanClosing('')).toBe(false);
   });
@@ -131,5 +135,33 @@ describe('hasUnsupportedPlanClosing', () => {
     expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
     expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
     expect(hasUnsupportedPlanClosing(fabricated)).toBe(true);
+  });
+});
+
+describe('stripUnsupportedPlanClosing -- paragraph-initial sentences (pipeline eval run 2026-11-04T20-50)', () => {
+  // Every sentence regex anchored on `(?:^|(?<=[.!?]\s))` with no `m` flag:
+  // a sentence opening a new paragraph after a blank line never matched, so
+  // the trailing-paragraph closing this backstop exists for survived 3/3
+  // clean-room samples.
+  it('strips the closing when it is its own final paragraph after a blank line', () => {
+    const plan =
+      'Next session will focus on bilateral coordination and sustained attention through graded therapeutic activities.\n\nNo home program assigned this session.\n\nPatient will continue to participate in skilled occupational therapy to address identified areas of need through structured therapeutic interventions.';
+    expect(hasUnsupportedPlanClosing(plan)).toBe(true);
+    const stripped = stripUnsupportedPlanClosing(plan, false, false);
+    expect(stripped).not.toMatch(/continue to participate/i);
+    expect(stripped).toContain('No home program assigned this session.');
+  });
+
+  it('strips "Continue current treatment frequency." in CASE A (no cadence exists to continue)', () => {
+    const plan =
+      'Next session will focus on bilateral coordination. Continue current treatment frequency.\n\nNo home program assigned this session.';
+    const stripped = stripUnsupportedPlanClosing(plan, false, false);
+    expect(stripped).not.toMatch(/continue current treatment frequency/i);
+    expect(stripped).toContain('Next session will focus on bilateral coordination.');
+  });
+
+  it('leaves "Continue current treatment frequency" alone in CASE B', () => {
+    const plan = 'Current plan remains appropriate; no changes recommended.\n\nContinue current treatment frequency.';
+    expect(stripUnsupportedPlanClosing(plan, true, true)).toBe(plan);
   });
 });

@@ -24,6 +24,10 @@ import {
   hasUnsupportedDeficitAssertion,
   validateAndEnhanceResponse,
   fallbackGeneration,
+  hasUnsupportedContinuityNecessity,
+  stripUnsupportedContinuityNecessity,
+  softenUnsupportedDeficitInRationale,
+  requestHasObservations,
 } from '../services/aiSoapBillingService';
 
 describe('softenAbsolutistCodingClaim', () => {
@@ -121,5 +125,72 @@ describe('fallbackGeneration', () => {
   it('never leaves Subjective empty when mood and caregiver report are both blank', () => {
     const out = fallbackGeneration(baseRequest, { firstName: 'Eval', lastName: 'Patient' }, 3);
     expect(out.subjective).toBe(SUBJECTIVE_PLACEHOLDER);
+  });
+});
+
+describe('stripUnsupportedContinuityNecessity (CASE A Assessment)', () => {
+  const remain = 'Skilled occupational therapy services remain medically necessary to address documented endurance limitations and motor planning needs.';
+  const continued = 'These observations demonstrate continued need for skilled occupational therapy services to address motor planning.';
+  const observation = 'Patient continued to participate in the obstacle course with skilled verbal cueing throughout.';
+
+  it('detects the two shapes that survived the 2026-11-04 pipeline eval', () => {
+    expect(hasUnsupportedContinuityNecessity(remain)).toBe(true);
+    expect(hasUnsupportedContinuityNecessity(continued)).toBe(true);
+  });
+
+  it('does not touch an observation that merely uses "continued" and "skilled"', () => {
+    expect(hasUnsupportedContinuityNecessity(observation)).toBe(false);
+    expect(stripUnsupportedContinuityNecessity(observation, false, false)).toBe(observation);
+  });
+
+  it('strips in CASE A only, including when the sentence opens a paragraph', () => {
+    const assessment = `Obstacle course work targeted sequencing and motor planning.\n\n${remain}`;
+    const stripped = stripUnsupportedContinuityNecessity(assessment, false, false);
+    expect(stripped).not.toMatch(/remain medically necessary/i);
+    expect(stripped).toContain('Obstacle course work targeted sequencing and motor planning.');
+    expect(stripUnsupportedContinuityNecessity(assessment, true, false)).toBe(assessment);
+  });
+});
+
+describe('softenUnsupportedDeficitInRationale', () => {
+  it('turns attributed deficits into activity demands', () => {
+    const out = softenUnsupportedDeficitInRationale('Dynamic activities to address underlying strength and endurance deficits within functional participation context.');
+    expect(hasUnsupportedDeficitAssertion(out)).toBe(false);
+    expect(out).toMatch(/strength and endurance demands/i);
+  });
+
+  it('leaves target language untouched', () => {
+    const fine = 'Trampoline work targets lower-extremity strength and endurance; 97110 is also plausible.';
+    expect(softenUnsupportedDeficitInRationale(fine)).toBe(fine);
+  });
+});
+
+describe('requestHasObservations', () => {
+  it('is false with blank ratings and no activity responses, true with either', () => {
+    expect(requestHasObservations(baseRequest)).toBe(false);
+    expect(requestHasObservations({ ...baseRequest, assessment: { ...baseRequest.assessment, strength: 'Fair' } })).toBe(true);
+    expect(requestHasObservations({ ...baseRequest, activityDetails: [{ name: 'Trampoline', response: 'Fatigue at 8 minutes.' }] })).toBe(true);
+  });
+});
+
+describe('validateAndEnhanceResponse with no observations', () => {
+  it('softens deficit language in rationales but leaves the Assessment prose alone', async () => {
+    const aiResponse = {
+      subjective: 'No subjective information was entered for this session.',
+      objective: 'Session conducted in Sensory gym for 45 minutes.',
+      assessment: 'Activities target motor planning and endurance demands.',
+      plan: 'Next session: bilateral coordination.',
+      cptCodes: [{ code: '97530', name: 'Therapeutic Activities', units: 3, rationale: 'Addresses the patient\'s underlying strength and endurance deficits.', activitiesAssigned: ['Obstacle Course', 'Trampoline'] }],
+      activityCptPairings: [
+        { activity: 'Obstacle Course', code: '97530', rationale: 'Functional task; 97112 also plausible.' },
+        { activity: 'Trampoline', code: '97530', rationale: 'Targets endurance.' },
+      ],
+      billingRationale: 'Coded to address identified endurance deficits.',
+      auditNotes: [],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, baseRequest, 3, false, false);
+    expect(hasUnsupportedDeficitAssertion(out.billingRationale)).toBe(false);
+    expect(out.cptCodes.every((c) => !hasUnsupportedDeficitAssertion(c.rationale))).toBe(true);
+    expect(out.assessment).toBe('Activities target motor planning and endurance demands.');
   });
 });
