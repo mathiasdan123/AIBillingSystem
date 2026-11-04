@@ -20,6 +20,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
 import logger from '../services/logger';
+import { isMfaExemptDemoUser } from './demoPracticeExemption';
 
 // MFA re-verification window for PHI/admin routes. Sliding: refreshed by PHI
 // activity (see touchMfaSession), so it measures idleness, not wall-clock time
@@ -271,6 +272,13 @@ export const mfaRequired = async (req: Request, res: Response, next: NextFunctio
         message: 'User not found',
         code: 'USER_NOT_FOUND'
       });
+    }
+
+    // Demo practice: fictional data only. Skip both the enrollment check and
+    // the session challenge so a prospect is never asked for a code that
+    // only the shared demo account's owner could produce.
+    if (await isMfaExemptDemoUser(dbUser)) {
+      return next();
     }
 
     // Check if MFA is enabled on the account

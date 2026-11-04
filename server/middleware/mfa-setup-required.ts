@@ -13,6 +13,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { storage } from '../storage';
+import { isMfaExemptDemoUser } from './demoPracticeExemption';
 import logger from '../services/logger';
 
 // Routes exempt from MFA setup enforcement (needed to actually set up MFA)
@@ -77,6 +78,12 @@ export const mfaSetupRequired = async (req: Request, res: Response, next: NextFu
     }
 
     if (dbUser.mfaEnabled) {
+      return next();
+    }
+
+    // Demo practice: fictional data only, and the shared demo account's
+    // enrollment must never be what stands between a prospect and the demo.
+    if (await isMfaExemptDemoUser(dbUser)) {
       return next();
     }
 
