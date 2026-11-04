@@ -38,9 +38,15 @@ name: SOAP Generation Fabrication Eval
 on:
   pull_request:
     branches: [main]
-    paths:
-      - 'server/services/aiSoapBillingService.ts'
-      - 'server/services/aiProvider.ts'
+    # Same opt-in as eval-prompt-pipeline.yml: the job below only runs when
+    # the PR carries the `ready-for-eval` label. Before 2026-11-04 this fired
+    # on every push to a prompt PR, which doubled the cost of every attempt
+    # at the required gate (three rounds on #450 ran this harness three
+    # times, ~$5 each, with nothing new to learn from it). `labeled` is in
+    # the list so adding the label starts a run; a path filter is NOT used
+    # because a required-check context that never gets a run stays
+    # "Expected" forever (see eval-prompt-pipeline.yml).
+    types: [opened, reopened, labeled, synchronize]
   schedule:
     # Wednesdays 07:00 UTC -- a different day than ci.yml's Monday Stedi
     # job, so scheduled AI-cost workflows don't all land on the same day.
@@ -50,6 +56,7 @@ on:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready-for-eval')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -75,3 +82,4 @@ jobs:
           name: eval-soap-generation-results
           path: .eval-results/
           if-no-files-found: ignore
+          include-hidden-files: true
