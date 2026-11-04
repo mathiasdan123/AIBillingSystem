@@ -275,7 +275,12 @@ export async function generateSoapNoteAndBilling(
       // note). Perceived speed comes from streaming the note as it's written,
       // not from a tight cap. See the audit notes in adversarial review.
       max_tokens: 6000,
-      temperature: 0.5,
+      // 0.2, down from 0.5 (2026-11-04): a live retest generated two notes from
+      // IDENTICAL inputs that chose different codes for the same activities
+      // (97110 vs 97530) while each rationale called its own choice the "only
+      // defensible" one. Clinical documentation and code suggestions should
+      // be as repeatable as the model allows; variety has no value here.
+      temperature: 0.2,
       system:
         systemPrompt +
         "\n\nRespond with ONLY a valid JSON object, no markdown fencing or commentary.",
@@ -638,7 +643,10 @@ Cover as applicable based on the input:
 - Progress toward goals — ONLY if treatment goals data was provided
 - Medical necessity statement — summarize the clinical deficits that
   WERE observed and link them to functional participation. Do not
-  invent deficits.
+  invent deficits. If no performance/strength/assistance/endurance
+  observations were supplied, the note may describe what the activities
+  TARGET, but must not state that the patient HAS strength, endurance,
+  motor-planning or other deficits.
 
 OMIT any sub-section if the input does not support it. It is better to
 write 4 substantive paragraphs than 8 padded ones.
@@ -707,6 +715,31 @@ Objective is paired with its billing code.
 - These are SUGGESTIONS for accuracy review, never final: the treating
   therapist reviews and can change every per-activity code and makes every
   coding decision.
+
+CODING RATIONALE DISCIPLINE (applies to every rationale and billingRationale):
+1. Suggestion-framed, never absolute. A rationale must NEVER call a code the
+   "only defensible", "only correct", "only appropriate" or "required"
+   choice, and must never say an activity "must be coded/billed as" a code.
+   Live retest, 2026-11-04: two notes generated from IDENTICAL inputs chose
+   97110 for one and 97530 for the other, and each called its own choice the
+   "only defensible" code. Both cannot be true; the certainty was fabricated.
+2. Name the alternative when one is plausible. Dynamic gross-motor activities
+   (obstacle course, trampoline, climbing) can be argued as 97530 Therapeutic
+   Activities (functional/dynamic task) or 97110 Therapeutic Exercise
+   (strength/endurance) depending on the documented objective. When the
+   documentation supports more than one reading, say so in one clause, name
+   the alternative, and state which documented detail tipped the choice. With
+   nothing documented to tip it, use the conservative default (97530) and say
+   that is why.
+3. Targets, not diagnoses. Describe what an activity TARGETS or DEMANDS
+   (strength, endurance, motor planning, postural control). Do NOT assert
+   that the patient HAS a deficit unless the therapist's performance,
+   strength, assistance, endurance or activity-response observations document
+   one. "Trampoline work targets lower-extremity strength and endurance" is
+   correct with no observations. "Trampoline work addresses the patient's
+   underlying strength and endurance deficits" asserts a clinical finding
+   nobody documented -- that is fabrication, in a rationale exactly as much
+   as in the Assessment. This rule applies to auditNotes too.
 
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
@@ -898,7 +931,7 @@ the input is rich — never pad to reach them, and never invent specifics
 (trial counts, scores, prior-session comparisons, equipment adjectives) to
 fill space. The anti-fabrication rules above OVERRIDE every example here.
 {
-  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: ONLY if the Caregiver Report field above has a real value (not the marker), write it as 'Caregiver reported: [that value].' If the field is the marker, OMIT any caregiver-report sentence entirely -- do NOT write 'Caregiver report was not obtained this session' or anything asserting that no report was given; the field being blank in this form means the therapist didn't type anything here, not that you know a report wasn't obtained. Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.",
+  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: ONLY if the Caregiver Report field above has a real value (not the marker), write it as 'Caregiver reported: [that value].' If the field is the marker, OMIT any caregiver-report sentence entirely -- do NOT write 'Caregiver report was not obtained this session' or anything asserting that no report was given; the field being blank in this form means the therapist didn't type anything here, not that you know a report wasn't obtained. Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.\n\nIf BOTH the Caregiver Report and Mood/Presentation fields are the marker and no other subjective input exists, write exactly: 'No subjective information was entered for this session.' -- a statement about this form, not a claim about what happened in the room. Never leave the section empty.",
 
   "objective": "Scaled to the richness of the input (120-300 words when rich; shorter when sparse). Structure:\\n\\nSession conducted in [location] for [duration] minutes. Standardized measures: include scores ONLY if the input explicitly states a measure was administered and gives the value; otherwise write 'Standardized measurements were not administered; observations were qualitative.'\\n\\nActivities & performance:\\n- [Activity from the activities list]: describe with the assistance level the therapist provided and qualitative performance. Do NOT invent trial counts (e.g. '8/10 trials'), timings, or percentages that weren't provided.\\n\\nAssistance levels: use the assistance field. Standard terms (Independent / Modified Independent / Supervision / Min / Mod / Max Assist / Dependent). Cue types (verbal/visual/tactile/hand-over-hand) when they describe how an activity was supported — no invented cue counts.\\n\\nEquipment/materials: name ONLY items in the activities list, with ONLY the adjectives the therapist used (no '55cm', 'medium resistance', '2 lb' unless stated).\\n\\nSkilled interventions: describe the techniques corresponding to the activities, framed by their skilled/functional objective (e.g. neuromuscular re-education for postural control; graded vestibular-proprioceptive input to support motor planning).",
 
@@ -911,7 +944,7 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
       "code": "97533",
       "name": "Sensory Integration",
       "units": 2,
-      "rationale": "Clinical justification for this code",
+      "rationale": "Why this code fits the documented skilled objective. Suggestion-framed for provider review: if another code is also plausible for these activities, name it in one clause and say which documented detail tipped the choice (or that 97530 is the conservative default because nothing documented tips it). Describe what the activities TARGET; never assert the patient HAS a deficit unless an observation above documents one. Never use \"only defensible\", \"only correct\", \"must be coded as\" or similar absolute wording.",
       "activitiesAssigned": ["Activity 1", "Activity 2"]
     }
   ],
@@ -919,10 +952,10 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
     {
       "activity": "Activity name EXACTLY as it appears in the activities list above",
       "code": "97530",
-      "rationale": "Why this code fits this activity's documented skilled objective (or that 97530 is the conservative default because nothing more specific is clearly supported)"
+      "rationale": "Why this code fits this activity's documented skilled objective (or that 97530 is the conservative default because nothing more specific is clearly supported). Same discipline as above: name a plausible alternative in one clause, describe targets rather than asserting undocumented deficits, no absolute wording."
     }
   ],
-  "billingRationale": "Explanation of code assignment strategy",
+  "billingRationale": "Explanation of the code-assignment reasoning for provider review: which documented details drove each code, which alternative code(s) were considered and why they were not chosen. Never present a choice as the only defensible one, and never describe patient deficits that no observation above documents.",
   "auditNotes": ["Documentation points supporting the billing codes"]
 }
 
@@ -1109,6 +1142,93 @@ export function stripUnsupportedDocumentationDenialClause(text: string): string 
   return stripped;
 }
 
+// ---------------------------------------------------------------------------
+// Subjective placeholder. Live retest, 2026-11-04: with Mood/Presentation and
+// Caregiver Report both blank, one generation wrote a sentence explaining
+// that nothing subjective was supplied and another left the section EMPTY.
+// An empty Subjective reads as a documentation gap on a signed note. The
+// placeholder is a statement about the form ("was entered"), deliberately
+// NOT about the room ("was not obtained") -- see DOCUMENTATION_DENIAL_CLAUSE
+// above for why that distinction matters, and note its vocabulary (caregiver
+// report / mood / presentation) does not match this sentence.
+// ---------------------------------------------------------------------------
+export const SUBJECTIVE_PLACEHOLDER = "No subjective information was entered for this session.";
+
+export function ensureSubjectivePresent(text: string): string {
+  return text && text.trim().length > 0 ? text : SUBJECTIVE_PLACEHOLDER;
+}
+
+// ---------------------------------------------------------------------------
+// Absolutist coding-claim backstop. Live retest, 2026-11-04: two generations
+// from IDENTICAL inputs chose 97110 and 97530 respectively for the same
+// activities, and each rationale called its own choice the "only defensible"
+// code. Whatever the right code is, that certainty was fabricated, and it is
+// the kind of sentence a provider is least likely to question. The prompt now
+// forbids the wording (CODING RATIONALE DISCIPLINE); this rewrites the known
+// shapes into suggestion framing when the model uses them anyway. Scoped to
+// the rationale fields only -- never applied to S/O/A/P prose.
+// ---------------------------------------------------------------------------
+const ABSOLUTIST_CODING_REWRITES: Array<[RegExp, string]> = [
+  // "the only defensible code" -> "the suggested code"
+  [/\b(?:the\s+)?only\s+(?:defensible|correct|appropriate|supportable|justifiable|valid|accurate)\s+(code|choice|option|assignment|selection)\b/gi, "suggested $1"],
+  // "is the only defensible ..." (no noun) -> "is a defensible ..."
+  [/\b(is|are|remains|was)\s+the\s+only\s+(defensible|correct|appropriate|supportable|justifiable|valid|accurate)\b/gi, "$1 a $2"],
+  // "must be coded/billed as" -> "is suggested as"
+  [/\bmust\s+be\s+(?:coded|billed|assigned|reported)\s+as\b/gi, "is suggested as"],
+  // "no other code is defensible/appropriate" -> alternative acknowledged
+  [/\bno\s+other\s+code\s+(?:is|would\s+be|could\s+be)\s+(?:defensible|appropriate|correct|supportable|justifiable|valid|accurate)\b/gi, "an alternative code may also be defensible"],
+];
+
+/** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause. */
+export function hasAbsolutistCodingClaim(text: string): boolean {
+  if (!text) return false;
+  return ABSOLUTIST_CODING_REWRITES.some(([re]) => {
+    re.lastIndex = 0;
+    const hit = re.test(text);
+    re.lastIndex = 0;
+    return hit;
+  });
+}
+
+export function softenAbsolutistCodingClaim(text: string): string {
+  if (!text || !hasAbsolutistCodingClaim(text)) return text;
+  let out = text;
+  for (const [re, replacement] of ABSOLUTIST_CODING_REWRITES) {
+    re.lastIndex = 0;
+    out = out.replace(re, replacement);
+  }
+  logger.warn("Softened absolutist coding claim in a billing rationale", {
+    originalLength: text.length,
+    softenedLength: out.length,
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Unsupported-deficit detector. Live retest, 2026-11-04: with no performance,
+// strength, assistance or endurance observations supplied, a generation
+// asserted "underlying strength and endurance deficits" in the Assessment and
+// the billing explanation. Describing what an activity TARGETS is fine;
+// asserting the patient HAS a deficit is a clinical finding nobody made.
+//
+// DETECTION ONLY. Unlike the mood/denial clauses, "deficit" sentences in the
+// Assessment are legitimate whenever observations exist, and the right fix
+// when they do not is to regenerate, not to excise prose from a clinical
+// paragraph. Used by the pipeline eval on its no-observation scenario and
+// available to callers that know no observations were supplied.
+// ---------------------------------------------------------------------------
+const UNSUPPORTED_DEFICIT_PATTERNS: RegExp[] = [
+  /\b(?:underlying|patient'?s|his|her|their|identified|existing|noted|documented|observed)\s+(?:[\w/-]+\s+){0,3}deficits?\b/i,
+  /\bdeficits?\s+(?:in|with|of)\s+(?:strength|endurance|motor\s+planning|postural|core|balance|coordination|bilateral|praxis|regulation)/i,
+  /\baddress(?:es|ing)?\s+(?:the\s+)?(?:[\w/-]+\s+){0,3}deficits?\b/i,
+  /\b(?:weakness|decreased|reduced|poor|impaired|limited)\s+(?:[\w/-]+\s+){0,2}(?:strength|endurance|postural\s+control|core\s+stability|motor\s+planning|balance|coordination)\b/i,
+];
+
+export function hasUnsupportedDeficitAssertion(text: string): boolean {
+  if (!text) return false;
+  return UNSUPPORTED_DEFICIT_PATTERNS.some((re) => re.test(text));
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
@@ -1129,7 +1249,7 @@ export async function validateAndEnhanceResponse(
       code: code.code,
       name: code.name || codeInfo?.name || "Unknown",
       units: code.units || 1,
-      rationale: code.rationale || "",
+      rationale: softenAbsolutistCodingClaim(code.rationale || ""),
       reimbursement: rate * (code.units || 1),
       activitiesAssigned: code.activitiesAssigned || []
     };
@@ -1211,10 +1331,22 @@ export async function validateAndEnhanceResponse(
     }
   }
 
+  // Per-activity rationales get the same suggestion-framing backstop as the
+  // aggregate codes (normalizeActivityCptPairings fills defaults; the model's
+  // own wording is what needs softening).
+  for (const pairing of activityCptPairings) {
+    if (pairing.rationale) pairing.rationale = softenAbsolutistCodingClaim(pairing.rationale);
+  }
+  for (const code of cptCodes) {
+    if (code.rationale) code.rationale = softenAbsolutistCodingClaim(code.rationale);
+  }
+
   const hasMood = !!request.mood;
   return {
-    subjective: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
+    subjective: ensureSubjectivePresent(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
+      ),
     ),
     objective: stripUnsupportedDocumentationDenialClause(
       stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
@@ -1236,8 +1368,10 @@ export async function validateAndEnhanceResponse(
     activityCptPairings,
     timeBlocks,
     totalReimbursement,
-    billingRationale: aiResponse.billingRationale || "",
-    auditNotes: aiResponse.auditNotes || [],
+    billingRationale: softenAbsolutistCodingClaim(aiResponse.billingRationale || ""),
+    auditNotes: (aiResponse.auditNotes || []).map((n: unknown) =>
+      typeof n === "string" ? softenAbsolutistCodingClaim(n) : n,
+    ),
     generationMode: "ai",
   };
 }
@@ -1353,7 +1487,7 @@ export function fallbackGeneration(
   const moodLine = request.mood
     ? `${patientName} presented as ${request.mood.toLowerCase()} during today's session.`
     : "";
-  const subjective = [caregiverLine, moodLine].filter(Boolean).join('\n\n');
+  const subjective = ensureSubjectivePresent([caregiverLine, moodLine].filter(Boolean).join('\n\n'));
 
   // Build objective section — grounded ONLY in the provided activities and
   // assessment fields. No invented trials, cue counts, equipment specifics, or

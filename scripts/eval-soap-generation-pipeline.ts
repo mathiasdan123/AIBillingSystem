@@ -76,9 +76,12 @@ import { createAiClient, isAiConfigured } from '../server/services/aiProvider';
 import { storage } from '../server/storage';
 import {
   generateSoapNoteAndBilling,
+  hasAbsolutistCodingClaim,
+  hasUnsupportedDeficitAssertion,
   hasUnsupportedDocumentationDenialClause,
   hasUnsupportedMoodClause,
   hasUnsupportedPlanClosing,
+  SUBJECTIVE_PLACEHOLDER,
   type AiSoapBillingRequest,
   type AiSoapBillingResponse,
 } from '../server/services/aiSoapBillingService';
@@ -88,8 +91,38 @@ import {
 // failure here means a backstop regressed)
 // ---------------------------------------------------------------------------
 
-type FinalNote = Pick<AiSoapBillingResponse, 'subjective' | 'objective' | 'assessment' | 'plan'>;
+// The four SOAP sections plus the billing text the provider reads alongside
+// them. The 2026-11-04 retest findings (absolutist "only defensible code"
+// claims, deficits asserted with no observations) lived in the billing
+// rationales, which the first version of this gate never looked at.
+type FinalNote = Pick<AiSoapBillingResponse, 'subjective' | 'objective' | 'assessment' | 'plan'> & {
+  billingText: string; // billingRationale + every code/pairing rationale + auditNotes, joined
+};
 type DeterministicCheck = (note: FinalNote, ctx: { hasMood: boolean }) => string | null;
+
+function subjectiveNotBlank(note: FinalNote, _ctx: { hasMood: boolean }) {
+  return note.subjective && note.subjective.trim().length > 0
+    ? null
+    : `Subjective came back EMPTY -- ensureSubjectivePresent should have written "${SUBJECTIVE_PLACEHOLDER}".`;
+}
+
+function noAbsolutistCodingClaims(note: FinalNote, _ctx: { hasMood: boolean }) {
+  return hasAbsolutistCodingClaim(note.billingText)
+    ? 'hasAbsolutistCodingClaim matched the FINAL billing text ("only defensible code", "must be coded as", ...) -- softenAbsolutistCodingClaim should have rewritten this, and the prompt forbids it.'
+    : null;
+}
+
+// Only meaningful on a scenario that supplies NO performance / strength /
+// assistance / endurance observations and NO activity responses.
+function noUnsupportedDeficitAssertion(note: FinalNote, _ctx: { hasMood: boolean }) {
+  const failures: string[] = [];
+  for (const [field, text] of Object.entries(note)) {
+    if (hasUnsupportedDeficitAssertion(text as string)) {
+      failures.push(`${field} asserts a patient deficit ("underlying ... deficits", "address ... deficits", "decreased strength", ...) although NO observations were supplied -- describing what an activity targets is allowed; a finding nobody documented is not.`);
+    }
+  }
+  return failures.length > 0 ? failures.join(' ') : null;
+}
 
 function noBackstopTripwires(note: FinalNote, hasMood: boolean): string | null {
   const failures: string[] = [];
@@ -141,7 +174,7 @@ function continuityShouldAppear(note: FinalNote, _ctx: { hasMood: boolean }) {
 // ---------------------------------------------------------------------------
 
 interface JudgeFinding {
-  check: 'traceability' | 'mood_fabrication' | 'caregiver_report_fabrication' | 'mood_omission' | 'caregiver_report_omission';
+  check: 'traceability' | 'mood_fabrication' | 'caregiver_report_fabrication' | 'mood_omission' | 'caregiver_report_omission' | 'coding_overclaim' | 'unsupported_deficit';
   quote: string;
   reason: string;
 }
@@ -155,6 +188,10 @@ FABRICATION checks:
 2. MOOD FABRICATION: if the Mood/Presentation input was BLANK, the note must not describe the patient's mood, affect, demeanor, or presentation ANYWHERE.
 3. CAREGIVER REPORT FABRICATION: if the Caregiver Report input was BLANK, the note must make NO statement about a caregiver report in either direction -- not "a caregiver report was obtained" and not "a caregiver report was not obtained." Silence is correct.
 
+CODING-RATIONALE checks (apply to the BILLING TEXT section of every note):
+6. CODING OVERCLAIM: a billing/code rationale that presents its code as the only defensible, only correct, required or mandatory choice -- in any wording -- is a violation. Code suggestions are for provider review; when dynamic gross-motor activities could be argued as 97530 or 97110, a rationale may prefer one but must not deny that the other exists. A rationale that names the alternative and explains its preference is CORRECT and must not be flagged.
+7. UNSUPPORTED DEFICIT: if you are told NO performance/strength/assistance/endurance observations and NO activity responses were supplied, any statement (in the Assessment, the Plan, or the billing text) that the patient HAS a deficit, weakness, decreased endurance, impaired motor planning, etc. is a fabricated clinical finding. Describing what an activity TARGETS or DEMANDS ("trampoline work targets lower-extremity strength and endurance") is allowed and must NOT be flagged. When activity responses WERE supplied (e.g. fatigue noted during an activity), an inference from that response is allowed per the inference rule below.
+
 OMISSION checks (only apply when told the field is NON-blank):
 4. MOOD OMISSION: if the Mood/Presentation input carried a real value, the note's Subjective/Objective/Assessment must reflect that real information SOMEWHERE, in substance -- a reasonable paraphrase is fine (e.g. "cooperative and engaged" legitimately becomes "patient demonstrated cooperative engagement throughout the session"). Flag only if the real supplied mood information is entirely absent from the note, not if the wording differs.
 5. CAREGIVER REPORT OMISSION: if the Caregiver Report input carried a real value, the note must reflect, somewhere, that a caregiver report was obtained AND its real substance -- again, matched by meaning, not exact phrase. Flag only if the real supplied caregiver information is entirely absent, not if the wording differs.
@@ -165,12 +202,12 @@ You MUST allow, and must NOT flag:
 - Any reasonable paraphrase of a real, supplied fact. Do not require exact wording for either a fabrication check (which forbids a CONCEPT, regardless of phrasing) or an omission check (which requires a CONCEPT to survive, regardless of phrasing).
 
 Respond with ONLY this JSON:
-{"findings": [{"check": "traceability"|"mood_fabrication"|"caregiver_report_fabrication"|"mood_omission"|"caregiver_report_omission", "quote": "<the EXACT offending sentence copied verbatim from the note, or, for an omission finding, the EXACT sentence(s) that should have contained it but didn't -- if omission is note-wide, quote the full Subjective section>", "reason": "<one sentence stating WHY this IS a violation>"}]}
+{"findings": [{"check": "traceability"|"mood_fabrication"|"caregiver_report_fabrication"|"mood_omission"|"caregiver_report_omission"|"coding_overclaim"|"unsupported_deficit", "quote": "<the EXACT offending sentence copied verbatim from the note, or, for an omission finding, the EXACT sentence(s) that should have contained it but didn't -- if omission is note-wide, quote the full Subjective section>", "reason": "<one sentence stating WHY this IS a violation>"}]}
 
 Every entry in "findings" is an assertion that this IS a real violation -- never include an entry whose own reasoning concludes the content is correct, compliant, or not a violation. If you considered a sentence and decided it does NOT violate any check, leave it out of "findings" entirely; do not add it as a note or explanation. If there are no violations, respond with {"findings": []}. Every finding MUST include a verbatim quote -- never paraphrase or summarize what's wrong without quoting it.`;
 
 async function runSemanticJudge(client: Anthropic, note: FinalNote, judgeContext: string): Promise<JudgeFinding[]> {
-  const userPrompt = `INPUT PROVIDED TO THE NOTE-GENERATING PIPELINE:\n${judgeContext}\n\nFINAL NOTE (after production backstops already ran):\nSUBJECTIVE: ${note.subjective}\n\nOBJECTIVE: ${note.objective}\n\nASSESSMENT: ${note.assessment}\n\nPLAN: ${note.plan}`;
+  const userPrompt = `INPUT PROVIDED TO THE NOTE-GENERATING PIPELINE:\n${judgeContext}\n\nFINAL NOTE (after production backstops already ran):\nSUBJECTIVE: ${note.subjective}\n\nOBJECTIVE: ${note.objective}\n\nASSESSMENT: ${note.assessment}\n\nPLAN: ${note.plan}\n\nBILLING TEXT (code rationales shown to the provider):\n${note.billingText}`;
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-5',
@@ -289,15 +326,15 @@ const scenarios: Scenario[] = [
     guards: 'Final-output equivalent of raw harness Scenario 1 -- fabrication checks against the REAL pipeline output (post-backstops).',
     request: { patientId: 900001, mood: '', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('CleanRoom'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires],
-    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.` },
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims],
+    judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.\n- Activity responses WERE supplied (see above), so an endurance inference from the trampoline fatigue note is allowed under check 7.` },
   },
   {
     name: 'P2: blank date of birth',
     guards: 'Final-output equivalent of raw harness Scenario 4 -- the epoch-age bug (#425), checked on the real pipeline output.',
     request: { patientId: 900002, mood: '', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('DobBlank', null), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, noAgeAnywhere],
+    deterministicChecks: [noBackstopTripwires, noAgeAnywhere, subjectiveNotBlank, noAbsolutistCodingClaims],
     judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Date of birth: BLANK (not entered).\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.` },
   },
   {
@@ -325,7 +362,7 @@ const scenarios: Scenario[] = [
         plan: 'Continue OT 2x/week focusing on bilateral coordination.',
       }],
     },
-    deterministicChecks: [continuityShouldAppear],
+    deterministicChecks: [continuityShouldAppear, subjectiveNotBlank, noAbsolutistCodingClaims],
     judge: null,
   },
   {
@@ -333,7 +370,7 @@ const scenarios: Scenario[] = [
     guards: 'Requirement #3: a genuinely supplied mood value must appear in the final note in substance (paraphrase allowed), checked via the omission judge.',
     request: { patientId: 900004, mood: 'Cooperative and engaged throughout the session', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('MoodControl'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires],
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims],
     judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: REAL VALUE supplied -- "Cooperative and engaged throughout the session." Apply check 4 (mood omission), not check 2.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.` },
   },
   {
@@ -341,8 +378,33 @@ const scenarios: Scenario[] = [
     guards: 'Requirement #3: a genuinely supplied caregiver report must appear in the final note in substance (paraphrase allowed), checked via the omission judge.',
     request: { patientId: 900005, mood: '', caregiverReport: 'Caregiver reports increased independence with morning self-dressing routine at home this week.', ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('CaregiverControl'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires],
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims],
     judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: REAL VALUE supplied -- "Caregiver reports increased independence with morning self-dressing routine at home this week." Apply check 5 (caregiver omission), not check 3.` },
+  },
+  {
+    name: 'P6: activities only -- no observations, no activity responses (targets, not deficits)',
+    guards: 'Retest finding 2026-11-04: with no performance/strength/assistance/endurance observations and no activity responses, a note asserted "underlying strength and endurance deficits" in the Assessment and the billing explanation. Describing what the activities target is allowed; asserting the patient has a deficit is not. Also the cleanest input for the run-to-run code-consistency metric.',
+    request: {
+      patientId: 900006,
+      practiceId: PRACTICE_ID,
+      activities: ['Obstacle Course', 'Trampoline'],
+      // NO activityDetails on purpose.
+      mood: '',
+      caregiverReport: undefined,
+      duration: 45,
+      location: 'Sensory gym',
+      assessment: BASE_ASSESSMENT,
+      planNextSteps: 'Bilateral coordination and sustained attention',
+    } as AiSoapBillingRequest,
+    fixture: { patient: freshPatient('ActivitiesOnly'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noUnsupportedDeficitAssertion],
+    judge: { context: `- Activities: Obstacle Course, Trampoline -- NO activity responses were entered.
+- Clinical observation ratings (performance, assistance, strength, motor planning, sensory regulation, endurance): all BLANK.
+- Plan Next Steps: "Bilateral coordination and sustained attention"
+- No prior treatment plan, goals, or session history exists for this patient (first documented session).
+- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.
+- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.
+- NO observations of any kind were supplied: apply check 7 strictly. Any statement that the patient HAS a deficit, weakness or decreased endurance is a fabricated finding; describing what the activities target is fine.` },
   },
 ];
 
@@ -359,6 +421,8 @@ interface SampleRecord {
   deterministicFailures: string[];
   judgeFindings: JudgeFinding[];
   error: string | null;
+  /** activity -> suggested CPT code, for the run-to-run consistency metric. */
+  codesByActivity: Record<string, string> | null;
 }
 
 function allFailures(record: SampleRecord): string[] {
@@ -407,6 +471,7 @@ async function main() {
           deterministicFailures: [],
           judgeFindings: [],
           error: null,
+          codesByActivity: null,
         };
         try {
           const result = await generateSoapNoteAndBilling(scenario.request);
@@ -416,8 +481,15 @@ async function main() {
             objective: result.objective,
             assessment: result.assessment,
             plan: result.plan,
+            billingText: [
+              result.billingRationale,
+              ...result.cptCodes.map((c) => `${c.code} ${c.name}: ${c.rationale}`),
+              ...result.activityCptPairings.map((p) => `${p.activity} -> ${p.code}: ${p.rationale}`),
+              ...(result.auditNotes || []),
+            ].filter(Boolean).join('\n'),
           };
           record.note = note;
+          record.codesByActivity = Object.fromEntries(result.activityCptPairings.map((p) => [p.activity, p.code]));
           const checkCtx = { hasMood: !!scenario.request.mood };
           record.deterministicFailures = scenario.deterministicChecks
             .map((check) => check(note, checkCtx))
@@ -439,12 +511,33 @@ async function main() {
     console.log('');
   }
 
+  // Run-to-run code consistency (REPORTED, not gated). Identical inputs that
+  // land on different codes across samples are the 2026-11-04 finding in its
+  // raw form. Genuinely ambiguous activities may still split at low
+  // temperature, so this is a metric to watch, not a pass/fail -- the gated
+  // part is that no rationale may claim its side of a split is the "only
+  // defensible" one (noAbsolutistCodingClaims).
+  const consistency: Record<string, Record<string, string[]>> = {};
+  for (const scenario of scenarios) {
+    const perActivity: Record<string, string[]> = {};
+    for (const r of records.filter((x) => x.scenario === scenario.name && x.codesByActivity)) {
+      for (const [activity, code] of Object.entries(r.codesByActivity!)) {
+        (perActivity[activity] ||= []).push(code);
+      }
+    }
+    consistency[scenario.name] = perActivity;
+    const splits = Object.entries(perActivity).filter(([, codes]) => new Set(codes).size > 1);
+    if (splits.length > 0) {
+      console.log(`  consistency (${scenario.name}): ${splits.map(([a, codes]) => `${a} -> ${codes.join('/')}`).join('; ')}  [reported, not gated]`);
+    }
+  }
+
   const resultsDir = resolve(import.meta.dirname, '..', '.eval-results');
   mkdirSync(resultsDir, { recursive: true });
   const logPath = resolve(resultsDir, `pipeline-${runId}.json`);
   writeFileSync(
     logPath,
-    JSON.stringify({ runId, timestamp: new Date().toISOString(), scenarios: scenarios.map((s) => s.name), records }, null, 2),
+    JSON.stringify({ runId, timestamp: new Date().toISOString(), scenarios: scenarios.map((s) => s.name), consistency, records }, null, 2),
   );
   console.log(`Full results (fixtures + outputs + verdicts) written to ${logPath}\n`);
 
