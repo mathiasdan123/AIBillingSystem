@@ -26,6 +26,8 @@ import {
   fallbackGeneration,
   hasUnsupportedContinuityNecessity,
   stripUnsupportedContinuityNecessity,
+  removeCaseAContinuityWording,
+  stripUnsupportedPlanClosing,
   softenUnsupportedDeficitInRationale,
   requestHasObservations,
 } from '../services/aiSoapBillingService';
@@ -192,5 +194,57 @@ describe('validateAndEnhanceResponse with no observations', () => {
     expect(hasUnsupportedDeficitAssertion(out.billingRationale)).toBe(false);
     expect(out.cptCodes.every((c) => !hasUnsupportedDeficitAssertion(c.rationale))).toBe(true);
     expect(out.assessment).toBe('Activities target motor planning and endurance demands.');
+  });
+});
+
+describe('removeCaseAContinuityWording (pipeline eval run 2026-11-04T21-08)', () => {
+  it('drops continuity words from otherwise grounded sentences, in CASE A only', () => {
+    const cases: Array<[string, RegExp]> = [
+      ['indicating emerging motor planning skills with continued need for external structure.', /with need for external structure/],
+      ['This finding indicates that sustained gross motor activity remains challenging and requires continued therapeutic intervention.', /is challenging and requires therapeutic intervention/],
+      ['Activities will continue to target motor planning, postural control, and endurance.', /Activities will target motor planning/],
+      ['Continue activities targeting motor planning and endurance.', /^Use activities targeting/],
+      ['The documented fatigue pattern suggests continued deficits in lower extremity strength.', /suggests deficits in lower extremity strength/],
+    ];
+    for (const [input, expected] of cases) {
+      const out = removeCaseAContinuityWording(input, false, false);
+      expect(out, input).toMatch(expected);
+      expect(out).not.toMatch(/\b(continued|continue|remains)\b/i);
+      expect(removeCaseAContinuityWording(input, true, false)).toBe(input);
+    }
+  });
+
+  it('leaves sentences without continuity wording untouched', () => {
+    const fine = 'Patient required minimal verbal cueing to complete the obstacle course sequence.';
+    expect(removeCaseAContinuityWording(fine, false, false)).toBe(fine);
+  });
+});
+
+describe('stripUnsupportedPlanClosing -- CASE B carry-overs in a CASE A plan', () => {
+  it('replaces the CASE B home-program sentence with the CASE A one', () => {
+    const plan = 'Next session will focus on bilateral coordination.\n\nHome program: Reviewed continuation of current home strategies; no changes to home program at this time.';
+    const out = stripUnsupportedPlanClosing(plan, false, false);
+    expect(out).not.toMatch(/continuation of current home strategies/i);
+    expect(out).toContain('Home program: No home program assigned this session.');
+  });
+
+  it('removes a Goals line that names a plan of care or goals that do not exist', () => {
+    for (const line of [
+      'Goals: No established treatment goals are documented in the plan of care at this time.',
+      'No established treatment goals were provided for reference.',
+      'Goals: This section is omitted as no active treatment goals were provided in the input data.',
+    ]) {
+      const plan = `Next session will focus on bilateral coordination.\n\nNo home program assigned this session.\n\n${line}`;
+      const out = stripUnsupportedPlanClosing(plan, false, false);
+      expect(out, line).not.toMatch(/goals|plan of care/i);
+      expect(out).toContain('No home program assigned this session.');
+    }
+  });
+
+  it('strips "remains necessary" without "medically" in the CASE A Assessment', () => {
+    const a = 'Obstacle course work targeted sequencing.\n\nSkilled occupational therapy intervention remains necessary to address motor planning and activity tolerance.';
+    const out = stripUnsupportedContinuityNecessity(a, false, false);
+    expect(out).not.toMatch(/remains necessary/i);
+    expect(out).toContain('Obstacle course work targeted sequencing.');
   });
 });

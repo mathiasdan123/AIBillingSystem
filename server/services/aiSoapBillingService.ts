@@ -651,6 +651,19 @@ Cover as applicable based on the input:
 OMIT any sub-section if the input does not support it. It is better to
 write 4 substantive paragraphs than 8 padded ones.
 
+FIRST DOCUMENTED SESSION (no MOST RECENT PLAN and no ACTIVE TREATMENT GOALS
+appear in this prompt): there is no history, so do not use continuity words
+ANYWHERE in the note about therapy, need, deficits, frequency, goals or the
+home program: not "continue", "continued", "continuing", "ongoing",
+"remain(s)", "further" or "still". Write "needed external structure", not
+"continued need for external structure"; "is challenging", not "remains
+challenging"; "activities will target", not "will continue to target". A
+present-tense necessity statement ("skilled OT is indicated to address the
+observed fatigue response") is allowed only when observations support it.
+Never write a Goals line explaining that no goals exist -- omit the Goals
+subsection -- and never write "Reviewed continuation of current home
+strategies" (write "No home program assigned this session.").
+
 PLAN SECTION (target: 75-150 words):
 Use the "planNextSteps", "nextSessionFocus", and "homeProgram" fields.
 
@@ -1053,14 +1066,21 @@ export function stripUnsupportedPlanClosing(
   hasActiveGoalsContext: boolean,
 ): string {
   if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
-  CASE_A_CONTINUE_FREQUENCY.lastIndex = 0;
-  const hasFrequency = CASE_A_CONTINUE_FREQUENCY.test(plan);
-  CASE_A_CONTINUE_FREQUENCY.lastIndex = 0;
-  if (!hasUnsupportedPlanClosing(plan) && !hasFrequency) return plan;
+  const extras = [CASE_A_CONTINUE_FREQUENCY, CASE_A_HOME_PROGRAM_CARRYOVER, CASE_A_NO_GOALS_LINE];
+  const hasExtra = extras.some((re) => {
+    re.lastIndex = 0;
+    const hit = re.test(plan);
+    re.lastIndex = 0;
+    return hit;
+  });
+  if (!hasUnsupportedPlanClosing(plan) && !hasExtra) return plan;
   SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  for (const re of extras) re.lastIndex = 0;
   const stripped = plan
     .replace(SKILLED_OT_CONTINUATION_CLOSING, "")
     .replace(CASE_A_CONTINUE_FREQUENCY, "")
+    .replace(CASE_A_HOME_PROGRAM_CARRYOVER, (_m, prefix) => `${prefix ?? ""}No home program assigned this session.`)
+    .replace(CASE_A_NO_GOALS_LINE, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -1083,7 +1103,64 @@ export function stripUnsupportedPlanClosing(
 // the obstacle course with skilled cueing" is never touched. Gated to CASE A
 // by the caller exactly like stripUnsupportedPlanClosing.
 const CASE_A_CONTINUITY_NECESSITY =
-  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:medically\s+necessary|medical\s+necessity|need\s+for\s+(?:continued\s+|ongoing\s+)?skilled|benefit\s+from\s+(?:continued\s+|ongoing\s+)?skilled|necessit\w+)\b)[^.!?\n]*[.!?]/gim;
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:medically\s+necessary|medical\s+necessity|necessary|need\s+for\s+(?:continued\s+|ongoing\s+)?skilled|benefit\s+from\s+(?:continued\s+|ongoing\s+)?skilled|necessit\w+)\b)[^.!?\n]*[.!?]/gim;
+
+// CASE A word-level continuity rewrites. Pipeline eval run 2026-11-04T21-08:
+// with the sentence-level strips working, the judge's remaining traceability
+// findings were continuity WORDS riding on otherwise-grounded sentences --
+// "continued need for external structure" (a within-session observation),
+// "remains challenging", "Activities will continue to target...", "require
+// continued therapeutic intervention". On a first documented session there
+// is nothing for any of these to continue from, so the word goes and the
+// sentence stays. Never applied in CASE B.
+const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
+  [/\b(?:continued|ongoing|continuing)\s+need\s+for\b/gi, "need for"],
+  [/\b(?:continued|ongoing)\s+(deficits?|limitations?|difficult(?:y|ies)|challenges?|weakness)\b/gi, "$1"],
+  [/\b(?:require|requires|requiring|indicates?|indicating|suggests?|suggesting|demonstrates?|demonstrating|need\s+for|warrants?)\s+(?:continued|ongoing|further)\s+/gi, (m: string) => m.replace(/\s+(?:continued|ongoing|further)\s+$/i, " ")],
+  [/\bcontinued\s+((?:skilled\s+)?(?:therapeutic\s+)?(?:intervention|strengthening|practice|support|work|therapy))\b/gi, "$1"],
+  [/\bremains?\s+(challenging|difficult|limited|an\s+area|a\s+(?:focus|priority))\b/gi, "is $1"],
+  [/\b(?:will\s+)?continue\s+to\s+(target|address|focus\s+on|work\s+on|emphasi[sz]e|build|support|benefit)\b/gi, "will $1"],
+  [/(?:^|(?<=[.!?]\s))Continue\s+(?:targeting|to\s+target)\b/gim, "Target"],
+  [/(?:^|(?<=[.!?]\s))Continue\s+((?:graded\s+|dynamic\s+)?(?:therapeutic\s+)?activities)\b/gim, "Use $1"],
+];
+
+export function hasCaseAContinuityWording(text: string): boolean {
+  if (!text) return false;
+  return CASE_A_CONTINUITY_REWRITES.some(([re]) => {
+    re.lastIndex = 0;
+    const hit = re.test(text);
+    re.lastIndex = 0;
+    return hit;
+  });
+}
+
+export function removeCaseAContinuityWording(
+  text: string,
+  hasMostRecentPlanContext: boolean,
+  hasActiveGoalsContext: boolean,
+): string {
+  if (hasMostRecentPlanContext || hasActiveGoalsContext || !text) return text;
+  if (!hasCaseAContinuityWording(text)) return text;
+  let out = text;
+  for (const [re, replacement] of CASE_A_CONTINUITY_REWRITES) {
+    re.lastIndex = 0;
+    out = out.replace(re, replacement as any);
+  }
+  logger.warn("Rewrote CASE A continuity wording (first documented session; nothing to continue from)", {
+    originalLength: text.length,
+    rewrittenLength: out.length,
+  });
+  return out;
+}
+
+// CASE A: the prompt's own CASE B home-program default, and any "Goals:" line
+// that explains there are no goals. Both name a history (a current home
+// program, a plan of care) that does not exist on a first documented
+// session. Pipeline eval run 2026-11-04T21-08 caught both surviving.
+const CASE_A_HOME_PROGRAM_CARRYOVER =
+  /(?:^|(?<=[.!?]\s))(Home program:\s*)?Reviewed continuation of current home strategies;?\s*no changes to (?:the )?home program at this time\.?/gim;
+const CASE_A_NO_GOALS_LINE =
+  /(?:^|(?<=[.!?]\s))(?:Goals?:\s*)?[^.!?\n]*\b(?:no|not|none|cannot|omitted)\b[^.!?\n]*\b(?:treatment\s+goals?|active\s+goals?|plan\s+of\s+care)\b[^.!?\n]*[.!?]?/gim;
 
 export function hasUnsupportedContinuityNecessity(text: string): boolean {
   if (!text) return false;
@@ -1450,28 +1527,40 @@ export async function validateAndEnhanceResponse(
         stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
       ),
     ),
-    objective: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
-    ),
-    assessment: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(
-        stripUnsupportedContinuityNecessity(
-          aiResponse.assessment || "",
-          hasMostRecentPlanContext,
-          hasActiveGoalsContext,
-        ),
-        hasMood,
+    objective: removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
       ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
     ),
-    plan: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(
-        stripUnsupportedPlanClosing(
-          aiResponse.plan || "",
-          hasMostRecentPlanContext,
-          hasActiveGoalsContext,
+    assessment: removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(
+          stripUnsupportedContinuityNecessity(
+            aiResponse.assessment || "",
+            hasMostRecentPlanContext,
+            hasActiveGoalsContext,
+          ),
+          hasMood,
         ),
-        hasMood,
       ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
+    ),
+    plan: removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(
+          stripUnsupportedPlanClosing(
+            aiResponse.plan || "",
+            hasMostRecentPlanContext,
+            hasActiveGoalsContext,
+          ),
+          hasMood,
+        ),
+      ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
     ),
     cptCodes,
     activityCptPairings,

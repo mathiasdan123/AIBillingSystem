@@ -91,7 +91,11 @@ describe('stripUnsupportedPlanClosing', () => {
       'Next session will focus on bilateral coordination and sustained attention through graded therapeutic activities.',
       'Continue to monitor for signs of fatigue during dynamic activities.',
       'Continue home exercise program as previously instructed by caregiver.',
-      'Reviewed continuation of current home strategies; no changes to home program at this time.',
+      // "Reviewed continuation of current home strategies; no changes to home
+      // program at this time." used to be here too. It is CASE B's sentence
+      // (a current home program to continue); in CASE A it is now replaced
+      // with "No home program assigned this session." -- see the CASE B
+      // carry-over tests in codingRationaleBackstops.test.ts.
     ];
     for (const plan of legitimate) {
       expect(stripUnsupportedPlanClosing(plan, noPlanContext, noGoalsContext)).toBe(plan);
