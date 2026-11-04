@@ -41,6 +41,12 @@ vi.mock('../services/emailService', () => ({
   sendEmail: (...args: any[]) => mockSendEmail(...args),
 }));
 
+const mockShouldSendNotification = vi.fn();
+
+vi.mock('../services/notificationPreferencesService', () => ({
+  shouldSendNotification: (...args: any[]) => mockShouldSendNotification(...args),
+}));
+
 vi.mock('../services/emailTemplates', () => ({
   appointmentReminder: () => ({ subject: 'Reminder', html: '<p>reminder</p>', text: 'reminder' }),
 }));
@@ -62,6 +68,11 @@ import {
 describe('getReminderStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockShouldSendNotification.mockResolvedValue({
+      allowed: true,
+      channels: { email: true, sms: true, portal: true },
+      inQuietHours: false,
+    });
   });
 
   it('returns email and SMS configuration status', () => {
@@ -76,6 +87,11 @@ describe('getReminderStatus', () => {
 describe('processAppointmentReminders', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockShouldSendNotification.mockResolvedValue({
+      allowed: true,
+      channels: { email: true, sms: true, portal: true },
+      inQuietHours: false,
+    });
   });
 
   it('returns empty array when practice is not found', async () => {
@@ -174,6 +190,72 @@ describe('processAppointmentReminders', () => {
     expect(mockUpdateAppointment).toHaveBeenCalledWith(12, { reminderSent: true });
   });
 
+  it('does NOT email a patient of the isolated demo practice', async () => {
+    mockGetPractice.mockResolvedValue({ id: 99, name: 'Demo Practice', isDemo: true });
+    mockGetAppointmentsForReminder.mockResolvedValue([
+      { id: 30, patientId: 40, startTime: new Date().toISOString() },
+    ]);
+    mockGetPatient.mockResolvedValue({
+      id: 40,
+      firstName: 'Seeded',
+      lastName: 'Patient',
+      email: 'seeded.patient@example.net',
+      phone: null,
+    });
+    mockIsEmailConfigured.mockReturnValue(true);
+
+    const results = await processAppointmentReminders(99);
+    expect(results).toHaveLength(1);
+    expect(results[0].emailSent).toBe(false);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('does NOT email a patient whose email channel is suppressed (bounce/complaint or opt-out)', async () => {
+    mockGetPractice.mockResolvedValue({ id: 1, name: 'Test Practice' });
+    mockGetAppointmentsForReminder.mockResolvedValue([
+      { id: 31, patientId: 41, startTime: new Date().toISOString() },
+    ]);
+    mockGetPatient.mockResolvedValue({
+      id: 41,
+      firstName: 'Bounced',
+      lastName: 'Address',
+      email: 'bounced@example.com',
+      phone: null,
+    });
+    mockIsEmailConfigured.mockReturnValue(true);
+    mockShouldSendNotification.mockResolvedValue({
+      allowed: true,
+      channels: { email: false, sms: true, portal: true },
+      inQuietHours: false,
+    });
+
+    const results = await processAppointmentReminders(1);
+    expect(results).toHaveLength(1);
+    expect(results[0].emailSent).toBe(false);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockShouldSendNotification).toHaveBeenCalledWith(41, 'appointmentReminders');
+  });
+
+  it('still emails when the preferences lookup itself fails (fail open)', async () => {
+    mockGetPractice.mockResolvedValue({ id: 1, name: 'Test Practice' });
+    mockGetAppointmentsForReminder.mockResolvedValue([
+      { id: 32, patientId: 42, startTime: new Date().toISOString() },
+    ]);
+    mockGetPatient.mockResolvedValue({
+      id: 42,
+      firstName: 'Real',
+      lastName: 'Patient',
+      email: 'real@example.com',
+      phone: null,
+    });
+    mockIsEmailConfigured.mockReturnValue(true);
+    mockShouldSendNotification.mockRejectedValue(new Error('prefs table unavailable'));
+    mockSendEmail.mockResolvedValue({ success: true });
+
+    const results = await processAppointmentReminders(1);
+    expect(results[0].emailSent).toBe(true);
+  });
+
   it('records error when patient is not found', async () => {
     mockGetPractice.mockResolvedValue({ id: 1, name: 'Test Practice' });
     mockGetAppointmentsForReminder.mockResolvedValue([
@@ -201,6 +283,11 @@ describe('processAppointmentReminders', () => {
 describe('sendAppointmentReminders', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockShouldSendNotification.mockResolvedValue({
+      allowed: true,
+      channels: { email: true, sms: true, portal: true },
+      inQuietHours: false,
+    });
   });
 
   it('returns empty array when neither email nor SMS is configured', async () => {

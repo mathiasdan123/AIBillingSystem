@@ -19,6 +19,7 @@ const { dbStub, storageStub } = vi.hoisted(() => {
   function chain(resolveValue: unknown) {
     const c: any = {
       from: vi.fn(() => c),
+      leftJoin: vi.fn(() => c),
       where: vi.fn(() => c),
       limit: vi.fn(() => Promise.resolve(resolveValue)),
       then: (resolve: any, reject: any) => Promise.resolve(resolveValue).then(resolve, reject),
@@ -117,5 +118,65 @@ describe('suppressEmailForAddress', () => {
 
     expect(result.staffSuppressed).toBe(0);
     expect(dbStub.__updatedRows).toHaveLength(0);
+  });
+});
+
+describe('getOutboundEmailBlock', () => {
+  // Read-only send-path check used by the transport guard. Select order:
+  //   1. patients-by-email joined to practices + notification_preferences
+  //   2. (only if storage.getUserByEmail matches) staff prefs by userId
+
+  it('returns not blocked for an address no patient or staff user owns', async () => {
+    dbStub.__selectQueue.push([]);
+    storageStub.getUserByEmail.mockResolvedValueOnce(undefined as any);
+
+    const result = await svc.getOutboundEmailBlock('nobody@example.com');
+
+    expect(result).toEqual({ blocked: false });
+    expect(dbStub.insert).not.toHaveBeenCalled();
+    expect(dbStub.update).not.toHaveBeenCalled();
+  });
+
+  it('returns not blocked for a real patient with no prefs row (never writes a default row)', async () => {
+    dbStub.__selectQueue.push([{ id: 10, practiceId: 1, practiceIsDemo: false, emailEnabled: null }]);
+    storageStub.getUserByEmail.mockResolvedValueOnce(undefined as any);
+
+    const result = await svc.getOutboundEmailBlock('patient@example.com');
+
+    expect(result).toEqual({ blocked: false });
+    expect(dbStub.insert).not.toHaveBeenCalled();
+  });
+
+  it('blocks an address whose patient prefs have email disabled (bounce/complaint/opt-out)', async () => {
+    dbStub.__selectQueue.push([{ id: 10, practiceId: 1, practiceIsDemo: false, emailEnabled: false }]);
+
+    const result = await svc.getOutboundEmailBlock('Bounced@Example.com');
+
+    expect(result).toEqual({ blocked: true, reason: 'suppressed' });
+  });
+
+  it('blocks an address that belongs to a patient of the demo practice', async () => {
+    dbStub.__selectQueue.push([{ id: 50, practiceId: 99, practiceIsDemo: true, emailEnabled: null }]);
+
+    const result = await svc.getOutboundEmailBlock('seeded@example.net');
+
+    expect(result).toEqual({ blocked: true, reason: 'demo-practice' });
+  });
+
+  it('blocks a staff user whose prefs have email disabled', async () => {
+    dbStub.__selectQueue.push([]); // no patient match
+    storageStub.getUserByEmail.mockResolvedValueOnce({ id: 'user-1', practiceId: 1 } as any);
+    dbStub.__selectQueue.push([{ emailEnabled: false }]);
+
+    const result = await svc.getOutboundEmailBlock('therapist@example.com');
+
+    expect(result).toEqual({ blocked: true, reason: 'suppressed' });
+  });
+
+  it('treats an empty address as not blocked without touching the database', async () => {
+    const result = await svc.getOutboundEmailBlock('   ');
+
+    expect(result).toEqual({ blocked: false });
+    expect(dbStub.select).not.toHaveBeenCalled();
   });
 });
