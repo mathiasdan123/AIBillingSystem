@@ -24,6 +24,26 @@ interface MfaSetupResponse {
   backupCodes: string[];
 }
 
+/**
+ * Both MFA endpoints sit behind the auth rate limiter (5 requests / 15 min).
+ * A 429 must be shown as "wait", never as "invalid code": the generic message
+ * sent a locked-out admin back to the button, and every extra click restarted
+ * their 15-minute window (production, 2026-11-04).
+ */
+export const MFA_RATE_LIMITED_MESSAGE =
+  'Too many attempts. Wait 15 minutes without clicking, then try once with a fresh code.';
+
+async function readMfaError(res: Response, fallback: string): Promise<string> {
+  if (res.status === 429) return MFA_RATE_LIMITED_MESSAGE;
+  try {
+    const data = await res.json();
+    if (data && typeof data.message === 'string' && data.message) return data.message;
+  } catch {
+    // non-JSON body: fall through to the fallback
+  }
+  return fallback;
+}
+
 export default function MfaSetupRequired() {
   const queryClient = useQueryClient();
   const [setupData, setSetupData] = useState<MfaSetupResponse | null>(null);
@@ -31,10 +51,14 @@ export default function MfaSetupRequired() {
   const [error, setError] = useState<string | null>(null);
 
   const setupMutation = useMutation({
+    // Never retry: the global shouldRetry only recognises numeric-status
+    // errors, so these text errors were retried 3x and one click burned 4 of
+    // the 5 allowed auth requests.
+    retry: false,
     mutationFn: async (): Promise<MfaSetupResponse> => {
       const headers = await getAuthHeaders();
       const res = await fetch('/api/mfa/setup', { method: 'POST', headers });
-      if (!res.ok) throw new Error('Could not start MFA setup. Please try again.');
+      if (!res.ok) throw new Error(await readMfaError(res, 'Could not start MFA setup. Please try again.'));
       return res.json();
     },
     onSuccess: (data) => {
@@ -45,6 +69,7 @@ export default function MfaSetupRequired() {
   });
 
   const verifyMutation = useMutation({
+    retry: false,
     mutationFn: async (code: string) => {
       const headers = await getAuthHeaders();
       const res = await fetch('/api/mfa/verify', {
@@ -52,7 +77,14 @@ export default function MfaSetupRequired() {
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({ token: code }),
       });
-      if (!res.ok) throw new Error('Invalid code. Check your authenticator and try again.');
+      if (!res.ok) {
+        throw new Error(
+          await readMfaError(
+            res,
+            'Invalid code. Use the TherapyBill entry you just added to your authenticator and try again.'
+          )
+        );
+      }
       return res.json();
     },
     onSuccess: () => {
