@@ -233,20 +233,43 @@ Every entry in "findings" is an assertion that this IS a real violation -- never
 // semantic reach: that is where paraphrased closings live and the rule
 // cannot be a regex.
 // ---------------------------------------------------------------------------
-const CONTINUITY_WORD = /\b(?:continue[sd]?|continuing|ongoing|remain(?:s|ed|ing)?|still|further)\b/i;
+const CONTINUITY_WORD = /\b(?:continue[sd]?|continuing|continuation|ongoing|remain(?:s|ed|ing)?|still|further)\b/i;
 const CODING_EXCLUSIVITY = /\b(?:only|sole(?:ly)?|exclusively|must\s+be\s+(?:coded|billed|assigned|reported)|no\s+other\s+code|required\s+code|mandatory)\b/i;
 
-function verifyJudgeFindings(findings: JudgeFinding[], note: FinalNote, check7Applies: boolean): { kept: JudgeFinding[]; dropped: Array<JudgeFinding & { droppedBecause: string }> } {
+function verifyJudgeFindings(
+  findings: JudgeFinding[],
+  note: FinalNote,
+  check7Applies: boolean,
+  therapistPlanInputs: string[],
+): { kept: JudgeFinding[]; dropped: Array<JudgeFinding & { droppedBecause: string }> } {
   const kept: JudgeFinding[] = [];
   const dropped: Array<JudgeFinding & { droppedBecause: string }> = [];
   const norm = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
   const inPlan = (quote: string) => norm(note.plan).includes(norm(quote).slice(0, 80));
+  // A Plan sentence that restates what the therapist typed into
+  // planNextSteps / nextSessionFocus / homeProgram is traceable by
+  // construction. Round 4 flagged "Next session will target bilateral
+  // coordination and sustained attention..." -- the planNextSteps field,
+  // nearly verbatim -- as a continuity claim.
+  const restatesTherapistInput = (quote: string) => {
+    const nq = norm(quote);
+    return therapistPlanInputs.some((input) => {
+      const ni = norm(input);
+      return ni.split(' ').length >= 3 && nq.includes(ni);
+    });
+  };
   for (const f of findings) {
     const q = f.quote || '';
     switch (f.check) {
       case 'traceability':
-        if (inPlan(q) || CONTINUITY_WORD.test(q)) kept.push(f);
-        else dropped.push({ ...f, droppedBecause: 'Assessment/other sentence with no explicit continuity word (present-tense necessity, "age-appropriate", "required ... cueing" are not continuity claims).' });
+        if (inPlan(q)) {
+          if (CONTINUITY_WORD.test(q) || !restatesTherapistInput(q)) kept.push(f);
+          else dropped.push({ ...f, droppedBecause: 'Plan sentence restates the therapist\'s own planNextSteps/nextSessionFocus/homeProgram input and carries no continuity word -- traceable by construction.' });
+        } else if (CONTINUITY_WORD.test(q)) {
+          kept.push(f);
+        } else {
+          dropped.push({ ...f, droppedBecause: 'Assessment/other sentence with no explicit continuity word (present-tense necessity, "age-appropriate", "required ... cueing" are not continuity claims).' });
+        }
         break;
       case 'coding_overclaim':
         if (hasAbsolutistCodingClaim(q) || CODING_EXCLUSIVITY.test(q)) kept.push(f);
@@ -557,7 +580,12 @@ async function main() {
 
           if (result.generationMode === 'ai' && scenario.judge) {
             const raw = await runSemanticJudge(judgeClient, note, scenario.judge.context);
-            const { kept, dropped } = verifyJudgeFindings(raw, note, /CHECK 7 APPLIES/.test(scenario.judge.context));
+            const { kept, dropped } = verifyJudgeFindings(
+              raw,
+              note,
+              /CHECK 7 APPLIES/.test(scenario.judge.context),
+              [scenario.request.planNextSteps, scenario.request.nextSessionFocus, scenario.request.homeProgram].filter((x): x is string => !!x),
+            );
             record.judgeFindings = kept;
             record.judgeFindingsDropped = dropped;
             if (dropped.length > 0) {

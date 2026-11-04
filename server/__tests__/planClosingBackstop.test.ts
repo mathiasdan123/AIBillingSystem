@@ -169,3 +169,14 @@ describe('stripUnsupportedPlanClosing -- paragraph-initial sentences (pipeline e
     expect(stripUnsupportedPlanClosing(plan, true, true)).toBe(plan);
   });
 });
+
+describe('stripUnsupportedPlanClosing -- round-4 shape (no necessity word)', () => {
+  it('strips "Patient will continue with skilled occupational therapy to address ..."', () => {
+    const plan =
+      'Next session will target bilateral coordination and sustained attention.\n\nNo home program assigned this session.\n\nPatient will continue with skilled occupational therapy to address bilateral coordination, motor planning, and activity tolerance as demonstrated in today\'s session.';
+    expect(hasUnsupportedPlanClosing(plan)).toBe(true);
+    const stripped = stripUnsupportedPlanClosing(plan, false, false);
+    expect(stripped).not.toMatch(/continue with skilled/i);
+    expect(stripped).toContain('Next session will target bilateral coordination and sustained attention.');
+  });
+});

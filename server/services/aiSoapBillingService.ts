@@ -1038,8 +1038,13 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 // did nothing for exactly the trailing-paragraph closing it was built for.
 // The pipeline eval (run 2026-11-04T20-50) showed 3/3 clean-room samples
 // with that sentence surviving as its own final paragraph.
+// 2026-11-04 (pipeline eval round 4): "Patient will continue with skilled
+// occupational therapy to address bilateral coordination..." carried a
+// persistence word and a therapy word but none of the necessity/participation
+// words, so it slipped through. "address"/"target"/"continue with" added to
+// that third group.
 const SKILLED_OT_CONTINUATION_CLOSING =
-  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*)\b)[^.!?\n]*[.!?]/gim;
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*|address\w*|target\w*|continue\s+with)\b)[^.!?\n]*[.!?]/gim;
 
 /**
  * Detection only (no mutation) — exposed so callers like the fabrication
