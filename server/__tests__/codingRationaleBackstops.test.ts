@@ -345,3 +345,16 @@ describe('validateAndEnhanceResponse applies CASE A wording rewrites to rational
     expect((out.auditNotes as string[])[0]).toBe('Documentation connects skilled interventions to functional outcomes supporting need for services.');
   });
 });
+
+describe('removeCaseAContinuityWording -- "continue(s) to <any verb>" (round 6)', () => {
+  it('rewrites present-tense continue-to with any verb and leaves past-tense observations alone', () => {
+    expect(removeCaseAContinuityWording('Activities will continue to provide graded motor challenges addressing these areas.', false, false))
+      .toBe('Activities will provide graded motor challenges addressing these areas.');
+    expect(removeCaseAContinuityWording('Sessions continue to emphasize bilateral coordination.', false, false))
+      .toBe('Sessions emphasize bilateral coordination.');
+    expect(removeCaseAContinuityWording('Further development of motor planning is expected.', false, false))
+      .toBe('development of motor planning is expected.');
+    const observation = 'Patient continued to participate in the obstacle course with skilled cueing.';
+    expect(removeCaseAContinuityWording(observation, false, false)).toBe(observation);
+  });
+});

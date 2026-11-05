@@ -1133,7 +1133,13 @@ const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => s
   [/\b(?:require|requires|requiring|indicates?|indicating|suggests?|suggesting|demonstrates?|demonstrating|need\s+for|warrants?)\s+(?:continued|ongoing|further)\s+/gi, (m: string) => m.replace(/\s+(?:continued|ongoing|further)\s+$/i, " ")],
   [/\bcontinued\s+((?:skilled\s+|clinical\s+|graded\s+)?(?:therapeutic\s+)?(?:intervention|strengthening|practice|support|work|therapy|focus|emphasis|training|development|monitoring|attention|use|progress|exposure|participation\s+in))\b/gi, "$1"],
   [/\bremains?\s+(challenging|difficult|limited|an\s+area|a\s+(?:focus|priority)|(?:a|an)\s+(?:clinically\s+)?(?:appropriate|relevant|primary|key|important|reasonable)|(?:clinically\s+)?(?:appropriate|indicated|relevant|important|warranted))\b/gi, "is $1"],
-  [/\b(?:will\s+)?continue\s+to\s+(target|address|focus\s+on|work\s+on|emphasi[sz]e|build|support|benefit|develop|strengthen|monitor)\b/gi, "will $1"],
+  // Present-tense "continue(s) to <verb>" in a first-session note is always a
+  // plan/necessity claim ("will continue to provide", "activities continue
+  // to target"), never an observation -- observations use the past tense
+  // ("continued to participate"), which is excluded below. Any verb.
+  // Round 6 (2026-11-05) failed on "continue to provide" after five rounds
+  // of adding verbs one at a time.
+  [/\b(will\s+)?continues?\s+to\s+([a-z]+)\b/gi, (_m: string, will: string | undefined, verb: string) => `${will ? "will " : ""}${verb}`],
   [/\b(to\s+)?continue\s+(supporting|building|developing|addressing|targeting|working\s+on|strengthening|monitoring|emphasi[sz]ing)\b/gi, (_m: string, to: string | undefined, ing: string) => {
     const base: Record<string, string> = { supporting: "support", building: "build", developing: "develop", addressing: "address", targeting: "target", strengthening: "strengthen", monitoring: "monitor", emphasizing: "emphasize", emphasising: "emphasise" };
     const key = ing.toLowerCase().replace(/\s+on$/, "");
@@ -1153,6 +1159,9 @@ const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => s
   // until/for/on/in/at/through/during/as/and", pronoun objects.
   [/\b(?:continued|ongoing)\s+(?!(?:to|the|a|an|this|that|these|those|his|her|their|its|with|despite|after|until|for|on|in|at|through|throughout|during|as|and|but|or|into|from|by|over|under|without|while|when|because|if|it|them|him|she|he|they|we|you)\b)(?=[a-z])/gi, ""],
   [/\bstill\s+(requires?|needs?|benefits?\s+from|warrants?|demonstrates?|shows?|presents?\s+with)\b/gi, "$1"],
+  // "further development/intervention/strengthening" -> drop "further" (the
+  // noun stands on its own; "further" implies a prior amount).
+  [/\bfurther\s+(?=[a-z]+(?:ment|tion|ing|ance|ence)\b)/gi, ""],
 ];
 
 export function hasCaseAContinuityWording(text: string): boolean {
