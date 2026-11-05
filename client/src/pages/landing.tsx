@@ -555,7 +555,7 @@ export default function Landing() {
               <Button
                 size="lg"
                 variant="outline"
-                onClick={() => setLocation('/settings')}
+                onClick={handleLogin}
                 className="px-8 py-6 text-lg border-white/20 text-white hover:bg-white/10"
               >
                 See Setup Guide
