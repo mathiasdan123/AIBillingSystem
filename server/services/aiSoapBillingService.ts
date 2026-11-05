@@ -1064,6 +1064,14 @@ export function hasUnsupportedPlanClosing(plan: string): boolean {
 // keeps emitting on first sessions where there is no frequency to continue.
 const CASE_A_CONTINUE_FREQUENCY =
   /(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?Continue (?:the )?current treatment frequency[^.!?\n]*[.!?]?/gim;
+// CASE A: a frequency line that explains there is no frequency ("Treatment
+// frequency: No established frequency documented.", "...not specified at
+// this time.", "...has not been established"). The prompt says omit the
+// statement; writing it names an "established" cadence that does not exist
+// (pipeline eval round 5). Only CASE A, only sentences that mention
+// frequency/cadence together with a negation.
+const CASE_A_NO_FREQUENCY_LINE =
+  /(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?[^.!?\n]*\b(?:no|not|none|unspecified)\b[^.!?\n]*\b(?:frequency|cadence)\b[^.!?\n]*[.!?]?|(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?[^.!?\n]*\b(?:frequency|cadence)\b[^.!?\n]*\b(?:not|no|none|unspecified)\b[^.!?\n]*[.!?]?/gim;
 
 export function stripUnsupportedPlanClosing(
   plan: string,
@@ -1071,7 +1079,7 @@ export function stripUnsupportedPlanClosing(
   hasActiveGoalsContext: boolean,
 ): string {
   if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
-  const extras = [CASE_A_CONTINUE_FREQUENCY, CASE_A_HOME_PROGRAM_CARRYOVER, CASE_A_NO_GOALS_LINE];
+  const extras = [CASE_A_CONTINUE_FREQUENCY, CASE_A_NO_FREQUENCY_LINE, CASE_A_HOME_PROGRAM_CARRYOVER, CASE_A_NO_GOALS_LINE];
   const hasExtra = extras.some((re) => {
     re.lastIndex = 0;
     const hit = re.test(plan);
@@ -1084,6 +1092,7 @@ export function stripUnsupportedPlanClosing(
   const stripped = plan
     .replace(SKILLED_OT_CONTINUATION_CLOSING, "")
     .replace(CASE_A_CONTINUE_FREQUENCY, "")
+    .replace(CASE_A_NO_FREQUENCY_LINE, "")
     .replace(CASE_A_HOME_PROGRAM_CARRYOVER, (_m, prefix) => `${prefix ?? ""}No home program assigned this session.`)
     .replace(CASE_A_NO_GOALS_LINE, "")
     .replace(/[ \t]{2,}/g, " ")
@@ -1133,6 +1142,17 @@ const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => s
   }],
   [/(?:^|(?<=[.!?]\s))Continue\s+(?:targeting|to\s+target)\b/gim, "Target"],
   [/(?:^|(?<=[.!?]\s))Continue\s+((?:graded\s+|dynamic\s+)?(?:therapeutic\s+)?activities)\b/gim, "Use $1"],
+  // STRUCTURAL RULE (pipeline eval round 5, 2026-11-05): the specific shapes
+  // above kept being outrun by new nouns -- "continued obstacle course work",
+  // "continued benefit from external structure", "continued skilled OT
+  // services", "continued need for services". On a first documented session
+  // the adjective "continued"/"ongoing" is unjustified in front of ANY noun
+  // phrase, and removing it leaves the sentence grammatical. Verb uses are
+  // preserved by excluding the words that follow a verb: "continued to
+  // participate", "continued the activity", "continued with/despite/after/
+  // until/for/on/in/at/through/during/as/and", pronoun objects.
+  [/\b(?:continued|ongoing)\s+(?!(?:to|the|a|an|this|that|these|those|his|her|their|its|with|despite|after|until|for|on|in|at|through|throughout|during|as|and|but|or|into|from|by|over|under|without|while|when|because|if|it|them|him|she|he|they|we|you)\b)(?=[a-z])/gi, ""],
+  [/\bstill\s+(requires?|needs?|benefits?\s+from|warrants?|demonstrates?|shows?|presents?\s+with)\b/gi, "$1"],
 ];
 
 export function hasCaseAContinuityWording(text: string): boolean {
@@ -1525,8 +1545,12 @@ export async function validateAndEnhanceResponse(
   // 2026-11-04T21-26: a documentation-denial sentence surfaced in an
   // auditNote) plus the two rationale-only softeners.
   const cleanRationale = (text: string) => {
-    const base = stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+    const base = removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+      ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
     );
     return noObservations ? softenUnsupportedDeficitInRationale(base) : base;
   };

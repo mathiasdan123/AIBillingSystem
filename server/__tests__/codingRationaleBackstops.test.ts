@@ -284,3 +284,64 @@ describe('validateAndEnhanceResponse strips a documentation-denial sentence from
     expect((out.auditNotes as string[]).join(' ')).toContain('Activities documented with location and duration.');
   });
 });
+
+describe('removeCaseAContinuityWording -- structural adjective rule (round 5)', () => {
+  it('drops "continued"/"ongoing" before any noun phrase while preserving verb uses', () => {
+    const cases: Array<[string, string]> = [
+      ['Activities will include continued obstacle course work with reduced cueing.', 'Activities will include obstacle course work with reduced cueing.'],
+      ['Emerging motor planning with continued benefit from external structure.', 'Emerging motor planning with benefit from external structure.'],
+      ['Potential for skill development with continued skilled occupational therapy services addressing coordination.', 'Potential for skill development with skilled occupational therapy services addressing coordination.'],
+      ['Documentation supports continued need for services.', 'Documentation supports need for services.'],
+      ['Ongoing verbal cueing was provided during the task.', 'verbal cueing was provided during the task.'],
+    ];
+    for (const [input, expected] of cases) {
+      expect(removeCaseAContinuityWording(input, false, false), input).toBe(expected);
+    }
+    const verbs = [
+      'Patient continued to participate in the obstacle course with skilled cueing.',
+      'Patient continued the activity after a brief rest.',
+      'Patient continued despite visible fatigue.',
+      'She continued with the trampoline sequence for two more minutes.',
+    ];
+    for (const v of verbs) {
+      expect(removeCaseAContinuityWording(v, false, false), v).toBe(v);
+    }
+  });
+});
+
+describe('stripUnsupportedPlanClosing -- CASE A frequency lines that say there is none', () => {
+  it('removes them in CASE A and leaves CASE B alone', () => {
+    for (const line of [
+      'Treatment frequency: No established frequency documented.',
+      'Treatment frequency: Not specified at this time.',
+      'No treatment frequency was documented.',
+      'Treatment frequency has not been established for this initial documented session.',
+    ]) {
+      const plan = `Next session will target bilateral coordination.\n\n${line}\n\nNo home program assigned this session.`;
+      const out = stripUnsupportedPlanClosing(plan, false, false);
+      expect(out, line).not.toMatch(/frequency/i);
+      expect(out).toContain('No home program assigned this session.');
+      expect(stripUnsupportedPlanClosing(plan, true, false)).toBe(plan);
+    }
+  });
+});
+
+describe('validateAndEnhanceResponse applies CASE A wording rewrites to rationale fields', () => {
+  it('drops "continued" from an auditNote on a first documented session', async () => {
+    const aiResponse = {
+      subjective: 'No subjective information was entered for this session.',
+      objective: 'Session conducted in Sensory gym for 45 minutes.',
+      assessment: 'Activities target motor planning and endurance demands.',
+      plan: 'Next session: bilateral coordination.',
+      cptCodes: [{ code: '97530', name: 'Therapeutic Activities', units: 3, rationale: 'Functional dynamic activities.', activitiesAssigned: ['Obstacle Course', 'Trampoline'] }],
+      activityCptPairings: [
+        { activity: 'Obstacle Course', code: '97530', rationale: 'Functional task.' },
+        { activity: 'Trampoline', code: '97530', rationale: 'Targets endurance.' },
+      ],
+      billingRationale: 'Coded conservatively as 97530.',
+      auditNotes: ['Documentation connects skilled interventions to functional outcomes supporting continued need for services.'],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, baseRequest, 3, false, false);
+    expect((out.auditNotes as string[])[0]).toBe('Documentation connects skilled interventions to functional outcomes supporting need for services.');
+  });
+});
