@@ -67,7 +67,7 @@ const TARGETED_SKILLS = [
   "Graphomotor", "Tool Use", "Praxis / Sequencing", "Self-Advocacy / Interoception"
 ];
 
-// All activities organized by category (NO CPT codes shown - AI determines optimal billing)
+// All activities organized by category (NO CPT codes shown - AI suggests codes for provider review)
 // Seeded from the practice's existing OT + ST exercise library (April 2026).
 // AI billing logic infers the right CPT family from the activity suffix
 // (- Strength → 97110, - Coordination → 97112, - Functional → 97530,
@@ -1384,7 +1384,7 @@ export default function SoapNotes() {
               Pediatric OT Documentation
             </h1>
             <p className="text-muted-foreground mt-1">
-              Select activities performed &rarr; AI generates notes & optimal billing codes
+              Select activities performed &rarr; AI drafts the note and suggests billing codes for your review
             </p>
           </div>
           <Button
@@ -2626,7 +2626,7 @@ export default function SoapNotes() {
                         <div className="p-2 bg-blue-50 rounded-lg">
                           <div className="flex items-center gap-1 mb-1">
                             <Lightbulb className="w-3 h-3 text-blue-600" />
-                            <span className="text-xs font-medium text-blue-700">AI Billing Strategy</span>
+                            <span className="text-xs font-medium text-blue-700">AI Coding Rationale</span>
                           </div>
                           <p className="text-xs text-muted-foreground">{generatedNote.billingRationale}</p>
                         </div>

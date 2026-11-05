@@ -275,6 +275,11 @@ export async function generateSoapNoteAndBilling(
       // note). Perceived speed comes from streaming the note as it's written,
       // not from a tight cap. See the audit notes in adversarial review.
       max_tokens: 6000,
+      // 0.5. A 0.2 trial (2026-11-04) did not make code choices repeatable
+      // (identical inputs still split 97530/97112/97110 across samples) and
+      // coincided with more continuity padding in CASE A plans, so the
+      // known-passing value stays. Repeatability is handled by the
+      // conservative-default rule and the rationale backstops instead.
       temperature: 0.5,
       system:
         systemPrompt +
@@ -638,10 +643,26 @@ Cover as applicable based on the input:
 - Progress toward goals — ONLY if treatment goals data was provided
 - Medical necessity statement — summarize the clinical deficits that
   WERE observed and link them to functional participation. Do not
-  invent deficits.
+  invent deficits. If no performance/strength/assistance/endurance
+  observations were supplied, the note may describe what the activities
+  TARGET, but must not state that the patient HAS strength, endurance,
+  motor-planning or other deficits.
 
 OMIT any sub-section if the input does not support it. It is better to
 write 4 substantive paragraphs than 8 padded ones.
+
+FIRST DOCUMENTED SESSION (no MOST RECENT PLAN and no ACTIVE TREATMENT GOALS
+appear in this prompt): there is no history, so do not use continuity words
+ANYWHERE in the note about therapy, need, deficits, frequency, goals or the
+home program: not "continue", "continued", "continuing", "ongoing",
+"remain(s)", "further" or "still". Write "needed external structure", not
+"continued need for external structure"; "is challenging", not "remains
+challenging"; "activities will target", not "will continue to target". A
+present-tense necessity statement ("skilled OT is indicated to address the
+observed fatigue response") is allowed only when observations support it.
+Never write a Goals line explaining that no goals exist -- omit the Goals
+subsection -- and never write "Reviewed continuation of current home
+strategies" (write "No home program assigned this session.").
 
 PLAN SECTION (target: 75-150 words):
 Use the "planNextSteps", "nextSessionFocus", and "homeProgram" fields.
@@ -649,10 +670,14 @@ Use the "planNextSteps", "nextSessionFocus", and "homeProgram" fields.
 1. NEXT SESSION FOCUS — Use what the therapist wrote. Add 2-3 specific
    activities that would clinically align with that focus.
 2. TREATMENT FREQUENCY — Only state a frequency if one is implied or
-   stated in the treatment plan data. Otherwise write
-   "Continue current treatment frequency" without a specific cadence.
+   stated in the treatment plan data. Otherwise: with a MOST RECENT PLAN
+   on file (CASE B) write "Continue current treatment frequency" without
+   a specific cadence; on a first documented session (CASE A) OMIT the
+   frequency statement entirely -- there is no cadence to continue.
 3. HOME PROGRAM — Use the home program field if provided. If it wasn't
-   provided, write "Home program: no changes" or omit this subsection.
+   provided: CASE B "Reviewed continuation of current home strategies; no
+   changes to home program at this time."; CASE A "No home program
+   assigned this session." (never "no changes" -- nothing existed to change).
 4. GOALS — Reference ONLY the treatment goals provided in the input.
 5. REFERRALS — Only mention referrals that are clearly indicated by
    the observations. Otherwise omit.
@@ -667,7 +692,9 @@ CLINICAL TERMINOLOGY (use when supported by observations):
 - "compensatory movement strategies"
 - "proximal stability/weakness"
 - "anti-gravity positions"
-- "skilled occupational therapy services remain medically necessary"
+- "skilled occupational therapy services are medically necessary" (ONLY when
+  documented deficits support it; never "remain"/"continue to be" on a first
+  documented session -- there is no prior determination to remain in force)
 
 BILLING CODE ASSIGNMENT:
 Assign codes by the PRIMARY SKILLED OBJECTIVE the documentation supports —
@@ -707,6 +734,31 @@ Objective is paired with its billing code.
 - These are SUGGESTIONS for accuracy review, never final: the treating
   therapist reviews and can change every per-activity code and makes every
   coding decision.
+
+CODING RATIONALE DISCIPLINE (applies to every rationale and billingRationale):
+1. Suggestion-framed, never absolute. A rationale must NEVER call a code the
+   "only defensible", "only correct", "only appropriate" or "required"
+   choice, and must never say an activity "must be coded/billed as" a code.
+   Live retest, 2026-11-04: two notes generated from IDENTICAL inputs chose
+   97110 for one and 97530 for the other, and each called its own choice the
+   "only defensible" code. Both cannot be true; the certainty was fabricated.
+2. Name the alternative when one is plausible. Dynamic gross-motor activities
+   (obstacle course, trampoline, climbing) can be argued as 97530 Therapeutic
+   Activities (functional/dynamic task) or 97110 Therapeutic Exercise
+   (strength/endurance) depending on the documented objective. When the
+   documentation supports more than one reading, say so in one clause, name
+   the alternative, and state which documented detail tipped the choice. With
+   nothing documented to tip it, use the conservative default (97530) and say
+   that is why.
+3. Targets, not diagnoses. Describe what an activity TARGETS or DEMANDS
+   (strength, endurance, motor planning, postural control). Do NOT assert
+   that the patient HAS a deficit unless the therapist's performance,
+   strength, assistance, endurance or activity-response observations document
+   one. "Trampoline work targets lower-extremity strength and endurance" is
+   correct with no observations. "Trampoline work addresses the patient's
+   underlying strength and endurance deficits" asserts a clinical finding
+   nobody documented -- that is fabrication, in a rationale exactly as much
+   as in the Assessment. This rule applies to auditNotes too.
 
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
@@ -898,7 +950,7 @@ the input is rich — never pad to reach them, and never invent specifics
 (trial counts, scores, prior-session comparisons, equipment adjectives) to
 fill space. The anti-fabrication rules above OVERRIDE every example here.
 {
-  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: ONLY if the Caregiver Report field above has a real value (not the marker), write it as 'Caregiver reported: [that value].' If the field is the marker, OMIT any caregiver-report sentence entirely -- do NOT write 'Caregiver report was not obtained this session' or anything asserting that no report was given; the field being blank in this form means the therapist didn't type anything here, not that you know a report wasn't obtained. Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.",
+  "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: ONLY if the Caregiver Report field above has a real value (not the marker), write it as 'Caregiver reported: [that value].' If the field is the marker, OMIT any caregiver-report sentence entirely -- do NOT write 'Caregiver report was not obtained this session' or anything asserting that no report was given; the field being blank in this form means the therapist didn't type anything here, not that you know a report wasn't obtained. Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.\n\nIf BOTH the Caregiver Report and Mood/Presentation fields are the marker and no other subjective input exists, write exactly: 'No subjective information was entered for this session.' -- a statement about this form, not a claim about what happened in the room. Never leave the section empty.",
 
   "objective": "Scaled to the richness of the input (120-300 words when rich; shorter when sparse). Structure:\\n\\nSession conducted in [location] for [duration] minutes. Standardized measures: include scores ONLY if the input explicitly states a measure was administered and gives the value; otherwise write 'Standardized measurements were not administered; observations were qualitative.'\\n\\nActivities & performance:\\n- [Activity from the activities list]: describe with the assistance level the therapist provided and qualitative performance. Do NOT invent trial counts (e.g. '8/10 trials'), timings, or percentages that weren't provided.\\n\\nAssistance levels: use the assistance field. Standard terms (Independent / Modified Independent / Supervision / Min / Mod / Max Assist / Dependent). Cue types (verbal/visual/tactile/hand-over-hand) when they describe how an activity was supported — no invented cue counts.\\n\\nEquipment/materials: name ONLY items in the activities list, with ONLY the adjectives the therapist used (no '55cm', 'medium resistance', '2 lb' unless stated).\\n\\nSkilled interventions: describe the techniques corresponding to the activities, framed by their skilled/functional objective (e.g. neuromuscular re-education for postural control; graded vestibular-proprioceptive input to support motor planning).",
 
@@ -911,7 +963,7 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
       "code": "97533",
       "name": "Sensory Integration",
       "units": 2,
-      "rationale": "Clinical justification for this code",
+      "rationale": "Why this code fits the documented skilled objective. Suggestion-framed for provider review: if another code is also plausible for these activities, name it in one clause and say which documented detail tipped the choice (or that 97530 is the conservative default because nothing documented tips it). Describe what the activities TARGET; never assert the patient HAS a deficit unless an observation above documents one. Never use \"only defensible\", \"only correct\", \"must be coded as\" or similar absolute wording.",
       "activitiesAssigned": ["Activity 1", "Activity 2"]
     }
   ],
@@ -919,10 +971,10 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
     {
       "activity": "Activity name EXACTLY as it appears in the activities list above",
       "code": "97530",
-      "rationale": "Why this code fits this activity's documented skilled objective (or that 97530 is the conservative default because nothing more specific is clearly supported)"
+      "rationale": "Why this code fits this activity's documented skilled objective (or that 97530 is the conservative default because nothing more specific is clearly supported). Same discipline as above: name a plausible alternative in one clause, describe targets rather than asserting undocumented deficits, no absolute wording."
     }
   ],
-  "billingRationale": "Explanation of code assignment strategy",
+  "billingRationale": "Explanation of the code-assignment reasoning for provider review: which documented details drove each code, which alternative code(s) were considered and why they were not chosen. Never present a choice as the only defensible one, and never describe patient deficits that no observation above documents.",
   "auditNotes": ["Documentation points supporting the billing codes"]
 }
 
@@ -977,8 +1029,22 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 // recommended.", "Reviewed continuation of current home strategies...") --
 // though the hasMostRecentPlanContext/hasActiveGoalsContext gate below
 // already keeps this function from ever running in CASE B regardless.
+// FLAGS: `m` is load-bearing (added 2026-11-04). Every sentence regex in
+// this file anchors on `(?:^|(?<=[.!?]\s))`. Without `m`, `^` is the start
+// of the whole string and the lookbehind wants punctuation plus ONE
+// whitespace character -- so a sentence that opens a paragraph after a
+// blank line ("...session.\n\nPatient will continue to participate in
+// skilled occupational therapy...") never matched, and the backstop silently
+// did nothing for exactly the trailing-paragraph closing it was built for.
+// The pipeline eval (run 2026-11-04T20-50) showed 3/3 clean-room samples
+// with that sentence surviving as its own final paragraph.
+// 2026-11-04 (pipeline eval round 4): "Patient will continue with skilled
+// occupational therapy to address bilateral coordination..." carried a
+// persistence word and a therapy word but none of the necessity/participation
+// words, so it slipped through. "address"/"target"/"continue with" added to
+// that third group.
 const SKILLED_OT_CONTINUATION_CLOSING =
-  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*)\b)[^.!?\n]*[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*|address\w*|target\w*|continue\s+with)\b)[^.!?\n]*[.!?]/gim;
 
 /**
  * Detection only (no mutation) — exposed so callers like the fabrication
@@ -994,16 +1060,41 @@ export function hasUnsupportedPlanClosing(plan: string): boolean {
   return result;
 }
 
+// CASE A only: the prompt's own CASE B default sentence, which the model
+// keeps emitting on first sessions where there is no frequency to continue.
+const CASE_A_CONTINUE_FREQUENCY =
+  /(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?Continue (?:the )?current treatment frequency[^.!?\n]*[.!?]?/gim;
+// CASE A: a frequency line that explains there is no frequency ("Treatment
+// frequency: No established frequency documented.", "...not specified at
+// this time.", "...has not been established"). The prompt says omit the
+// statement; writing it names an "established" cadence that does not exist
+// (pipeline eval round 5). Only CASE A, only sentences that mention
+// frequency/cadence together with a negation.
+const CASE_A_NO_FREQUENCY_LINE =
+  /(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?[^.!?\n]*\b(?:no|not|none|unspecified)\b[^.!?\n]*\b(?:frequency|cadence)\b[^.!?\n]*[.!?]?|(?:^|(?<=[.!?]\s))(?:Treatment frequency:\s*)?[^.!?\n]*\b(?:frequency|cadence)\b[^.!?\n]*\b(?:not|no|none|unspecified)\b[^.!?\n]*[.!?]?/gim;
+
 export function stripUnsupportedPlanClosing(
   plan: string,
   hasMostRecentPlanContext: boolean,
   hasActiveGoalsContext: boolean,
 ): string {
   if (hasMostRecentPlanContext || hasActiveGoalsContext || !plan) return plan;
-  if (!hasUnsupportedPlanClosing(plan)) return plan;
+  const extras = [CASE_A_CONTINUE_FREQUENCY, CASE_A_NO_FREQUENCY_LINE, CASE_A_HOME_PROGRAM_CARRYOVER, CASE_A_NO_GOALS_LINE];
+  const hasExtra = extras.some((re) => {
+    re.lastIndex = 0;
+    const hit = re.test(plan);
+    re.lastIndex = 0;
+    return hit;
+  });
+  if (!hasUnsupportedPlanClosing(plan) && !hasExtra) return plan;
   SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  for (const re of extras) re.lastIndex = 0;
   const stripped = plan
     .replace(SKILLED_OT_CONTINUATION_CLOSING, "")
+    .replace(CASE_A_CONTINUE_FREQUENCY, "")
+    .replace(CASE_A_NO_FREQUENCY_LINE, "")
+    .replace(CASE_A_HOME_PROGRAM_CARRYOVER, (_m, prefix) => `${prefix ?? ""}No home program assigned this session.`)
+    .replace(CASE_A_NO_GOALS_LINE, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -1015,6 +1106,130 @@ export function stripUnsupportedPlanClosing(
 }
 
 // Deterministic backstop for mood/presentation fabrication. The JSON-template
+// CASE A continuity-necessity claims OUTSIDE the Plan. Pipeline eval run
+// 2026-11-04T20-50: first-session notes closed the Assessment with "Skilled
+// occupational therapy services remain medically necessary..." and "These
+// observations demonstrate continued need for skilled occupational therapy
+// services..." -- the Plan backstop's banned class, one section earlier.
+// Tighter than the Plan regex on purpose: the persistence word must share
+// the sentence with a NECESSITY phrase (medically necessary / need for /
+// benefit from skilled), so an observation like "continued to participate in
+// the obstacle course with skilled cueing" is never touched. Gated to CASE A
+// by the caller exactly like stripUnsupportedPlanClosing.
+const CASE_A_CONTINUITY_NECESSITY =
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:medically\s+necessary|medical\s+necessity|necessary|need\s+for\s+(?:continued\s+|ongoing\s+)?skilled|benefit\s+from\s+(?:continued\s+|ongoing\s+)?skilled|necessit\w+)\b)[^.!?\n]*[.!?]/gim;
+
+// CASE A word-level continuity rewrites. Pipeline eval run 2026-11-04T21-08:
+// with the sentence-level strips working, the judge's remaining traceability
+// findings were continuity WORDS riding on otherwise-grounded sentences --
+// "continued need for external structure" (a within-session observation),
+// "remains challenging", "Activities will continue to target...", "require
+// continued therapeutic intervention". On a first documented session there
+// is nothing for any of these to continue from, so the word goes and the
+// sentence stays. Never applied in CASE B.
+const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
+  [/\b(?:continued|ongoing|continuing)\s+need\s+for\b/gi, "need for"],
+  [/\b(?:continued|ongoing)\s+(deficits?|limitations?|difficult(?:y|ies)|challenges?|weakness)\b/gi, "$1"],
+  [/\b(?:require|requires|requiring|indicates?|indicating|suggests?|suggesting|demonstrates?|demonstrating|need\s+for|warrants?)\s+(?:continued|ongoing|further)\s+/gi, (m: string) => m.replace(/\s+(?:continued|ongoing|further)\s+$/i, " ")],
+  [/\bcontinued\s+((?:skilled\s+|clinical\s+|graded\s+)?(?:therapeutic\s+)?(?:intervention|strengthening|practice|support|work|therapy|focus|emphasis|training|development|monitoring|attention|use|progress|exposure|participation\s+in))\b/gi, "$1"],
+  [/\bremains?\s+(challenging|difficult|limited|an\s+area|a\s+(?:focus|priority)|(?:a|an)\s+(?:clinically\s+)?(?:appropriate|relevant|primary|key|important|reasonable)|(?:clinically\s+)?(?:appropriate|indicated|relevant|important|warranted))\b/gi, "is $1"],
+  // Present-tense "continue(s) to <verb>" in a first-session note is always a
+  // plan/necessity claim ("will continue to provide", "activities continue
+  // to target"), never an observation -- observations use the past tense
+  // ("continued to participate"), which is excluded below. Any verb.
+  // Round 6 (2026-11-05) failed on "continue to provide" after five rounds
+  // of adding verbs one at a time.
+  [/\b(will\s+)?continues?\s+to\s+([a-z]+)\b/gi, (_m: string, will: string | undefined, verb: string) => `${will ? "will " : ""}${verb}`],
+  [/\b(to\s+)?continue\s+(supporting|building|developing|addressing|targeting|working\s+on|strengthening|monitoring|emphasi[sz]ing)\b/gi, (_m: string, to: string | undefined, ing: string) => {
+    const base: Record<string, string> = { supporting: "support", building: "build", developing: "develop", addressing: "address", targeting: "target", strengthening: "strengthen", monitoring: "monitor", emphasizing: "emphasize", emphasising: "emphasise" };
+    const key = ing.toLowerCase().replace(/\s+on$/, "");
+    const verb = key === "working" ? "work on" : (base[key] ?? ing);
+    return to ? `to ${verb}` : verb;
+  }],
+  [/(?:^|(?<=[.!?]\s))Continue\s+(?:targeting|to\s+target)\b/gim, "Target"],
+  [/(?:^|(?<=[.!?]\s))Continue\s+((?:graded\s+|dynamic\s+)?(?:therapeutic\s+)?activities)\b/gim, "Use $1"],
+  // STRUCTURAL RULE (pipeline eval round 5, 2026-11-05): the specific shapes
+  // above kept being outrun by new nouns -- "continued obstacle course work",
+  // "continued benefit from external structure", "continued skilled OT
+  // services", "continued need for services". On a first documented session
+  // the adjective "continued"/"ongoing" is unjustified in front of ANY noun
+  // phrase, and removing it leaves the sentence grammatical. Verb uses are
+  // preserved by excluding the words that follow a verb: "continued to
+  // participate", "continued the activity", "continued with/despite/after/
+  // until/for/on/in/at/through/during/as/and", pronoun objects.
+  [/\b(?:continued|ongoing)\s+(?!(?:to|the|a|an|this|that|these|those|his|her|their|its|with|despite|after|until|for|on|in|at|through|throughout|during|as|and|but|or|into|from|by|over|under|without|while|when|because|if|it|them|him|she|he|they|we|you)\b)(?=[a-z])/gi, ""],
+  [/\bstill\s+(requires?|needs?|benefits?\s+from|warrants?|demonstrates?|shows?|presents?\s+with)\b/gi, "$1"],
+  // "further development/intervention/strengthening" -> drop "further" (the
+  // noun stands on its own; "further" implies a prior amount).
+  [/\bfurther\s+(?=[a-z]+(?:ment|tion|ing|ance|ence)\b)/gi, ""],
+];
+
+export function hasCaseAContinuityWording(text: string): boolean {
+  if (!text) return false;
+  return CASE_A_CONTINUITY_REWRITES.some(([re]) => {
+    re.lastIndex = 0;
+    const hit = re.test(text);
+    re.lastIndex = 0;
+    return hit;
+  });
+}
+
+export function removeCaseAContinuityWording(
+  text: string,
+  hasMostRecentPlanContext: boolean,
+  hasActiveGoalsContext: boolean,
+): string {
+  if (hasMostRecentPlanContext || hasActiveGoalsContext || !text) return text;
+  if (!hasCaseAContinuityWording(text)) return text;
+  let out = text;
+  for (const [re, replacement] of CASE_A_CONTINUITY_REWRITES) {
+    re.lastIndex = 0;
+    out = out.replace(re, replacement as any);
+  }
+  logger.warn("Rewrote CASE A continuity wording (first documented session; nothing to continue from)", {
+    originalLength: text.length,
+    rewrittenLength: out.length,
+  });
+  return out;
+}
+
+// CASE A: the prompt's own CASE B home-program default, and any "Goals:" line
+// that explains there are no goals. Both name a history (a current home
+// program, a plan of care) that does not exist on a first documented
+// session. Pipeline eval run 2026-11-04T21-08 caught both surviving.
+const CASE_A_HOME_PROGRAM_CARRYOVER =
+  /(?:^|(?<=[.!?]\s))(Home program:\s*)?Reviewed continuation of current home strategies;?\s*no changes to (?:the )?home program at this time\.?/gim;
+const CASE_A_NO_GOALS_LINE =
+  /(?:^|(?<=[.!?]\s))(?:Goals?:\s*)?[^.!?\n]*\b(?:no|not|none|cannot|omitted)\b[^.!?\n]*\b(?:treatment\s+goals?|active\s+goals?|plan\s+of\s+care)\b[^.!?\n]*[.!?]?/gim;
+
+export function hasUnsupportedContinuityNecessity(text: string): boolean {
+  if (!text) return false;
+  CASE_A_CONTINUITY_NECESSITY.lastIndex = 0;
+  const result = CASE_A_CONTINUITY_NECESSITY.test(text);
+  CASE_A_CONTINUITY_NECESSITY.lastIndex = 0;
+  return result;
+}
+
+export function stripUnsupportedContinuityNecessity(
+  text: string,
+  hasMostRecentPlanContext: boolean,
+  hasActiveGoalsContext: boolean,
+): string {
+  if (hasMostRecentPlanContext || hasActiveGoalsContext || !text) return text;
+  if (!hasUnsupportedContinuityNecessity(text)) return text;
+  CASE_A_CONTINUITY_NECESSITY.lastIndex = 0;
+  const stripped = text
+    .replace(CASE_A_CONTINUITY_NECESSITY, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  logger.warn(
+    "Stripped CASE A continuity/necessity claim outside the Plan (no prior plan or goals exist)",
+    { originalLength: text.length, strippedLength: stripped.length },
+  );
+  return stripped;
+}
+
 // subjective-field instruction has, since #420, explicitly forbidden
 // defaulting to "a plausible-sounding word like 'cooperative' or 'engaged'"
 // when Mood/Presentation is blank -- yet confirmed in production (clean-room
@@ -1033,7 +1248,7 @@ export function stripUnsupportedPlanClosing(
 // difficulty maintaining balance") and would be a real false-positive risk
 // without a second confirmed example to justify the wider net.
 const MOOD_PRESENTATION_CLAUSE =
-  /(?:^|(?<=[.!?]\s))[^.!?\n]*?\bpresented\s+as\s+[^.!?\n]+[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))[^.!?\n]*?\bpresented\s+as\s+[^.!?\n]+[.!?]/gim;
 
 /** Detection only (no mutation) -- mirrors hasUnsupportedPlanClosing. */
 export function hasUnsupportedMoodClause(text: string): boolean {
@@ -1083,7 +1298,7 @@ export function stripUnsupportedMoodClause(text: string, hasMood: boolean): stri
 // + was/were (not) documented/obtained/provided/recorded/reported) rather
 // than a broader net, matching the discipline from the mood backstop above.
 const DOCUMENTATION_DENIAL_CLAUSE =
-  /(?:^|(?<=[.!?]\s))(?:No\s+[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b|[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\s+not\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b)[^.!?\n]*[.!?]/gi;
+  /(?:^|(?<=[.!?]\s))(?:No\s+[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b|[^.!?\n]*?\b(?:caregiver report|mood|presentation)\b[^.!?\n]*?\b(?:was|were)\s+not\b[^.!?\n]*?\b(?:documented|obtained|provided|recorded|reported)\b)[^.!?\n]*[.!?]/gim;
 
 /** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause. */
 export function hasUnsupportedDocumentationDenialClause(text: string): boolean {
@@ -1109,6 +1324,125 @@ export function stripUnsupportedDocumentationDenialClause(text: string): string 
   return stripped;
 }
 
+// ---------------------------------------------------------------------------
+// Subjective placeholder. Live retest, 2026-11-04: with Mood/Presentation and
+// Caregiver Report both blank, one generation wrote a sentence explaining
+// that nothing subjective was supplied and another left the section EMPTY.
+// An empty Subjective reads as a documentation gap on a signed note. The
+// placeholder is a statement about the form ("was entered"), deliberately
+// NOT about the room ("was not obtained") -- see DOCUMENTATION_DENIAL_CLAUSE
+// above for why that distinction matters, and note its vocabulary (caregiver
+// report / mood / presentation) does not match this sentence.
+// ---------------------------------------------------------------------------
+export const SUBJECTIVE_PLACEHOLDER = "No subjective information was entered for this session.";
+
+export function ensureSubjectivePresent(text: string): string {
+  return text && text.trim().length > 0 ? text : SUBJECTIVE_PLACEHOLDER;
+}
+
+// ---------------------------------------------------------------------------
+// Absolutist coding-claim backstop. Live retest, 2026-11-04: two generations
+// from IDENTICAL inputs chose 97110 and 97530 respectively for the same
+// activities, and each rationale called its own choice the "only defensible"
+// code. Whatever the right code is, that certainty was fabricated, and it is
+// the kind of sentence a provider is least likely to question. The prompt now
+// forbids the wording (CODING RATIONALE DISCIPLINE); this rewrites the known
+// shapes into suggestion framing when the model uses them anyway. Scoped to
+// the rationale fields only -- never applied to S/O/A/P prose.
+// ---------------------------------------------------------------------------
+const ABSOLUTIST_CODING_REWRITES: Array<[RegExp, string]> = [
+  // "the only defensible code" -> "the suggested code"
+  [/\b(?:the\s+)?only\s+(?:defensible|correct|appropriate|supportable|justifiable|valid|accurate)\s+(code|choice|option|assignment|selection)\b/gi, "suggested $1"],
+  // "is the only defensible ..." (no noun) -> "is a defensible ..."
+  [/\b(is|are|remains|was)\s+the\s+only\s+(defensible|correct|appropriate|supportable|justifiable|valid|accurate)\b/gi, "$1 a $2"],
+  // "must be coded/billed as" -> "is suggested as"
+  [/\bmust\s+be\s+(?:coded|billed|assigned|reported)\s+as\b/gi, "is suggested as"],
+  // "no other code is defensible/appropriate" -> alternative acknowledged
+  [/\bno\s+other\s+code\s+(?:is|would\s+be|could\s+be)\s+(?:defensible|appropriate|correct|supportable|justifiable|valid|accurate)\b/gi, "an alternative code may also be defensible"],
+];
+
+/** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause. */
+export function hasAbsolutistCodingClaim(text: string): boolean {
+  if (!text) return false;
+  return ABSOLUTIST_CODING_REWRITES.some(([re]) => {
+    re.lastIndex = 0;
+    const hit = re.test(text);
+    re.lastIndex = 0;
+    return hit;
+  });
+}
+
+export function softenAbsolutistCodingClaim(text: string): string {
+  if (!text || !hasAbsolutistCodingClaim(text)) return text;
+  let out = text;
+  for (const [re, replacement] of ABSOLUTIST_CODING_REWRITES) {
+    re.lastIndex = 0;
+    out = out.replace(re, replacement);
+  }
+  logger.warn("Softened absolutist coding claim in a billing rationale", {
+    originalLength: text.length,
+    softenedLength: out.length,
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Unsupported-deficit detector. Live retest, 2026-11-04: with no performance,
+// strength, assistance or endurance observations supplied, a generation
+// asserted "underlying strength and endurance deficits" in the Assessment and
+// the billing explanation. Describing what an activity TARGETS is fine;
+// asserting the patient HAS a deficit is a clinical finding nobody made.
+//
+// DETECTION ONLY. Unlike the mood/denial clauses, "deficit" sentences in the
+// Assessment are legitimate whenever observations exist, and the right fix
+// when they do not is to regenerate, not to excise prose from a clinical
+// paragraph. Used by the pipeline eval on its no-observation scenario and
+// available to callers that know no observations were supplied.
+// ---------------------------------------------------------------------------
+const UNSUPPORTED_DEFICIT_PATTERNS: RegExp[] = [
+  /\b(?:underlying|patient'?s|his|her|their|identified|existing|noted|documented|observed)\s+(?:[\w/-]+\s+){0,3}deficits?\b/i,
+  /\bdeficits?\s+(?:in|with|of)\s+(?:strength|endurance|motor\s+planning|postural|core|balance|coordination|bilateral|praxis|regulation)/i,
+  /\baddress(?:es|ing)?\s+(?:the\s+)?(?:[\w/-]+\s+){0,3}deficits?\b/i,
+  /\b(?:weakness|decreased|reduced|poor|impaired|limited)\s+(?:[\w/-]+\s+){0,2}(?:strength|endurance|postural\s+control|core\s+stability|motor\s+planning|balance|coordination)\b/i,
+];
+
+export function hasUnsupportedDeficitAssertion(text: string): boolean {
+  if (!text) return false;
+  return UNSUPPORTED_DEFICIT_PATTERNS.some((re) => re.test(text));
+}
+
+/** True when the therapist supplied ANY observation the note could ground a deficit in. */
+export function requestHasObservations(request: AiSoapBillingRequest): boolean {
+  const a = request.assessment || ({} as AiSoapBillingRequest["assessment"]);
+  const ratingFields = [
+    a.performance, a.assistance, a.strength, a.motorPlanning, a.sensoryRegulation,
+    a.posturalControl, a.primitiveReflexes, a.fineMotor, a.grossMotor,
+    a.bilateralCoordination, a.endurance, a.engagement,
+  ];
+  if (ratingFields.some((v) => typeof v === "string" && v.trim().length > 0)) return true;
+  return (request.activityDetails || []).some((d) => d.response && d.response.trim().length > 0);
+}
+
+// Rationale fields ONLY (short, provider-facing coding text, never S/O/A/P
+// prose): when nothing was observed, "deficits" the model attributes to the
+// patient become "demands" of the activity, which is the claim the input
+// actually supports. Pipeline eval run 2026-11-04T20-50, P6 sample 3: a
+// rationale asserted deficits with every observation field blank.
+export function softenUnsupportedDeficitInRationale(text: string): string {
+  if (!text || !hasUnsupportedDeficitAssertion(text)) return text;
+  const out = text
+    .replace(/\b(underlying|patient'?s|his|her|their|identified|existing|noted|documented|observed)\s+((?:[\w/-]+\s+){0,3})deficits?\b/gi, (_m, _lead, mid) => `${mid}demands`)
+    .replace(/\baddress(es|ing)?\s+(?:the\s+)?((?:[\w/-]+\s+){0,3})deficits?\b/gi, (_m, suffix, mid) => `target${suffix ?? ""} ${mid}demands`)
+    .replace(/\bdeficits?\s+(in|with|of)\s+/gi, "demands on ")
+    .replace(/\b(weakness|decreased|reduced|poor|impaired|limited)\s+((?:[\w/-]+\s+){0,2})(strength|endurance|postural\s+control|core\s+stability|motor\s+planning|balance|coordination)\b/gi, (_m, _adj, mid, noun) => `${mid}${noun} demands`)
+    .replace(/[ \t]{2,}/g, " ");
+  logger.warn("Softened undocumented deficit language in a billing rationale (no observations supplied)", {
+    originalLength: text.length,
+    softenedLength: out.length,
+  });
+  return out;
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
@@ -1129,7 +1463,7 @@ export async function validateAndEnhanceResponse(
       code: code.code,
       name: code.name || codeInfo?.name || "Unknown",
       units: code.units || 1,
-      rationale: code.rationale || "",
+      rationale: softenAbsolutistCodingClaim(code.rationale || ""),
       reimbursement: rate * (code.units || 1),
       activitiesAssigned: code.activitiesAssigned || []
     };
@@ -1211,33 +1545,81 @@ export async function validateAndEnhanceResponse(
     }
   }
 
+  // Per-activity rationales get the same suggestion-framing backstop as the
+  // aggregate codes (normalizeActivityCptPairings fills defaults; the model's
+  // own wording is what needs softening).
+  const noObservations = !requestHasObservations(request);
+  const hasMoodForRationale = !!request.mood;
+  // Rationale fields get every text backstop S/O/A/P get (pipeline eval run
+  // 2026-11-04T21-26: a documentation-denial sentence surfaced in an
+  // auditNote) plus the two rationale-only softeners.
+  const cleanRationale = (text: string) => {
+    const base = removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+      ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
+    );
+    return noObservations ? softenUnsupportedDeficitInRationale(base) : base;
+  };
+  for (const pairing of activityCptPairings) {
+    if (pairing.rationale) pairing.rationale = cleanRationale(pairing.rationale);
+  }
+  for (const code of cptCodes) {
+    if (code.rationale) code.rationale = cleanRationale(code.rationale);
+  }
+
   const hasMood = !!request.mood;
   return {
-    subjective: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
-    ),
-    objective: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
-    ),
-    assessment: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(aiResponse.assessment || "", hasMood),
-    ),
-    plan: stripUnsupportedDocumentationDenialClause(
-      stripUnsupportedMoodClause(
-        stripUnsupportedPlanClosing(
-          aiResponse.plan || "",
-          hasMostRecentPlanContext,
-          hasActiveGoalsContext,
-        ),
-        hasMood,
+    subjective: ensureSubjectivePresent(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
       ),
+    ),
+    objective: removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
+      ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
+    ),
+    assessment: removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(
+          stripUnsupportedContinuityNecessity(
+            aiResponse.assessment || "",
+            hasMostRecentPlanContext,
+            hasActiveGoalsContext,
+          ),
+          hasMood,
+        ),
+      ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
+    ),
+    plan: removeCaseAContinuityWording(
+      stripUnsupportedDocumentationDenialClause(
+        stripUnsupportedMoodClause(
+          stripUnsupportedPlanClosing(
+            aiResponse.plan || "",
+            hasMostRecentPlanContext,
+            hasActiveGoalsContext,
+          ),
+          hasMood,
+        ),
+      ),
+      hasMostRecentPlanContext,
+      hasActiveGoalsContext,
     ),
     cptCodes,
     activityCptPairings,
     timeBlocks,
     totalReimbursement,
-    billingRationale: aiResponse.billingRationale || "",
-    auditNotes: aiResponse.auditNotes || [],
+    billingRationale: cleanRationale(aiResponse.billingRationale || ""),
+    auditNotes: (aiResponse.auditNotes || []).map((n: unknown) =>
+      typeof n === "string" ? cleanRationale(n) : n,
+    ),
     generationMode: "ai",
   };
 }
@@ -1353,7 +1735,7 @@ export function fallbackGeneration(
   const moodLine = request.mood
     ? `${patientName} presented as ${request.mood.toLowerCase()} during today's session.`
     : "";
-  const subjective = [caregiverLine, moodLine].filter(Boolean).join('\n\n');
+  const subjective = ensureSubjectivePresent([caregiverLine, moodLine].filter(Boolean).join('\n\n'));
 
   // Build objective section — grounded ONLY in the provided activities and
   // assessment fields. No invented trials, cue counts, equipment specifics, or

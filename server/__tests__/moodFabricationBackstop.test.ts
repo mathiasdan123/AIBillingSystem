@@ -61,3 +61,13 @@ describe('hasUnsupportedMoodClause', () => {
     expect(hasUnsupportedMoodClause(text)).toBe(true);
   });
 });
+
+describe('stripUnsupportedMoodClause -- paragraph-initial sentence', () => {
+  it('strips a "presented as" sentence that opens a paragraph after a blank line', () => {
+    const text = 'Caregiver reported: slept well.\n\nMia presented as cooperative during today\'s session.';
+    expect(hasUnsupportedMoodClause(text)).toBe(true);
+    const stripped = stripUnsupportedMoodClause(text, false);
+    expect(stripped).not.toMatch(/presented as/i);
+    expect(stripped).toContain('Caregiver reported: slept well.');
+  });
+});
