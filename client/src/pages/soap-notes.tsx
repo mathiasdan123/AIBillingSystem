@@ -67,7 +67,7 @@ const TARGETED_SKILLS = [
   "Graphomotor", "Tool Use", "Praxis / Sequencing", "Self-Advocacy / Interoception"
 ];
 
-// All activities organized by category (NO CPT codes shown - AI determines optimal billing)
+// All activities organized by category (NO CPT codes shown - AI suggests codes for provider review)
 // Seeded from the practice's existing OT + ST exercise library (April 2026).
 // AI billing logic infers the right CPT family from the activity suffix
 // (- Strength → 97110, - Coordination → 97112, - Functional → 97530,
@@ -382,6 +382,7 @@ export default function SoapNotes() {
     clear: clearDraft,
     lastSavedAt: draftLastSavedAt,
     isSaving: draftSaving,
+    error: draftError,
   } = useSoapDraft({
     patientId: selectedPatient,
     onRestore: (draft) => {
@@ -405,6 +406,21 @@ export default function SoapNotes() {
       }
     },
   });
+
+  // Surface autosave failures instead of swallowing them (therapybill-qa #3):
+  // useSoapDraft only records the error in state, and until now nothing on
+  // the page read it, so a draft endpoint that fails on every call looked
+  // identical to one that never ran. The hook clears `error` at the start of
+  // each attempt, so a repeat failure re-fires this effect.
+  useEffect(() => {
+    if (!draftError) return;
+    toast({
+      title: "Draft not saved",
+      description:
+        "Your note is still on this page but the autosave failed. Copy anything important before leaving, then try again.",
+      variant: "destructive",
+    });
+  }, [draftError, toast]);
 
   // Autosave the generated SOAP whenever it changes. Only fires when the
   // current generatedNote was actually produced for the current selectedPatient
@@ -1384,7 +1400,7 @@ export default function SoapNotes() {
               Pediatric OT Documentation
             </h1>
             <p className="text-muted-foreground mt-1">
-              Select activities performed &rarr; AI generates notes & optimal billing codes
+              Select activities performed &rarr; AI drafts the note and suggests billing codes for your review
             </p>
           </div>
           <Button
@@ -2565,7 +2581,11 @@ export default function SoapNotes() {
           <div className="space-y-4" id="generated-note-section">
             {generatedNote ? (
               <>
-                <DraftSavedIndicator saving={draftSaving} lastSavedAt={draftLastSavedAt} />
+                <DraftSavedIndicator
+                  saving={draftSaving}
+                  lastSavedAt={draftLastSavedAt}
+                  error={draftError}
+                />
                 {generatedNote.generationMode === "fallback" && (
                   <Alert className="border-amber-300 bg-amber-50">
                     <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -2626,7 +2646,7 @@ export default function SoapNotes() {
                         <div className="p-2 bg-blue-50 rounded-lg">
                           <div className="flex items-center gap-1 mb-1">
                             <Lightbulb className="w-3 h-3 text-blue-600" />
-                            <span className="text-xs font-medium text-blue-700">AI Billing Strategy</span>
+                            <span className="text-xs font-medium text-blue-700">AI Coding Rationale</span>
                           </div>
                           <p className="text-xs text-muted-foreground">{generatedNote.billingRationale}</p>
                         </div>
