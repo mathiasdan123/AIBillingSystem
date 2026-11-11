@@ -849,10 +849,10 @@ export const soapNoteDrafts = pgTable("soap_note_drafts", {
   // CONFLICT specification" and autosave fails on every call (QA #3).
   // migrations/add_soap_draft_columns.sql declared the same index by hand,
   // but production applies the schema via `drizzle-kit push`, which only
-  // reads this file. Before this index can be created, legacy duplicate
-  // (therapist_id, patient_id) rows must be collapsed — see
-  // scripts/dedupe-soap-drafts-payload.cjs, which the deploy migration
-  // step runs ahead of db:push.
+  // reads this file. CREATE UNIQUE INDEX fails if legacy duplicate
+  // (therapist_id, patient_id) rows exist, so the deploy migration step
+  // runs scripts/dedupe-soap-drafts-payload.cjs (report only) ahead of
+  // db:push and halts the deploy if any are found.
   uniqueIndex("idx_soap_draft_therapist_patient").on(table.therapistId, table.patientId),
   index("idx_soap_draft_practice").on(table.practiceId),
 ]);

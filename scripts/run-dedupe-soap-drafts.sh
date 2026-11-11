@@ -1,33 +1,34 @@
 #!/usr/bin/env bash
 #
-# Collapse duplicate soap_note_drafts rows on prod ahead of creating the
-# unique index idx_soap_draft_therapist_patient (therapybill-qa #3). Runs as
-# a one-off ECS Fargate task (RDS is in a private subnet; nothing reaches it
-# from a laptop). Feeds scripts/dedupe-soap-drafts-payload.cjs to the app
-# container as `node -e` - the same mechanism as the other one-off repairs.
-# See the payload for what "newest" means and why NULL keys are skipped.
+# REPORT-ONLY duplicate check for soap_note_drafts on prod, ahead of the
+# unique index idx_soap_draft_therapist_patient (therapybill-qa #3). Runs
+# scripts/dedupe-soap-drafts-payload.cjs as a one-off ECS Fargate task
+# (RDS is in a private subnet; nothing reaches it from a laptop), fed to
+# the app container as `node -e` like the other one-off tasks.
 #
-# The deploy workflow runs the same payload automatically before db:push,
-# so this script is for looking first: run --dry-run to see how many
-# duplicate groups prod has (and which rows would go) without changing
-# anything, then either let the deploy handle it or run it for real here.
+# The payload only SELECTs: it prints whether the index exists and lists
+# any duplicate (therapist_id, patient_id) groups with every row's id and
+# timestamps, exiting 1 if any exist. It never deletes or updates a row.
+# (The name is from the original deleting proposal; kept so references in
+# QA #3 / PR #454 stay valid.)
+#
+# This is still a PRODUCTION OPERATION: it launches a Fargate task in the
+# prod cluster, opens a connection to the prod database, and bills for the
+# task. Run it only with Daniel's explicit approval. The deploy workflow
+# runs the same payload automatically before db:push, so there is normally
+# no reason to run this by hand.
 #
 # Usage:
-#   scripts/run-dedupe-soap-drafts.sh --dry-run   # report only, rolled back
 #   scripts/run-dedupe-soap-drafts.sh
 #
-# Needs: aws CLI with prod credentials, jq.
+# Exit code is the payload's: 0 = no duplicates, 1 = duplicates found or
+# the check failed. Needs: aws CLI with prod credentials, jq.
 set -euo pipefail
 
 REGION=us-east-1
 CLUSTER=therapybill-cluster
 SERVICE=therapybill-service
 PAYLOAD="$(dirname "$0")/dedupe-soap-drafts-payload.cjs"
-
-DRY_RUN_ENV='[]'
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN_ENV='[{"name":"DRY_RUN","value":"1"}]'
-fi
 
 # Network config + task def from the live service (avoids hardcoding subnets).
 NET=$(aws ecs describe-services --region "$REGION" \
@@ -41,8 +42,8 @@ CONTAINER=$(aws ecs describe-task-definition --region "$REGION" \
   --query 'taskDefinition.containerDefinitions[0].name' --output text)
 echo "Using task def $TASK_DEF, container $CONTAINER"
 
-OVERRIDES=$(jq -Rs --arg name "$CONTAINER" --argjson env "$DRY_RUN_ENV" \
-  '{containerOverrides:[{name:$name,command:["node","-e",.],environment:$env}]}' \
+OVERRIDES=$(jq -Rs --arg name "$CONTAINER" \
+  '{containerOverrides:[{name:$name,command:["node","-e",.]}]}' \
   "$PAYLOAD")
 
 TASK_ARN=$(aws ecs run-task --region "$REGION" \
@@ -51,9 +52,9 @@ TASK_ARN=$(aws ecs run-task --region "$REGION" \
   --task-definition "$TASK_DEF" \
   --network-configuration "$NET" \
   --overrides "$OVERRIDES" \
-  --started-by "dedupe-soap-drafts" \
+  --started-by "soap-draft-duplicate-check" \
   --query 'tasks[0].taskArn' --output text)
-echo "Repair task: $TASK_ARN"
+echo "Check task: $TASK_ARN"
 
 aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN"
 
