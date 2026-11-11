@@ -357,6 +357,7 @@ function Router() {
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />
               <Route path="/feedback/:token" component={PublicFeedback} />
+              <Route path="/pricing" component={Pricing} />
               <Route path="/privacy" component={PrivacyPolicy} />
               <Route path="/terms" component={TermsOfService} />
               <Route component={NotFound} />
