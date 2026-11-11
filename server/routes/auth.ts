@@ -372,7 +372,22 @@ router.post('/mfa/verify', authLimiter, isAuthenticated, async (req: any, res) =
   }
 });
 
-router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
+/**
+ * Self-service MFA disable (admins only).
+ *
+ * Re-authentication is required (therapybill-qa #2): the caller must present
+ * either their password or a current authenticator code in the body. Holding
+ * a session cookie is not enough. Without this, a hijacked admin session could
+ * strip the account's second factor with one POST and then enrol a factor the
+ * attacker controls; /users/:id/mfa/reset already treats touching a second
+ * factor as a privileged act, and this route now does too.
+ *
+ * Either credential is accepted because SSO-provisioned accounts have no
+ * password hash; for them the authenticator code is the only option. A failed
+ * attempt is audited and the response does not say which credential was
+ * checked. authLimiter bounds guessing at the same rate as login.
+ */
+router.post('/mfa/disable', authLimiter, isAuthenticated, async (req: any, res) => {
   try {
     const userId = req.user.claims.sub;
     // MFA is mandatory for HIPAA compliance - only admins can disable for account recovery
@@ -383,11 +398,71 @@ router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
         code: 'MFA_DISABLE_FORBIDDEN'
       });
     }
+
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    if (!password && !token) {
+      return res.status(401).json({
+        message: 'Re-enter your password or a current authenticator code to disable MFA.',
+        code: 'MFA_REAUTH_REQUIRED',
+      });
+    }
+
+    let reauthMethod: 'password' | 'totp' | null = null;
+    if (token) {
+      const { verifyToken } = await import('../services/mfaService');
+      const rawSecret = currentUser.mfaSecret;
+      const secret = typeof rawSecret === 'string' ? rawSecret : (rawSecret as any)?.secret;
+      if (secret && verifyToken(secret as string, token)) reauthMethod = 'totp';
+    }
+    if (!reauthMethod && password) {
+      const { verifyPassword } = await import('../services/passwordService');
+      if (currentUser.passwordHash && (await verifyPassword(password, currentUser.passwordHash))) {
+        reauthMethod = 'password';
+      }
+    }
+
+    if (!reauthMethod) {
+      logger.warn('MFA self-disable refused: re-authentication failed', {
+        userId,
+        attempted: token ? 'totp' : 'password',
+      });
+      await storage.createAuditLog({
+        eventCategory: 'admin',
+        eventType: 'mfa_disable_self',
+        resourceType: 'user',
+        resourceId: userId,
+        userId,
+        practiceId: currentUser.practiceId,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        details: { attempted: token ? 'totp' : 'password' },
+        success: false,
+      });
+      return res.status(401).json({
+        message: 'Re-authentication failed. Check your password or authenticator code and try again.',
+        code: 'MFA_REAUTH_FAILED',
+      });
+    }
+
     await storage.updateUserMfa(userId, { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: null });
     clearMfaVerification(req.session);
-    logger.warn('MFA disabled by admin for account recovery', { userId });
+    logger.warn('MFA disabled by admin for own account', { userId, reauthMethod });
+    await storage.createAuditLog({
+      eventCategory: 'admin',
+      eventType: 'mfa_disable_self',
+      resourceType: 'user',
+      resourceId: userId,
+      userId,
+      practiceId: currentUser.practiceId,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      details: { reauthMethod },
+      success: true,
+    });
     res.json({ success: true });
   } catch (error) {
+    logger.error('MFA disable error', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to disable MFA' });
   }
 });
