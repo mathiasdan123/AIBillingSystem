@@ -379,9 +379,10 @@ export default function Analytics() {
             <div className="text-2xl font-bold">
               {collectionRate?.collectionRate?.toFixed(1) || 0}%
             </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Paid ÷ billed across all claims to date. Target is this page’s practice target.</p>
             <div className="mt-2">
               <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>Target: 99%</span>
+                <span>Practice target: 99%</span>
                 <span className={(collectionRate?.collectionRate || 0) >= 99 ? 'text-green-600' : 'text-amber-600'}>
                   {((collectionRate?.collectionRate || 0) >= 99) ? 'On Target' : `${(99 - (collectionRate?.collectionRate || 0)).toFixed(1)}% below`}
                 </span>
@@ -404,9 +405,10 @@ export default function Analytics() {
             <div className="text-2xl font-bold">
               {cleanClaimsRate?.cleanClaimsRate?.toFixed(1) || 0}%
             </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Claims paid or accepted on first submission ÷ all claims to date. Target is this page’s practice target.</p>
             <div className="mt-2">
               <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>Target: 97%</span>
+                <span>Practice target: 97%</span>
                 <span className={(cleanClaimsRate?.cleanClaimsRate || 0) >= 97 ? 'text-green-600' : 'text-amber-600'}>
                   {((cleanClaimsRate?.cleanClaimsRate || 0) >= 97) ? 'On Target' : `${(97 - (cleanClaimsRate?.cleanClaimsRate || 0)).toFixed(1)}% below`}
                 </span>
@@ -429,9 +431,10 @@ export default function Analytics() {
             <div className="text-2xl font-bold">
               {capacityUtilization?.arrivedRate?.toFixed(1) || 0}%
             </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Completed sessions ÷ scheduled slots, last 30 days. Target is this page’s practice target.</p>
             <div className="mt-2">
               <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>Target: 90%</span>
+                <span>Practice target: 90%</span>
                 <span className={(capacityUtilization?.arrivedRate || 0) >= 90 ? 'text-green-600' : 'text-amber-600'}>
                   {((capacityUtilization?.arrivedRate || 0) >= 90) ? 'On Target' : `${(90 - (capacityUtilization?.arrivedRate || 0)).toFixed(1)}% below`}
                 </span>
@@ -635,7 +638,8 @@ export default function Analytics() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{collectionRate?.collectionRate?.toFixed(1) || 0}%</div>
-                <p className="text-xs text-muted-foreground">Target: {collectionRate?.target || 99}%</p>
+                <p className="text-xs text-muted-foreground">Practice target: {collectionRate?.target || 99}%</p>
+                <p className="text-[11px] text-muted-foreground">Paid ÷ billed across all claims to date.</p>
               </CardContent>
             </Card>
             <Card>
@@ -889,7 +893,8 @@ export default function Analytics() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{cleanClaimsRate?.cleanClaimsRate?.toFixed(1) || 0}%</div>
-                <p className="text-xs text-muted-foreground">Target: {cleanClaimsRate?.target || 97}%</p>
+                <p className="text-xs text-muted-foreground">Practice target: {cleanClaimsRate?.target || 97}%</p>
+                <p className="text-[11px] text-muted-foreground">Claims paid or accepted on first submission ÷ all claims to date.</p>
               </CardContent>
             </Card>
             <Card>
@@ -1012,7 +1017,8 @@ export default function Analytics() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{capacityUtilization?.arrivedRate?.toFixed(1) || 0}%</div>
-                <p className="text-xs text-muted-foreground">Target: {capacityUtilization?.target || 90}%</p>
+                <p className="text-xs text-muted-foreground">Practice target: {capacityUtilization?.target || 90}%</p>
+                <p className="text-[11px] text-muted-foreground">Completed sessions ÷ scheduled slots, last 30 days.</p>
               </CardContent>
             </Card>
           </div>

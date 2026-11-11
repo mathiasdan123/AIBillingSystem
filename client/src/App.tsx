@@ -234,6 +234,7 @@ function Router() {
               <Route path="/intake" component={PatientIntake} />
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />
+              <Route path="/mcp-setup" component={McpSetup} />
               <Route path="/book/:slug" component={PublicBooking} />
               <Route path="/join/:code" component={TelehealthJoin} />
               <Route path="/portal" component={PatientPortal} />
@@ -356,6 +357,7 @@ function Router() {
               <Route path="/invite/:token" component={InvitePage} />
               <Route path="/mfa-challenge" component={MfaChallenge} />
               <Route path="/feedback/:token" component={PublicFeedback} />
+              <Route path="/pricing" component={Pricing} />
               <Route path="/privacy" component={PrivacyPolicy} />
               <Route path="/terms" component={TermsOfService} />
               <Route component={NotFound} />

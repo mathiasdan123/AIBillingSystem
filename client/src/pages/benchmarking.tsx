@@ -230,6 +230,11 @@ export default function Benchmarking() {
           <p className="text-sm text-muted-foreground mt-1">
             Compare your practice KPIs against industry benchmarks (MGMA / AOTA / CMS)
           </p>
+          <p className="text-xs text-muted-foreground mt-1" data-testid="benchmarking-definition">
+            Practice-wide figures for the selected period. Targets here are industry targets, which are
+            not the practice targets shown on the Analytics page, so the two pages can show different
+            numbers for a KPI of the same name.
+          </p>
         </div>
         <Select value={period} onValueChange={setPeriod}>
           <SelectTrigger className="w-[180px]">
@@ -337,7 +342,7 @@ export default function Benchmarking() {
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Target</span>
+                          <span>Industry target</span>
                           <span className="font-medium">{formatValue(b.target, b.unit)}</span>
                         </div>
                       </div>
