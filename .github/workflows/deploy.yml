@@ -180,7 +180,19 @@ jobs:
             --output text)
           echo "Using task def $TASK_DEF, container $CONTAINER"
 
-          OVERRIDES=$(printf '{"containerOverrides":[{"name":"%s","command":["sh","-c","npm run db:push -- --force"]}]}' "$CONTAINER")
+          # Data-safety pre-check (therapybill-qa #3): collapse duplicate
+          # soap_note_drafts rows BEFORE db:push creates the unique index
+          # idx_soap_draft_therapist_patient. CREATE UNIQUE INDEX fails on
+          # legacy duplicates, which would halt the deploy right here. The
+          # payload is idempotent (no duplicates -> nothing changes) and runs
+          # in the same one-off task ahead of db:push. It is handed over as
+          # an env var so none of its source needs shell quoting; if it exits
+          # non-zero, db:push never runs and the deploy halts as usual.
+          OVERRIDES=$(jq -Rs --arg name "$CONTAINER" \
+            '{containerOverrides:[{name:$name,
+              environment:[{name:"SOAP_DRAFT_DEDUPE_JS",value:.}],
+              command:["sh","-c","node -e \"$SOAP_DRAFT_DEDUPE_JS\" && npm run db:push -- --force"]}]}' \
+            scripts/dedupe-soap-drafts-payload.cjs)
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "${{ env.ECS_CLUSTER }}" \
