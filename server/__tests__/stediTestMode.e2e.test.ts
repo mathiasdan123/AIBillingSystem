@@ -156,7 +156,18 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
 
       // Poll the same code path production uses until every scenario's 835
       // has landed (they arrive independently), normalizing each report once.
-      const deadline = Date.now() + 500_000;
+      //
+      // Widened 500s -> 900s (2026-11-02): every one of the 4 scheduled runs
+      // since the paid/partial/denied prefixes shipped (Stedi changelog,
+      // 2026-10) failed here with zero 835s landed in the old window, while
+      // the single-claim fast-path test above (no prefix differentiation)
+      // has passed every time -- submission works; only the newer
+      // differentiated-outcome generation is slow. This is an empirical
+      // probe, not a confirmed root cause: if 900s still isn't enough, that
+      // argues for widening further (or asking Stedi); if it now passes,
+      // that confirms this was purely a timing mismatch with their newer
+      // feature, not a bug in pollTransactions/fetch835Report.
+      const deadline = Date.now() + 900_000;
       const seenTransactions = new Set<string>();
       const lineByPcn = new Map<string, import('../services/stedi835Normalizer').NormalizedLineItem>();
       while (Date.now() < deadline && lineByPcn.size < scenarios.length) {
@@ -204,7 +215,7 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
         'denial carries no CAS reason codes — the denial pipeline would show an unexplained $0'
       ).toBeGreaterThan(0);
     },
-    540_000,
+    940_000, // vitest's own test timeout -- must stay above the 900s poll deadline, same ~40s slack as before for the final fetch+normalize calls.
   );
 });
 
