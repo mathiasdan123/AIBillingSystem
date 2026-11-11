@@ -835,3 +835,126 @@ describe('role-gating audit — auth routes', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/mfa/disable — self-service disable needs re-authentication
+// (therapybill-qa #2). Mirrors the guard tests on /users/:id/mfa/reset: a
+// session cookie alone must never be enough to strip a second factor.
+// ---------------------------------------------------------------------------
+import * as OTPAuth from 'otpauth';
+import { generateSecret } from '../services/mfaService';
+import { verifyPassword } from '../services/passwordService';
+import { clearMfaVerification } from '../middleware/mfa-required';
+
+describe('POST /api/mfa/disable (re-authentication required)', () => {
+  let app: Express;
+  const SECRET = generateSecret('admin@example.com').secret;
+  const ADMIN = {
+    id: 'admin-user-1',
+    role: 'admin',
+    practiceId: 1,
+    email: 'admin@example.com',
+    passwordHash: 'argon2-hash',
+    mfaEnabled: true,
+    mfaSecret: SECRET,
+  };
+  const currentCode = (secret: string) =>
+    new OTPAuth.TOTP({ issuer: 'TherapyBill', algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) }).generate();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authenticatedUserId = 'admin-user-1';
+    authenticatedUserRole = 'admin';
+    app = buildApp();
+    mockStorage.getUser.mockResolvedValue(ADMIN);
+  });
+
+  it('refuses a bare POST (no password, no code) and changes nothing', async () => {
+    const res = await request(app).post('/api/mfa/disable').send({}).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_REQUIRED');
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    expect(clearMfaVerification).not.toHaveBeenCalled();
+  });
+
+  it('refuses a wrong password and audits the failed attempt', async () => {
+    vi.mocked(verifyPassword).mockResolvedValueOnce(false);
+
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'not-it' }).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_FAILED');
+    expect(verifyPassword).toHaveBeenCalledWith('not-it', 'argon2-hash');
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    const audit = mockStorage.createAuditLog.mock.calls[0][0];
+    expect(audit).toMatchObject({ eventType: 'mfa_disable_self', resourceId: 'admin-user-1', success: false });
+  });
+
+  it('refuses a wrong authenticator code', async () => {
+    const otherSecret = generateSecret('someone@example.com').secret;
+
+    const res = await request(app).post('/api/mfa/disable').send({ token: currentCode(otherSecret) }).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_FAILED');
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+  });
+
+  it('refuses a password on an account that has none (SSO) without consulting the hasher', async () => {
+    mockStorage.getUser.mockResolvedValue({ ...ADMIN, passwordHash: null });
+
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'anything' }).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_FAILED');
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+  });
+
+  it('disables after a correct password, clears the MFA session and audits it', async () => {
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'correct horse' }).expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(verifyPassword).toHaveBeenCalledWith('correct horse', 'argon2-hash');
+    expect(mockStorage.updateUserMfa).toHaveBeenCalledWith('admin-user-1', {
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaBackupCodes: null,
+    });
+    expect(clearMfaVerification).toHaveBeenCalled();
+    const audit = mockStorage.createAuditLog.mock.calls[0][0];
+    expect(audit).toMatchObject({
+      eventCategory: 'admin',
+      eventType: 'mfa_disable_self',
+      resourceId: 'admin-user-1',
+      userId: 'admin-user-1',
+      practiceId: 1,
+      success: true,
+    });
+    expect(audit.details.reauthMethod).toBe('password');
+  });
+
+  it('disables after a current authenticator code, so SSO admins without a password are not locked out', async () => {
+    mockStorage.getUser.mockResolvedValue({ ...ADMIN, passwordHash: null });
+
+    const res = await request(app).post('/api/mfa/disable').send({ token: currentCode(SECRET) }).expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(mockStorage.updateUserMfa).toHaveBeenCalledWith('admin-user-1', {
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaBackupCodes: null,
+    });
+    expect(mockStorage.createAuditLog.mock.calls[0][0].details.reauthMethod).toBe('totp');
+  });
+
+  it('still refuses non-admins, before any credential is examined', async () => {
+    authenticatedUserRole = 'billing';
+    app = buildApp();
+    mockStorage.getUser.mockResolvedValue({ ...ADMIN, role: 'billing' });
+
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'correct horse' }).expect(403);
+
+    expect(res.body.code).toBe('MFA_DISABLE_FORBIDDEN');
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+  });
+});
