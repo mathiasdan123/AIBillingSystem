@@ -842,7 +842,20 @@ export const soapNoteDrafts = pgTable("soap_note_drafts", {
   aiOptimization: jsonb("ai_optimization"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  // One draft per therapist per patient. storage.upsertSoapDraft relies on
+  // this as its ON CONFLICT target; without it Postgres rejects the upsert
+  // with "there is no unique or exclusion constraint matching the ON
+  // CONFLICT specification" and autosave fails on every call (QA #3).
+  // migrations/add_soap_draft_columns.sql declared the same index by hand,
+  // but production applies the schema via `drizzle-kit push`, which only
+  // reads this file. CREATE UNIQUE INDEX fails if legacy duplicate
+  // (therapist_id, patient_id) rows exist, so the deploy migration step
+  // runs scripts/dedupe-soap-drafts-payload.cjs (report only) ahead of
+  // db:push and halts the deploy if any are found.
+  uniqueIndex("idx_soap_draft_therapist_patient").on(table.therapistId, table.patientId),
+  index("idx_soap_draft_practice").on(table.practiceId),
+]);
 
 // Appointments / Calendar
 export const appointments = pgTable("appointments", {

@@ -382,6 +382,7 @@ export default function SoapNotes() {
     clear: clearDraft,
     lastSavedAt: draftLastSavedAt,
     isSaving: draftSaving,
+    error: draftError,
   } = useSoapDraft({
     patientId: selectedPatient,
     onRestore: (draft) => {
@@ -405,6 +406,21 @@ export default function SoapNotes() {
       }
     },
   });
+
+  // Surface autosave failures instead of swallowing them (therapybill-qa #3):
+  // useSoapDraft only records the error in state, and until now nothing on
+  // the page read it, so a draft endpoint that fails on every call looked
+  // identical to one that never ran. The hook clears `error` at the start of
+  // each attempt, so a repeat failure re-fires this effect.
+  useEffect(() => {
+    if (!draftError) return;
+    toast({
+      title: "Draft not saved",
+      description:
+        "Your note is still on this page but the autosave failed. Copy anything important before leaving, then try again.",
+      variant: "destructive",
+    });
+  }, [draftError, toast]);
 
   // Autosave the generated SOAP whenever it changes. Only fires when the
   // current generatedNote was actually produced for the current selectedPatient
@@ -2565,7 +2581,11 @@ export default function SoapNotes() {
           <div className="space-y-4" id="generated-note-section">
             {generatedNote ? (
               <>
-                <DraftSavedIndicator saving={draftSaving} lastSavedAt={draftLastSavedAt} />
+                <DraftSavedIndicator
+                  saving={draftSaving}
+                  lastSavedAt={draftLastSavedAt}
+                  error={draftError}
+                />
                 {generatedNote.generationMode === "fallback" && (
                   <Alert className="border-amber-300 bg-amber-50">
                     <AlertTriangle className="h-4 w-4 text-amber-600" />
