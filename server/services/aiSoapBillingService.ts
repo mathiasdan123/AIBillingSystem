@@ -148,6 +148,14 @@ export interface AiSoapBillingResponse {
  */
 export interface GenerateSoapOptions {
   /**
+   * Skip the AI call and run the rule-based fallback generator directly.
+   * Test fixture for the fallback path (therapybill-qa #2): the route only
+   * sets this for demo practices, so a prospect or an auditor can exercise
+   * the exact code that runs when the AI is down, without taking it down.
+   * Never set for a real practice.
+   */
+  forceFallback?: boolean;
+  /**
    * Optional callback invoked each time Claude streams a text chunk. The server
    * uses this to flush keepalive bytes to the HTTP response so the ALB idle
    * timeout doesn't fire on long generations. Safe to ignore.
@@ -246,6 +254,13 @@ export async function generateSoapNoteAndBilling(
 
   // Calculate available billing units
   const billingUnits = Math.floor(request.duration / 15);
+
+  // Forced fallback (demo-only test fixture, see GenerateSoapOptions): same
+  // function, same inputs as the real outage path, no model call, no spend.
+  if (options.forceFallback) {
+    console.log("Using fallback rule-based SOAP generation (forced by demo test fixture)");
+    return fallbackGeneration(request, patient, billingUnits);
+  }
 
   // Check if Anthropic is available
   const client = getAnthropicClient();

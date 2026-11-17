@@ -528,6 +528,16 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
   if (!soapUser?.practiceId) {
     return res.status(403).json({ error: 'No practice context for this user' });
   }
+  // Demo-only test fixture (therapybill-qa #2): `forceFallback: true` runs the
+  // rule-based fallback generator instead of the model, so the outage path can
+  // be exercised in the demo. Silently ignored for every non-demo practice; a
+  // real practice can never opt out of AI generation through this flag.
+  let forceFallback = false;
+  if (req.body?.forceFallback === true) {
+    const soapPractice = await storage.getPractice(soapUser.practiceId);
+    forceFallback = soapPractice?.isDemo === true;
+    logger.info('SOAP forceFallback requested', { practiceId: soapUser.practiceId, honored: forceFallback });
+  }
 
   // Response transport. Either way we flush headers immediately so the ALB
   // sees an open pipe during the multi-second generation.
@@ -605,6 +615,7 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         onProgress: wantStream ? undefined : writeKeepalive,
         onTextDelta: wantStream ? (t) => sendEvent('delta', { text: t }) : undefined,
         signal: abort.signal,
+        forceFallback,
       }
     );
 

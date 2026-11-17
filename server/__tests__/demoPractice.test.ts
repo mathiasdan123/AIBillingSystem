@@ -8,6 +8,7 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       getDemoPractice: vi.fn(),
       createPractice: vi.fn(),
       getPatients: vi.fn(),
+      getPatientsByEmail: vi.fn(),
       createPatient: vi.fn(),
       createAppointment: vi.fn(),
       createClaim: vi.fn(),
@@ -34,6 +35,8 @@ describe('ensureDemoPractice', () => {
     mockStorage.createPatient.mockImplementation(async () => ({ id: nextPatientId++ }));
     mockStorage.createAppointment.mockResolvedValue({ id: 1 });
     mockStorage.createClaim.mockResolvedValue({ id: 1 });
+    // Default: no fixture patient exists yet.
+    mockStorage.getPatientsByEmail.mockResolvedValue([]);
   });
 
   it('creates an isolated demo practice (isDemo=true, sandbox) and seeds it when none exists', async () => {
@@ -64,6 +67,8 @@ describe('ensureDemoPractice', () => {
   it('is idempotent: reuses the existing demo practice and does not re-seed', async () => {
     mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
     mockStorage.getPatients.mockResolvedValue([{ id: 1 }]); // already has data
+    // Fixture already present in THIS practice → nothing to add.
+    mockStorage.getPatientsByEmail.mockResolvedValue([{ id: 2, practiceId: 99 }]);
 
     const practice = await ensureDemoPractice();
 
@@ -71,5 +76,55 @@ describe('ensureDemoPractice', () => {
     expect(mockStorage.createPractice).not.toHaveBeenCalled();
     expect(mockStorage.createPatient).not.toHaveBeenCalled();
     expect(mockStorage.createClaim).not.toHaveBeenCalled();
+  });
+
+  // ---- QA fixture patients (therapybill-qa #2) ----
+
+  it('seeds the blank-DOB fixture patient (Riley Nodob, dateOfBirth null) on a fresh demo practice', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue(undefined);
+    mockStorage.createPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([]);
+
+    await ensureDemoPractice();
+
+    const fixture = mockStorage.createPatient.mock.calls
+      .map((c) => c[0])
+      .find((p: any) => p.email === 'riley.nodob@example.com');
+    expect(fixture).toBeDefined();
+    expect(fixture.dateOfBirth).toBeNull();
+    expect(fixture.practiceId).toBe(99);
+    expect(fixture.isDemo).toBe(false);
+    // Every realistic seed patient still has a DOB; only the fixture is blank.
+    const blank = mockStorage.createPatient.mock.calls.filter((c) => c[0].dateOfBirth == null);
+    expect(blank).toHaveLength(1);
+  });
+
+  it('adds the blank-DOB fixture to an ALREADY seeded demo practice that lacks it, without reseeding', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    mockStorage.getPatientsByEmail.mockResolvedValue([]); // not there yet
+
+    await ensureDemoPractice();
+
+    expect(mockStorage.createPatient).toHaveBeenCalledTimes(1);
+    expect(mockStorage.createPatient.mock.calls[0][0]).toMatchObject({
+      practiceId: 99,
+      email: 'riley.nodob@example.com',
+      dateOfBirth: null,
+      isDemo: false,
+    });
+    expect(mockStorage.createClaim).not.toHaveBeenCalled();
+    expect(mockStorage.createAppointment).not.toHaveBeenCalled();
+  });
+
+  it('does not treat the same fixture email in ANOTHER practice as present', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+    mockStorage.getPatientsByEmail.mockResolvedValue([{ id: 5, practiceId: 7 }]);
+
+    await ensureDemoPractice();
+
+    expect(mockStorage.createPatient).toHaveBeenCalledTimes(1);
+    expect(mockStorage.createPatient.mock.calls[0][0].practiceId).toBe(99);
   });
 });
