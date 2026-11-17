@@ -133,7 +133,12 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
     // Unique member id per run/submission: near-identical claims (same
     // subscriber, charge, and service date) submitted seconds apart trip the
     // test payer's duplicate-claim rejection (seen live 2026-10-07).
-    await submitTestClaim(`E2E-${runId}`, `STEDI_PAID_FAST${runId}`);
+    //
+    // "FAST" tag: this claim produces its own test 835 too (first seen on run
+    // 44162680444, once the Test Payer 835 enrollment existed). Its control
+    // number must be distinguishable from the three outcome scenarios below,
+    // which previously collected it as an unexpected fourth remittance.
+    await submitTestClaim(`E2E-FAST-${runId}`, `STEDI_PAID_FAST${runId}`);
   }, 60_000);
 
   it.skipIf(!FULL)(
@@ -156,6 +161,15 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
 
       // Poll the same code path production uses until every scenario's 835
       // has landed (they arrive independently), normalizing each report once.
+      //
+      // Match lines by EXACT scenario control number. A substring match on the
+      // run id also swept in the fast-path claim (`E2E-FAST-<runId>`), which
+      // gets its own test 835: run 44162680444 collected it as a fourth key
+      // and the strict equality below failed with all three real scenarios
+      // present. Worse, the loop could stop at three entries with one scenario
+      // still missing. Exact matching ignores every same-run remittance that
+      // is not one of the three under test.
+      const wantedPcns = new Set<string>(scenarios.map((s) => s.pcn));
       const deadline = Date.now() + 500_000;
       const seenTransactions = new Set<string>();
       const lineByPcn = new Map<string, import('../services/stedi835Normalizer').NormalizedLineItem>();
@@ -171,7 +185,7 @@ describe.skipIf(!hasTestKey)('Stedi end-to-end test mode', () => {
           const normalized = normalizeStedi835(report);
           expect(normalized.payerName).toBeTruthy();
           for (const line of normalized.lineItems) {
-            if (line.claimReference && line.claimReference.includes(String(runId))) {
+            if (line.claimReference && wantedPcns.has(line.claimReference)) {
               lineByPcn.set(line.claimReference, line);
             }
           }
