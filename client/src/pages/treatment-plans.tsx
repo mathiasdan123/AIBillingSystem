@@ -550,7 +550,6 @@ export default function TreatmentPlansPage() {
                         const res = await apiRequest("POST", "/api/patients", {
                           firstName: newPatientData.firstName.trim(),
                           lastName: newPatientData.lastName.trim(),
-                          dateOfBirth: "2000-01-01",
                         });
                         const newPatient = await res.json();
                         setSelectedPatientId(newPatient.id);
