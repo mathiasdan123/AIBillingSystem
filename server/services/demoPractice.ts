@@ -153,6 +153,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
     if (patients.length > 0) {
       await normalizeDemoRates(existing.id);
       await repairDemoRowFlags(existing.id);
+      await ensureDemoFixturePatients(existing.id);
       return existing;
     }
   }
@@ -193,6 +194,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
 
     await normalizeDemoRates(practice.id);
     await repairDemoRowFlags(practice.id);
+    await ensureDemoFixturePatients(practice.id);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
@@ -210,6 +212,59 @@ const DEMO_PATIENTS = [
   { firstName: 'Sofia', lastName: 'Demo', dob: '2018-07-30', gender: 'F', payer: 'Horizon BCBS of New Jersey' },
   { firstName: 'Ethan', lastName: 'Example', dob: '2015-03-08', gender: 'M', payer: 'Aetna' },
 ];
+
+/**
+ * QA fixture patients (therapybill-qa #2). These exist so behaviours that the
+ * realistic caseload above can never reach are testable in the live demo:
+ *
+ *   - Riley Nodob has NO date of birth. Every seeded patient has one, so the
+ *     blank-DOB paths (age lines in AI prompts, DOB rendering on cards and
+ *     PDFs, intake/import gaps) had no demo reproduction.
+ *
+ * They are added by ensureDemoFixturePatients() on EVERY ensureDemoPractice
+ * call, keyed by their @example.com address, so an already-seeded demo
+ * practice picks them up on the next demo login without a reseed. Same
+ * isolation rules as DEMO_PATIENTS: isDemo=false rows inside the demo practice.
+ */
+export const DEMO_FIXTURE_PATIENTS = [
+  {
+    firstName: 'Riley',
+    lastName: 'Nodob',
+    dob: null as string | null,
+    gender: 'F',
+    payer: 'Aetna',
+    email: 'riley.nodob@example.com',
+    purpose: 'blank date of birth',
+  },
+];
+
+/**
+ * Create any QA fixture patient the demo practice does not have yet.
+ * Idempotent: looks each fixture up by email within this practice first.
+ */
+export async function ensureDemoFixturePatients(practiceId: number): Promise<number> {
+  let created = 0;
+  for (const f of DEMO_FIXTURE_PATIENTS) {
+    const matches = await storage.getPatientsByEmail(f.email);
+    if (matches.some((m: any) => m.practiceId === practiceId)) continue;
+    await storage.createPatient({
+      practiceId,
+      isDemo: false,
+      firstName: f.firstName,
+      lastName: f.lastName,
+      dateOfBirth: f.dob,
+      gender: f.gender,
+      email: f.email,
+      phone: '(555) 019-0099',
+      insuranceProvider: f.payer,
+      insuranceId: 'DEMO1099',
+      policyNumber: 'POL5099',
+    } as any);
+    created++;
+    logger.info('Demo fixture patient created', { practiceId, fixture: f.purpose });
+  }
+  return created;
+}
 
 // Representative claim mix so the dashboard shows revenue, a clean-claim /
 // denial rate, and AR aging. amounts in dollars. paidOffset/submitOffset drive

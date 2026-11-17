@@ -321,6 +321,16 @@ export default function SoapNotes() {
 
   // AI Generated content
   const [isGenerating, setIsGenerating] = useState(false);
+  // Demo-only test fixture (therapybill-qa #2): lets a demo user run the
+  // rule-based fallback generator instead of the AI. The server honours the
+  // flag only for demo practices; the checkbox is only rendered for them.
+  const [forceFallback, setForceFallback] = useState(false);
+  const { data: currentPractice } = useQuery<any>({
+    queryKey: ["/api/practices", user?.practiceId],
+    enabled: !!user?.practiceId,
+    retry: false,
+  });
+  const isDemoPractice = currentPractice?.isDemo === true;
   // Live preview text assembled from streamed SOAP deltas while generating.
   const [streamPreview, setStreamPreview] = useState("");
   const [generatedNote, setGeneratedNote] = useState<{
@@ -1126,7 +1136,8 @@ export default function SoapNotes() {
           planNextSteps: planNextSteps,
           nextSessionFocus: nextSessionFocus,
           homeProgram: homeProgram || undefined,
-          ratePerUnit: ratePerUnit // Manual rate override
+          ratePerUnit: ratePerUnit, // Manual rate override
+          ...(isDemoPractice && forceFallback ? { forceFallback: true } : {}),
         },
         {
           onDelta: (t) => {
@@ -2538,6 +2549,25 @@ export default function SoapNotes() {
                   })}
                 </CardContent>
               </Card>
+            )}
+
+            {isDemoPractice && (
+              <label
+                className="flex items-start gap-2 rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                data-testid="demo-force-fallback"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={forceFallback}
+                  onChange={(e) => setForceFallback(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Demo test fixture:</span> generate with the rule-based
+                  fallback instead of the AI. This is what every practice gets if the AI is unavailable.
+                  Only shown in the demo practice.
+                </span>
+              </label>
             )}
 
             {/* Generate Button */}
