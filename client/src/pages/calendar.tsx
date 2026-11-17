@@ -368,7 +368,6 @@ export default function CalendarPage() {
           lastName: newPatientData.lastName.trim(),
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
-          dateOfBirth: "2000-01-01",
           // Optional insurance — only sent if the user filled them in.
           // Blank strings would otherwise persist as "" and confuse the
           // claim scrubber's "missing insurance" check.

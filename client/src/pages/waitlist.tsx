@@ -1055,7 +1055,6 @@ function AddWaitlistForm({
           lastName: newPatientData.lastName.trim(),
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
-          dateOfBirth: "2000-01-01",
         });
         const created = await res.json();
         patientId = String(created.id);
