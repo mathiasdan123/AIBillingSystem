@@ -89,7 +89,10 @@ describe('Claims: patient name for an archived patient', () => {
       if (url.startsWith('/api/claims?')) {
         return jsonResponse({ data: [AVA_CLAIM], pagination: { page: 1, limit: 50, total: 1, totalPages: 1, hasMore: false } });
       }
-      if (url.startsWith('/api/claims/1006')) return jsonResponse(AVA_CLAIM);
+      // Exact match: the detail dialog also fetches /api/claims/1006/line-items
+      // and /appeals, which must come back as arrays.
+      if (url === '/api/claims/1006') return jsonResponse(AVA_CLAIM);
+      if (url.startsWith('/api/claims/1006/')) return jsonResponse([]);
       if (url.startsWith('/api/practices/')) return jsonResponse({ id: 1, name: 'Demo Practice' });
       if (url.startsWith('/api/insurances')) return jsonResponse([{ id: 1, name: 'Aetna' }]);
       return jsonResponse([]);

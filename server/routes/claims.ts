@@ -593,7 +593,10 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
         // already refused above, so this only removes the list round-trip.
         const patient = await storage.getPatient(patientId);
 
-        if (sessionSoapNote && patient) {
+        // Tenant guard: a patient id from another practice must never reach
+        // the AI review (it would read that patient's record). Skip the
+        // review entirely unless the patient belongs to the caller's practice.
+        if (sessionSoapNote && patient && patient.practiceId === practiceId) {
           const optimization = await claimOptimizer.optimizeClaim(
             sessionSoapNote,
             patient,
