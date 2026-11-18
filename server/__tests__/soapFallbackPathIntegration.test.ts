@@ -119,8 +119,8 @@ describe('fallback path — reached via a real caught AI failure', () => {
     // 3. The real fallbackGeneration() ran -- its own distinguishing marker
     // and rationale string, not a stand-in.
     expect(result.generationMode).toBe('fallback');
-    expect(result.billingRationale).toBe(
-      'Billing codes assigned using rule-based accuracy checks. AI unavailable.',
+    expect(result.billingRationale).toMatch(
+      /^Codes suggested by rule-based mapping from each activity's entered category or name because AI generation was unavailable\./,
     );
   });
 

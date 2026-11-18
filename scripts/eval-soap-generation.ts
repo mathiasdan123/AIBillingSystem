@@ -202,12 +202,28 @@ function noAgeAnywhere(note: RawNote): string | null {
   return null;
 }
 
+// QA sweep 2026-11-18: with a thin input (one activity account, every rating
+// blank) the raw note asserted findings never supplied. No raw scenario
+// enters these topics, so the literal strings are known-bad everywhere here.
+// The prompt used to INSTRUCT the measurement sentence; it is withdrawn.
+function noUnenteredNegativeFindings(note: RawNote): string | null {
+  const haystack = [note.objective, note.assessment, ...note.auditNotes].join('\n');
+  if (/standardi[sz]ed\s+(?:measure(?:ment)?s?|assessments?|tests?|testing)\s+(?:were|was)\s+not/i.test(haystack)) {
+    return 'Check 10 (no unentered negative findings): the note asserts standardized measures were not administered -- no input field records that, so it is a fabricated negative. Seed failure: "Standardized measurements were not administered; observations were qualitative." (QA 2026-11-18)';
+  }
+  if (/\bno\s+(?:observable|observed|visible|apparent|signs?\s+of)\s+distress\b/i.test(haystack)) {
+    return 'Check 10 (no unentered negative findings): "no observable distress" asserted with no input mentioning distress. Seed failure: "No observable distress was noted." (QA 2026-11-18)';
+  }
+  return null;
+}
+
 const CASE_A_DETERMINISTIC_CHECKS = [
   noContinuityOpening,
   noFrequencyFabrication,
   homeProgramDefault,
   noGoalsFabrication,
   noClosingSentenceDeterministic,
+  noUnenteredNegativeFindings,
 ];
 
 // ---------------------------------------------------------------------------

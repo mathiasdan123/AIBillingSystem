@@ -514,19 +514,41 @@ is a compliance and liability issue, not just a stylistic preference.
      NOT write "lycra swing" or "platform swing". Use exactly the
      words the therapist used; add adjectives only when the input
      contains them.
+   - **NEGATIVE findings the input never stated.** "No observable
+     distress", "no signs of fatigue", "tolerated the activity without
+     discomfort", "no adverse response", "no complaints" are clinical
+     findings exactly as much as their positive counterparts. Write one
+     ONLY when the therapist's account or a field says it (an account
+     reading "no pain" supports "no pain" -- and nothing else). The
+     input being silent about distress is not an observation that there
+     was none. The grounding rule has no direction: an unsupported
+     negative is fabrication, same as an unsupported positive.
+   - **Services and therapist actions the input never described.**
+     Grading, monitoring, adjusting, modifying, cueing, prompting,
+     hand-over-hand support, redirection: write these ONLY when the
+     assistance field or the therapist's account describes them. An
+     activity name plus a bare account ("five sets of ten jumps") does
+     not establish that the therapist graded or monitored anything.
+     Describe what the activity TARGETS instead. Likewise never state
+     that a service was NOT provided ("standardized measurements were
+     not administered") -- the form has no field for that, so you do
+     not know it; omit the topic.
 
 5. **When data is missing, use one of these patterns:**
    - Qualitative clinical language grounded in the observations that WERE
      provided (e.g., "Patient demonstrated mild difficulty with motor
      planning during [activity]")
-   - Explicit acknowledgment ONLY when you actually know the negative fact,
-     not merely that a form field was left blank (e.g., "Standardized
-     measurements were not administered; observations were qualitative" is
-     fine because an administered measure would appear elsewhere in the
-     input if one existed — but do NOT write "Caregiver report was not
-     obtained this session": a blank Caregiver Report field means the
-     therapist didn't type anything here, not that you know no report was
-     given. That's a fabricated negative, same as a fabricated positive.
+   - NEVER an explicit acknowledgment of absence. A blank field or a silent
+     account tells you the therapist typed nothing -- not that the thing
+     did not happen. "Caregiver report was not obtained this session",
+     "Standardized measurements were not administered; observations were
+     qualitative", "No distress was observed" are all fabricated negatives,
+     same as a fabricated positive (the measurement sentence was once
+     permitted here on the theory that an administered measure would have
+     been entered; QA 2026-11-18 showed it asserted on a note where nothing
+     either way was known -- it is withdrawn). The ONLY sanctioned
+     statement about a gap is the Subjective placeholder named below, which
+     is about this form ("was entered"), not about the room.
    - Simple omission — it is better to write a shorter section than to
      invent content to fill it, and is the correct choice whenever you
      don't actually know the negative (see above)
@@ -691,9 +713,11 @@ Cover, USING ONLY PROVIDED DATA:
    when they describe how an activity was supported — do not invent
    specific cue counts.
 
-4. SKILLED INTERVENTIONS — Describe the therapeutic techniques that
-   correspond to the activities performed. You may use clinical
-   terminology to explain the rationale.
+4. SKILLED INTERVENTIONS — Describe what each documented activity
+   TARGETS in clinical terms (the skilled objective). Therapist ACTIONS
+   during the activity -- grading, monitoring, cueing, adjusting,
+   hand-over-hand -- are facts about the session and appear ONLY when the
+   assistance field or the therapist's account describes them.
 
 ASSESSMENT SECTION (target: 200-300 words, scaled to input):
 This is clinical interpretation of the objective observations. You MAY
@@ -1018,7 +1042,7 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
 {
   "subjective": "Proportional to the input (a single sentence if the input is sparse). Structure when data exists:\\n\\nCaregiver report: ONLY if the Caregiver Report field above has a real value (not the marker), write it as 'Caregiver reported: [that value].' If the field is the marker, OMIT any caregiver-report sentence entirely -- do NOT write 'Caregiver report was not obtained this session' or anything asserting that no report was given; the field being blank in this form means the therapist didn't type anything here, not that you know a report wasn't obtained. Do NOT invent home observations, compliance details, or functional examples the caregiver didn't state.\\n\\nMood/presentation: ONLY if the Mood/Presentation field above has a real value (not the \\\"(not recorded...)\\\" marker), write '[Patient] presented as [that value].' If the field is the marker, OMIT this sentence entirely -- do not write a presentation/mood sentence of any kind, and never default to a plausible-sounding word like 'cooperative' or 'engaged'. Describe only behaviors actually observed. Do not invent self-reported statements or social details.\\n\\nReference prior sessions ONLY if treatment-plan/goal data provides a prior measurement.\n\nIf BOTH the Caregiver Report and Mood/Presentation fields are the marker and no other subjective input exists, write exactly: 'No subjective information was entered for this session.' -- a statement about this form, not a claim about what happened in the room. Never leave the section empty.",
 
-  "objective": "Scaled to the richness of the input (120-300 words when rich; shorter when sparse). Structure:\\n\\nSession conducted in [location] for [duration] minutes. Standardized measures: include scores ONLY if the input explicitly states a measure was administered and gives the value; otherwise write 'Standardized measurements were not administered; observations were qualitative.'\\n\\nActivities & performance:\\n- [Activity from the activities list]: describe with the assistance level the therapist provided and qualitative performance. Do NOT invent trial counts (e.g. '8/10 trials'), timings, or percentages that weren't provided.\\n\\nAssistance levels: use the assistance field. Standard terms (Independent / Modified Independent / Supervision / Min / Mod / Max Assist / Dependent). Cue types (verbal/visual/tactile/hand-over-hand) when they describe how an activity was supported — no invented cue counts.\\n\\nEquipment/materials: name ONLY items in the activities list, with ONLY the adjectives the therapist used (no '55cm', 'medium resistance', '2 lb' unless stated).\\n\\nSkilled interventions: describe the techniques corresponding to the activities, framed by their skilled/functional objective (e.g. neuromuscular re-education for postural control; graded vestibular-proprioceptive input to support motor planning).",
+  "objective": "Scaled to the richness of the input (120-300 words when rich; shorter when sparse). Structure:\\n\\nSession conducted in [location] for [duration] minutes. Standardized measures: include scores ONLY if the input explicitly states a measure was administered and gives the value; otherwise write NOTHING about standardized measures -- not that they were not administered, not that observations were qualitative. The input is silent, which is not a finding.\\n\\nActivities & performance:\\n- [Activity from the activities list]: describe with the assistance level the therapist provided and qualitative performance. Do NOT invent trial counts (e.g. '8/10 trials'), timings, or percentages that weren't provided. Do NOT add negative findings the account did not state ('no observable distress', 'tolerated without difficulty') or therapist actions it did not describe (graded, monitored, cued).\\n\\nAssistance levels: use the assistance field. Standard terms (Independent / Modified Independent / Supervision / Min / Mod / Max Assist / Dependent). Cue types (verbal/visual/tactile/hand-over-hand) when they describe how an activity was supported — no invented cue counts.\\n\\nEquipment/materials: name ONLY items in the activities list, with ONLY the adjectives the therapist used (no '55cm', 'medium resistance', '2 lb' unless stated).\\n\\nSkilled interventions: describe the techniques corresponding to the activities, framed by their skilled/functional objective (e.g. neuromuscular re-education for postural control; graded vestibular-proprioceptive input to support motor planning).",
 
   "assessment": "Clinical interpretation anchored to the observations actually provided (200-400 words when the input supports it; fewer paragraphs when it doesn't — omit sub-sections you have no data for). Connect each skilled intervention to a specific functional deficit using payer-aligned skilled vocabulary (skilled clinical analysis, clinical reasoning, task grading, neuromuscular re-education, cueing hierarchy, compensatory strategies, safety/judgment, measurable functional impact). Cover, as supported by the input: engagement/participation; postural/core control; motor planning & coordination; fine motor (only if fine-motor activities were done); sensory processing & regulation (frame in functional/neuromuscular terms — e.g. 'vestibular-proprioceptive input to support postural control and motor planning' — NOT as 'sensory play'); progress toward goals ONLY if goal data was provided (no invented 'improved from last session'). End with a medical-necessity statement ONLY when the documented observations support one — it must tie the OBSERVED deficits to functional participation, customized to this session. If the input is thin (sparse observations, no documented deficits), OMIT the medical-necessity statement entirely: per clinical review, a generic necessity sentence weakens documentation more than leaving it out. Do not name primitive reflexes (TLR/STNR/ATNR/Moro) or specific test patterns unless the input observed them.",
 
@@ -1509,6 +1533,156 @@ export function softenUnsupportedDeficitInRationale(text: string): string {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Grounding in BOTH directions: unsupported NEGATIVE findings and UNENTERED
+// therapist actions. QA sweep 2026-11-18 (Riley Nodob, thin input: one
+// activity with the account "five sets of ten jumps, one-minute pauses, no
+// pain", every rating blank): the AI note kept the account but added "no
+// observable distress", "Standardized measurements were not administered;
+// observations were qualitative", and therapist grading/monitoring. Every
+// earlier backstop in this file targets a fabricated POSITIVE (a mood, a
+// deficit, a continuity claim) or one specific denial shape (caregiver
+// report / mood "was not documented"). A negative finding nobody made and a
+// service nobody described are the same defect in the other direction, and
+// the prompt itself used to instruct the measurement sentence (rule 5,
+// withdrawn above).
+//
+// Unlike the earlier backstops these are gated on the INPUT, not just the
+// output: "no pain" is legitimate when the account says "no pain", and
+// "graded the task" is legitimate when the assistance field or the account
+// describes therapist support. groundingEvidenceFor() collects every
+// free-text field the therapist typed; a negated topic is kept only when
+// that topic appears in the evidence, and a therapist-action sentence only
+// when an assistance level or an intervention word was entered.
+// ---------------------------------------------------------------------------
+export interface GroundingEvidence {
+  /** Every free-text thing the therapist typed about the session, joined. */
+  text: string;
+  /** An assistance level was documented (the one structured therapist-action field). */
+  hasAssistance: boolean;
+}
+
+export function groundingEvidenceFor(request: AiSoapBillingRequest): GroundingEvidence {
+  const a = (request.assessment ?? {}) as Record<string, unknown>;
+  const text = [
+    ...(request.activityDetails ?? []).map((d) => d.response),
+    request.caregiverReport,
+    request.mood,
+    ...Object.values(a),
+  ]
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    .join("\n");
+  return { text, hasAssistance: typeof a.assistance === "string" && a.assistance.trim().length > 0 };
+}
+
+// Topics a note can deny. Each is matched both in the output sentence and in
+// the evidence text; the same regex on both sides so "pain" in the account
+// supports "no pain" / "denied pain" / "pain-free" in the note.
+const NEGATED_FINDING_TOPICS: RegExp[] = [
+  /\b(?:standardi[sz]ed|formal|normed)\s+(?:measure(?:ment)?s?|assessments?|test(?:s|ing)?|tools?|scor(?:es?|ing)|instruments?)\b/i,
+  /\bdistress(?:ed)?\b/i,
+  /\bdiscomfort\b/i,
+  /\bpain(?:ful|-free)?\b/i,
+  /\bfatigue[ds]?\b|\bfatiguing\b|\btir(?:ed|ing)\b/i,
+  /\badverse\s+(?:response|reaction|event|effect)s?\b/i,
+  /\bcomplain(?:t|ts|ed|ing)?\b/i,
+];
+const NEGATION_WORD = /\b(?:no|not|without|denie[ds]|absen(?:t|ce)|free\s+of|never|none|nor)\b|-free\b/i;
+const SENTENCE_RE = /[^.!?\n]+(?:[.!?]+|(?=\n)|$)/g;
+
+function unsupportedNegatedTopics(sentence: string, evidence: GroundingEvidence): { unsupported: RegExp[]; supported: RegExp[] } {
+  const unsupported: RegExp[] = [];
+  const supported: RegExp[] = [];
+  if (!NEGATION_WORD.test(sentence)) return { unsupported, supported };
+  for (const topic of NEGATED_FINDING_TOPICS) {
+    if (!topic.test(sentence)) continue;
+    (topic.test(evidence.text) ? supported : unsupported).push(topic);
+  }
+  return { unsupported, supported };
+}
+
+/** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause, but input-aware. */
+export function hasUnsupportedNegativeFinding(text: string, evidence: GroundingEvidence): boolean {
+  if (!text) return false;
+  for (const sentence of text.match(SENTENCE_RE) ?? []) {
+    if (unsupportedNegatedTopics(sentence, evidence).unsupported.length > 0) return true;
+  }
+  return false;
+}
+
+function tidyProse(text: string): string {
+  return text
+    // "...reported no pain and." / "...no pain, ." after a clause was removed
+    .replace(/\s+(?:and|with|while|but|or)\s*([.!?;])/gi, "$1")
+    .replace(/\s*[,;]\s*([.!?])/g, "$1")
+    .replace(/\(\s*\)/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +([.!?,;])/g, "$1")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function stripUnsupportedNegativeFindings(text: string, evidence: GroundingEvidence): string {
+  if (!text || !hasUnsupportedNegativeFinding(text, evidence)) return text;
+  const out = text.replace(SENTENCE_RE, (sentence) => {
+    const { unsupported, supported } = unsupportedNegatedTopics(sentence, evidence);
+    if (unsupported.length === 0) return sentence;
+    // Nothing in the sentence is grounded: drop the whole sentence.
+    if (supported.length === 0) return "";
+    // Mixed ("reported no pain and showed no observable distress"): cut only
+    // the clause carrying each unsupported topic; if no clause-shaped match
+    // can be found, dropping the sentence beats leaving the fabrication.
+    let kept = sentence;
+    for (const topic of unsupported) {
+      const clause = new RegExp(
+        String.raw`[,;]?\s*(?:(?:and|with|while|but|or)\s+)?(?:(?:show|demonstrat|display|exhibit|report|not|observ|indicat|appear|remain)(?:ed|ing|s)?\s+)?(?:no|not|without|free\s+of|absence\s+of|denie[ds])\s+(?:[\w-]+\s+){0,4}?(?:${topic.source})[^.!?,;\n]*`,
+        "i",
+      );
+      const next = kept.replace(clause, "");
+      if (next === kept || topic.test(next)) return "";
+      kept = next;
+    }
+    return kept;
+  });
+  const stripped = tidyProse(out);
+  logger.warn("Stripped negative finding(s) the session input never stated", {
+    originalLength: text.length,
+    strippedLength: stripped.length,
+  });
+  return stripped;
+}
+
+// Therapist actions a note can claim. Deliberately NOT "skilled", "targets",
+// "neuromuscular re-education" and the rest of the payer vocabulary the prompt
+// asks for -- those describe the activity's objective, which an activity name
+// supports. These describe something the therapist DID during the session.
+const THERAPIST_ACTION_CLAIM =
+  /\b(?:grad(?:ed|ing)|monitor(?:ed|ing)|adjust(?:ed|ing|ments?)|modif(?:ied|ying|ications?)|adapt(?:ed|ing|ations?)|cue[ds]?|cueing|cuing|prompt(?:ed|ing|s)|facilitat(?:ed|ing|ion)|hand[- ]over[- ]hand|redirect(?:ed|ing|ion)|model(?:ed|led|ing|ling)|scaffold(?:ed|ing)|physical\s+(?:assist(?:ance)?|support|guidance)|verbal\s+(?:support|prompts?|cues?|guidance)|therapist[- ]directed|clinician[- ]directed)\b/i;
+// What in the therapist's own words counts as having described an action.
+const THERAPIST_ACTION_EVIDENCE =
+  /\b(?:grad(?:e|ed|ing)|monitor\w*|adjust\w*|modif\w*|adapt\w*|cue\w*|cuing|prompt\w*|facilitat\w*|hand[- ]over[- ]hand|redirect\w*|model\w*|guid\w*|scaffold\w*|assist\w*|support\w*|demonstrat\w*|instruct\w*|help\w*|supervis\w*|min\s*a\b|mod\s*a\b|max\s*a\b)\b/i;
+
+export function therapistActionsDocumented(evidence: GroundingEvidence): boolean {
+  return evidence.hasAssistance || THERAPIST_ACTION_EVIDENCE.test(evidence.text);
+}
+
+/** Detection only (no mutation): a therapist-action claim with nothing entered to support one. */
+export function hasUnsupportedTherapistAction(text: string, evidence: GroundingEvidence): boolean {
+  if (!text || therapistActionsDocumented(evidence)) return false;
+  return THERAPIST_ACTION_CLAIM.test(text);
+}
+
+export function stripUnsupportedTherapistActions(text: string, evidence: GroundingEvidence): string {
+  if (!hasUnsupportedTherapistAction(text, evidence)) return text;
+  const stripped = tidyProse(text.replace(SENTENCE_RE, (sentence) => (THERAPIST_ACTION_CLAIM.test(sentence) ? "" : sentence)));
+  logger.warn("Stripped therapist-action claim(s) with no assistance level or account describing one", {
+    originalLength: text.length,
+    strippedLength: stripped.length,
+  });
+  return stripped;
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
@@ -1616,18 +1790,29 @@ export async function validateAndEnhanceResponse(
   // own wording is what needs softening).
   const noObservations = !requestHasObservations(request);
   const hasMoodForRationale = !!request.mood;
+  const evidence = groundingEvidenceFor(request);
   // Rationale fields get every text backstop S/O/A/P get (pipeline eval run
   // 2026-11-04T21-26: a documentation-denial sentence surfaced in an
   // auditNote) plus the two rationale-only softeners.
   const cleanRationale = (text: string) => {
     const base = removeCaseAContinuityWording(
-      stripUnsupportedDocumentationDenialClause(
-        stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+      stripUnsupportedNegativeFindings(
+        stripUnsupportedDocumentationDenialClause(
+          stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+        ),
+        evidence,
       ),
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
     );
     return noObservations ? softenUnsupportedDeficitInRationale(base) : base;
+  };
+  // Prose sections: negative findings nobody entered go in every section;
+  // therapist-action claims are checked in Objective and Assessment only --
+  // the Plan legitimately says what the therapist WILL grade next time.
+  const groundProse = (text: string, withActions: boolean) => {
+    const negatives = stripUnsupportedNegativeFindings(text, evidence);
+    return withActions ? stripUnsupportedTherapistActions(negatives, evidence) : negatives;
   };
   for (const pairing of activityCptPairings) {
     if (pairing.rationale) pairing.rationale = cleanRationale(pairing.rationale);
@@ -1639,41 +1824,53 @@ export async function validateAndEnhanceResponse(
   const hasMood = !!request.mood;
   return {
     subjective: ensureSubjectivePresent(
-      stripUnsupportedDocumentationDenialClause(
-        stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
+      groundProse(
+        stripUnsupportedDocumentationDenialClause(
+          stripUnsupportedMoodClause(aiResponse.subjective || "", hasMood),
+        ),
+        false,
       ),
     ),
     objective: removeCaseAContinuityWording(
-      stripUnsupportedDocumentationDenialClause(
-        stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
+      groundProse(
+        stripUnsupportedDocumentationDenialClause(
+          stripUnsupportedMoodClause(aiResponse.objective || "", hasMood),
+        ),
+        true,
       ),
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
     ),
     assessment: removeCaseAContinuityWording(
-      stripUnsupportedDocumentationDenialClause(
-        stripUnsupportedMoodClause(
-          stripUnsupportedContinuityNecessity(
-            aiResponse.assessment || "",
-            hasMostRecentPlanContext,
-            hasActiveGoalsContext,
+      groundProse(
+        stripUnsupportedDocumentationDenialClause(
+          stripUnsupportedMoodClause(
+            stripUnsupportedContinuityNecessity(
+              aiResponse.assessment || "",
+              hasMostRecentPlanContext,
+              hasActiveGoalsContext,
+            ),
+            hasMood,
           ),
-          hasMood,
         ),
+        true,
       ),
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
     ),
     plan: removeCaseAContinuityWording(
-      stripUnsupportedDocumentationDenialClause(
-        stripUnsupportedMoodClause(
-          stripUnsupportedPlanClosing(
-            aiResponse.plan || "",
-            hasMostRecentPlanContext,
-            hasActiveGoalsContext,
+      groundProse(
+        stripUnsupportedDocumentationDenialClause(
+          stripUnsupportedMoodClause(
+            stripUnsupportedPlanClosing(
+              aiResponse.plan || "",
+              hasMostRecentPlanContext,
+              hasActiveGoalsContext,
+            ),
+            hasMood,
           ),
-          hasMood,
         ),
+        false,
       ),
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
@@ -1717,6 +1914,19 @@ export function fallbackGeneration(
   const unitRate = request.ratePerUnit || DEFAULT_UNIT_RATE;
 
   // Rule-based assignment by SKILLED OBJECTIVE, not by reimbursement rate.
+  //
+  // CATEGORY FIRST (QA follow-up 2026-11-18): the activity picker names
+  // every activity "<Activity> - <Category>" ("Trampoline - Strengthening",
+  // "Platform Swing - Balance", "Pegboard - Functional"), and the category
+  // is the therapist's own statement of the activity's objective -- it is
+  // what the AI path keys off. The keyword pass below used to run alone and
+  // matched the activity NOUN before the category: "Trampoline -
+  // Strengthening" hit the neuromuscular keyword "trampoline" and came back
+  // 97112 while the AI path (and the therapist) said strengthening → 97110.
+  // Now the category suffix decides when it names one; keywords are the
+  // fallback for activities with no recognised category (custom bank items,
+  // free text), and anything still unclear takes the conservative default.
+  //
   // Vestibular/proprioceptive sensory-motor work maps to neuromuscular
   // re-education (97112) by its motor objective (postural control, motor
   // planning, coordination) rather than defaulting to a sensory-integration
@@ -1725,36 +1935,74 @@ export function fallbackGeneration(
   const functionalKeywords = ["obstacle", "pegboard", "puzzle", "cutting", "writing", "ADL", "lacing", "buttoning", "feeding", "rice bin", "tactile", "brushing"];
   const exerciseKeywords = ["strength", "endurance", "exercise", "putty", "resistance", "wall push", "animal walk"];
 
+  type RuleCode = { code: "97110" | "97112" | "97530"; name: string };
+  const RULE_CODES: Record<RuleCode["code"], RuleCode> = {
+    "97110": { code: "97110", name: "Therapeutic Exercise" },
+    "97112": { code: "97112", name: "Neuromuscular Re-education" },
+    "97530": { code: "97530", name: "Therapeutic Activities" },
+  };
+  // Category suffix → code. Matches the suffix vocabulary of the activity
+  // picker (client/src/pages/soap-notes.tsx) and the AI path's BILLING CODE
+  // ASSIGNMENT guidance: strengthening/endurance → 97110; balance,
+  // coordination, motor planning, postural control, stability, neuro →
+  // 97112; functional, fine motor, ADL, handwriting, hand manipulation →
+  // 97530. Sensory/regulation, speech and anything else fall through.
+  const CATEGORY_RULES: Array<[RegExp, RuleCode["code"]]> = [
+    [/strength|endurance/i, "97110"],
+    [/balance|coordination|motor planning|postural|stability|\bneuro(?:muscular)?\b/i, "97112"],
+    [/functional|fine motor|\badl\b|handwriting|hand manipulation/i, "97530"],
+  ];
+  const categoryOf = (activity: string): string | null => {
+    const idx = activity.lastIndexOf(" - ");
+    return idx === -1 ? null : activity.slice(idx + 3).trim() || null;
+  };
+  const codeForCategory = (category: string | null): RuleCode["code"] | null => {
+    if (!category) return null;
+    for (const [re, code] of CATEGORY_RULES) if (re.test(category)) return code;
+    return null;
+  };
+  const codeForKeywords = (activity: string): { code: RuleCode["code"]; keyword: string } | null => {
+    const lower = activity.toLowerCase();
+    const hit = (list: string[]) => list.find((k) => lower.includes(k.toLowerCase()));
+    const f = hit(functionalKeywords);
+    if (f) return { code: "97530", keyword: f };
+    const n = hit(neuromuscularKeywords);
+    if (n) return { code: "97112", keyword: n };
+    const e = hit(exerciseKeywords);
+    if (e) return { code: "97110", keyword: e };
+    return null;
+  };
+  // Rationales say WHERE the suggestion came from (the entered category, or
+  // a word in the activity name) and nothing about the patient, the
+  // session, or what the activity "targets" -- none of that was entered.
+  const SUGGESTION_ONLY = "Suggestion only; the treating provider makes the final coding decision.";
+
   // Per-activity pairing first — one suggested code per documented activity.
-  // An activity no keyword clearly maps conservatively defaults to 97530
-  // Therapeutic Activities (clinician guidance: some payers only reimburse
-  // one type of code, and Therapeutic Activities is the defensible default).
+  // An activity no category or keyword clearly maps conservatively defaults
+  // to 97530 Therapeutic Activities (clinician guidance: some payers only
+  // reimburse one type of code, and Therapeutic Activities is the defensible
+  // default).
   const activityCptPairings: ActivityCptPairing[] = request.activities.map((a) => {
-    const lower = a.toLowerCase();
-    if (functionalKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+    const category = categoryOf(a);
+    const byCategory = codeForCategory(category);
+    if (byCategory) {
+      const rc = RULE_CODES[byCategory];
       return {
         activity: a,
-        code: "97530",
-        name: "Therapeutic Activities",
-        rationale: "Functional/dynamic activity for participation — therapeutic activities. Suggestion only; the treating provider makes the final coding decision.",
+        code: rc.code,
+        name: rc.name,
+        rationale: `Suggested from the activity's entered category ("${category}" → ${rc.code} ${rc.name}). ${SUGGESTION_ONLY}`,
         source: "ai" as const,
       };
     }
-    if (neuromuscularKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+    const byKeyword = codeForKeywords(a);
+    if (byKeyword) {
+      const rc = RULE_CODES[byKeyword.code];
       return {
         activity: a,
-        code: "97112",
-        name: "Neuromuscular Re-education",
-        rationale: "Balance/postural control/motor planning objective — neuromuscular re-education. Suggestion only; the treating provider makes the final coding decision.",
-        source: "ai" as const,
-      };
-    }
-    if (exerciseKeywords.some((k) => lower.includes(k.toLowerCase()))) {
-      return {
-        activity: a,
-        code: "97110",
-        name: "Therapeutic Exercise",
-        rationale: "Strengthening/endurance objective — therapeutic exercise. Suggestion only; the treating provider makes the final coding decision.",
+        code: rc.code,
+        name: rc.name,
+        rationale: `Suggested from the activity name ("${byKeyword.keyword}" → ${rc.code} ${rc.name}); no category was entered for it. ${SUGGESTION_ONLY}`,
         source: "ai" as const,
       };
     }
@@ -1770,12 +2018,16 @@ export function fallbackGeneration(
 
   // Aggregate billing codes derived from the pairings (single source of
   // truth), units distributed across the paired codes by documentation.
+  // Aggregate rationales are as neutral as the per-activity ones: they name
+  // the mapping, not a clinical objective nobody documented ("targeting
+  // postural control, balance, and motor planning" was asserted here for
+  // every 97112 regardless of input -- QA follow-up 2026-11-18).
   const cptCodes: GeneratedCptCode[] = reconcileCptCodesWithPairings(
     activityCptPairings,
     [
-      { code: "97112", rationale: `Neuromuscular re-education targeting postural control, balance, and motor planning via the documented activities.` },
-      { code: "97530", rationale: `Therapeutic activities for functional participation across the documented activities.` },
-      { code: "97110", rationale: `Therapeutic exercise for strength and endurance across the documented activities.` },
+      { code: "97112", rationale: `Neuromuscular re-education, suggested for the activities whose entered category or name indicates balance, coordination or motor-planning work. ${SUGGESTION_ONLY}` },
+      { code: "97530", rationale: `Therapeutic activities, suggested for the activities whose entered category or name indicates functional or fine-motor work, and as the conservative default where neither was clear. ${SUGGESTION_ONLY}` },
+      { code: "97110", rationale: `Therapeutic exercise, suggested for the activities whose entered category or name indicates strengthening or endurance work. ${SUGGESTION_ONLY}` },
     ],
     unitRate,
     Math.max(billingUnits, 1),
@@ -1839,10 +2091,33 @@ export function fallbackGeneration(
     .filter(([, v]) => documented(v))
     .map(([label, v]) => `• ${label}: ${(v as string).trim()}`);
   const assistanceLine = documented(a.assistance) ? `\n\nAssistance level: ${a.assistance.trim()}.` : '';
+  // The per-activity therapist account IS the Objective observation for that
+  // activity (the AI path treats it as the primary source). QA sweep
+  // 2026-11-18: the template listed the activity name alone and then said
+  // no observations were documented beyond the list -- dropping the entered
+  // "five sets of ten jumps, one-minute pauses, no pain" and asserting a
+  // gap that the therapist had in fact filled. Carried verbatim, in the
+  // therapist's words, under its activity.
+  const accountFor = (activity: string): string | null => {
+    const detail = request.activityDetails?.find((d) => d.name === activity);
+    return detail && documented(detail.response) ? detail.response.trim() : null;
+  };
+  const hasAnyAccount = request.activities.some((act) => accountFor(act) !== null);
+  const activityLines = request.activities
+    .map((act) => {
+      const account = accountFor(act);
+      return account ? `• ${act}\n  Therapist's account: ${account}` : `• ${act}`;
+    })
+    .join('\n');
+  // A statement about this FORM ("entered"), never about the room ("not
+  // documented" reads as a confirmed absence). Omitted whenever any account
+  // was entered -- those are observations.
   const observationsBlock = observationLines.length
     ? `\n\nClinical observations as documented by the treating therapist:\n${observationLines.join('\n')}`
-    : `\n\nClinical observations: not documented for this session beyond the activities listed.`;
-  const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${request.activities.map(a => `• ${a}`).join('\n')}${assistanceLine}${observationsBlock}`;
+    : hasAnyAccount
+      ? ''
+      : `\n\nClinical observations: none entered for this session beyond the activities listed.`;
+  const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${activityLines}${assistanceLine}${observationsBlock}`;
 
   // Build assessment section — clinical interpretation anchored to the
   // observations actually provided; no fabricated reflexes, prior-session
@@ -1855,8 +2130,12 @@ export function fallbackGeneration(
   const hasDocumentedDeficits = [a.strength, a.motorPlanning, a.sensoryRegulation]
     .filter(documented)
     .some((f) => /poor|decreas|difficult|limit|delay|reduc/i.test(f));
+  // Worded around what was entered: the deficits the therapist rated. It
+  // does not say the therapist "graded and adapted" the activities -- that
+  // is a therapist action no field records (the AI path's backstop strips the
+  // same claim when nothing entered describes therapist support).
   const necessityParagraph = hasDocumentedDeficits
-    ? `\n\nSkilled OT was required to grade and adapt the above activities to the patient's documented deficits in the areas noted above, supporting safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
+    ? `\n\nSkilled occupational therapy addressed the deficits documented above to support safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
     : '';
   // Same blank-field rule as the Subjective section: an unset mood is
   // omitted, never defaulted into a sentence that would otherwise read
@@ -1876,7 +2155,17 @@ export function fallbackGeneration(
     .filter(([, v]) => documented(v))
     .map(([label, v]) => `${label}: ${(v as string).trim()}.`)
     .join(' ');
-  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy${assistanceClause}. Skilled clinical analysis and therapist-directed adaptation were provided to support performance across the documented activities.${performanceSentences ? `\n\n${performanceSentences}` : ''}${necessityParagraph}`;
+  // No skilled-service sentence at all. "Skilled clinical analysis and
+  // therapist-directed adaptation were provided" used to be unconditional
+  // (QA sweep 2026-11-18, asserted on a note with every rating blank); a
+  // first fix gated the two halves on the ratings / assistance fields, but
+  // neither field records that analysis or adaptation happened -- the form
+  // has no field that does, so there is nothing the therapist could enter
+  // to support the sentence (QA follow-up, same day). The Assessment is the
+  // participation sentence (with the entered assistance level, if any), the
+  // therapist's own ratings, and the necessity paragraph when they rated a
+  // deficit. The therapist adds their clinical reasoning on review.
+  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy${assistanceClause}.${performanceSentences ? `\n\n${performanceSentences}` : ''}${necessityParagraph}`;
 
   // Build plan section. Mirrors the AI path's CASE A / CASE B rules:
   //  - "Continue occupational therapy to address current treatment goals" is
@@ -1913,8 +2202,14 @@ export function fallbackGeneration(
     activityCptPairings,
     timeBlocks,
     totalReimbursement,
-    billingRationale: "Billing codes assigned using rule-based accuracy checks. AI unavailable.",
-    auditNotes: ["Documentation supports assigned CPT codes", "Activities match code descriptions"],
+    // Neutral: say what the rule did, never that the documentation
+    // "supports" the codes or that activities "match" descriptions -- the
+    // template reviewed nothing (QA follow-up 2026-11-18).
+    billingRationale: `Codes suggested by rule-based mapping from each activity's entered category or name because AI generation was unavailable. ${SUGGESTION_ONLY}`,
+    auditNotes: [
+      "Codes were suggested by rule-based mapping from the entered activity categories and names; this is not a review of the documentation.",
+      `Units derived from the documented session duration: ${request.duration} minutes → ${billingUnits} timed unit(s).`,
+    ],
     generationMode: "fallback",
   };
 }

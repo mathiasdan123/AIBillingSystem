@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // import time); the prompt builder under test never touches it.
 vi.mock('../storage', () => ({ storage: {} }));
 
-import { buildUserPrompt, fallbackGeneration, validateAndEnhanceResponse } from '../services/aiSoapBillingService';
+import { buildSystemPrompt, buildUserPrompt, fallbackGeneration, validateAndEnhanceResponse } from '../services/aiSoapBillingService';
 
 const patient = { firstName: 'Test', lastName: 'Child', dateOfBirth: '2019-03-01' };
 
@@ -256,5 +256,98 @@ describe('validateAndEnhanceResponse — billing arithmetic consistency', () => 
     const timeBlocksSum = result.timeBlocks.reduce((sum, b) => sum + b.rate, 0);
     expect(result.totalReimbursement).toBeCloseTo(cptCodesSum, 2);
     expect(result.totalReimbursement).toBeCloseTo(timeBlocksSum, 2);
+  });
+});
+
+/**
+ * QA sweep 2026-11-18 (Riley Nodob, normal AI path): the note retained the
+ * activity account but asserted findings never supplied -- "no observable
+ * distress", "standardized measurements were not administered", therapist
+ * grading/monitoring. The grounding rule applies in both directions: an
+ * unsupported negative, and an unentered service, are fabrications exactly
+ * as an unsupported positive is. Pinned at the prompt (which used to
+ * INSTRUCT the measurement sentence) and at the deterministic backstop on
+ * the final output.
+ */
+describe('grounding in both directions — prompt rules', () => {
+  const system = buildSystemPrompt(null);
+  const user = buildUserPrompt(baseRequest(), patient, 3, null);
+
+  it('no longer instructs or permits the standardized-measurement denial sentence', () => {
+    expect(system).not.toContain("otherwise write 'Standardized measurements were not administered");
+    expect(system).not.toMatch(/is\s+fine because an administered measure/);
+    expect(user).not.toContain("otherwise write 'Standardized measurements were not administered");
+    expect(user).toContain('write NOTHING about standardized measures');
+  });
+
+  it('names unsupported negative findings and unentered therapist actions as fabrication', () => {
+    expect(system).toContain('NEGATIVE findings the input never stated');
+    expect(system).toContain('an unsupported\n     negative is fabrication, same as an unsupported positive');
+    expect(system).toContain('Services and therapist actions the input never described');
+    expect(user).toContain("Do NOT add negative findings the account did not state ('no observable distress'");
+  });
+});
+
+describe('grounding in both directions — validateAndEnhanceResponse on the Riley Nodob repro', () => {
+  const riley = baseRequest({
+    activities: ['Trampoline - Strengthening'],
+    activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps, one-minute pauses, no pain' }],
+    mood: '',
+    assessment: { performance: '', assistance: '', strength: '', motorPlanning: '', sensoryRegulation: '' },
+    planNextSteps: '',
+    nextSessionFocus: 'reassess jumping endurance',
+  });
+  // What the model actually produced for this input, condensed: the account
+  // is kept, and three claims are added that nothing entered supports.
+  const aiResponse = {
+    subjective: '',
+    objective:
+      'Session conducted in Clinic for 45 minutes. Standardized measurements were not administered; observations were qualitative.\n\n' +
+      'Trampoline - Strengthening: Riley completed five sets of ten jumps with one-minute pauses between sets and reported no pain. ' +
+      'No observable distress was noted. The therapist graded bout duration and monitored for fatigue throughout.',
+    assessment:
+      'Trampoline jumping targets lower-extremity strength and endurance to support sustained play participation. ' +
+      'Riley tolerated the activity without signs of fatigue.',
+    plan: 'Next session focus: reassess jumping endurance.\n\nHome program: No home program assigned this session.',
+    cptCodes: [{ code: '97110', name: 'Therapeutic Exercise', units: 3, rationale: 'Strengthening/endurance objective.', activitiesAssigned: ['Trampoline - Strengthening'] }],
+    activityCptPairings: [{ activity: 'Trampoline - Strengthening', code: '97110', rationale: 'Strengthening/endurance objective.' }],
+    billingRationale: 'Standardized measures were not used; coding reflects the documented strengthening objective.',
+    auditNotes: ['Documentation supports 97110.'],
+  };
+
+  it('keeps the therapist\'s account, including the negative they DID write ("no pain")', async () => {
+    const out = await validateAndEnhanceResponse(aiResponse, riley, 3);
+    expect(out.objective).toContain('completed five sets of ten jumps with one-minute pauses between sets and reported no pain');
+    expect(out.plan).toContain('reassess jumping endurance');
+  });
+
+  it('drops the three unsupported claims from the QA sweep, in every section and the billing text', async () => {
+    const out = await validateAndEnhanceResponse(aiResponse, riley, 3);
+    const everything = [out.subjective, out.objective, out.assessment, out.plan, out.billingRationale, ...out.auditNotes,
+      ...out.cptCodes.map((c) => c.rationale), ...out.activityCptPairings.map((p) => p.rationale)].join('\n');
+    expect(everything).not.toMatch(/standardi[sz]ed/i);
+    expect(everything).not.toMatch(/distress/i);
+    expect(everything).not.toMatch(/graded|monitored/i);
+    expect(everything).not.toMatch(/without signs of fatigue/i);
+    // What the activity TARGETS is grounded in the activity itself and survives.
+    expect(out.assessment).toBe('Trampoline jumping targets lower-extremity strength and endurance to support sustained play participation.');
+    expect(out.objective).toBe(
+      'Session conducted in Clinic for 45 minutes.\n\n' +
+      'Trampoline - Strengthening: Riley completed five sets of ten jumps with one-minute pauses between sets and reported no pain.',
+    );
+  });
+
+  it('is symmetric: the same sentences survive when the input supports them', async () => {
+    const supported = baseRequest({
+      ...riley,
+      activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps, no pain, no distress or fatigue; graded bouts down when rhythm broke' }],
+      assessment: { ...riley.assessment, assistance: 'Supervision' },
+    });
+    const out = await validateAndEnhanceResponse(aiResponse, supported, 3);
+    expect(out.objective).toContain('No observable distress was noted.');
+    expect(out.objective).toContain('The therapist graded bout duration and monitored for fatigue throughout.');
+    expect(out.assessment).toContain('Riley tolerated the activity without signs of fatigue.');
+    // Still no field can support a statement about standardized measures.
+    expect(out.objective).not.toMatch(/standardi[sz]ed/i);
   });
 });
