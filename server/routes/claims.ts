@@ -30,6 +30,8 @@ import { getStediApiKeyForPractice } from '../services/stediService';
 import logger from '../services/logger';
 import type { ClaimSubmission } from '../services/stediService';
 import { checkClaimUnderpayment } from './payerContracts';
+import { recordClaimEvent, clip } from '../services/claimEventService';
+import { reclassifyDenialAppealFollowUps } from '../services/claimFollowUpService';
 
 /**
  * Phase 6 Slice 2 — resolve the rendering therapist's taxonomy for a claim.
@@ -1462,6 +1464,23 @@ router.post('/batch-submit', isAuthenticated, async (req: any, res) => {
           clearinghouseResponse: clearinghouseResult || null,
           clearinghouseSubmittedAt: new Date(),
         });
+        {
+          const isResubmission = ((claim as any).resubmissionCount ?? 0) > 0;
+          await recordClaimEvent({
+            claimId: claim.id,
+            practiceId: claim.practiceId ?? practiceId,
+            eventType: 'submitted',
+            summary: isResubmission
+              ? `Resubmitted as a replacement claim (837P frequency 7) via ${submissionMethod} (batch)`
+              : `Submitted via ${submissionMethod} (batch)`,
+            metadata: {
+              isResubmission,
+              submissionMethod,
+              clearinghouseStatus: clearinghouseResult?.status || 'pending',
+            },
+            createdBy: req.user?.claims?.sub,
+          });
+        }
 
         results.push({
           claimId: claim.id,
@@ -2127,6 +2146,24 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
       clearinghouseSubmittedAt: new Date(),
     } as any);
 
+    {
+      const isResubmission = ((claim as any).resubmissionCount ?? 0) > 0;
+      await recordClaimEvent({
+        claimId,
+        practiceId: claim.practiceId ?? getAuthorizedPracticeId(req),
+        eventType: 'submitted',
+        summary: isResubmission
+          ? `Resubmitted as a replacement claim (837P frequency 7) via ${submissionMethod}`
+          : `Submitted via ${submissionMethod}`,
+        metadata: {
+          isResubmission,
+          submissionMethod,
+          clearinghouseStatus: clearinghouseResult?.status || 'pending',
+        },
+        createdBy: req.user?.claims?.sub,
+      });
+    }
+
     res.json({
       success: true,
       message: submissionMethod === 'stedi'
@@ -2270,15 +2307,51 @@ router.post('/:id/reopen', isAuthenticated, async (req: any, res) => {
     }
 
     const prevCount = (claim as any).resubmissionCount ?? 0;
+    const previousDenialReason = (claim as any).denialReason ?? null;
     const updated = await storage.updateClaim(claimId, {
       status: 'draft',
       resubmissionCount: prevCount + 1,
       lastResubmissionReason: reason,
       // Clear denial/hold state so the next submit runs through the scrubber
-      // cleanly instead of re-triggering the same hold.
+      // cleanly instead of re-triggering the same hold. The denial reason is
+      // not lost: it goes into the timeline event below (QA 2026-11-18 —
+      // reopen used to erase the only record of why the payer denied).
       denialReason: null,
       holdReason: null,
     } as any);
+
+    await recordClaimEvent({
+      claimId,
+      practiceId,
+      eventType: 'reopened',
+      summary: `Reopened to draft for correction: ${clip(reason)}`,
+      metadata: {
+        reason,
+        previousStatus: claim.status,
+        previousDenialReason,
+        resubmissionCount: prevCount + 1,
+      },
+      createdBy: req.user?.claims?.sub,
+    });
+
+    // The open "Denial — appeal" follow-up for this claim now points at a
+    // draft with no appeal path. Reclassify it to a correction/resubmit task
+    // (its action link is the claim detail, i.e. the correction draft) and
+    // carry the old denial reason in its notes. Best-effort: a task-table
+    // error must not undo a reopen that already happened.
+    try {
+      await reclassifyDenialAppealFollowUps(claimId, practiceId, {
+        reason,
+        previousDenialReason,
+        claimNumber: (claim as any).claimNumber ?? null,
+      });
+    } catch (followUpError) {
+      logger.error('Reopen: could not reclassify denial follow-up', {
+        claimId,
+        practiceId,
+        error: followUpError instanceof Error ? followUpError.message : String(followUpError),
+      });
+    }
 
     try {
       await storage.createAuditLog?.({
@@ -2729,10 +2802,27 @@ router.post('/:id/deny', isAuthenticated, isAdminOrBilling, async (req: any, res
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
     }
+    // Tenant check (added 2026-11-18): the claim id is serial, and this route
+    // changed status and triggered appeal generation for whatever id it was
+    // given. Same rule as /reopen.
+    if (claim.practiceId !== practiceId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
 
     const updatedClaim = await storage.updateClaim(claimId, {
       status: 'denied',
       denialReason: denialReason || 'No reason provided',
+    });
+
+    // Timeline: the claims row keeps only the latest denialReason (reopen
+    // clears it), so the denial itself is recorded as an event.
+    await recordClaimEvent({
+      claimId,
+      practiceId,
+      eventType: 'denied',
+      summary: `Denied: ${clip(denialReason || 'No reason provided')}`,
+      metadata: { denialReason: denialReason || 'No reason provided', previousStatus: claim.status },
+      createdBy: req.user?.claims?.sub,
     });
 
     // Record outcome for AI learning (non-blocking)
@@ -2849,12 +2939,48 @@ router.post('/:id/deny', isAuthenticated, isAdminOrBilling, async (req: any, res
   }
 });
 
+// ==================== TIMELINE ====================
+
+/**
+ * GET /api/claims/:id/events — the claim's append-only history (denials,
+ * reopens, submissions, appeal milestones, internal notes), oldest first.
+ * The claim detail's Status tab merges these with the row-level milestones
+ * (created / paid) it already renders.
+ */
+router.get('/:id/events', isAuthenticated, async (req: any, res) => {
+  try {
+    const claimId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(claimId) || claimId <= 0) {
+      return res.status(400).json({ message: 'Invalid claim ID' });
+    }
+    const practiceId = getAuthorizedPracticeId(req);
+    const claim = await storage.getClaim(claimId);
+    if (!claim || claim.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
+    const events = await storage.getClaimEvents(practiceId, claimId);
+    res.json(events);
+  } catch (error) {
+    logger.error('Error fetching claim events', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch claim events' });
+  }
+});
+
 // ==================== APPEALS ====================
 
-// Get appeals for a claim
+// Get AI appeal recommendations for a claim (reimbursement_optimizations
+// rows of type 'appeal'; the appeals table proper is served by
+// /api/appeals?claimId=).
 router.get('/:id/appeals', isAuthenticated, async (req: any, res) => {
   try {
     const claimId = parseInt(req.params.id);
+    // Tenant check (added 2026-11-18): this returned appeal letters for any
+    // claim id with no ownership check.
+    const practiceId = getAuthorizedPracticeId(req);
+    const owner = await storage.getClaim(claimId);
+    if (!owner || owner.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Claim not found' });
+    }
     const appeals = await storage.getClaimAppeals(claimId);
 
     const parsedAppeals = appeals.map((appeal: any) => {

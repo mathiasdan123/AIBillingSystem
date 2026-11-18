@@ -23,6 +23,7 @@ import { isAuthenticated } from '../replitAuth';
 import { appealGenerator } from '../aiAppealGenerator';
 import { recordAppealOutcome } from '../services/appealOutcomeLearningService';
 import logger from '../services/logger';
+import { recordClaimEvent, clip } from '../services/claimEventService';
 
 const router = Router();
 
@@ -127,6 +128,10 @@ router.get('/appeals', isAuthenticated, async (req: any, res) => {
 
     if (req.query.status) filters.status = req.query.status;
     if (req.query.appealLevel) filters.appealLevel = req.query.appealLevel;
+    if (req.query.claimId) {
+      const claimId = parseInt(String(req.query.claimId), 10);
+      if (Number.isInteger(claimId) && claimId > 0) filters.claimId = claimId;
+    }
     if (req.query.deadlineWithinDays) filters.deadlineWithinDays = parseInt(req.query.deadlineWithinDays);
 
     const appeals = await storage.getAppeals(practiceId, filters);
@@ -204,9 +209,11 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'claimId is required' });
     }
 
-    // Get the claim
+    // Get the claim. Tenant check (added 2026-11-18): claim ids are serial
+    // and this route filed appeals, and read patient/denial data, for any
+    // id it was given. 404, not 403, so cross-practice ids are not confirmed.
     const claim = await storage.getClaim(claimId);
-    if (!claim) {
+    if (!claim || claim.practiceId !== practiceId) {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
@@ -280,6 +287,15 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
     // Update claim status to appeal
     await storage.updateClaim(claimId, { status: 'appeal' });
 
+    await recordClaimEvent({
+      claimId,
+      practiceId,
+      eventType: 'appeal_created',
+      summary: `Appeal created (${appeal.appealLevel}) — ${appealResult ? 'letter drafted, status ready' : 'status draft'}; filing deadline ${calculatedDeadline}`,
+      metadata: { appealId: appeal.id, appealLevel: appeal.appealLevel, status: appeal.status, deadlineDate: calculatedDeadline },
+      createdBy: req.user?.claims?.sub,
+    });
+
     res.json({
       message: 'Appeal created successfully',
       appeal: {
@@ -311,6 +327,20 @@ router.patch('/appeals/:id', isAuthenticated, async (req: any, res) => {
     }
 
     const updatedAppeal = await storage.updateAppealRecord(appealId, updates);
+
+    // Internal notes are the biller's working record on the appeal; surface
+    // them on the claim timeline (excerpt only — the appeal row holds the text).
+    if (typeof updates?.notes === 'string' && updates.notes.trim() && updates.notes !== existingAppeal.notes) {
+      await recordClaimEvent({
+        claimId: existingAppeal.claimId,
+        practiceId: existingAppeal.practiceId,
+        eventType: 'note_added',
+        summary: `Internal note on appeal #${appealId}: ${clip(updates.notes, 160)}`,
+        metadata: { appealId, excerpt: clip(updates.notes, 160) },
+        createdBy: req.user?.claims?.sub,
+      });
+    }
+
     res.json(updatedAppeal);
   } catch (error) {
     logger.error('Error updating appeal', { error: error instanceof Error ? error.message : String(error) });
@@ -333,6 +363,15 @@ router.post('/appeals/:id/submit', isAuthenticated, async (req: any, res) => {
     const updatedAppeal = await storage.updateAppealRecord(appealId, {
       status: 'submitted',
       submittedDate: new Date(),
+    });
+
+    await recordClaimEvent({
+      claimId: appeal.claimId,
+      practiceId: appeal.practiceId,
+      eventType: 'appeal_submitted',
+      summary: `Appeal #${appealId} (${appeal.appealLevel}) submitted to payer`,
+      metadata: { appealId, appealLevel: appeal.appealLevel },
+      createdBy: req.user?.claims?.sub,
     });
 
     res.json({
@@ -384,6 +423,15 @@ router.post('/appeals/:id/resolve', isAuthenticated, async (req: any, res) => {
     // Idempotent — safe if the route fires twice. Non-blocking on its own
     // errors (logged inside the service).
     await recordAppealOutcome(appealId);
+
+    await recordClaimEvent({
+      claimId: appeal.claimId,
+      practiceId: appeal.practiceId,
+      eventType: 'appeal_resolved',
+      summary: `Appeal #${appealId} resolved: ${outcome}${recoveredAmount ? ` — $${recoveredAmount} recovered` : ''}`,
+      metadata: { appealId, outcome, recoveredAmount: recoveredAmount ?? null },
+      createdBy: req.user?.claims?.sub,
+    });
 
     res.json({
       message: `Appeal resolved as ${outcome}`,
@@ -438,6 +486,15 @@ router.post('/appeals/:id/escalate', isAuthenticated, async (req: any, res) => {
       appealedAmount: appeal.appealedAmount,
       notes: notes || `Escalated from ${appeal.appealLevel}`,
       supportingDocs: appeal.supportingDocs as any,
+    });
+
+    await recordClaimEvent({
+      claimId: appeal.claimId,
+      practiceId: appeal.practiceId,
+      eventType: 'appeal_created',
+      summary: `Appeal escalated to ${nextLevel} (new appeal #${newAppeal.id}; #${appealId} closed as lost)`,
+      metadata: { appealId: newAppeal.id, appealLevel: nextLevel, escalatedFrom: appealId, status: 'draft' },
+      createdBy: req.user?.claims?.sub,
     });
 
     res.json({

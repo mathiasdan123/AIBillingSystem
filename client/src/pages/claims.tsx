@@ -91,6 +91,17 @@ interface Claim {
   } | null;
 }
 
+// How each claim_events type renders on the Status timeline.
+const CLAIM_EVENT_LOOK: Record<string, { label: string; bg: string; fg: string; Icon: any }> = {
+  submitted: { label: 'Submitted', bg: 'bg-indigo-100', fg: 'text-indigo-600', Icon: Send },
+  denied: { label: 'Denied', bg: 'bg-red-100', fg: 'text-red-600', Icon: XCircle },
+  reopened: { label: 'Reopened to draft', bg: 'bg-amber-100', fg: 'text-amber-700', Icon: RefreshCw },
+  appeal_created: { label: 'Appeal created', bg: 'bg-blue-100', fg: 'text-blue-600', Icon: Scale },
+  appeal_submitted: { label: 'Appeal submitted', bg: 'bg-blue-100', fg: 'text-blue-600', Icon: Mail },
+  appeal_resolved: { label: 'Appeal resolved', bg: 'bg-green-100', fg: 'text-green-700', Icon: CheckCircle },
+  note_added: { label: 'Internal note', bg: 'bg-slate-100', fg: 'text-slate-600', Icon: FileText },
+};
+
 // Comprehensive claim detail component with tabs for billing, payments, and status
 export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
   claim: any;
@@ -123,6 +134,28 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
     retry: false,
   });
   const claim: any = liveClaim ?? claimProp;
+
+  // Append-only history (denials, reopens, submissions, appeal milestones,
+  // internal notes). The claims row only has the latest state, so the
+  // Status tab used to show nothing after Created/Submitted (QA 2026-11-18).
+  const { data: claimEventsData } = useQuery<any[]>({
+    queryKey: [`/api/claims/${claimProp.id}/events`],
+    enabled: !!claimProp.id,
+    retry: false,
+  });
+  const claimEvents: any[] = Array.isArray(claimEventsData) ? claimEventsData : [];
+
+  // The appeals the biller actually created (appeals table), as opposed to
+  // the `appeals` prop, which is the legacy AI recommendation rows. After
+  // "Create Appeal" the claim status is 'appeal' and the record lives here,
+  // which is why the tab used to say "available for denied claims" with an
+  // appeal sitting right there (QA 2026-11-18).
+  const { data: filedAppealsData } = useQuery<any[]>({
+    queryKey: [`/api/appeals?claimId=${claimProp.id}`],
+    enabled: !!claimProp.id,
+    retry: false,
+  });
+  const filedAppeals: any[] = Array.isArray(filedAppealsData) ? filedAppealsData : [];
 
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const { toast } = useToast();
@@ -297,8 +330,8 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
       <TabsList className="grid w-full grid-cols-4">
         <TabsTrigger value="billing">Billing</TabsTrigger>
         <TabsTrigger value="payments">Payments</TabsTrigger>
-        <TabsTrigger value="status">Status</TabsTrigger>
-        <TabsTrigger value="appeals">Appeals</TabsTrigger>
+        <TabsTrigger value="status" data-testid="tab-status">Status</TabsTrigger>
+        <TabsTrigger value="appeals" data-testid="tab-appeals">Appeals</TabsTrigger>
       </TabsList>
 
       {/* TAB 1: Billing Summary */}
@@ -838,7 +871,7 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
                 <p className="text-xs text-slate-500">{new Date(claim.createdAt).toLocaleString()}</p>
               </div>
             </div>
-            {claim.submittedAt && (
+            {claim.submittedAt && !claimEvents.some((ev: any) => ev.eventType === 'submitted') && (
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center"><Send className="w-4 h-4 text-indigo-600" /></div>
                 <div>
@@ -847,6 +880,29 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
                 </div>
               </div>
             )}
+            {/* Recorded history, oldest first. Each row is a claim_events
+                entry written at the transition (deny, reopen, submit,
+                appeal created/submitted/resolved, internal note). */}
+            {claimEvents.map((ev: any) => {
+              const look = CLAIM_EVENT_LOOK[ev.eventType] ?? { label: ev.eventType, bg: 'bg-slate-100', fg: 'text-slate-600', Icon: Info };
+              const EvIcon = look.Icon;
+              return (
+                <div key={`ev-${ev.id}`} className="flex items-start gap-3" data-testid={`claim-event-${ev.eventType}`}>
+                  <div className={`w-8 h-8 rounded-full ${look.bg} flex items-center justify-center shrink-0`}><EvIcon className={`w-4 h-4 ${look.fg}`} /></div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{look.label}</p>
+                    <p className="text-xs text-slate-500">{new Date(ev.createdAt).toLocaleString()}</p>
+                    {ev.summary && <p className={`text-xs mt-0.5 ${ev.eventType === 'denied' ? 'text-red-600' : 'text-slate-600'}`}>{ev.summary}</p>}
+                    {ev.eventType === 'reopened' && ev.metadata?.previousDenialReason && (
+                      <p className="text-xs text-slate-500">Denial reason before reopen: {ev.metadata.previousDenialReason}</p>
+                    )}
+                    {ev.metadata?.appealId && (
+                      <Link href={`/appeals?appealId=${ev.metadata.appealId}`} className="text-xs text-blue-600 hover:underline">Open appeal #{ev.metadata.appealId}</Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
             {claim.paidAt && (
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><CheckCircle className="w-4 h-4 text-green-600" /></div>
@@ -856,7 +912,9 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
                 </div>
               </div>
             )}
-            {claim.status === 'denied' && (
+            {/* Fallback for a denial that predates the events table: the row
+                still carries denialReason while the claim is denied. */}
+            {claim.status === 'denied' && !claimEvents.some((ev: any) => ev.eventType === 'denied') && (
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center"><XCircle className="w-4 h-4 text-red-600" /></div>
                 <div>
@@ -952,6 +1010,41 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
 
       {/* TAB 4: Appeals */}
       <TabsContent value="appeals" className="mt-4 space-y-4">
+        {/* Filed appeals (appeals table) come first: shown for denied AND
+            appeal-state claims, and for any state that has an appeal row.
+            Each links to its draft on the Appeals page. */}
+        {filedAppeals.length > 0 && (
+          <div className="space-y-2" data-testid="filed-appeals">
+            <Label className="text-slate-700 font-semibold flex items-center gap-2">
+              <Scale className="w-4 h-4 text-blue-600" />
+              Appeals on this claim
+            </Label>
+            {filedAppeals.map((a: any) => (
+              <div key={a.id} className="flex items-center justify-between rounded-lg border bg-card p-3" data-testid={`filed-appeal-${a.id}`}>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Appeal #{a.id}</span>
+                    <Badge variant="outline" className="capitalize">{String(a.appealLevel || 'initial').replace(/_/g, ' ')}</Badge>
+                    <Badge className={
+                      a.status === 'ready' ? 'bg-blue-100 text-blue-800' :
+                      a.status === 'submitted' || a.status === 'in_review' ? 'bg-indigo-100 text-indigo-800' :
+                      a.status === 'won' || a.status === 'partial' ? 'bg-green-100 text-green-800' :
+                      a.status === 'lost' ? 'bg-red-100 text-red-800' :
+                      'bg-yellow-100 text-yellow-800'
+                    }>{String(a.status).replace(/_/g, ' ')}</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {a.deadlineDate ? `Filing deadline ${String(a.deadlineDate).slice(0, 10)}` : 'No filing deadline set'}
+                    {a.appealedAmount ? ` · $${a.appealedAmount} appealed` : ''}
+                  </p>
+                </div>
+                <Link href={`/appeals?appealId=${a.id}`} className="text-sm text-blue-600 hover:underline whitespace-nowrap" data-testid={`link-appeal-${a.id}`}>
+                  Open appeal
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
         {claim.status === 'denied' ? (
           <>
             <div className="flex items-center justify-between">
@@ -1037,12 +1130,17 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
               </div>
             )}
           </>
-        ) : (
+        ) : claim.status === 'appeal' && filedAppeals.length === 0 ? (
+          <div className="text-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600 mx-auto mb-2" />
+            <p className="text-slate-500 text-sm">Loading this claim's appeal…</p>
+          </div>
+        ) : filedAppeals.length === 0 ? (
           <div className="text-center py-8">
             <Scale className="w-12 h-12 text-slate-300 mx-auto mb-4" />
             <p className="text-slate-500">Appeals are available for denied claims</p>
           </div>
-        )}
+        ) : null}
       </TabsContent>
     </Tabs>
   );

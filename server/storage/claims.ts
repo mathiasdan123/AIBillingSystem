@@ -948,9 +948,13 @@ export async function getAppeals(practiceId: number, filters?: {
   status?: string;
   appealLevel?: string;
   deadlineWithinDays?: number;
+  claimId?: number;
 }): Promise<Appeal[]> {
   const conditions: any[] = [eq(appeals.practiceId, practiceId)];
 
+  if (filters?.claimId) {
+    conditions.push(eq(appeals.claimId, filters.claimId));
+  }
   if (filters?.status) {
     conditions.push(eq(appeals.status, filters.status));
   }

@@ -20,6 +20,7 @@ export * from "./analytics";
 export * from "./audit";
 export * from "./blancheConversations";
 export * from "./progressNotes";
+export * from "./claimEvents";
 
 // Re-export all domain functions as methods on a storage object for backwards compatibility
 import * as userFns from "./users";
@@ -38,6 +39,7 @@ import * as pdms2Fns from "./pdms2";
 import * as auditFns from "./audit";
 import * as blancheConversationFns from "./blancheConversations";
 import * as progressNoteFns from "./progressNotes";
+import * as claimEventFns from "./claimEvents";
 
 export const storage = {
   // ==================== BLANCHE CHAT ====================
@@ -310,6 +312,10 @@ export const storage = {
   countCompletedSessionsSince: progressNoteFns.countCompletedSessionsSince,
   getFirstCompletedSessionDate: progressNoteFns.getFirstCompletedSessionDate,
   getSignedSoapNotesInRange: progressNoteFns.getSignedSoapNotesInRange,
+
+  // Claim timeline events (append-only)
+  createClaimEvent: claimEventFns.createClaimEvent,
+  getClaimEvents: claimEventFns.getClaimEvents,
   createTreatmentGoal: clinicalFns.createTreatmentGoal,
   getTreatmentGoals: clinicalFns.getTreatmentGoals,
   getTreatmentGoal: clinicalFns.getTreatmentGoal,

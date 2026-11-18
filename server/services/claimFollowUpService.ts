@@ -23,7 +23,10 @@ type FollowUpType =
   | 'aging_90'
   | 'denial_appeal'
   | 'missing_info'
-  | 'underpayment';
+  | 'underpayment'
+  // A denied claim reopened to draft for correction: the biller fixes the
+  // claim and resubmits (837P frequency 7). Replaces denial_appeal on reopen.
+  | 'correction_resubmit';
 type FollowUpStatus = 'pending' | 'in_progress' | 'completed' | 'dismissed';
 type FollowUpPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -294,4 +297,41 @@ export async function dismissFollowUp(
   practiceId: number
 ): Promise<ClaimFollowUp | undefined> {
   return updateFollowUp(id, practiceId, { status: 'dismissed' });
+}
+
+/**
+ * Reopen-to-draft handoff (QA 2026-11-18, denial follow-up sweep): the
+ * claim's open `denial_appeal` task used to survive the reopen untouched, so
+ * Revenue at Risk kept a high-priority "Denial — appeal" item pointing at a
+ * draft claim with no appeal path. Reclassify it to `correction_resubmit`
+ * (its action link is the claim detail, i.e. the correction draft), keep
+ * its priority, and rewrite the notes so the old denial reason travels with
+ * the task. Scoped to the caller's practice; returns the rows changed.
+ */
+export async function reclassifyDenialAppealFollowUps(
+  claimId: number,
+  practiceId: number,
+  ctx: { reason: string; previousDenialReason?: string | null; claimNumber?: string | null },
+): Promise<ClaimFollowUp[]> {
+  const label = ctx.claimNumber || String(claimId);
+  const notes =
+    `Claim ${label} reopened to draft for correction: ${ctx.reason}. Fix and resubmit (replacement claim).` +
+    (ctx.previousDenialReason ? ` Previous denial reason: ${ctx.previousDenialReason}` : '');
+  return db
+    .update(claimFollowUps)
+    .set({
+      followUpType: 'correction_resubmit',
+      status: 'pending',
+      notes,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(claimFollowUps.claimId, claimId),
+        eq(claimFollowUps.practiceId, practiceId),
+        eq(claimFollowUps.followUpType, 'denial_appeal'),
+        inArray(claimFollowUps.status, ['pending', 'in_progress']),
+      ),
+    )
+    .returning();
 }

@@ -69,6 +69,7 @@ describe('POST /api/appeals — practice context', () => {
   it("populates practice name/NPI/address/phone from storage.getPractice (not the 'Practice' stub)", async () => {
     storageStub.getClaim.mockResolvedValueOnce({
       id: 42,
+      practiceId: 7, // caller's practice — POST /appeals is tenant-checked (2026-11-18)
       status: 'denied',
       patientId: 99,
       denialReason: 'not medically necessary',
@@ -106,6 +107,7 @@ describe('POST /api/appeals — practice context', () => {
   it('falls back to safe placeholders when storage.getPractice returns null', async () => {
     storageStub.getClaim.mockResolvedValueOnce({
       id: 42,
+      practiceId: 7,
       status: 'denied',
       patientId: 99,
       denialReason: 'x',
