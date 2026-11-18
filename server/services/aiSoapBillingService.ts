@@ -1589,11 +1589,21 @@ const NEGATED_FINDING_TOPICS: RegExp[] = [
 ];
 const NEGATION_WORD = /\b(?:no|not|without|denie[ds]|absen(?:t|ce)|free\s+of|never|none|nor)\b|-free\b/i;
 const SENTENCE_RE = /[^.!?\n]+(?:[.!?]+|(?=\n)|$)/g;
+// A sentence that CONDITIONS on a symptom is not asserting its absence.
+// "Stop the activity if the patient shows pain or fatigue; do not push
+// through" pairs a negation with two topics nobody entered, and is a
+// legitimate precaution (PR #464 review). Conditional / precaution lead-ins
+// anywhere in the sentence exempt it from the negative-finding strip -- in
+// every section, so the Plan keeps its precautions while a fabricated
+// finding there ("No distress was observed.") is still removed.
+const PRECAUTION_LEAD_IN =
+  /\b(?:if|when(?:ever)?|unless|should\s+(?:the\s+)?(?:patient|client|child|he|she|they)|in\s+(?:the\s+)?(?:case|event)\s+of|(?:monitor|watch|observe|check|assess|screen)\s+(?:closely\s+)?for|stop|discontinue|pause|hold|cease|avoid|report\s+any|notify|caregivers?\s+(?:were|was)\s+(?:instructed|advised|told|asked)|instruct(?:ed)?\s+to|precaution)\b/i;
 
 function unsupportedNegatedTopics(sentence: string, evidence: GroundingEvidence): { unsupported: RegExp[]; supported: RegExp[] } {
   const unsupported: RegExp[] = [];
   const supported: RegExp[] = [];
   if (!NEGATION_WORD.test(sentence)) return { unsupported, supported };
+  if (PRECAUTION_LEAD_IN.test(sentence)) return { unsupported, supported };
   for (const topic of NEGATED_FINDING_TOPICS) {
     if (!topic.test(sentence)) continue;
     (topic.test(evidence.text) ? supported : unsupported).push(topic);
@@ -1657,8 +1667,12 @@ export function stripUnsupportedNegativeFindings(text: string, evidence: Groundi
 // "neuromuscular re-education" and the rest of the payer vocabulary the prompt
 // asks for -- those describe the activity's objective, which an activity name
 // supports. These describe something the therapist DID during the session.
+// Verb forms only. "adapt(ed|ing|ation)" deliberately does NOT reach
+// "adaptive": adaptive equipment / seating / strategies name a thing, not an
+// action the therapist took (PR #464 review). Likewise "modified independent"
+// is an assistance LEVEL (a rating), not a modification the therapist made.
 const THERAPIST_ACTION_CLAIM =
-  /\b(?:grad(?:ed|ing)|monitor(?:ed|ing)|adjust(?:ed|ing|ments?)|modif(?:ied|ying|ications?)|adapt(?:ed|ing|ations?)|cue[ds]?|cueing|cuing|prompt(?:ed|ing|s)|facilitat(?:ed|ing|ion)|hand[- ]over[- ]hand|redirect(?:ed|ing|ion)|model(?:ed|led|ing|ling)|scaffold(?:ed|ing)|physical\s+(?:assist(?:ance)?|support|guidance)|verbal\s+(?:support|prompts?|cues?|guidance)|therapist[- ]directed|clinician[- ]directed)\b/i;
+  /\b(?:grad(?:ed|ing)|monitor(?:ed|ing)|adjust(?:ed|ing|ments?)|modif(?:ied(?!\s+independen)|ying|ications?)|adapt(?:ed|ing|ations?)(?!\s*-?equipment)|cue[ds]?|cueing|cuing|prompt(?:ed|ing|s)|facilitat(?:ed|ing|ion)|hand[- ]over[- ]hand|redirect(?:ed|ing|ion)|model(?:ed|led|ing|ling)|scaffold(?:ed|ing)|physical\s+(?:assist(?:ance)?|support|guidance)|verbal\s+(?:support|prompts?|cues?|guidance)|therapist[- ]directed|clinician[- ]directed)\b/i;
 // What in the therapist's own words counts as having described an action.
 const THERAPIST_ACTION_EVIDENCE =
   /\b(?:grad(?:e|ed|ing)|monitor\w*|adjust\w*|modif\w*|adapt\w*|cue\w*|cuing|prompt\w*|facilitat\w*|hand[- ]over[- ]hand|redirect\w*|model\w*|guid\w*|scaffold\w*|assist\w*|support\w*|demonstrat\w*|instruct\w*|help\w*|supervis\w*|min\s*a\b|mod\s*a\b|max\s*a\b)\b/i;
@@ -1673,9 +1687,49 @@ export function hasUnsupportedTherapistAction(text: string, evidence: GroundingE
   return THERAPIST_ACTION_CLAIM.test(text);
 }
 
+// Clause boundaries inside one sentence: punctuation, or a joining word with
+// whitespace on both sides. Captured so the rebuild can keep the joiner.
+const CLAUSE_SPLIT = /(\s*[,;]\s*|\s+(?:while|and|but|as|then|before|after|with|whereas)\s+)/i;
+const LEADING_JOINER = /^(?:while|and|but|as|then|with|whereas)\s+/i;
+
+/**
+ * Remove only the clause(s) of `sentence` that carry a therapist-action
+ * claim. A sentence can hold both an unsupported action and an entered fact
+ * ("Riley completed five sets of ten jumps while the therapist graded the
+ * task"): the fact stays, the action goes (PR #464 review; the whole sentence
+ * used to be dropped). Returns "" when nothing worth keeping remains -- every
+ * clause claimed an action, or what is left is a fragment or still claims one.
+ */
+function removeTherapistActionClauses(sentence: string): string {
+  const lead = (sentence.match(/^\s*/) ?? [""])[0];
+  const terminal = (sentence.match(/[.!?]+\s*$/) ?? [""])[0];
+  const body = sentence.slice(lead.length, sentence.length - terminal.length);
+  const parts = body.split(CLAUSE_SPLIT);
+  const clauses: Array<{ text: string; joiner: string }> = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    clauses.push({ text: parts[i] ?? "", joiner: i > 0 ? (parts[i - 1] ?? "") : "" });
+  }
+  const kept = clauses.filter((c) => c.text.trim() && !THERAPIST_ACTION_CLAIM.test(c.text));
+  if (kept.length === 0 || kept.length === clauses.length) return "";
+  let rebuilt = "";
+  kept.forEach((c, idx) => {
+    if (idx === 0) {
+      rebuilt = c.text.trim().replace(LEADING_JOINER, "");
+      return;
+    }
+    const joiner = c.joiner.trim();
+    rebuilt += (/^[,;]$/.test(joiner) ? `${joiner} ` : ` ${joiner} `) + c.text.trim();
+  });
+  if (rebuilt.split(/\s+/).length < 3 || THERAPIST_ACTION_CLAIM.test(rebuilt)) return "";
+  rebuilt = rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1);
+  return `${lead}${rebuilt}${terminal.trim() || "."}${terminal.match(/\s*$/)?.[0] ?? ""}`;
+}
+
 export function stripUnsupportedTherapistActions(text: string, evidence: GroundingEvidence): string {
   if (!hasUnsupportedTherapistAction(text, evidence)) return text;
-  const stripped = tidyProse(text.replace(SENTENCE_RE, (sentence) => (THERAPIST_ACTION_CLAIM.test(sentence) ? "" : sentence)));
+  const stripped = tidyProse(
+    text.replace(SENTENCE_RE, (sentence) => (THERAPIST_ACTION_CLAIM.test(sentence) ? removeTherapistActionClauses(sentence) : sentence)),
+  );
   logger.warn("Stripped therapist-action claim(s) with no assistance level or account describing one", {
     originalLength: text.length,
     strippedLength: stripped.length,
@@ -1807,9 +1861,11 @@ export async function validateAndEnhanceResponse(
     );
     return noObservations ? softenUnsupportedDeficitInRationale(base) : base;
   };
-  // Prose sections: negative findings nobody entered go in every section;
-  // therapist-action claims are checked in Objective and Assessment only --
-  // the Plan legitimately says what the therapist WILL grade next time.
+  // Prose sections: negative findings nobody entered go in every section
+  // (precaution / conditional sentences are exempt, so the Plan keeps "stop
+  // if the patient shows pain" -- see PRECAUTION_LEAD_IN); therapist-action
+  // claims are checked in Objective and Assessment only -- the Plan
+  // legitimately says what the therapist WILL grade next time.
   const groundProse = (text: string, withActions: boolean) => {
     const negatives = stripUnsupportedNegativeFindings(text, evidence);
     return withActions ? stripUnsupportedTherapistActions(negatives, evidence) : negatives;
@@ -2130,20 +2186,30 @@ export function fallbackGeneration(
   const hasDocumentedDeficits = [a.strength, a.motorPlanning, a.sensoryRegulation]
     .filter(documented)
     .some((f) => /poor|decreas|difficult|limit|delay|reduc/i.test(f));
-  // Worded around what was entered: the deficits the therapist rated. It
-  // does not say the therapist "graded and adapted" the activities -- that
-  // is a therapist action no field records (the AI path's backstop strips the
-  // same claim when nothing entered describes therapist support).
+  // Worded around what was entered and nothing else: it names the rated
+  // deficits and states the continuation, and does not say what the therapy
+  // "addressed" or that the therapist graded/adapted anything -- neither is
+  // recorded by any field (PR #464 review, 2026-11-18).
+  const ratedDeficits = (
+    [
+      ['strength/endurance', a.strength],
+      ['motor planning', a.motorPlanning],
+      ['sensory regulation', a.sensoryRegulation],
+    ] as Array<[string, unknown]>
+  )
+    .filter(([, v]) => documented(v) && /poor|decreas|difficult|limit|delay|reduc/i.test(v as string))
+    .map(([label, v]) => `${label}: ${(v as string).trim().toLowerCase()}`)
+    .join('; ');
   const necessityParagraph = hasDocumentedDeficits
-    ? `\n\nSkilled occupational therapy addressed the deficits documented above to support safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
+    ? `\n\nContinued skilled occupational therapy is indicated to address the deficits documented above (${ratedDeficits}).`
     : '';
   // Same blank-field rule as the Subjective section: an unset mood is
   // omitted, never defaulted into a sentence that would otherwise read
   // "presented as  and participated..." (literal double space) or assert a
   // presentation that was never documented. The assistance level is treated
   // the same way: "with assistance" is only written when a level was entered.
-  const presentedAsClause = request.mood ? `presented as ${request.mood.toLowerCase()} and ` : '';
-  const assistanceClause = documented(a.assistance) ? ` with ${a.assistance.trim().toLowerCase()} assistance` : '';
+  const presentedSentence = request.mood ? `${patientName} presented as ${request.mood.toLowerCase()}.` : '';
+  const assistanceSentence = documented(a.assistance) ? `Assistance level documented: ${a.assistance.trim().toLowerCase()}.` : '';
   const performanceSentences = (
     [
       ['Functional performance this session', a.performance],
@@ -2155,17 +2221,26 @@ export function fallbackGeneration(
     .filter(([, v]) => documented(v))
     .map(([label, v]) => `${label}: ${(v as string).trim()}.`)
     .join(' ');
-  // No skilled-service sentence at all. "Skilled clinical analysis and
-  // therapist-directed adaptation were provided" used to be unconditional
-  // (QA sweep 2026-11-18, asserted on a note with every rating blank); a
-  // first fix gated the two halves on the ratings / assistance fields, but
-  // neither field records that analysis or adaptation happened -- the form
-  // has no field that does, so there is nothing the therapist could enter
-  // to support the sentence (QA follow-up, same day). The Assessment is the
-  // participation sentence (with the entered assistance level, if any), the
-  // therapist's own ratings, and the necessity paragraph when they rated a
-  // deficit. The therapist adds their clinical reasoning on review.
-  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy${assistanceClause}.${performanceSentences ? `\n\n${performanceSentences}` : ''}${necessityParagraph}`;
+  // No skilled-service sentence at all, and nothing unconditional says
+  // "skilled". "Skilled clinical analysis and therapist-directed adaptation
+  // were provided" used to be unconditional (QA sweep 2026-11-18, asserted on
+  // a note with every rating blank); a first fix gated the two halves on the
+  // ratings / assistance fields, but neither field records that analysis or
+  // adaptation happened -- the form has no field that does. A second pass
+  // (PR #464 review) also dropped "participated in skilled occupational
+  // therapy": attendance and duration are facts the form records, "skilled"
+  // is a characterisation it does not. The Assessment is therefore: the
+  // attendance sentence, the entered mood and assistance level as their own
+  // sentences, the therapist's own ratings, and -- only when they rated a
+  // deficit -- the continuation sentence naming those deficits. The
+  // therapist adds their clinical reasoning on review.
+  const opening = [
+    `${patientName} attended a ${request.duration}-minute occupational therapy session.`,
+    presentedSentence,
+    assistanceSentence,
+  ].filter(Boolean).join(' ');
+  const ratingsParagraph = performanceSentences ? `\n\nAs rated by the treating therapist — ${performanceSentences}` : '';
+  const assessment = `${opening}${ratingsParagraph}${necessityParagraph}`;
 
   // Build plan section. Mirrors the AI path's CASE A / CASE B rules:
   //  - "Continue occupational therapy to address current treatment goals" is
