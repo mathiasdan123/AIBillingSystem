@@ -838,6 +838,9 @@ export const soapNoteDrafts = pgTable("soap_note_drafts", {
   // the draft so leaving the page and coming back restores the whole review
   // state, not just the prose (QA sweep 2026-11-18: codes/units/total reset
   // to 0 on draft restore). Shape: client/src/lib/soapDraftBilling.ts.
+  // PHI (activity descriptions + rationale beside patient_id): stored as one
+  // encrypted {ciphertext, iv, tag} object via encryptSoapDraftRecord, like
+  // the prose columns above; never plaintext.
   billing: jsonb("billing"),
   lastSavedAt: timestamp("last_saved_at").defaultNow(),
   // Legacy scaffold columns — unused.

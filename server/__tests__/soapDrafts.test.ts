@@ -182,5 +182,9 @@ describe('upsertSoapDraft billing', () => {
     } as any);
     expect(mockDbState.upserts).toHaveLength(1);
     expect(mockDbState.upserts[0].billing).toEqual(billing);
+    // Billing reaches the row only THROUGH the draft encryption helper (which
+    // encrypts it; see soapDraftBillingEncryption.test.ts), never around it.
+    expect(mockDbState.encryptCalls).toHaveLength(1);
+    expect(mockDbState.encryptCalls[0].billing).toEqual(billing);
   });
 });
