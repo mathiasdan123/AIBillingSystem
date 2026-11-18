@@ -29,7 +29,7 @@ import {
   type InsertPatientPlanBenefits,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, isNull, lt, inArray, sql, or } from "drizzle-orm";
+import { eq, desc, and, isNull, lt, inArray, sql, or, isNotNull } from "drizzle-orm";
 import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
   encryptPatientRecord,
@@ -55,7 +55,20 @@ export async function createPatient(patient: InsertPatient): Promise<Patient> {
   return decryptPatientRecord(newPatient) as Patient;
 }
 
-export async function getPatients(practiceId: number): Promise<Patient[]> {
+/**
+ * Which archived patients a list includes. 'exclude' (default) is what every
+ * picker and the main list want; 'only' backs the Patients page's Archived
+ * view; 'include' is for reports that must see everyone.
+ */
+export type ArchiveFilter = 'exclude' | 'only' | 'include';
+
+function archiveCondition(filter: ArchiveFilter | undefined) {
+  if (filter === 'only') return isNotNull(patients.archivedAt);
+  if (filter === 'include') return undefined;
+  return isNull(patients.archivedAt);
+}
+
+export async function getPatients(practiceId: number, opts: { archived?: ArchiveFilter } = {}): Promise<Patient[]> {
   // Ordered by most recently SEEN, not most recently added.
   //
   // A therapist picking a patient is nearly always reaching for someone they
@@ -77,7 +90,7 @@ export async function getPatients(practiceId: number): Promise<Patient[]> {
     .select({ patient: patients })
     .from(patients)
     .leftJoin(lastVisit, eq(lastVisit.patientId, patients.id))
-    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt)))
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt), archiveCondition(opts.archived)))
     .orderBy(sql`COALESCE(${lastVisit.lastSeen}, ${patients.createdAt}) DESC NULLS LAST`);
 
   return rows.map((r: any) => decryptPatientRecord(r.patient) as Patient);
@@ -190,13 +203,16 @@ export async function softDeletePatient(id: number): Promise<void> {
     .where(eq(patients.id, id));
 }
 
-export async function getAllPatients(practiceId: number, opts?: { limit?: number; offset?: number }): Promise<Patient[]> {
+export async function getAllPatients(
+  practiceId: number,
+  opts?: { limit?: number; offset?: number; archived?: ArchiveFilter },
+): Promise<Patient[]> {
   // Tenant isolation: always scope to the caller's practice. Without this filter
   // the list endpoint returned every practice's patients (cross-tenant PHI leak).
   let query = db
     .select()
     .from(patients)
-    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt)))
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt), archiveCondition(opts?.archived)))
     .orderBy(desc(patients.createdAt))
     .$dynamic();
   if (opts?.limit) query = query.limit(opts.limit);
@@ -229,19 +245,46 @@ export async function searchPatients(practiceId: number, query: string, limit: n
   const rows = await db
     .select()
     .from(patients)
-    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt), or(...conditions)))
+    // Archived patients never come back from search: the search box feeds
+    // schedulers and claim pickers, which must not book against them.
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt), isNull(patients.archivedAt), or(...conditions)))
     .orderBy(patients.lastName, patients.firstName)
     .limit(limit);
 
   return rows.map((r: any) => decryptPatientRecord(r) as Patient);
 }
 
-export async function countAllPatients(practiceId: number): Promise<number> {
+export async function countAllPatients(practiceId: number, opts: { archived?: ArchiveFilter } = {}): Promise<number> {
   const [result] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(patients)
-    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt)));
+    .where(and(eq(patients.practiceId, practiceId), isNull(patients.deletedAt), archiveCondition(opts.archived)));
   return result?.total ?? 0;
+}
+
+/**
+ * Archive / unarchive. Scoped by practice in the WHERE so an id from another
+ * practice is a no-op (undefined), never a cross-tenant write. Nothing else
+ * on the row changes: the patient's history, claims and notes stay exactly
+ * as they were, and unarchiving restores them to every list.
+ */
+async function setArchived(id: number, practiceId: number, archivedAt: Date | null): Promise<Patient | undefined> {
+  const [row] = await db
+    .update(patients)
+    .set({ archivedAt, updatedAt: new Date() })
+    .where(and(eq(patients.id, id), eq(patients.practiceId, practiceId), isNull(patients.deletedAt)))
+    .returning();
+  if (!row) return undefined;
+  await cache.delPattern(CacheKeys.analyticsPattern(practiceId));
+  return decryptPatientRecord(row) as Patient;
+}
+
+export async function archivePatient(id: number, practiceId: number): Promise<Patient | undefined> {
+  return setArchived(id, practiceId, new Date());
+}
+
+export async function unarchivePatient(id: number, practiceId: number): Promise<Patient | undefined> {
+  return setArchived(id, practiceId, null);
 }
 
 export async function getPatientsByIds(ids: number[]): Promise<Map<number, Patient>> {

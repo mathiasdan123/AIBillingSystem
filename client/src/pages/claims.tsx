@@ -32,6 +32,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -1599,12 +1600,22 @@ export default function Claims() {
     },
   });
 
+  // Draft claim pending deletion, confirmed through an in-page AlertDialog.
+  // QA 2026-11-18: the row menu called window.confirm() from the menu item's
+  // click handler. A native confirm() blocks the event loop while Radix's
+  // DropdownMenu is mid-close (pointer-events locked on <body>, focus being
+  // returned to the trigger), and the tab froze with no dialog visible,
+  // reproduced twice. The menu item now only records which claim to delete;
+  // the dialog renders outside the menu and runs the mutation on confirm.
+  const [claimPendingDelete, setClaimPendingDelete] = useState<Claim | null>(null);
+
   const deleteClaimMutation = useMutation({
     mutationFn: async (claimId: number) => {
       const res = await apiRequest("DELETE", `/api/claims/${claimId}`);
       return res.json();
     },
     onSuccess: () => {
+      setClaimPendingDelete(null);
       invalidateClaims();
       toast({ title: "Draft claim deleted" });
     },
@@ -3318,7 +3329,7 @@ export default function Claims() {
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" aria-label={`Actions for claim ${claim.claimNumber}`} data-testid={`menu-trigger-claim-${claim.id}`}>
                             <MoreVertical className="w-4 h-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -3352,15 +3363,7 @@ export default function Claims() {
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      `Delete draft claim ${claim.claimNumber}? It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.`,
-                                    )
-                                  ) {
-                                    deleteClaimMutation.mutate(claim.id);
-                                  }
-                                }}
+                                onClick={() => setClaimPendingDelete(claim)}
                                 data-testid={`menu-delete-claim-${claim.id}`}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
@@ -4127,6 +4130,34 @@ export default function Claims() {
             />
           )}
         </PrintLayout>
+
+        {/* Delete-draft confirmation. Rendered outside the row menu so the
+            menu finishes closing before any modal appears. */}
+        <AlertDialog open={!!claimPendingDelete} onOpenChange={(open) => { if (!open) setClaimPendingDelete(null); }}>
+          <AlertDialogContent data-testid="dialog-delete-claim">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete draft claim {claimPendingDelete?.claimNumber}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-delete-claim">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteClaimMutation.isPending}
+                onClick={(e) => {
+                  // Keep the dialog open until the request settles.
+                  e.preventDefault();
+                  if (claimPendingDelete) deleteClaimMutation.mutate(claimPendingDelete.id);
+                }}
+                data-testid="button-confirm-delete-claim"
+              >
+                {deleteClaimMutation.isPending ? "Deleting…" : "Delete draft"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
