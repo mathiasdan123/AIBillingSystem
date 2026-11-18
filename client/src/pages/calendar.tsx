@@ -135,14 +135,22 @@ export default function CalendarPage() {
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
 
-  // Fetch patients for the dropdown
+  // Fetch patients: name lookups for every appointment plus the picker.
+  // `archived=include` (mirrors #474 on Claims): this list resolves the
+  // patient NAME on existing records, and those belong to the patient after
+  // the patient is archived. The default list excludes archived patients,
+  // which made their existing records read "Patient #n" (QA 2026-11-18).
+  // Pickers that create something new use `pickablePatients` instead.
+  // The key keeps "/api/patients" first so the existing invalidations
+  // (new-patient creation here and in WalkInDialog) still hit it.
   const { data: patients = [] } = useQuery<any[]>({
-    queryKey: ["/api/patients"],
+    queryKey: ["/api/patients", "?archived=include"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/patients");
+      const res = await apiRequest("GET", "/api/patients?archived=include");
       return res.json();
     },
   });
+  const pickablePatients = patients.filter((p: any) => !p.archivedAt);
 
   // Fetch therapists for the dropdown
   // Use /api/therapists (available to all authenticated users) rather than
@@ -843,7 +851,7 @@ export default function CalendarPage() {
                                 })()
                               : (isNewPatient && newPatientData.firstName)
                                 ? `${newPatientData.firstName} ${newPatientData.lastName} (new)`
-                                : `Click to select patient (${patients.length} available)`}
+                                : `Click to select patient (${pickablePatients.length} available)`}
                             <ChevronsUpDown className="ml-2 h-5 w-5 shrink-0 opacity-70" />
                           </Button>
                         </PopoverTrigger>
@@ -902,7 +910,7 @@ export default function CalendarPage() {
                                 </div>
                               </CommandEmpty>
                               <CommandGroup>
-                                {patients.map((p: any) => (
+                                {pickablePatients.map((p: any) => (
                                   <CommandItem
                                     key={p.id}
                                     value={`${p.firstName} ${p.lastName}`}
