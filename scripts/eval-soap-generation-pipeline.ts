@@ -81,10 +81,12 @@ import {
   hasUnsupportedDeficitAssertion,
   hasUnsupportedDocumentationDenialClause,
   hasUnsupportedMoodClause,
+  hasUnsupportedNecessityClaim,
   hasUnsupportedNegativeFinding,
   hasUnsupportedPlanClosing,
   hasUnsupportedTherapistAction,
   groundingEvidenceFor,
+  necessityIsGrounded,
   SUBJECTIVE_PLACEHOLDER,
   type AiSoapBillingRequest,
   type AiSoapBillingResponse,
@@ -124,6 +126,22 @@ function noUnsupportedDeficitAssertion(note: FinalNote, _ctx: CheckContext) {
   for (const [field, text] of Object.entries(note)) {
     if (hasUnsupportedDeficitAssertion(text as string)) {
       failures.push(`${field} asserts a patient deficit ("underlying ... deficits", "address ... deficits", "decreased strength", ...) although NO observations were supplied -- describing what an activity targets is allowed; a finding nobody documented is not.`);
+    }
+  }
+  return failures.length > 0 ? failures.join(' ') : null;
+}
+
+// Post-deploy retest 2026-11-18: with no diagnosis, no goals, no rating and
+// no activity response documenting a deficit, nothing grounds a necessity
+// statement, in the billing text or the prose. Gated exactly like the real
+// backstop (necessityIsGrounded), so a scenario whose responses document a
+// deficit ("fatigue at 8 minutes") is never flagged for a grounded statement.
+function noUnsupportedNecessityClaim(note: FinalNote, ctx: CheckContext): string | null {
+  const grounded = necessityIsGrounded(ctx.request, { hasMostRecentPlanContext: false, hasActiveGoalsContext: false });
+  const failures: string[] = [];
+  for (const [field, text] of Object.entries(note)) {
+    if (hasUnsupportedNecessityClaim(text as string, grounded)) {
+      failures.push(`hasUnsupportedNecessityClaim matched the FINAL ${field} -- a medical-necessity claim with no diagnosis, goals, rating or documented deficit to ground it; stripUnsupportedNecessityClaim should have removed this.`);
     }
   }
   return failures.length > 0 ? failures.join(' ') : null;
@@ -424,7 +442,7 @@ const scenarios: Scenario[] = [
     guards: 'Final-output equivalent of raw harness Scenario 1 -- fabrication checks against the REAL pipeline output (post-backstops).',
     request: { patientId: 900001, mood: '', caregiverReport: undefined, ...BASE_SESSION } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('CleanRoom'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA],
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA, noUnsupportedNecessityClaim],
     judge: { context: `${CLEAN_ROOM_CONTEXT_BASE}\n- Mood/Presentation: BLANK (not entered) -- apply check 2, not check 4.\n- Caregiver Report: BLANK (not entered) -- apply check 3, not check 5.\n- Activity responses WERE supplied (see above): check 7 does NOT apply to this note.` },
   },
   {
@@ -495,7 +513,7 @@ const scenarios: Scenario[] = [
       planNextSteps: 'Bilateral coordination and sustained attention',
     } as AiSoapBillingRequest,
     fixture: { patient: freshPatient('ActivitiesOnly'), activeTreatmentPlan: null, allTreatmentPlans: [], treatmentGoals: [], recentSoapNotes: [] },
-    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA, noUnsupportedDeficitAssertion],
+    deterministicChecks: [noBackstopTripwires, subjectiveNotBlank, noAbsolutistCodingClaims, noContinuityNecessityInCaseA, noUnsupportedDeficitAssertion, noUnsupportedNecessityClaim],
     judge: { context: `- Activities: Obstacle Course, Trampoline -- NO activity responses were entered.
 - Clinical observation ratings (performance, assistance, strength, motor planning, sensory regulation, endurance): all BLANK.
 - Plan Next Steps: "Bilateral coordination and sustained attention"

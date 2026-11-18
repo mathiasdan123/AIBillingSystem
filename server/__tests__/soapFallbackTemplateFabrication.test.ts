@@ -164,6 +164,15 @@ describe('fallbackGeneration — activity account passthrough and no unsupported
     expect(out.plan).toContain('Next session focus:\n• reassess jumping endurance');
   });
 
+  it('prints the entered home program verbatim with no purpose clause (post-deploy retest 2026-11-18)', () => {
+    const withHome = fallbackGeneration(request({ ...RILEY_THIN, homeProgram: 'Practice jumping at home' }), PATIENT, 3);
+    expect(withHome.plan).toContain('Home program:\n• Practice jumping at home');
+    expect(withHome.plan).not.toMatch(/carryover|therapeutic gains|reinforce|generali/i);
+    // And the fallback's billing text never asserts necessity.
+    const billing = [withHome.billingRationale, ...withHome.auditNotes, ...withHome.cptCodes.map((c) => c.rationale)].join('\n');
+    expect(billing).not.toMatch(/necess|medically/i);
+  });
+
   it('never writes a skilled-analysis / therapist-directed-adaptation sentence, whatever was entered (no field records it)', () => {
     const ratingsOnly = fallbackGeneration(
       request({ assessment: { performance: 'Improved', assistance: '', strength: '', motorPlanning: '', sensoryRegulation: '' } }),

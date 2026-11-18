@@ -361,12 +361,17 @@ export async function generateSoapNoteAndBilling(
     // Validate and enhance the response
     const hasMostRecentPlanContext = !!priorSessions?.[0]?.plan;
     const hasActiveGoalsContext = !!(treatmentGoals && treatmentGoals.length > 0);
+    const hasDiagnosisContext = !!(
+      (treatmentPlan as any)?.diagnosis ||
+      (Array.isArray((treatmentPlan as any)?.diagnosisCodes) && (treatmentPlan as any).diagnosisCodes.length > 0)
+    );
     return await validateAndEnhanceResponse(
       aiResponse,
       request,
       billingUnits,
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
+      hasDiagnosisContext,
     );
 
   } catch (error) {
@@ -764,7 +769,12 @@ Use the "planNextSteps", "nextSessionFocus", and "homeProgram" fields.
    on file (CASE B) write "Continue current treatment frequency" without
    a specific cadence; on a first documented session (CASE A) OMIT the
    frequency statement entirely -- there is no cadence to continue.
-3. HOME PROGRAM — Use the home program field if provided. If it wasn't
+3. HOME PROGRAM — Use the home program field if provided, AS ENTERED: the
+   home-program line is the therapist's text verbatim ("Home program:
+   Practice jumping at home"). Do NOT add a purpose or rationale clause the
+   therapist did not write -- "to support carryover of therapeutic gains",
+   "to reinforce skills between sessions", "for generalization" are
+   fabricated clinical reasoning (post-deploy retest 2026-11-18). If it wasn't
    provided: CASE B "Reviewed continuation of current home strategies; no
    changes to home program at this time."; CASE A "No home program
    assigned this session." (never "no changes" -- nothing existed to change).
@@ -849,6 +859,15 @@ CODING RATIONALE DISCIPLINE (applies to every rationale and billingRationale):
    underlying strength and endurance deficits" asserts a clinical finding
    nobody documented -- that is fabrication, in a rationale exactly as much
    as in the Assessment. This rule applies to auditNotes too.
+4. No necessity claims in billing text. auditNotes and rationales explain
+   WHY A CODE FITS the documented activity; they never assert that the
+   services were medically necessary, indicated, required or justified, and
+   never say the documentation "supports medical necessity" -- that is a
+   clinical determination, and on a note with no diagnosis, no goals and no
+   documented deficit there is nothing to base it on. Post-deploy retest
+   2026-11-18: one activity line ("five sets of ten jumps, no pain") produced
+   an audit note asserting medical necessity. Write "97110: the activity's
+   entered category is strengthening", not "skilled services were necessary".
 
 Final reminder: when in doubt, write LESS rather than inventing MORE.
 A shorter, truthful note is always better than a longer one with
@@ -1046,7 +1065,7 @@ fill space. The anti-fabrication rules above OVERRIDE every example here.
 
   "assessment": "Clinical interpretation anchored to the observations actually provided (200-400 words when the input supports it; fewer paragraphs when it doesn't — omit sub-sections you have no data for). Connect each skilled intervention to a specific functional deficit using payer-aligned skilled vocabulary (skilled clinical analysis, clinical reasoning, task grading, neuromuscular re-education, cueing hierarchy, compensatory strategies, safety/judgment, measurable functional impact). Cover, as supported by the input: engagement/participation; postural/core control; motor planning & coordination; fine motor (only if fine-motor activities were done); sensory processing & regulation (frame in functional/neuromuscular terms — e.g. 'vestibular-proprioceptive input to support postural control and motor planning' — NOT as 'sensory play'); progress toward goals ONLY if goal data was provided (no invented 'improved from last session'). End with a medical-necessity statement ONLY when the documented observations support one — it must tie the OBSERVED deficits to functional participation, customized to this session. If the input is thin (sparse observations, no documented deficits), OMIT the medical-necessity statement entirely: per clinical review, a generic necessity sentence weakens documentation more than leaving it out. Do not name primitive reflexes (TLR/STNR/ATNR/Moro) or specific test patterns unless the input observed them.",
 
-  "plan": "Scaled to the input (80-200 words). FIRST, check whether a 'MOST RECENT PLAN' section actually appears earlier in this prompt -- these are two different cases with different required openings, and using the wrong one is a common failure mode:\\n\\nCASE A -- NO 'MOST RECENT PLAN' SECTION ABOVE (true for every patient's first documented session, and for any session where no prior signed note exists): there is no prior plan to continue, so NEVER write 'Current plan remains appropriate', 'no changes recommended', or any other continuity-style opening -- that claim is meaningless with nothing to compare against, and writing it anyway is itself a fabrication (a claim about continuity that doesn't exist). Draft entirely from the planNextSteps, nextSessionFocus, and homeProgram fields below. If those are sparse, keep this section SHORT and SPECIFIC to what's actually there. Do NOT pad it with a generic closing sentence about the patient continuing to benefit from skilled therapy, and do NOT name deficits (endurance, motor planning, bilateral coordination, etc.) just to sound thorough unless the Assessment section above actually documented them -- a short, honest plan is correct and preferred over a padded one. RECURRING FAILURE MODE: this prohibition has been evaded before by paraphrasing around the literal banned wording while writing the same kind of sentence -- e.g. '[Patient] will continue to participate in skilled occupational therapy services to address identified areas of need through graded therapeutic activities and neuromuscular re-education.' That is the same prohibited padding under different words. The rule is about the SENTENCE'S FUNCTION, not its exact phrasing: in CASE A, do not write ANY trailing sentence whose job is to generically assert that skilled OT remains necessary, appropriate, indicated, or something the patient will 'continue to participate in' or 'continue to benefit from' -- whatever words it uses. CASE A's plan ends after the Goals/Coordination content below; add nothing after it.\\n\\nCASE B -- A 'MOST RECENT PLAN' SECTION DOES APPEAR ABOVE: CONTINUITY RULE (clinician-requested) applies -- it is the baseline, and plans appropriately stay the same across visits. If today's documented session gives no clinical reason to change it, carry its substance forward and OPEN with exactly: 'Current plan remains appropriate; no changes recommended.' If today's data DOES indicate a change, the FIRST PARAGRAPH must be exactly the suggestion: 'Suggested update: [the change]' followed by the one observation from today that motivates it — then a blank line (\\n\\n), then the carried-forward remainder as its own paragraphs. The UI parses that first paragraph into an accept/dismiss card, so never mix carried-forward content into it. Never rewrite the plan wholesale, and never invent a change to appear thorough. When carrying the prior plan's substance forward, paraphrase ONLY that single prior plan's own content -- never pull in numbers, durations, thresholds, or named activities from any other prior session's objective or assessment text shown elsewhere in this prompt (that's a different session; blending a real number from one into a paraphrase of another is fabrication even though the number itself is real).\\n\\nIn EITHER case:\\n\\nNext session focus: use what the therapist wrote. Do NOT add new named activities, techniques, durations, or numeric thresholds beyond what's in planNextSteps, nextSessionFocus, or today's documented activities -- the same anti-fabrication rules at the top of this prompt (numeric measurements, equipment descriptors, invented specifics) apply here too. If the therapist's focus is brief, keep this section correspondingly brief.\\n\\nTreatment frequency: state a cadence only if the treatment-plan data implies one. If it doesn't: in CASE B, write 'Continue current treatment frequency' -- there IS an established cadence to continue. In CASE A, there is no established frequency yet (first documented session) -- 'continue' would fabricate a history that doesn't exist, so OMIT any frequency statement entirely rather than writing 'continue current' anything.\\n\\nHome program: use the home program field if provided. If none was given: in CASE B, write exactly 'Reviewed continuation of current home strategies; no changes to home program at this time.' In CASE A, there is no prior home program to review or continue -- that sentence would fabricate a history that doesn't exist, so instead write exactly 'No home program assigned this session.' Do NOT invent exercises, rep counts, or imply parent education that didn't occur.\\n\\nGoals: check whether an 'ACTIVE TREATMENT GOALS' section actually appears earlier in this prompt -- same check as the MOST RECENT PLAN check above, same failure mode. If it DOES appear, reference those specific goals (not a vague restatement -- name what they actually target). If it does NOT appear, there is no established plan of care or documented goal for this patient yet -- do NOT write a sentence that asserts one exists, in any wording (e.g. 'Continue working toward established treatment goals as documented in the plan of care' -- there is no plan of care on file to document anything, so this fabricates one). Omit the Goals subsection entirely in that case. Coordination/referrals: only if clearly indicated.",
+  "plan": "Scaled to the input (80-200 words). FIRST, check whether a 'MOST RECENT PLAN' section actually appears earlier in this prompt -- these are two different cases with different required openings, and using the wrong one is a common failure mode:\\n\\nCASE A -- NO 'MOST RECENT PLAN' SECTION ABOVE (true for every patient's first documented session, and for any session where no prior signed note exists): there is no prior plan to continue, so NEVER write 'Current plan remains appropriate', 'no changes recommended', or any other continuity-style opening -- that claim is meaningless with nothing to compare against, and writing it anyway is itself a fabrication (a claim about continuity that doesn't exist). Draft entirely from the planNextSteps, nextSessionFocus, and homeProgram fields below. If those are sparse, keep this section SHORT and SPECIFIC to what's actually there. Do NOT pad it with a generic closing sentence about the patient continuing to benefit from skilled therapy, and do NOT name deficits (endurance, motor planning, bilateral coordination, etc.) just to sound thorough unless the Assessment section above actually documented them -- a short, honest plan is correct and preferred over a padded one. RECURRING FAILURE MODE: this prohibition has been evaded before by paraphrasing around the literal banned wording while writing the same kind of sentence -- e.g. '[Patient] will continue to participate in skilled occupational therapy services to address identified areas of need through graded therapeutic activities and neuromuscular re-education.' That is the same prohibited padding under different words. The rule is about the SENTENCE'S FUNCTION, not its exact phrasing: in CASE A, do not write ANY trailing sentence whose job is to generically assert that skilled OT remains necessary, appropriate, indicated, or something the patient will 'continue to participate in' or 'continue to benefit from' -- whatever words it uses. CASE A's plan ends after the Goals/Coordination content below; add nothing after it.\\n\\nCASE B -- A 'MOST RECENT PLAN' SECTION DOES APPEAR ABOVE: CONTINUITY RULE (clinician-requested) applies -- it is the baseline, and plans appropriately stay the same across visits. If today's documented session gives no clinical reason to change it, carry its substance forward and OPEN with exactly: 'Current plan remains appropriate; no changes recommended.' If today's data DOES indicate a change, the FIRST PARAGRAPH must be exactly the suggestion: 'Suggested update: [the change]' followed by the one observation from today that motivates it — then a blank line (\\n\\n), then the carried-forward remainder as its own paragraphs. The UI parses that first paragraph into an accept/dismiss card, so never mix carried-forward content into it. Never rewrite the plan wholesale, and never invent a change to appear thorough. When carrying the prior plan's substance forward, paraphrase ONLY that single prior plan's own content -- never pull in numbers, durations, thresholds, or named activities from any other prior session's objective or assessment text shown elsewhere in this prompt (that's a different session; blending a real number from one into a paraphrase of another is fabrication even though the number itself is real).\\n\\nIn EITHER case:\\n\\nNext session focus: use what the therapist wrote. Do NOT add new named activities, techniques, durations, or numeric thresholds beyond what's in planNextSteps, nextSessionFocus, or today's documented activities -- the same anti-fabrication rules at the top of this prompt (numeric measurements, equipment descriptors, invented specifics) apply here too. If the therapist's focus is brief, keep this section correspondingly brief.\\n\\nTreatment frequency: state a cadence only if the treatment-plan data implies one. If it doesn't: in CASE B, write 'Continue current treatment frequency' -- there IS an established cadence to continue. In CASE A, there is no established frequency yet (first documented session) -- 'continue' would fabricate a history that doesn't exist, so OMIT any frequency statement entirely rather than writing 'continue current' anything.\\n\\nHome program: use the home program field if provided -- VERBATIM, as the therapist typed it, with no added purpose clause ('to support carryover of therapeutic gains', 'to reinforce skills') the therapist did not write. If none was given: in CASE B, write exactly 'Reviewed continuation of current home strategies; no changes to home program at this time.' In CASE A, there is no prior home program to review or continue -- that sentence would fabricate a history that doesn't exist, so instead write exactly 'No home program assigned this session.' Do NOT invent exercises, rep counts, or imply parent education that didn't occur.\\n\\nGoals: check whether an 'ACTIVE TREATMENT GOALS' section actually appears earlier in this prompt -- same check as the MOST RECENT PLAN check above, same failure mode. If it DOES appear, reference those specific goals (not a vague restatement -- name what they actually target). If it does NOT appear, there is no established plan of care or documented goal for this patient yet -- do NOT write a sentence that asserts one exists, in any wording (e.g. 'Continue working toward established treatment goals as documented in the plan of care' -- there is no plan of care on file to document anything, so this fabricates one). Omit the Goals subsection entirely in that case. Coordination/referrals: only if clearly indicated.",
 
   "cptCodes": [
     {
@@ -1815,12 +1834,180 @@ export function stripUnsupportedTherapistActions(text: string, evidence: Groundi
   return stripped;
 }
 
+// ---------------------------------------------------------------------------
+// Thin-input overstatement (post-deploy retest of #464, 2026-11-18, Riley
+// Nodob: one activity, account "five sets of ten jumps, one-minute pauses, no
+// pain", no diagnosis, no goals, no prior plan, home program "Practice
+// jumping at home"):
+//   (a) Audit Support asserted medical necessity from that one line;
+//   (b) the Plan turned the entered home program into "...to support
+//       carryover of therapeutic gains".
+//
+// NECESSITY. A necessity statement is a clinical determination. The prompt
+// already says to omit it on a thin note; this is the backstop. It is gated
+// on real grounding, never on vocabulary alone: necessity may stand when
+// goals, a prior plan or a diagnosis are on file, when the therapist entered
+// any structured rating, or when an activity account documents a response
+// that reads as a deficit or a need for support ("fatigue at 8 minutes",
+// "minimal verbal cues", "lost balance"). A bare completion account ("five
+// sets of ten jumps, no pain") documents no deficit, so nothing supports a
+// necessity claim built on it. When ungrounded, sentences asserting
+// necessity are removed from the billing text and from the prose.
+//
+// HOME PROGRAM. The Plan's home-program line is the therapist's text as
+// entered. When a home program was entered and the model's line carries
+// interpretive gloss (carryover, reinforce, generalization, therapeutic
+// gains...) or otherwise departs from the entered text, the line is restated
+// as "Home program: <entered>" and gloss sentences in the same paragraph
+// are dropped. Follows CASE_A_HOME_PROGRAM_CARRYOVER, which already rewrites
+// the CASE B default into the CASE A one.
+// ---------------------------------------------------------------------------
+const NECESSITY_CLAIM =
+  /\b(?:medical(?:ly)?\s+necess\w+|necessity|(?:skilled|therap(?:y|eutic)|occupational\s+therapy|OT|services?|intervention|treatment)\s+(?:[\w-]+\s+){0,4}?(?:is|are|was|were|remains?)\s+(?:clinically\s+|medically\s+)?(?:necessary|indicated|warranted|required|justified)|(?:need|requirement)\s+for\s+(?:skilled|continued|ongoing|therap)|requires?\s+(?:continued\s+|ongoing\s+)?skilled|justif(?:y|ies|ied|ying)\s+(?:skilled|the\s+(?:codes?|billing|units?)|billing)|supports?\s+(?:the\s+)?(?:need\s+for|necessity|skilled\s+(?:billing|services?)))\b/i;
+
+// Negated symptom phrases are removed before the deficit scan so "no pain"
+// never counts as a documented deficit.
+const NEGATED_SYMPTOM = /\b(?:no|without|denie[ds]|free\s+of|absence\s+of|not)\s+(?:[\w-]+\s+){0,2}?(?:pain|distress|fatigue|difficult\w*|discomfort|complaints?|problems?|issues?|signs?\s+of\s+\w+)\b/gi;
+const RESPONSE_DEFICIT_SIGNAL =
+  /\b(?:fatigue[ds]?|fatiguing|tir(?:ed|ing)|difficult\w*|struggl\w*|unable|could\s+not|couldn't|needed|required|requir\w+|assist\w*|cue[sd]?|cueing|cuing|prompt\w*|decreas\w*|reduc\w*|poor|limited|weak\w*|unsteady|lost\s+balance|fell|falls?|frustrat\w*|dysregulat\w*|avoid\w*|refus\w*|melt-?downs?|pain(?:ful)?|distress\w*|tremor|compensat\w*|slow(?:ed|ly|er)?|delay\w*|inconsisten\w*|rest\s+breaks?|breaks?\s+(?:needed|required|taken)|maximal|moderate|minimal|hand[- ]over[- ]hand)\b/i;
+
+/** True when an activity account documents a response that reads as a deficit or a need for support. */
+export function responseDocumentsDeficit(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const withoutNegations = text.replace(NEGATED_SYMPTOM, " ");
+  return RESPONSE_DEFICIT_SIGNAL.test(withoutNegations);
+}
+
+export interface NecessityContext {
+  hasMostRecentPlanContext: boolean;
+  hasActiveGoalsContext: boolean;
+  hasDiagnosisContext?: boolean;
+}
+
+/** Whether anything in the input or the patient's record can ground a medical-necessity statement. */
+export function necessityIsGrounded(request: AiSoapBillingRequest, ctx: NecessityContext): boolean {
+  if (ctx.hasMostRecentPlanContext || ctx.hasActiveGoalsContext || ctx.hasDiagnosisContext) return true;
+  const a = request.assessment || ({} as AiSoapBillingRequest["assessment"]);
+  const ratingFields = [
+    a.performance, a.assistance, a.strength, a.motorPlanning, a.sensoryRegulation,
+    a.posturalControl, a.primitiveReflexes, a.fineMotor, a.grossMotor,
+    a.bilateralCoordination, a.endurance, a.engagement,
+  ];
+  if (ratingFields.some((v) => typeof v === "string" && v.trim().length > 0)) return true;
+  return (request.activityDetails || []).some((d) => responseDocumentsDeficit(d.response));
+}
+
+/** Detection only (no mutation): a necessity claim with nothing to ground it. Always false when grounded. */
+export function hasUnsupportedNecessityClaim(text: string | null | undefined, grounded: boolean): boolean {
+  if (!text || grounded) return false;
+  for (const sentence of text.match(SENTENCE_RE) ?? []) {
+    if (NECESSITY_CLAIM.test(sentence)) return true;
+  }
+  return false;
+}
+
+export function stripUnsupportedNecessityClaim(text: string, grounded: boolean): string {
+  if (!hasUnsupportedNecessityClaim(text, grounded)) return text;
+  const stripped = tidyProse(text.replace(SENTENCE_RE, (sentence) => (NECESSITY_CLAIM.test(sentence) ? "" : sentence)));
+  logger.warn("Stripped medical-necessity claim(s) with no diagnosis, goals, rating or documented deficit to ground them", {
+    originalLength: text.length,
+    strippedLength: stripped.length,
+  });
+  return stripped;
+}
+
+const HOME_PROGRAM_GLOSS =
+  /\b(?:carry-?over|carried\s+over|reinforc\w*|generali[sz]\w*|therapeutic\s+gains|consolidat\w*|skill\s+transfer|transfer\s+of\s+skills|maintain(?:ing)?\s+(?:gains|progress|skills)|between\s+sessions|build(?:s|ing)?\s+on|retention|to\s+support\s+(?:progress|ongoing|continued|further|the\s+goals?)|promot\w*\s+(?:progress|independence))\b/i;
+const HOME_PROGRAM_LABEL = /\bhome\s+(?:program|exercise\s+program|practice|activities|activity|exercises?)\b/i;
+
+function normalizeForMatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+// "Home program:" on a line of its own (the fallback and the model both write
+// the bullet form) is a heading, not the home-program line.
+const HOME_PROGRAM_HEADING_ONLY = /^\s*(?:•\s*)?home\s+program:\s*$/i;
+
+function stripHomeProgramLabel(sentence: string): string {
+  return sentence.replace(/^\s*(?:•\s*)?home\s+program:\s*/i, "");
+}
+
+/**
+ * Detection only: a paragraph that carries the home program (by label or by
+ * the entered text) also carries gloss, or its home-program line says more
+ * than the therapist entered.
+ */
+export function hasHomeProgramGloss(plan: string | null | undefined, homeProgram: string | null | undefined): boolean {
+  if (!plan || !homeProgram || !homeProgram.trim()) return false;
+  const entered = normalizeForMatch(homeProgram);
+  for (const para of plan.split(/\n/)) {
+    const sentences = (para.match(SENTENCE_RE) ?? []).filter((sn) => !HOME_PROGRAM_HEADING_ONLY.test(sn));
+    const touches = sentences.some((sn) => HOME_PROGRAM_LABEL.test(sn) || normalizeForMatch(sn).includes(entered));
+    if (!touches) continue;
+    for (const sn of sentences) {
+      if (HOME_PROGRAM_GLOSS.test(sn)) return true;
+      const norm = normalizeForMatch(stripHomeProgramLabel(sn));
+      // Entered text present but the sentence says more than the therapist did.
+      if (norm.includes(entered) && norm !== entered) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Restate the Plan's home-program line as the therapist entered it and drop
+ * gloss sentences riding in the same paragraph. No-op when no home program
+ * was entered (the CASE A/B defaults are handled by stripUnsupportedPlanClosing).
+ */
+export function restateHomeProgramAsEntered(plan: string, homeProgram: string | null | undefined): string {
+  if (!plan || !homeProgram || !homeProgram.trim()) return plan;
+  if (!hasHomeProgramGloss(plan, homeProgram)) return plan;
+  const entered = homeProgram.trim();
+  const enteredNorm = normalizeForMatch(entered);
+  const paragraphs = plan.split(/\n/);
+  const out = paragraphs.map((para) => {
+    if (HOME_PROGRAM_HEADING_ONLY.test(para)) return para; // "Home program:" heading line
+    const sentences = para.match(SENTENCE_RE) ?? [];
+    const touches = sentences.some((sn) => HOME_PROGRAM_LABEL.test(sn) || normalizeForMatch(sn).includes(enteredNorm));
+    if (!touches) return para;
+    let restatedAt = -1;
+    const kept: string[] = [];
+    for (const sn of sentences) {
+      const norm = normalizeForMatch(stripHomeProgramLabel(sn));
+      const isHomeLine = HOME_PROGRAM_LABEL.test(sn) || norm.includes(enteredNorm);
+      if (isHomeLine) {
+        if (restatedAt === -1) {
+          const bullet = /^\s*•/.test(sn) ? "• " : "";
+          const label = /home\s+program:/i.test(sn) || !bullet ? "Home program: " : "";
+          restatedAt = kept.length;
+          kept.push(`${bullet}${label}${entered}`);
+        }
+        continue; // a second home-program sentence (gloss) is dropped
+      }
+      if (HOME_PROGRAM_GLOSS.test(sn)) continue; // gloss sentence in the same paragraph
+      kept.push(sn.trim());
+    }
+    // The entered text rarely ends in punctuation; close it when a sentence follows.
+    if (restatedAt !== -1 && restatedAt < kept.length - 1 && !/[.!?]$/.test(kept[restatedAt])) {
+      kept[restatedAt] = `${kept[restatedAt]}.`;
+    }
+    return kept.join(" ").trim();
+  });
+  const result = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  logger.warn("Restated the Plan's home program as entered (model added purpose/gloss the therapist did not write)", {
+    originalLength: plan.length,
+    restatedLength: result.length,
+  });
+  return result;
+}
+
 export async function validateAndEnhanceResponse(
   aiResponse: any,
   request: AiSoapBillingRequest,
   billingUnits: number,
   hasMostRecentPlanContext: boolean = false,
   hasActiveGoalsContext: boolean = false,
+  hasDiagnosisContext: boolean = false,
 ): Promise<AiSoapBillingResponse> {
 
   // Use manual rate override if provided, otherwise use default $289/unit
@@ -1923,16 +2110,20 @@ export async function validateAndEnhanceResponse(
   const noObservations = !requestHasObservations(request);
   const hasMoodForRationale = !!request.mood;
   const evidence = groundingEvidenceFor(request);
+  const necessityGrounded = necessityIsGrounded(request, { hasMostRecentPlanContext, hasActiveGoalsContext, hasDiagnosisContext });
   // Rationale fields get every text backstop S/O/A/P get (pipeline eval run
   // 2026-11-04T21-26: a documentation-denial sentence surfaced in an
   // auditNote) plus the two rationale-only softeners.
   const cleanRationale = (text: string) => {
     const base = removeCaseAContinuityWording(
-      stripUnsupportedNegativeFindings(
-        stripUnsupportedDocumentationDenialClause(
-          stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+      stripUnsupportedNecessityClaim(
+        stripUnsupportedNegativeFindings(
+          stripUnsupportedDocumentationDenialClause(
+            stripUnsupportedMoodClause(softenAbsolutistCodingClaim(text), hasMoodForRationale),
+          ),
+          evidence,
         ),
-        evidence,
+        necessityGrounded,
       ),
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
@@ -1951,7 +2142,8 @@ export async function validateAndEnhanceResponse(
   const groundProse = (text: string, withActions: boolean) => {
     const negatives = stripUnsupportedNegativeFindings(text, evidence);
     const actions = withActions ? stripUnsupportedTherapistActions(negatives, evidence) : negatives;
-    return noObservations ? softenUnsupportedDeficitInProse(actions) : actions;
+    const necessity = stripUnsupportedNecessityClaim(actions, necessityGrounded);
+    return noObservations ? softenUnsupportedDeficitInProse(necessity) : necessity;
   };
   for (const pairing of activityCptPairings) {
     if (pairing.rationale) pairing.rationale = cleanRationale(pairing.rationale);
@@ -1997,31 +2189,35 @@ export async function validateAndEnhanceResponse(
       hasMostRecentPlanContext,
       hasActiveGoalsContext,
     ),
-    plan: removeCaseAContinuityWording(
-      groundProse(
-        stripUnsupportedDocumentationDenialClause(
-          stripUnsupportedMoodClause(
-            stripUnsupportedPlanClosing(
-              aiResponse.plan || "",
-              hasMostRecentPlanContext,
-              hasActiveGoalsContext,
+    plan: restateHomeProgramAsEntered(
+      removeCaseAContinuityWording(
+        groundProse(
+          stripUnsupportedDocumentationDenialClause(
+            stripUnsupportedMoodClause(
+              stripUnsupportedPlanClosing(
+                aiResponse.plan || "",
+                hasMostRecentPlanContext,
+                hasActiveGoalsContext,
+              ),
+              hasMood,
             ),
-            hasMood,
           ),
+          false,
         ),
-        false,
+        hasMostRecentPlanContext,
+        hasActiveGoalsContext,
       ),
-      hasMostRecentPlanContext,
-      hasActiveGoalsContext,
+      request.homeProgram,
     ),
     cptCodes,
     activityCptPairings,
     timeBlocks,
     totalReimbursement,
     billingRationale: cleanRationale(aiResponse.billingRationale || ""),
-    auditNotes: (aiResponse.auditNotes || []).map((n: unknown) =>
-      typeof n === "string" ? cleanRationale(n) : n,
-    ),
+    auditNotes: (aiResponse.auditNotes || [])
+      .map((n: unknown) => (typeof n === "string" ? cleanRationale(n) : n))
+      // A note that was nothing but a stripped claim is dropped, not left as "".
+      .filter((n: unknown) => typeof n !== "string" || n.trim().length > 0),
     generationMode: "ai",
   };
 }

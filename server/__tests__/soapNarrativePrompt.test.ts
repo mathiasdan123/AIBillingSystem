@@ -4,7 +4,18 @@ import { describe, expect, it, vi } from 'vitest';
 // import time); the prompt builder under test never touches it.
 vi.mock('../storage', () => ({ storage: {} }));
 
-import { buildSystemPrompt, buildUserPrompt, fallbackGeneration, validateAndEnhanceResponse } from '../services/aiSoapBillingService';
+import {
+  buildSystemPrompt,
+  buildUserPrompt,
+  fallbackGeneration,
+  validateAndEnhanceResponse,
+  necessityIsGrounded,
+  responseDocumentsDeficit,
+  hasUnsupportedNecessityClaim,
+  stripUnsupportedNecessityClaim,
+  hasHomeProgramGloss,
+  restateHomeProgramAsEntered,
+} from '../services/aiSoapBillingService';
 
 const patient = { firstName: 'Test', lastName: 'Child', dateOfBirth: '2019-03-01' };
 
@@ -349,5 +360,185 @@ describe('grounding in both directions — validateAndEnhanceResponse on the Ril
     expect(out.assessment).toContain('Riley tolerated the activity without signs of fatigue.');
     // Still no field can support a statement about standardized measures.
     expect(out.objective).not.toMatch(/standardi[sz]ed/i);
+  });
+});
+
+/**
+ * Post-deploy retest of #464 (2026-11-18), same Riley Nodob input plus a home
+ * program "Practice jumping at home": the Audit Support asserted medical
+ * necessity from the one activity line (no diagnosis, no goals), and the
+ * Plan turned the entered home program into "carryover of therapeutic
+ * gains". Both are constrained to what was entered.
+ */
+describe('thin-input overstatement — prompt rules', () => {
+  const system = buildSystemPrompt(null);
+  const user = buildUserPrompt(baseRequest({ homeProgram: 'Practice jumping at home' }), patient, 3, null);
+
+  it('forbids necessity claims in billing text', () => {
+    expect(system).toContain('4. No necessity claims in billing text.');
+    expect(system).toContain('never say the documentation "supports medical necessity"');
+  });
+
+  it('requires the home program verbatim with no added purpose clause', () => {
+    expect(system).toContain('AS ENTERED: the\n   home-program line is the therapist\'s text verbatim');
+    expect(system).toContain('"to support carryover of therapeutic gains"');
+    expect(user).toContain('VERBATIM, as the therapist typed it, with no added purpose clause');
+  });
+});
+
+describe('thin-input overstatement — necessity grounding', () => {
+  const noCtx = { hasMostRecentPlanContext: false, hasActiveGoalsContext: false, hasDiagnosisContext: false };
+  const riley = baseRequest({
+    activities: ['Trampoline - Strengthening'],
+    activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps, one-minute pauses, no pain' }],
+    mood: '',
+    assessment: { performance: '', assistance: '', strength: '', motorPlanning: '', sensoryRegulation: '' },
+    planNextSteps: '',
+    homeProgram: 'Practice jumping at home',
+  });
+
+  it('a bare completion account documents no deficit; a response with fatigue, cues or assistance does', () => {
+    expect(responseDocumentsDeficit('five sets of ten jumps, one-minute pauses, no pain')).toBe(false);
+    expect(responseDocumentsDeficit('Completed all stations without difficulty.')).toBe(false);
+    expect(responseDocumentsDeficit('Fatigue noted at 8 minutes; recovered with brief rest.')).toBe(true);
+    expect(responseDocumentsDeficit('Completed obstacle course with minimal verbal cues.')).toBe(true);
+    expect(responseDocumentsDeficit('Lost balance twice on the beam.')).toBe(true);
+  });
+
+  it('is ungrounded for Riley, grounded with goals, a diagnosis, a prior plan, any rating, or a deficit response', () => {
+    expect(necessityIsGrounded(riley, noCtx)).toBe(false);
+    expect(necessityIsGrounded(riley, { ...noCtx, hasActiveGoalsContext: true })).toBe(true);
+    expect(necessityIsGrounded(riley, { ...noCtx, hasDiagnosisContext: true })).toBe(true);
+    expect(necessityIsGrounded(riley, { ...noCtx, hasMostRecentPlanContext: true })).toBe(true);
+    expect(necessityIsGrounded(baseRequest({ ...riley, assessment: { ...riley.assessment, strength: 'Poor' } }), noCtx)).toBe(true);
+    expect(
+      necessityIsGrounded(
+        baseRequest({ ...riley, activityDetails: [{ name: 'Trampoline - Strengthening', response: 'Fatigue at 3 sets; needed rest breaks.' }] }),
+        noCtx,
+      ),
+    ).toBe(true);
+  });
+
+  it('detects and strips necessity sentences only when ungrounded, keeping the rest of the text', () => {
+    const audit = 'Documentation supports medical necessity for skilled therapeutic exercise. 97110: the entered category is strengthening.';
+    expect(hasUnsupportedNecessityClaim(audit, false)).toBe(true);
+    expect(hasUnsupportedNecessityClaim(audit, true)).toBe(false);
+    expect(stripUnsupportedNecessityClaim(audit, false)).toBe('97110: the entered category is strengthening.');
+    expect(stripUnsupportedNecessityClaim(audit, true)).toBe(audit);
+    for (const claim of [
+      'Skilled occupational therapy services are medically necessary to address these areas.',
+      'Skilled intervention is indicated for this patient.',
+      'The documented session justifies skilled billing under 97110.',
+      'These findings support the need for skilled OT.',
+    ]) {
+      expect(hasUnsupportedNecessityClaim(claim, false)).toBe(true);
+    }
+    // Coding talk is not a necessity claim.
+    for (const fine of [
+      '97530 is the conservative default because nothing documented tips the choice.',
+      'Trampoline work targets lower-extremity strength and endurance.',
+      'Units derived from the documented session duration.',
+    ]) {
+      expect(hasUnsupportedNecessityClaim(fine, false)).toBe(false);
+    }
+  });
+
+  it('on the Riley repro, necessity claims leave the audit notes, rationales and Assessment; the home program is restated as entered', async () => {
+    const aiResponse = {
+      subjective: '',
+      objective: 'Trampoline - Strengthening: Riley completed five sets of ten jumps with one-minute pauses and reported no pain.',
+      assessment:
+        'Trampoline jumping targets lower-extremity strength and endurance to support sustained play participation. ' +
+        'Skilled occupational therapy services are medically necessary to address these areas.',
+      plan:
+        'Next session focus: reassess jumping endurance.\n\n' +
+        'Home program: Practice jumping at home to support carryover of therapeutic gains between sessions.',
+      cptCodes: [{ code: '97110', name: 'Therapeutic Exercise', units: 3, rationale: 'Strengthening objective; skilled exercise is indicated.', activitiesAssigned: ['Trampoline - Strengthening'] }],
+      activityCptPairings: [{ activity: 'Trampoline - Strengthening', code: '97110', rationale: 'Entered category is strengthening.' }],
+      billingRationale: 'Coding reflects the documented strengthening objective. The documentation supports medical necessity for 97110.',
+      auditNotes: ['Documentation supports medical necessity for skilled therapeutic exercise.', 'Session duration of 45 minutes supports 3 timed units.'],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, riley, 3);
+    const billing = [out.billingRationale, ...out.auditNotes, ...out.cptCodes.map((c) => c.rationale)].join('\n');
+    expect(billing).not.toMatch(/necess|is indicated/i);
+    expect(out.auditNotes).toEqual(['Session duration of 45 minutes supports 3 timed units.']);
+    expect(out.billingRationale).toBe('Coding reflects the documented strengthening objective.');
+    expect(out.assessment).toBe('Trampoline jumping targets lower-extremity strength and endurance to support sustained play participation.');
+    expect(out.plan).toBe('Next session focus: reassess jumping endurance.\n\nHome program: Practice jumping at home');
+    expect(out.plan).not.toMatch(/carryover|therapeutic gains/i);
+  });
+
+  it('keeps a grounded necessity statement when the account documents a deficit response', async () => {
+    const grounded = baseRequest({
+      ...riley,
+      activityDetails: [{ name: 'Trampoline - Strengthening', response: 'Fatigue noted at 8 minutes; recovered with brief rest.' }],
+    });
+    const aiResponse = {
+      subjective: '',
+      objective: 'Trampoline - Strengthening: fatigue noted at 8 minutes; recovered with brief rest.',
+      assessment: 'Skilled OT is indicated to address the observed fatigue response during sustained jumping.',
+      plan: 'Next session focus: reassess jumping endurance.\n\nHome program: Practice jumping at home',
+      cptCodes: [{ code: '97110', name: 'Therapeutic Exercise', units: 3, rationale: 'Strengthening/endurance objective.', activitiesAssigned: ['Trampoline - Strengthening'] }],
+      activityCptPairings: [{ activity: 'Trampoline - Strengthening', code: '97110', rationale: 'Strengthening/endurance objective.' }],
+      billingRationale: 'Coding reflects the documented endurance response.',
+      auditNotes: ['Observed fatigue response supports the need for skilled exercise.'],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, grounded, 3);
+    expect(out.assessment).toContain('Skilled OT is indicated to address the observed fatigue response');
+    expect(out.auditNotes).toEqual(['Observed fatigue response supports the need for skilled exercise.']);
+    expect(out.plan).toContain('Home program: Practice jumping at home');
+  });
+
+  it('keeps a necessity statement when goals are on file even with a bare account', async () => {
+    const aiResponse = {
+      subjective: '',
+      objective: 'Riley completed five sets of ten jumps.',
+      assessment: 'Skilled occupational therapy services are medically necessary to progress the active jumping-endurance goal.',
+      plan: 'Next session focus: reassess jumping endurance.',
+      cptCodes: [{ code: '97110', name: 'Therapeutic Exercise', units: 3, rationale: 'Strengthening objective.', activitiesAssigned: ['Trampoline - Strengthening'] }],
+      activityCptPairings: [{ activity: 'Trampoline - Strengthening', code: '97110', rationale: 'Strengthening objective.' }],
+      billingRationale: 'Coding reflects the strengthening objective.',
+      auditNotes: [],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, riley, 3, false, true);
+    expect(out.assessment).toContain('medically necessary');
+  });
+});
+
+describe('thin-input overstatement — home program as entered', () => {
+  const entered = 'Practice jumping at home';
+
+  it('detects gloss on the home-program line and in a trailing sentence; a verbatim line is clean', () => {
+    expect(hasHomeProgramGloss('Home program: Practice jumping at home to support carryover of therapeutic gains.', entered)).toBe(true);
+    expect(hasHomeProgramGloss('Home program: Practice jumping at home. This reinforces skills between sessions.', entered)).toBe(true);
+    expect(hasHomeProgramGloss('Caregivers will have Riley practice jumping at home for generalization of gains.', entered)).toBe(true);
+    expect(hasHomeProgramGloss('Home program: Practice jumping at home', entered)).toBe(false);
+    expect(hasHomeProgramGloss('Home program:\n• Practice jumping at home', entered)).toBe(false);
+    expect(hasHomeProgramGloss('Home program: No home program assigned this session.', undefined)).toBe(false);
+  });
+
+  it('restates the line verbatim, drops the gloss sentence, and leaves the rest of the Plan alone', () => {
+    const plan =
+      'Next session focus: reassess jumping endurance.\n\n' +
+      'Home program: Practice jumping at home to support carryover of therapeutic gains. Caregivers were instructed to report any pain.\n\n' +
+      'Goals: omitted.';
+    expect(restateHomeProgramAsEntered(plan, entered)).toBe(
+      'Next session focus: reassess jumping endurance.\n\n' +
+      'Home program: Practice jumping at home. Caregivers were instructed to report any pain.\n\n' +
+      'Goals: omitted.',
+    );
+  });
+
+  it('bullet form keeps its bullet; a trailing gloss sentence in the paragraph is dropped', () => {
+    const plan = 'Home program:\n• Practice jumping at home to reinforce skills between sessions. This builds on today\'s gains.';
+    expect(restateHomeProgramAsEntered(plan, entered)).toBe('Home program:\n• Practice jumping at home');
+  });
+
+  it('is a no-op when no home program was entered or the line is already verbatim', () => {
+    const plan = 'Home program: Practice jumping at home';
+    expect(restateHomeProgramAsEntered(plan, entered)).toBe(plan);
+    expect(restateHomeProgramAsEntered('Home program: No home program assigned this session.', undefined)).toBe(
+      'Home program: No home program assigned this session.',
+    );
   });
 });
