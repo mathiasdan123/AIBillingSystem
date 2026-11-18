@@ -1914,6 +1914,19 @@ export function fallbackGeneration(
   const unitRate = request.ratePerUnit || DEFAULT_UNIT_RATE;
 
   // Rule-based assignment by SKILLED OBJECTIVE, not by reimbursement rate.
+  //
+  // CATEGORY FIRST (QA follow-up 2026-11-18): the activity picker names
+  // every activity "<Activity> - <Category>" ("Trampoline - Strengthening",
+  // "Platform Swing - Balance", "Pegboard - Functional"), and the category
+  // is the therapist's own statement of the activity's objective -- it is
+  // what the AI path keys off. The keyword pass below used to run alone and
+  // matched the activity NOUN before the category: "Trampoline -
+  // Strengthening" hit the neuromuscular keyword "trampoline" and came back
+  // 97112 while the AI path (and the therapist) said strengthening → 97110.
+  // Now the category suffix decides when it names one; keywords are the
+  // fallback for activities with no recognised category (custom bank items,
+  // free text), and anything still unclear takes the conservative default.
+  //
   // Vestibular/proprioceptive sensory-motor work maps to neuromuscular
   // re-education (97112) by its motor objective (postural control, motor
   // planning, coordination) rather than defaulting to a sensory-integration
@@ -1922,36 +1935,74 @@ export function fallbackGeneration(
   const functionalKeywords = ["obstacle", "pegboard", "puzzle", "cutting", "writing", "ADL", "lacing", "buttoning", "feeding", "rice bin", "tactile", "brushing"];
   const exerciseKeywords = ["strength", "endurance", "exercise", "putty", "resistance", "wall push", "animal walk"];
 
+  type RuleCode = { code: "97110" | "97112" | "97530"; name: string };
+  const RULE_CODES: Record<RuleCode["code"], RuleCode> = {
+    "97110": { code: "97110", name: "Therapeutic Exercise" },
+    "97112": { code: "97112", name: "Neuromuscular Re-education" },
+    "97530": { code: "97530", name: "Therapeutic Activities" },
+  };
+  // Category suffix → code. Matches the suffix vocabulary of the activity
+  // picker (client/src/pages/soap-notes.tsx) and the AI path's BILLING CODE
+  // ASSIGNMENT guidance: strengthening/endurance → 97110; balance,
+  // coordination, motor planning, postural control, stability, neuro →
+  // 97112; functional, fine motor, ADL, handwriting, hand manipulation →
+  // 97530. Sensory/regulation, speech and anything else fall through.
+  const CATEGORY_RULES: Array<[RegExp, RuleCode["code"]]> = [
+    [/strength|endurance/i, "97110"],
+    [/balance|coordination|motor planning|postural|stability|\bneuro(?:muscular)?\b/i, "97112"],
+    [/functional|fine motor|\badl\b|handwriting|hand manipulation/i, "97530"],
+  ];
+  const categoryOf = (activity: string): string | null => {
+    const idx = activity.lastIndexOf(" - ");
+    return idx === -1 ? null : activity.slice(idx + 3).trim() || null;
+  };
+  const codeForCategory = (category: string | null): RuleCode["code"] | null => {
+    if (!category) return null;
+    for (const [re, code] of CATEGORY_RULES) if (re.test(category)) return code;
+    return null;
+  };
+  const codeForKeywords = (activity: string): { code: RuleCode["code"]; keyword: string } | null => {
+    const lower = activity.toLowerCase();
+    const hit = (list: string[]) => list.find((k) => lower.includes(k.toLowerCase()));
+    const f = hit(functionalKeywords);
+    if (f) return { code: "97530", keyword: f };
+    const n = hit(neuromuscularKeywords);
+    if (n) return { code: "97112", keyword: n };
+    const e = hit(exerciseKeywords);
+    if (e) return { code: "97110", keyword: e };
+    return null;
+  };
+  // Rationales say WHERE the suggestion came from (the entered category, or
+  // a word in the activity name) and nothing about the patient, the
+  // session, or what the activity "targets" -- none of that was entered.
+  const SUGGESTION_ONLY = "Suggestion only; the treating provider makes the final coding decision.";
+
   // Per-activity pairing first — one suggested code per documented activity.
-  // An activity no keyword clearly maps conservatively defaults to 97530
-  // Therapeutic Activities (clinician guidance: some payers only reimburse
-  // one type of code, and Therapeutic Activities is the defensible default).
+  // An activity no category or keyword clearly maps conservatively defaults
+  // to 97530 Therapeutic Activities (clinician guidance: some payers only
+  // reimburse one type of code, and Therapeutic Activities is the defensible
+  // default).
   const activityCptPairings: ActivityCptPairing[] = request.activities.map((a) => {
-    const lower = a.toLowerCase();
-    if (functionalKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+    const category = categoryOf(a);
+    const byCategory = codeForCategory(category);
+    if (byCategory) {
+      const rc = RULE_CODES[byCategory];
       return {
         activity: a,
-        code: "97530",
-        name: "Therapeutic Activities",
-        rationale: "Functional/dynamic activity for participation — therapeutic activities. Suggestion only; the treating provider makes the final coding decision.",
+        code: rc.code,
+        name: rc.name,
+        rationale: `Suggested from the activity's entered category ("${category}" → ${rc.code} ${rc.name}). ${SUGGESTION_ONLY}`,
         source: "ai" as const,
       };
     }
-    if (neuromuscularKeywords.some((k) => lower.includes(k.toLowerCase()))) {
+    const byKeyword = codeForKeywords(a);
+    if (byKeyword) {
+      const rc = RULE_CODES[byKeyword.code];
       return {
         activity: a,
-        code: "97112",
-        name: "Neuromuscular Re-education",
-        rationale: "Balance/postural control/motor planning objective — neuromuscular re-education. Suggestion only; the treating provider makes the final coding decision.",
-        source: "ai" as const,
-      };
-    }
-    if (exerciseKeywords.some((k) => lower.includes(k.toLowerCase()))) {
-      return {
-        activity: a,
-        code: "97110",
-        name: "Therapeutic Exercise",
-        rationale: "Strengthening/endurance objective — therapeutic exercise. Suggestion only; the treating provider makes the final coding decision.",
+        code: rc.code,
+        name: rc.name,
+        rationale: `Suggested from the activity name ("${byKeyword.keyword}" → ${rc.code} ${rc.name}); no category was entered for it. ${SUGGESTION_ONLY}`,
         source: "ai" as const,
       };
     }
@@ -1967,12 +2018,16 @@ export function fallbackGeneration(
 
   // Aggregate billing codes derived from the pairings (single source of
   // truth), units distributed across the paired codes by documentation.
+  // Aggregate rationales are as neutral as the per-activity ones: they name
+  // the mapping, not a clinical objective nobody documented ("targeting
+  // postural control, balance, and motor planning" was asserted here for
+  // every 97112 regardless of input -- QA follow-up 2026-11-18).
   const cptCodes: GeneratedCptCode[] = reconcileCptCodesWithPairings(
     activityCptPairings,
     [
-      { code: "97112", rationale: `Neuromuscular re-education targeting postural control, balance, and motor planning via the documented activities.` },
-      { code: "97530", rationale: `Therapeutic activities for functional participation across the documented activities.` },
-      { code: "97110", rationale: `Therapeutic exercise for strength and endurance across the documented activities.` },
+      { code: "97112", rationale: `Neuromuscular re-education, suggested for the activities whose entered category or name indicates balance, coordination or motor-planning work. ${SUGGESTION_ONLY}` },
+      { code: "97530", rationale: `Therapeutic activities, suggested for the activities whose entered category or name indicates functional or fine-motor work, and as the conservative default where neither was clear. ${SUGGESTION_ONLY}` },
+      { code: "97110", rationale: `Therapeutic exercise, suggested for the activities whose entered category or name indicates strengthening or endurance work. ${SUGGESTION_ONLY}` },
     ],
     unitRate,
     Math.max(billingUnits, 1),
@@ -2075,8 +2130,12 @@ export function fallbackGeneration(
   const hasDocumentedDeficits = [a.strength, a.motorPlanning, a.sensoryRegulation]
     .filter(documented)
     .some((f) => /poor|decreas|difficult|limit|delay|reduc/i.test(f));
+  // Worded around what was entered: the deficits the therapist rated. It
+  // does not say the therapist "graded and adapted" the activities -- that
+  // is a therapist action no field records (the AI path's backstop strips the
+  // same claim when nothing entered describes therapist support).
   const necessityParagraph = hasDocumentedDeficits
-    ? `\n\nSkilled OT was required to grade and adapt the above activities to the patient's documented deficits in the areas noted above, supporting safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
+    ? `\n\nSkilled occupational therapy addressed the deficits documented above to support safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
     : '';
   // Same blank-field rule as the Subjective section: an unset mood is
   // omitted, never defaulted into a sentence that would otherwise read
@@ -2096,21 +2155,17 @@ export function fallbackGeneration(
     .filter(([, v]) => documented(v))
     .map(([label, v]) => `${label}: ${(v as string).trim()}.`)
     .join(' ');
-  // Skilled-service claims need supporting input, same rule as every other
-  // sentence in this template. "Skilled clinical analysis and therapist-
-  // directed adaptation were provided" used to be unconditional; on the QA
-  // repro (one activity, one bare account, every rating blank) nothing
-  // entered supported either half. Now: analysis is claimed only when the
-  // therapist entered clinical observation ratings (the analysis is theirs,
-  // recorded in those fields); adaptation only when an assistance level was
-  // entered (the one field that records therapist-directed support). A bare
-  // activity account on its own supports neither -- it is carried in the
-  // Objective as written, and interpreted by the therapist on review.
-  const skilledServiceSentences = [
-    observationLines.length ? 'Skilled clinical analysis was applied to the observations documented above.' : '',
-    documented(a.assistance) ? 'Therapist-directed adaptation was provided at the documented assistance level.' : '',
-  ].filter(Boolean);
-  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy${assistanceClause}.${skilledServiceSentences.length ? ` ${skilledServiceSentences.join(' ')}` : ''}${performanceSentences ? `\n\n${performanceSentences}` : ''}${necessityParagraph}`;
+  // No skilled-service sentence at all. "Skilled clinical analysis and
+  // therapist-directed adaptation were provided" used to be unconditional
+  // (QA sweep 2026-11-18, asserted on a note with every rating blank); a
+  // first fix gated the two halves on the ratings / assistance fields, but
+  // neither field records that analysis or adaptation happened -- the form
+  // has no field that does, so there is nothing the therapist could enter
+  // to support the sentence (QA follow-up, same day). The Assessment is the
+  // participation sentence (with the entered assistance level, if any), the
+  // therapist's own ratings, and the necessity paragraph when they rated a
+  // deficit. The therapist adds their clinical reasoning on review.
+  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy${assistanceClause}.${performanceSentences ? `\n\n${performanceSentences}` : ''}${necessityParagraph}`;
 
   // Build plan section. Mirrors the AI path's CASE A / CASE B rules:
   //  - "Continue occupational therapy to address current treatment goals" is
@@ -2147,8 +2202,14 @@ export function fallbackGeneration(
     activityCptPairings,
     timeBlocks,
     totalReimbursement,
-    billingRationale: "Billing codes assigned using rule-based accuracy checks. AI unavailable.",
-    auditNotes: ["Documentation supports assigned CPT codes", "Activities match code descriptions"],
+    // Neutral: say what the rule did, never that the documentation
+    // "supports" the codes or that activities "match" descriptions -- the
+    // template reviewed nothing (QA follow-up 2026-11-18).
+    billingRationale: `Codes suggested by rule-based mapping from each activity's entered category or name because AI generation was unavailable. ${SUGGESTION_ONLY}`,
+    auditNotes: [
+      "Codes were suggested by rule-based mapping from the entered activity categories and names; this is not a review of the documentation.",
+      `Units derived from the documented session duration: ${request.duration} minutes → ${billingUnits} timed unit(s).`,
+    ],
     generationMode: "fallback",
   };
 }

@@ -86,8 +86,8 @@ describe('forceFallback option', () => {
       'Using fallback rule-based SOAP generation (forced by demo test fixture)',
     );
     expect(result.generationMode).toBe('fallback');
-    expect(result.billingRationale).toBe(
-      'Billing codes assigned using rule-based accuracy checks. AI unavailable.',
+    expect(result.billingRationale).toMatch(
+      /^Codes suggested by rule-based mapping from each activity's entered category or name because AI generation was unavailable\./,
     );
     expect(result.cptCodes.length).toBeGreaterThan(0);
   });

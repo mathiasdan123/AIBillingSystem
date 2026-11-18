@@ -106,13 +106,14 @@ describe('fallbackGeneration — documented input appears, in the therapist\'s w
 
   it('asserts medical necessity only when a documented observation shows a deficit', () => {
     const thin = fallbackGeneration(request(), PATIENT, 3);
-    expect(thin.assessment).not.toMatch(/medically necessary|Skilled OT was required/);
+    expect(thin.assessment).not.toMatch(/medically necessary|Skilled occupational therapy addressed|indicated/);
     const deficit = fallbackGeneration(
       request({ assessment: { performance: '', assistance: '', strength: 'Decreased core strength', motorPlanning: '', sensoryRegulation: '' } }),
       PATIENT,
       3,
     );
-    expect(deficit.assessment).toContain('Skilled OT was required');
+    expect(deficit.assessment).toContain('Skilled occupational therapy addressed the deficits documented above');
+    expect(deficit.assessment).toContain('Continued skilled occupational therapy is indicated');
   });
 });
 
@@ -157,23 +158,50 @@ describe('fallbackGeneration — activity account passthrough and no unsupported
     expect(out.plan).toContain('Next session focus:\n• reassess jumping endurance');
   });
 
-  it('claims skilled analysis only when observation ratings were entered, and adaptation only with an assistance level', () => {
+  it('never writes a skilled-analysis / therapist-directed-adaptation sentence, whatever was entered (no field records it)', () => {
     const ratingsOnly = fallbackGeneration(
       request({ assessment: { performance: 'Improved', assistance: '', strength: '', motorPlanning: '', sensoryRegulation: '' } }),
       PATIENT, 3,
     );
-    expect(ratingsOnly.assessment).toContain('Skilled clinical analysis was applied to the observations documented above.');
-    expect(ratingsOnly.assessment).not.toMatch(/therapist-directed adaptation/i);
+    expect(ratingsOnly.assessment).not.toMatch(/skilled clinical analysis|therapist-directed|adaptation/i);
+    // The entered rating itself still appears.
+    expect(ratingsOnly.assessment).toContain('Functional performance this session: Improved.');
 
     const assistOnly = fallbackGeneration(
       request({ assessment: { performance: '', assistance: 'Minimal', strength: '', motorPlanning: '', sensoryRegulation: '' } }),
       PATIENT, 3,
     );
-    expect(assistOnly.assessment).toContain('Therapist-directed adaptation was provided at the documented assistance level.');
-    expect(assistOnly.assessment).not.toMatch(/skilled clinical analysis/i);
+    expect(assistOnly.assessment).not.toMatch(/skilled clinical analysis|therapist-directed|adaptation/i);
+    expect(assistOnly.assessment).toContain('participated in skilled occupational therapy with minimal assistance.');
+    expect(assistOnly.objective).toContain('Assistance level: Minimal.');
+  });
 
-    const accountOnly = fallbackGeneration(RILEY_THIN, PATIENT, 3);
-    expect(accountOnly.assessment).not.toMatch(/skilled clinical analysis|therapist-directed adaptation/i);
+  it('Objective carries the per-exercise narrative AND the entered assistance level together', () => {
+    const out = fallbackGeneration(
+      request({
+        activities: ['Trampoline - Strengthening', 'Thera-Putty - Strengthening'],
+        activityDetails: [
+          { name: 'Trampoline - Strengthening', response: 'five sets of ten jumps, one-minute pauses, no pain' },
+          { name: 'Thera-Putty - Strengthening', response: 'two minutes of pinching, switched hands' },
+        ],
+        assessment: { performance: '', assistance: 'Supervision', strength: '', motorPlanning: '', sensoryRegulation: '' },
+      }),
+      PATIENT, 3,
+    );
+    expect(out.objective).toContain("• Trampoline - Strengthening\n  Therapist's account: five sets of ten jumps, one-minute pauses, no pain");
+    expect(out.objective).toContain("• Thera-Putty - Strengthening\n  Therapist's account: two minutes of pinching, switched hands");
+    expect(out.objective).toContain('Assistance level: Supervision.');
+  });
+
+  it('necessity paragraph (only with a rated deficit) does not claim the therapist graded or adapted anything', () => {
+    const out = fallbackGeneration(
+      request({ assessment: { performance: '', assistance: '', strength: 'poor endurance', motorPlanning: '', sensoryRegulation: '' } }),
+      PATIENT, 3,
+    );
+    expect(out.assessment).toContain('Skilled occupational therapy addressed the deficits documented above');
+    expect(out.assessment).not.toMatch(/grade|adapt|monitor|cue/i);
+    // And no necessity paragraph at all without a rated deficit.
+    expect(fallbackGeneration(RILEY_THIN, PATIENT, 3).assessment).not.toMatch(/necessity|indicated|required/i);
   });
 
   it('an activity without an account still renders as a plain bullet', () => {
@@ -205,5 +233,75 @@ describe('fallbackGeneration — prior plan and goals on file (CASE B)', () => {
     const out = fallbackGeneration(request({ homeProgram: 'Putty squeezes' }), PATIENT, 3, { hasPriorPlan: true, hasGoals: true });
     expect(out.plan).toContain('• Putty squeezes');
     expect(out.plan).not.toMatch(/continuation of current home strategies|No home program assigned/);
+  });
+});
+
+/**
+ * QA follow-up 2026-11-18: (1) the fallback picked 97112 for "Trampoline -
+ * Strengthening" because the keyword pass matched the noun before the
+ * category, while the AI path keys off the entered category (→ 97110);
+ * (2) the Audit Support lines ("Documentation supports assigned CPT codes",
+ * "Activities match code descriptions") and the 97112 rationale ("targeting
+ * postural control, balance, and motor planning") asserted a review and a
+ * clinical objective nobody entered.
+ */
+describe('fallbackGeneration — CPT code from the entered activity category, neutral billing text', () => {
+  const codeFor = (activity: string) =>
+    fallbackGeneration(request({ activities: [activity] }), PATIENT, 3).activityCptPairings[0];
+
+  it('Trampoline - Strengthening → 97110 Therapeutic Exercise (category beats the "trampoline" keyword), matching the AI path', () => {
+    const p = codeFor('Trampoline - Strengthening');
+    expect(p.code).toBe('97110');
+    expect(p.name).toBe('Therapeutic Exercise');
+    expect(p.rationale).toContain('"Strengthening"');
+  });
+
+  it('maps the other picker categories: Balance/Coordination/Motor Planning → 97112, Functional/ADL → 97530', () => {
+    expect(codeFor('Platform Swing - Balance').code).toBe('97112');
+    expect(codeFor('Scooter Board - Coordination').code).toBe('97112');
+    expect(codeFor('Obstacle Course - Motor Planning').code).toBe('97112');
+    expect(codeFor('Pegboard - Functional').code).toBe('97530');
+    expect(codeFor('Dressing Practice - ADL').code).toBe('97530');
+    expect(codeFor('Thera-Putty - Hand Strength / Endurance').code).toBe('97110');
+  });
+
+  it('falls back to the activity-name keyword when no category was entered, then to the conservative default', () => {
+    const bare = codeFor('Trampoline');
+    expect(bare.code).toBe('97112');
+    expect(bare.rationale).toContain('no category was entered');
+    const unknown = codeFor('Board game');
+    expect(unknown.code).toBe('97530');
+    expect(unknown.source).toBe('default');
+  });
+
+  it('aggregate codes follow the pairings, so the thin Riley note bills 97110 only', () => {
+    const out = fallbackGeneration(
+      request({
+        activities: ['Trampoline - Strengthening'],
+        activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps, one-minute pauses, no pain' }],
+      }),
+      PATIENT, 3,
+    );
+    expect(out.cptCodes.map((c) => c.code)).toEqual(['97110']);
+    expect(out.cptCodes[0].units).toBe(3);
+    expect(out.timeBlocks.every((b) => b.code === '97110')).toBe(true);
+  });
+
+  it('audit notes and rationales never claim a documentation review or an undocumented clinical objective', () => {
+    const out = fallbackGeneration(
+      request({ activities: ['Trampoline - Strengthening', 'Platform Swing - Balance', 'Pegboard - Functional'] }),
+      PATIENT, 3,
+    );
+    const billingText = [out.billingRationale, ...out.auditNotes, ...out.cptCodes.map((c) => c.rationale), ...out.activityCptPairings.map((p) => p.rationale)].join('\n');
+    expect(billingText).not.toMatch(/documentation supports|activities match|targeting|postural control|supports assigned/i);
+    expect(billingText).not.toMatch(/accuracy checks/i);
+    expect(out.auditNotes).toEqual([
+      'Codes were suggested by rule-based mapping from the entered activity categories and names; this is not a review of the documentation.',
+      'Units derived from the documented session duration: 45 minutes → 3 timed unit(s).',
+    ]);
+    // Every rationale is suggestion-framed for provider review.
+    for (const r of [out.billingRationale, ...out.cptCodes.map((c) => c.rationale), ...out.activityCptPairings.map((p) => p.rationale)]) {
+      expect(r).toMatch(/treating provider makes the final coding decision/);
+    }
   });
 });
