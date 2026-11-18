@@ -565,6 +565,17 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
     const { patientId, insuranceId, totalAmount, submittedAmount, sessionId, billingOrder, primaryClaimId } = req.body;
     const practiceId = getAuthorizedPracticeId(req);
 
+    // An archived patient takes no new claims (QA 2026-11-18). Defensive
+    // lookup: only an archived patient is refused here.
+    try {
+      const patient: any = Number.isInteger(Number(patientId)) ? await storage.getPatient(Number(patientId)) : null;
+      if (patient?.archivedAt) {
+        return res.status(400).json({ message: 'This patient is archived. Unarchive the patient before creating a claim.' });
+      }
+    } catch {
+      /* lookup failure: fall through to the existing create path */
+    }
+
     const prefix = billingOrder === 'secondary' ? 'SEC' : 'CLM';
     const claimNumber = generateSecureClaimNumber(prefix);
 

@@ -356,6 +356,11 @@ export const patients = pgTable("patients", {
   // Stripe customer ID for patient billing
   stripeCustomerId: varchar("stripe_customer_id"),
   deletedAt: timestamp("deleted_at"),
+  // Archive (QA 2026-11-18): hidden from the default list, search and pickers,
+  // and blocked from new appointments/claims, but fully retained and
+  // reversible. Distinct from deletedAt, which is the right-to-erasure path
+  // (PHI nulled, row purged after the retention window).
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [

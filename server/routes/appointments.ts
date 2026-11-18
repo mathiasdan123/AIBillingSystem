@@ -24,6 +24,18 @@ import { zonedTimeString } from '../utils/dateOnly';
 const router = Router();
 
 // Helper to get authorized practiceId from request
+/** True only when the patient exists and is archived; any lookup failure reads as not archived. */
+async function isArchivedPatient(patientId: unknown): Promise<boolean> {
+  const id = Number(patientId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  try {
+    const patient: any = await storage.getPatient(id);
+    return !!patient?.archivedAt;
+  } catch {
+    return false;
+  }
+}
+
 const getAuthorizedPracticeId = (req: any): number => {
   if (req.authorizedPracticeId) {
     return req.authorizedPracticeId;
@@ -107,6 +119,13 @@ router.post('/', isAuthenticated, async (req: any, res) => {
     // practice's appointments into practice 1 (a real billing entity, and the
     // wrong PHI custodian). Same rule as patients.ts.
     appointmentData.practiceId = getAuthorizedPracticeId(req);
+
+    // An archived patient takes no new appointments (QA 2026-11-18). Looked
+    // up defensively: a missing patient is left to the FK / later checks as
+    // before, only an archived one is refused here.
+    if (await isArchivedPatient(appointmentData.patientId)) {
+      return res.status(400).json({ message: 'This patient is archived. Unarchive the patient before scheduling.' });
+    }
 
     // Convert date strings to Date objects
     appointmentData.startTime = new Date(appointmentData.startTime);
