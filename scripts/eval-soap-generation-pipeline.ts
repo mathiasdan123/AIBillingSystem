@@ -81,7 +81,10 @@ import {
   hasUnsupportedDeficitAssertion,
   hasUnsupportedDocumentationDenialClause,
   hasUnsupportedMoodClause,
+  hasUnsupportedNegativeFinding,
   hasUnsupportedPlanClosing,
+  hasUnsupportedTherapistAction,
+  groundingEvidenceFor,
   SUBJECTIVE_PLACEHOLDER,
   type AiSoapBillingRequest,
   type AiSoapBillingResponse,
@@ -99,15 +102,16 @@ import {
 type FinalNote = Pick<AiSoapBillingResponse, 'subjective' | 'objective' | 'assessment' | 'plan'> & {
   billingText: string; // billingRationale + every code/pairing rationale + auditNotes, joined
 };
-type DeterministicCheck = (note: FinalNote, ctx: { hasMood: boolean }) => string | null;
+type CheckContext = { hasMood: boolean; request: AiSoapBillingRequest };
+type DeterministicCheck = (note: FinalNote, ctx: CheckContext) => string | null;
 
-function subjectiveNotBlank(note: FinalNote, _ctx: { hasMood: boolean }) {
+function subjectiveNotBlank(note: FinalNote, _ctx: CheckContext) {
   return note.subjective && note.subjective.trim().length > 0
     ? null
     : `Subjective came back EMPTY -- ensureSubjectivePresent should have written "${SUBJECTIVE_PLACEHOLDER}".`;
 }
 
-function noAbsolutistCodingClaims(note: FinalNote, _ctx: { hasMood: boolean }) {
+function noAbsolutistCodingClaims(note: FinalNote, _ctx: CheckContext) {
   return hasAbsolutistCodingClaim(note.billingText)
     ? 'hasAbsolutistCodingClaim matched the FINAL billing text ("only defensible code", "must be coded as", ...) -- softenAbsolutistCodingClaim should have rewritten this, and the prompt forbids it.'
     : null;
@@ -115,7 +119,7 @@ function noAbsolutistCodingClaims(note: FinalNote, _ctx: { hasMood: boolean }) {
 
 // Only meaningful on a scenario that supplies NO performance / strength /
 // assistance / endurance observations and NO activity responses.
-function noUnsupportedDeficitAssertion(note: FinalNote, _ctx: { hasMood: boolean }) {
+function noUnsupportedDeficitAssertion(note: FinalNote, _ctx: CheckContext) {
   const failures: string[] = [];
   for (const [field, text] of Object.entries(note)) {
     if (hasUnsupportedDeficitAssertion(text as string)) {
@@ -125,7 +129,11 @@ function noUnsupportedDeficitAssertion(note: FinalNote, _ctx: { hasMood: boolean
   return failures.length > 0 ? failures.join(' ') : null;
 }
 
-function noBackstopTripwires(note: FinalNote, hasMood: boolean): string | null {
+function noBackstopTripwires(note: FinalNote, ctx: CheckContext): string | null {
+  // (Was typed `hasMood: boolean` while being called with the ctx object, so
+  // the mood tripwire below never ran -- fixed 2026-11-18 when ctx grew.)
+  const { hasMood } = ctx;
+  const evidence = groundingEvidenceFor(ctx.request);
   const failures: string[] = [];
   if (hasUnsupportedPlanClosing(note.plan)) {
     failures.push('hasUnsupportedPlanClosing matched the FINAL plan -- stripUnsupportedPlanClosing should have removed this before generateSoapNoteAndBilling returned.');
@@ -144,6 +152,16 @@ function noBackstopTripwires(note: FinalNote, hasMood: boolean): string | null {
     if (hasUnsupportedDocumentationDenialClause(text as string)) {
       failures.push(`hasUnsupportedDocumentationDenialClause matched the FINAL ${field} -- stripUnsupportedDocumentationDenialClause should have removed this.`);
     }
+    // QA sweep 2026-11-18: negative findings nobody entered ("no observable
+    // distress", "standardized measurements were not administered") and
+    // therapist actions nobody described (graded, monitored). Input-gated,
+    // exactly like the real backstops.
+    if (hasUnsupportedNegativeFinding(text as string, evidence)) {
+      failures.push(`hasUnsupportedNegativeFinding matched the FINAL ${field} -- a negated topic (distress, fatigue, pain, standardized measures, ...) that no entered field or account mentions; stripUnsupportedNegativeFindings should have removed this.`);
+    }
+    if ((field === 'objective' || field === 'assessment') && hasUnsupportedTherapistAction(text as string, evidence)) {
+      failures.push(`hasUnsupportedTherapistAction matched the FINAL ${field} -- grading/monitoring/cueing claimed with no assistance level or account describing therapist support; stripUnsupportedTherapistActions should have removed this.`);
+    }
   }
   return failures.length > 0 ? failures.join(' ') : null;
 }
@@ -151,7 +169,7 @@ function noBackstopTripwires(note: FinalNote, hasMood: boolean): string | null {
 // CASE A scenarios only (no prior plan, no goals): neither the Assessment
 // nor the Plan may carry a "remain medically necessary" / "continued need
 // for skilled" claim.
-function noContinuityNecessityInCaseA(note: FinalNote, _ctx: { hasMood: boolean }) {
+function noContinuityNecessityInCaseA(note: FinalNote, _ctx: CheckContext) {
   const failures: string[] = [];
   for (const field of ['assessment', 'plan'] as const) {
     if (hasUnsupportedContinuityNecessity(note[field])) {
@@ -573,7 +591,7 @@ async function main() {
           };
           record.note = note;
           record.codesByActivity = Object.fromEntries(result.activityCptPairings.map((p) => [p.activity, p.code]));
-          const checkCtx = { hasMood: !!scenario.request.mood };
+          const checkCtx: CheckContext = { hasMood: !!scenario.request.mood, request: scenario.request };
           record.deterministicFailures = scenario.deterministicChecks
             .map((check) => check(note, checkCtx))
             .filter((msg): msg is string => msg !== null);

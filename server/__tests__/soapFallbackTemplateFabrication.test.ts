@@ -68,7 +68,7 @@ describe('fallbackGeneration — blank input, no plan or goals on file (CASE A)'
     expect(all).not.toMatch(DANGLING_LABEL);
     expect(out.objective).not.toMatch(/Overall performance:|Strength\/endurance:|Motor planning:|Sensory regulation:/);
     expect(out.assessment).not.toMatch(/Functional performance this session/);
-    expect(out.objective).toContain('Clinical observations: not documented for this session');
+    expect(out.objective).toContain('Clinical observations: none entered for this session');
   });
 
   it('still records what WAS documented: location, duration, units, activities', () => {
@@ -113,6 +113,78 @@ describe('fallbackGeneration — documented input appears, in the therapist\'s w
       3,
     );
     expect(deficit.assessment).toContain('Skilled OT was required');
+  });
+});
+
+/**
+ * QA sweep 2026-11-18 (Riley Nodob, forceFallback): thin input with ONE
+ * activity account -- "five sets of ten jumps, one-minute pauses, no pain" --
+ * and every rating blank. The template (a) dropped the account and said no
+ * observations were documented beyond the activity list, and (b) asserted
+ * "skilled clinical analysis and therapist-directed adaptation were
+ * provided" with nothing entered to support either half.
+ */
+describe('fallbackGeneration — activity account passthrough and no unsupported skilled-service claims', () => {
+  const RILEY_THIN = request({
+    activities: ['Trampoline - Strengthening'],
+    activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps, one-minute pauses, no pain' }],
+    nextSessionFocus: 'reassess jumping endurance',
+  });
+  const out = fallbackGeneration(RILEY_THIN, PATIENT, 3);
+
+  it('carries the entered account into the Objective, verbatim, under its activity', () => {
+    expect(out.objective).toContain("• Trampoline - Strengthening\n  Therapist's account: five sets of ten jumps, one-minute pauses, no pain");
+  });
+
+  it('does not claim observations were not documented when an account was entered', () => {
+    expect(out.objective).not.toMatch(/Clinical observations:/);
+    expect(out.objective).not.toMatch(/not documented|none entered/i);
+  });
+
+  it('does not assert skilled analysis or therapist-directed adaptation with no supporting input', () => {
+    expect(out.assessment).toBe('Riley participated in skilled occupational therapy.');
+    expect(out.assessment).not.toMatch(/skilled clinical analysis|therapist-directed|adaptation|graded|monitored/i);
+  });
+
+  it('asserts no negative finding the account did not state, in any section', () => {
+    const all = [out.subjective, out.objective, out.assessment, out.plan].join('\n');
+    expect(all).not.toMatch(/distress|standardized|without (signs|difficulty)|tolerated/i);
+    // The one negative the therapist DID write survives, in their words.
+    expect(out.objective).toContain('no pain');
+  });
+
+  it('still carries the plan field the therapist typed', () => {
+    expect(out.plan).toContain('Next session focus:\n• reassess jumping endurance');
+  });
+
+  it('claims skilled analysis only when observation ratings were entered, and adaptation only with an assistance level', () => {
+    const ratingsOnly = fallbackGeneration(
+      request({ assessment: { performance: 'Improved', assistance: '', strength: '', motorPlanning: '', sensoryRegulation: '' } }),
+      PATIENT, 3,
+    );
+    expect(ratingsOnly.assessment).toContain('Skilled clinical analysis was applied to the observations documented above.');
+    expect(ratingsOnly.assessment).not.toMatch(/therapist-directed adaptation/i);
+
+    const assistOnly = fallbackGeneration(
+      request({ assessment: { performance: '', assistance: 'Minimal', strength: '', motorPlanning: '', sensoryRegulation: '' } }),
+      PATIENT, 3,
+    );
+    expect(assistOnly.assessment).toContain('Therapist-directed adaptation was provided at the documented assistance level.');
+    expect(assistOnly.assessment).not.toMatch(/skilled clinical analysis/i);
+
+    const accountOnly = fallbackGeneration(RILEY_THIN, PATIENT, 3);
+    expect(accountOnly.assessment).not.toMatch(/skilled clinical analysis|therapist-directed adaptation/i);
+  });
+
+  it('an activity without an account still renders as a plain bullet', () => {
+    const mixed = fallbackGeneration(
+      request({
+        activities: ['Trampoline - Strengthening', 'Pegboard'],
+        activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps' }],
+      }),
+      PATIENT, 3,
+    );
+    expect(mixed.objective).toContain("• Trampoline - Strengthening\n  Therapist's account: five sets of ten jumps\n• Pegboard");
   });
 });
 
