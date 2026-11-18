@@ -69,7 +69,7 @@
  *        description this script shipped with).
  */
 import { randomUUID } from 'crypto';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync, appendFileSync } from 'fs';
 import { resolve } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { createAiClient, isAiConfigured } from '../server/services/aiProvider';
@@ -89,6 +89,7 @@ import {
   type AiSoapBillingRequest,
   type AiSoapBillingResponse,
 } from '../server/services/aiSoapBillingService';
+import { evaluateGate, needsHumanReview, renderGateMarkdown, renderGateText, sampleStatus, type GateSample } from './eval-gate-policy';
 
 // ---------------------------------------------------------------------------
 // Deterministic tripwire checks (final output -- should always pass; a
@@ -525,13 +526,29 @@ interface SampleRecord {
   codesByActivity: Record<string, string> | null;
 }
 
-function allFailures(record: SampleRecord): string[] {
-  const judgeFailures = record.judgeFindings.map((f) => `Semantic judge [${f.check}]: "${f.quote}" -- ${f.reason}`);
+/**
+ * Hard (zero-tolerance) failures for a sample: deterministic checks and the
+ * generation-mode check. Judge findings are NOT in this list -- the gate
+ * policy (scripts/eval-gate-policy.ts) tolerates a bounded number of
+ * judge-only findings per scenario and surfaces every one for review.
+ */
+function hardFailures(record: SampleRecord): string[] {
   const modeFailure =
     record.generationMode && record.generationMode !== 'ai'
       ? [`result.generationMode was "${record.generationMode}", not "ai" -- the live call did not complete (see aiSoapBillingService.ts's catch block). A fallback note must never count as a pass.`]
       : [];
-  return [...modeFailure, ...record.deterministicFailures, ...judgeFailures];
+  return [...modeFailure, ...record.deterministicFailures];
+}
+
+function toGateSample(record: SampleRecord): GateSample {
+  return {
+    scenario: record.scenario,
+    sample: record.sample,
+    error: record.error,
+    hardFailures: hardFailures(record),
+    judgeFindings: record.judgeFindings.map((f) => ({ check: f.check, quote: f.quote, reason: f.reason })),
+    planText: record.note?.plan ?? null,
+  };
 }
 
 async function main() {
@@ -614,8 +631,10 @@ async function main() {
           record.error = e?.message ?? String(e);
         }
         records.push(record);
-        const failed = record.error || allFailures(record).length > 0;
-        console.log(`  sample ${sample}/${samplesPerScenario}: ${record.error ? 'ERROR' : failed ? 'FAIL' : 'PASS'} (generationMode=${record.generationMode ?? 'n/a'})`);
+        // PASS / JUDGE-ONLY / FAIL / ERROR -- JUDGE-ONLY is decided for the
+        // run as a whole by the gate policy below (tolerated up to a limit
+        // per scenario), never per sample.
+        console.log(`  sample ${sample}/${samplesPerScenario}: ${sampleStatus(toGateSample(record))} (generationMode=${record.generationMode ?? 'n/a'})`);
       }
     } finally {
       restoreFixture(original);
@@ -653,28 +672,33 @@ async function main() {
   );
   console.log(`Full results (fixtures + outputs + verdicts) written to ${logPath}\n`);
 
-  const failedRecords = records.filter((r) => r.error || allFailures(r).length > 0);
-  if (failedRecords.length > 0) {
-    console.error('='.repeat(70));
-    console.error(`FAILED: ${failedRecords.length}/${records.length} samples had at least one finding\n`);
-    for (const r of failedRecords) {
-      console.error(`--- ${r.scenario} (sample ${r.sample}) ---`);
-      if (r.error) {
-        console.error(`  ✗ Error: ${r.error}`);
-      } else {
-        for (const f of allFailures(r)) console.error(`  ✗ ${f}`);
-      }
-      if (r.note) {
-        console.error(`  Plan text:\n    ${r.note.plan.replace(/\n/g, '\n    ')}`);
-      }
-      console.error('');
+  // Gate policy: deterministic checks zero tolerance; judge-only findings
+  // tolerated up to a per-scenario limit; every judge-only finding printed
+  // here, appended to the GitHub step summary, and (via the workflow) posted
+  // on the PR for a person to review. See scripts/eval-gate-policy.ts.
+  const verdict = evaluateGate(records.map(toGateSample));
+  const text = renderGateText(verdict, records.length, scenarios.length);
+  (verdict.passed ? console.log : console.error)(text);
+
+  if (needsHumanReview(verdict)) {
+    const runLabel = process.env.GITHUB_RUN_ID
+      ? `GitHub Actions run ${process.env.GITHUB_RUN_ID} (${process.env.GITHUB_SHA?.slice(0, 7) ?? 'unknown sha'})`
+      : `local run ${runId}`;
+    const markdown = renderGateMarkdown(verdict, { runLabel, totalSamples: records.length, scenarioCount: scenarios.length });
+    // Fixed name so the workflow's comment step can find it without parsing
+    // the run id; the JSON log above keeps the full per-sample detail.
+    const reviewPath = resolve(resultsDir, 'pipeline-review.md');
+    writeFileSync(reviewPath, `${markdown}\n\nFull results: \`${logPath.replace(resolve(import.meta.dirname, '..'), '.')}\` (run artifact)\n`);
+    console.log(`Review summary written to ${reviewPath}`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${markdown}\n`);
     }
+  }
+
+  if (!verdict.passed) {
     console.error(`Replay this run: cat ${logPath}`);
     process.exit(1);
   }
-
-  console.log('='.repeat(70));
-  console.log(`PASSED: final output passed these checks on these ${scenarios.length} scenarios (${records.length} samples total).`);
 }
 
 main().catch((e) => {
