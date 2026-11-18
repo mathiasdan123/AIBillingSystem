@@ -15,8 +15,10 @@ name: SOAP Generation Pipeline Eval (release gate)
 # 2026-11-18 the gate has two ways to open:
 #
 #   1. AUTOMATIC -- the PR touches any file on the SOAP generation path
-#      (the six files under TRIGGER COVERAGE below). The `changes` job
-#      lists the PR's changed files via the GitHub API and sets
+#      (the seven files under TRIGGER COVERAGE below). The `changes` job
+#      lists the PR's changed files via the GitHub API -- matching both a
+#      file's current path and, for a renamed file, its previous path, so
+#      moving a watched file cannot slip past -- and sets
 #      `soap_path_touched`; no label is needed. Closes the coverage gap
 #      documented on QA #2: before this, an unlabeled PR that changed the
 #      prompt builders or provider routing merged with pipeline-eval
@@ -77,11 +79,19 @@ name: SOAP Generation Pipeline Eval (release gate)
 # TRIGGER COVERAGE (requirement #5): every file that can change the final
 # output. Touching any of these on a PR runs the eval automatically (the
 # `changes` job below -- keep its SOAP_PATH_FILES list in sync with this
-# list; the two are the same six files):
+# list; the two are the same seven files):
 #   - server/services/aiSoapBillingService.ts   (prompt builders, every
 #                                                 backstop, the pipeline
 #                                                 function itself, final
 #                                                 response assembly)
+#   - shared/activityCpt.ts                     (imported directly by the
+#                                                 service: normalizes the
+#                                                 activity-code pairings
+#                                                 and derives CPT codes,
+#                                                 units and reimbursement
+#                                                 in the final output --
+#                                                 added 2026-11-18 after
+#                                                 PR #461 review)
 #   - server/services/aiProvider.ts             (model/provider config,
 #                                                 which model/client is used)
 #   - server/utils/phiAiGuard.ts                (can gate the AI path off
@@ -95,16 +105,19 @@ name: SOAP Generation Pipeline Eval (release gate)
 #   - .github/workflows/eval-prompt-pipeline.yml (this workflow itself)
 #
 # COST: makes real, billed API calls (default 3 samples/scenario x 5
-# scenarios = 15 generation calls + up to 12 judge calls), ONLY on a
-# labeled PR. See the PR description this workflow shipped with for the
-# per-run/per-month estimate Daniel approved before this was wired in as
-# required.
+# scenarios = 15 generation calls + up to 12 judge calls), only when the
+# gate opens: a PR touching the path list above, a PR carrying
+# `ready-for-eval`, or a workflow_dispatch. See the PR description this
+# workflow shipped with for the per-run/per-month estimate Daniel approved
+# before this was wired in as required; the automatic path (PR #461) adds
+# runs only for PRs that change the SOAP generation output, which are the
+# PRs that should have been labeled anyway.
 #
 # NOT a substitute for eval-prompt.yml's weekly schedule: that diagnostic
 # still runs on its own cadence (10 samples/scenario) to catch drift from
-# Anthropic-side model changes between PRs; this workflow only spends
-# anything on a labeled PR or workflow_dispatch, by design, to keep
-# routine PRs from ever costing money even though every one of them now
+# Anthropic-side model changes between PRs; this workflow spends nothing
+# on a PR that neither touches the path list nor carries the label, by
+# design, so routine PRs never cost money even though every one of them
 # triggers (cheaply) the workflow itself and its `changes` job.
 
 on:
@@ -144,6 +157,7 @@ jobs:
           # Keep in sync with TRIGGER COVERAGE at the top of this file.
           SOAP_PATH_FILES: |
             server/services/aiSoapBillingService.ts
+            shared/activityCpt.ts
             server/services/aiProvider.ts
             server/utils/phiAiGuard.ts
             server/storage/index.ts
@@ -155,10 +169,13 @@ jobs:
           # merge base, which is exactly the set the eval cares about -- a
           # `git diff` against a shallow checkout would need fetch-depth
           # tuning and still miss files changed on the base since branching.
-          # --paginate covers PRs over 30 files.
+          # --paginate covers PRs over 30 files. Both the current path and,
+          # for a renamed/moved file, its previous path are listed: a PR that
+          # renames a watched file changes everything that imported it and
+          # must not evade the gate by no longer matching its old name.
           gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
-            --jq '.[].filename' > changed-files.txt
-          echo "PR #${PR_NUMBER} changed $(wc -l < changed-files.txt) file(s)"
+            --jq '.[] | .filename, (.previous_filename // empty)' > changed-files.txt
+          echo "PR #${PR_NUMBER} changed $(wc -l < changed-files.txt) path(s), previous names of renamed files included"
           touched="false"
           while IFS= read -r path; do
             [ -z "$path" ] && continue
