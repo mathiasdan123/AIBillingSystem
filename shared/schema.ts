@@ -833,6 +833,12 @@ export const soapNoteDrafts = pgTable("soap_note_drafts", {
   interventions: jsonb("interventions"),
   location: varchar("location"),
   sessionType: varchar("session_type"),
+  // Suggested billing that came back with the generated S-O-A-P (CPT codes,
+  // activity pairings, time blocks, rationale, estimated total). Saved with
+  // the draft so leaving the page and coming back restores the whole review
+  // state, not just the prose (QA sweep 2026-11-18: codes/units/total reset
+  // to 0 on draft restore). Shape: client/src/lib/soapDraftBilling.ts.
+  billing: jsonb("billing"),
   lastSavedAt: timestamp("last_saved_at").defaultNow(),
   // Legacy scaffold columns — unused.
   draftName: varchar("draft_name"),

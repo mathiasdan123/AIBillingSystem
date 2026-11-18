@@ -193,7 +193,7 @@ export function VoiceInput({ onTranscription, disabled = false }: VoiceInputProp
       stopRecording();
       toast({
         title: "Not Available",
-        description: "No speech recognition available. Please configure OpenAI API key for Whisper.",
+        description: "Speech recognition is not available in this browser and enhanced transcription is not enabled for this practice. Try a different browser or ask your administrator.",
         variant: "destructive",
       });
     }
@@ -351,7 +351,7 @@ export function VoiceInput({ onTranscription, disabled = false }: VoiceInputProp
         <p className="text-xs text-blue-600 mt-2">
           {whisperAvailable
             ? "Click record and speak your therapy session notes. OpenAI Whisper will transcribe with high accuracy."
-            : "Click record and speak. Add OPENAI_API_KEY to .env for enhanced Whisper transcription."}
+            : "Click record and speak. Your browser's built-in recognition is used; enhanced transcription is not enabled for this practice — ask your administrator."}
         </p>
       </div>
 

@@ -703,10 +703,15 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
     const existingExpected = (appointment as any).copayExpected as string | null;
     const existingCollected = (appointment as any).copayCollected as string | null;
 
-    // Telehealth appointments have no front-desk copay collection.
-    // (Derived: telehealth appointments typically have locationId null or a
-    // matching telehealthSessions row. For this slice we use locationId.)
-    const isTelehealth = appointment.locationId == null;
+    // Telehealth appointments have no front-desk copay collection. Telehealth
+    // is a FACT about the appointment — a telehealth_sessions row exists for
+    // it — not an inference from a missing location: the New Appointment
+    // dialog's location is optional, so most in-person appointments at a
+    // single-site practice have no locationId. Deriving from that labelled
+    // an ordinary "Individual Therapy" check-in as Telehealth and hid the
+    // copay charge controls for it (QA sweep 2026-11-18).
+    const telehealthSession = await storage.getTelehealthSessionByAppointment(appointmentId);
+    const isTelehealth = !!telehealthSession;
 
     let expectedCents: number | null = null;
     let source: 'eligibility' | 'cache' | 'none' | 'recorded' | 'patient' = 'none';

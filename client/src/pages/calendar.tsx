@@ -664,7 +664,7 @@ export default function CalendarPage() {
               <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Schedule New Appointment</DialogTitle>
-                  <DialogDescription>Create a new 1-hour therapy session.</DialogDescription>
+                  <DialogDescription>Create a new {parseInt(newAppointment.durationMinutes, 10) || 45}-minute therapy session.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">

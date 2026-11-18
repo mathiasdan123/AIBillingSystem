@@ -160,3 +160,27 @@ describe('deleteSoapDraft', () => {
     expect(ok).toBe(true);
   });
 });
+
+describe('upsertSoapDraft billing', () => {
+  it('passes the suggested billing through to the stored row (draft restore keeps codes and totals)', async () => {
+    const billing = {
+      v: 1,
+      cptCodes: [{ code: '97110', name: 'Therapeutic Exercise', units: 3, rationale: 'r', reimbursement: 300 }],
+      timeBlocks: [],
+      activityCptPairings: [],
+      billingRationale: '3 units',
+      auditNotes: [],
+      totalReimbursement: 300,
+      generationMode: 'ai',
+    };
+    await upsertSoapDraft({
+      practiceId: 1,
+      therapistId: 'therapist-a',
+      patientId: 42,
+      subjective: 'S',
+      billing,
+    } as any);
+    expect(mockDbState.upserts).toHaveLength(1);
+    expect(mockDbState.upserts[0].billing).toEqual(billing);
+  });
+});

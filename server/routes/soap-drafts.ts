@@ -69,6 +69,13 @@ router.put("/", isAuthenticated, async (req: any, res) => {
       interventions: req.body.interventions ?? null,
       location: req.body.location ?? null,
       sessionType: req.body.sessionType ?? null,
+      // Suggested billing travels with the draft (see schema comment). Only
+      // plain objects are stored; anything else (string, array) is dropped
+      // so a malformed client can't park arbitrary JSON here.
+      billing:
+        req.body.billing && typeof req.body.billing === "object" && !Array.isArray(req.body.billing)
+          ? req.body.billing
+          : null,
     });
     res.json(draft);
   } catch (error: any) {
