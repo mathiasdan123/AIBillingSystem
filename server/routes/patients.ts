@@ -26,6 +26,7 @@ import { validate } from '../middleware/validate';
 import { requirePatientConsent } from '../middleware/consentCheck';
 import { createPatientSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
+import { parseDateOnly } from '../utils/dateOnly';
 import logger from '../services/logger';
 import { sendEmail } from '../services/emailService';
 import { portalWelcome, intakeSubmissionNotification } from '../services/emailTemplates';
@@ -486,6 +487,11 @@ const DETAIL_FIELDS = new Set([
   // Administrative sex for CMS-1500 Box 3. 'gender' was listed here for a
   // column that has never existed, so it silently went nowhere.
   'sex',
+  // Quick-add flows (calendar, walk-in, SOAP) create patients with no DOB
+  // since #457, and the only way to complete the record was... nothing: this
+  // route didn't accept it (QA sweep 2026-11-18). Storage encrypts it into
+  // dateOfBirthEnc exactly as createPatient does; '' clears both columns.
+  'dateOfBirth',
 ]);
 
 router.patch('/:id/details', isAuthenticated, async (req: any, res) => {
@@ -514,6 +520,20 @@ router.patch('/:id/details', isAuthenticated, async (req: any, res) => {
     }
     if ('lastName' in patch && !patch.lastName) {
       return res.status(400).json({ error: 'Last name cannot be empty' });
+    }
+
+    // DOB goes on every eligibility check and claim, so a malformed or future
+    // value is a guaranteed payer rejection — refuse it here rather than store
+    // it. YYYY-MM-DD only (a leading date part of a longer string is accepted).
+    if ('dateOfBirth' in patch && patch.dateOfBirth !== null) {
+      const parsed = parseDateOnly(String(patch.dateOfBirth));
+      if (!parsed) {
+        return res.status(400).json({ error: 'Date of birth must be a valid date (YYYY-MM-DD)' });
+      }
+      if (parsed.getTime() > Date.now()) {
+        return res.status(400).json({ error: 'Date of birth cannot be in the future' });
+      }
+      patch.dateOfBirth = String(patch.dateOfBirth).slice(0, 10);
     }
 
     if (Object.keys(patch).length === 0) {

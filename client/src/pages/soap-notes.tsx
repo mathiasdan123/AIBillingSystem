@@ -34,6 +34,7 @@ import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
 import ActivityCptPairingEditor from "@/components/ActivityCptPairingEditor";
+import GeneratedSoapSection, { type SoapSectionKey } from "@/components/GeneratedSoapSection";
 
 // ============================================
 // FEATURE FLAGS
@@ -862,6 +863,17 @@ export default function SoapNotes() {
   // One-level undo keeps the therapist in control of every AI edit.
   const [docCheckAnswers, setDocCheckAnswers] = useState<Record<string, string>>({});
   const [weaving, setWeaving] = useState(false);
+
+  // Sections the therapist has hand-edited since the last generation. Shown
+  // as an "Edited by therapist" badge so reviewers can tell therapist text
+  // from model text. An edit writes straight into generatedNote, which is
+  // what Save, the autosaved draft, the doc-check and the TTS all read — so
+  // the edited text is the text that gets stored. Cleared on regeneration.
+  const [therapistEditedSections, setTherapistEditedSections] = useState<Set<SoapSectionKey>>(new Set());
+  const saveSectionEdit = (key: SoapSectionKey, text: string) => {
+    setGeneratedNote((prev) => (prev ? { ...prev, [key]: text } : prev));
+    setTherapistEditedSections((prev) => new Set(prev).add(key));
+  };
   const [weaveChanges, setWeaveChanges] = useState<Array<{ section: string; summary: string }> | null>(null);
   const weaveBackupRef = useRef<{ subjective: string; objective: string; assessment: string; plan: string } | null>(null);
 
@@ -1192,6 +1204,7 @@ export default function SoapNotes() {
               auditNotes: aiResponse.auditNotes || [],
               generationMode: aiResponse.generationMode || "ai"
             });
+            setTherapistEditedSections(new Set());
             generatedNoteForPatientRef.current = selectedPatient;
 
             toast({
@@ -2801,34 +2814,64 @@ export default function SoapNotes() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
-                    <div>
-                      <Label className="text-xs font-semibold text-blue-600">SUBJECTIVE</Label>
-                      <p className="mt-1 text-foreground">{generatedNote.subjective}</p>
-                    </div>
+                    {/* Every section is therapist-editable in place (QA sweep
+                        2026-11-18: these were read-only paragraphs while the
+                        doc-check copy below said "edit the sections above").
+                        Edits land in generatedNote, so Save / draft / sign
+                        store what the therapist approved, not what the model
+                        drafted. */}
+                    <GeneratedSoapSection
+                      sectionKey="subjective"
+                      label="SUBJECTIVE"
+                      labelClassName="text-blue-600"
+                      value={generatedNote.subjective}
+                      edited={therapistEditedSections.has("subjective")}
+                      onSave={(t) => saveSectionEdit("subjective", t)}
+                      disabled={weaving}
+                    />
                     <Separator />
-                    <div>
-                      <Label className="text-xs font-semibold text-green-600">OBJECTIVE</Label>
-                      <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.objective}</p>
-                      {/* Per-activity CPT pairing (Megan's ask, Kelli-approved):
-                          activity description and billing code live together in
-                          the Objective; every code is therapist-editable and
-                          edits re-derive the billing codes above. */}
-                      {generatedNote.activityCptPairings && generatedNote.activityCptPairings.length > 0 && (
-                        <ActivityCptPairingEditor
-                          pairings={generatedNote.activityCptPairings}
-                          catalog={cptCodes?.map((c) => ({ id: c.id, code: c.code, description: c.description }))}
-                          onCodeChange={updateActivityPairingCode}
-                        />
-                      )}
-                    </div>
+                    <GeneratedSoapSection
+                      sectionKey="objective"
+                      label="OBJECTIVE"
+                      labelClassName="text-green-600"
+                      value={generatedNote.objective}
+                      edited={therapistEditedSections.has("objective")}
+                      onSave={(t) => saveSectionEdit("objective", t)}
+                      disabled={weaving}
+                      footer={
+                        /* Per-activity CPT pairing (Megan's ask, Kelli-approved):
+                           activity description and billing code live together in
+                           the Objective; every code is therapist-editable and
+                           edits re-derive the billing codes above. */
+                        generatedNote.activityCptPairings && generatedNote.activityCptPairings.length > 0 ? (
+                          <ActivityCptPairingEditor
+                            pairings={generatedNote.activityCptPairings}
+                            catalog={cptCodes?.map((c) => ({ id: c.id, code: c.code, description: c.description }))}
+                            onCodeChange={updateActivityPairingCode}
+                          />
+                        ) : null
+                      }
+                    />
                     <Separator />
-                    <div>
-                      <Label className="text-xs font-semibold text-purple-600">ASSESSMENT</Label>
-                      <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.assessment}</p>
-                    </div>
+                    <GeneratedSoapSection
+                      sectionKey="assessment"
+                      label="ASSESSMENT"
+                      labelClassName="text-purple-600"
+                      value={generatedNote.assessment}
+                      edited={therapistEditedSections.has("assessment")}
+                      onSave={(t) => saveSectionEdit("assessment", t)}
+                      disabled={weaving}
+                    />
                     <Separator />
-                    <div>
-                      <Label className="text-xs font-semibold text-orange-600">PLAN</Label>
+                    <GeneratedSoapSection
+                      sectionKey="plan"
+                      label="PLAN"
+                      labelClassName="text-orange-600"
+                      value={generatedNote.plan}
+                      edited={therapistEditedSections.has("plan")}
+                      onSave={(t) => saveSectionEdit("plan", t)}
+                      disabled={weaving}
+                    >
                       {planSuggestion ? (
                         <div className="mt-1 space-y-2">
                           <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg" data-testid="plan-suggestion-card">
@@ -2861,9 +2904,9 @@ export default function SoapNotes() {
                           )}
                         </div>
                       ) : (
-                        <p className="mt-1 text-foreground">{generatedNote.plan}</p>
+                        <p className="mt-1 text-foreground whitespace-pre-line" data-testid="text-plan">{generatedNote.plan}</p>
                       )}
-                    </div>
+                    </GeneratedSoapSection>
                     <Separator />
                     {/* Documentation check — review before signing. Never edits
                         the note; asks the therapist for missing facts instead. */}
@@ -2947,7 +2990,7 @@ export default function SoapNotes() {
                                   {weaving ? (<><Loader2 className="w-3 h-3 mr-1 animate-spin" />Weaving…</>) : 'Weave answers into note'}
                                 </Button>
                                 <span className="text-[10px] text-muted-foreground">
-                                  You can also just edit the sections above directly.
+                                  Or use the Edit button on any section above to type the answer in yourself.
                                 </span>
                               </div>
                             </div>
