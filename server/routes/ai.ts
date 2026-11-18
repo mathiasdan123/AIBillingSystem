@@ -597,12 +597,17 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         caregiverReport,
         duration,
         location: location || 'Clinic',
+        // An absent assessment object means nothing was documented. The old
+        // default here ("Stable", "Minimal Assist", "Adequate", ...) invented
+        // therapist observations the generators then narrated as fact. Empty
+        // strings keep the required shape and are treated as "not documented"
+        // by both the prompt builder and the fallback template.
         assessment: assessment || {
-          performance: 'Stable',
-          assistance: 'Minimal Assist',
-          strength: 'Adequate',
-          motorPlanning: 'Mild Difficulty',
-          sensoryRegulation: 'Needed Minimal Supports'
+          performance: '',
+          assistance: '',
+          strength: '',
+          motorPlanning: '',
+          sensoryRegulation: '',
         },
         planNextSteps: planNextSteps || '',
         nextSessionFocus,
