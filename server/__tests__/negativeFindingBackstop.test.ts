@@ -101,6 +101,35 @@ describe('stripUnsupportedNegativeFindings', () => {
     expect(stripUnsupportedNegativeFindings('', evidence)).toBe('');
     expect(hasUnsupportedNegativeFinding('', evidence)).toBe(false);
   });
+
+  // PR #464 review: a sentence that CONDITIONS on a symptom is not asserting
+  // its absence. Precautions pair a negation with pain/fatigue/distress the
+  // input never mentioned and must survive -- in the Plan, where they live,
+  // and anywhere else they appear.
+  it('keeps conditional / precaution sentences in the Plan', () => {
+    const plan =
+      'Next session focus:\n• reassess jumping endurance\n\n' +
+      'Stop the activity if the patient shows pain or fatigue; do not push through. ' +
+      'Monitor for signs of distress and discontinue if discomfort is reported. ' +
+      'Caregivers were instructed to report any complaints of pain after sessions.';
+    expect(hasUnsupportedNegativeFinding(plan, evidence)).toBe(false);
+    expect(stripUnsupportedNegativeFindings(plan, evidence)).toBe(plan);
+  });
+
+  it('keeps a precaution in the Objective too, while still removing a fabricated finding beside it', () => {
+    const objective =
+      'Trampoline jumping targets lower-extremity strength and endurance. ' +
+      'Activity was to be stopped if the patient showed pain or fatigue. ' +
+      'No observable distress was noted.';
+    expect(stripUnsupportedNegativeFindings(objective, evidence)).toBe(
+      'Trampoline jumping targets lower-extremity strength and endurance. Activity was to be stopped if the patient showed pain or fatigue.',
+    );
+  });
+
+  it('a fabricated negative in the Plan is still removed when nothing conditions it', () => {
+    const plan = 'Continue trampoline work next session. No distress was observed, so intensity can increase.';
+    expect(stripUnsupportedNegativeFindings(plan, evidence)).toBe('Continue trampoline work next session.');
+  });
 });
 
 describe('stripUnsupportedTherapistActions', () => {
@@ -133,6 +162,37 @@ describe('stripUnsupportedTherapistActions', () => {
     const text = 'Verbal cues were provided to maintain rhythm and the task was graded to three sets.';
     expect(hasUnsupportedTherapistAction(text, withCues)).toBe(false);
     expect(stripUnsupportedTherapistActions(text, withCues)).toBe(text);
+  });
+
+  // PR #464 review: clause-level removal, so a sentence carrying both an
+  // unsupported action and an entered fact keeps the fact.
+  it('removes only the action clause from a mixed sentence and keeps the entered fact', () => {
+    expect(
+      stripUnsupportedTherapistActions('Riley completed five sets of ten jumps while the therapist graded the task.', evidence),
+    ).toBe('Riley completed five sets of ten jumps.');
+    expect(
+      stripUnsupportedTherapistActions('The therapist graded the task, and Riley completed five sets of ten jumps with one-minute pauses.', evidence),
+    ).toBe('Riley completed five sets of ten jumps with one-minute pauses.');
+    expect(
+      stripUnsupportedTherapistActions('Riley completed five sets of ten jumps; verbal cues were provided between sets.', evidence),
+    ).toBe('Riley completed five sets of ten jumps.');
+  });
+
+  it('still drops a sentence whose every clause claims an action', () => {
+    expect(stripUnsupportedTherapistActions('The therapist graded the jumping bouts and monitored for fatigue.', evidence)).toBe('');
+    expect(stripUnsupportedTherapistActions('Verbal cues were provided to maintain rhythm.', evidence)).toBe('');
+  });
+
+  it('does not flag "adaptive equipment" or the "modified independent" assistance level', () => {
+    const legitimate = [
+      'Riley used adaptive equipment (a jump handle) for the trampoline bouts.',
+      'Adaptive seating was in place for tabletop work.',
+      'Riley was modified independent for transfers on and off the trampoline.',
+    ];
+    for (const text of legitimate) {
+      expect(hasUnsupportedTherapistAction(text, evidence)).toBe(false);
+      expect(stripUnsupportedTherapistActions(text, evidence)).toBe(text);
+    }
   });
 
   it('never flags the payer vocabulary the prompt asks for (skilled, targets, neuromuscular re-education)', () => {
