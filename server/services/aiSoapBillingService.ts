@@ -1242,6 +1242,16 @@ const CASE_A_CONTINUITY_REWRITES: Array<[RegExp, string | ((...m: string[]) => s
   [/\b(?:require|requires|requiring|indicates?|indicating|suggests?|suggesting|demonstrates?|demonstrating|need\s+for|warrants?)\s+(?:continued|ongoing|further)\s+/gi, (m: string) => m.replace(/\s+(?:continued|ongoing|further)\s+$/i, " ")],
   [/\bcontinued\s+((?:skilled\s+|clinical\s+|graded\s+)?(?:therapeutic\s+)?(?:intervention|strengthening|practice|support|work|therapy|focus|emphasis|training|development|monitoring|attention|use|progress|exposure|participation\s+in))\b/gi, "$1"],
   [/\bremains?\s+(challenging|difficult|limited|an\s+area|a\s+(?:focus|priority)|(?:a|an)\s+(?:clinically\s+)?(?:appropriate|relevant|primary|key|important|reasonable)|(?:clinically\s+)?(?:appropriate|indicated|relevant|important|warranted))\b/gi, "is $1"],
+  // Plural / tailed form of the rule above. Pipeline eval run 44367902540
+  // (PR #467, P1 sample 3): "motor planning, bilateral coordination, and
+  // endurance remain areas requiring skilled therapeutic intervention" --
+  // the judge flagged "remain" as continuity on a first session; the rest
+  // of the sentence is a present-tense necessity statement grounded in the
+  // supplied activity responses, so the word is rewritten (are/is by
+  // number) and the sentence stays. "remain seated" and other observations
+  // have no such noun after the verb and are untouched.
+  [/\b(remain|remains)\s+((?:an?\s+)?(?:areas?|focus(?:es)?|priorit(?:y|ies)|targets?|concerns?|needs?)(?:\s+(?:requiring|needing|warranting|of|for))?)\b/gi,
+    (_m: string, verb: string, rest: string) => `${verb.toLowerCase() === "remain" ? "are" : "is"} ${rest}`],
   // Present-tense "continue(s) to <verb>" in a first-session note is always a
   // plan/necessity claim ("will continue to provide", "activities continue
   // to target"), never an observation -- observations use the past tense

@@ -430,3 +430,33 @@ describe('removeCaseAContinuityWording -- "continue(s) to <any verb>" (round 6)'
     expect(removeCaseAContinuityWording(observation, false, false)).toBe(observation);
   });
 });
+
+// Pipeline eval run 44367902540 (PR #467), P1 sample 3: the judge flagged
+// "remain" in an Assessment sentence whose remainder is a necessity
+// statement grounded in the supplied activity responses. The sentence-level
+// strip rightly leaves it (no necessity phrase from its list), and the
+// word-level rewrite only knew the singular "remains an area / challenging".
+describe('removeCaseAContinuityWording -- plural "remain areas requiring"', () => {
+  const flagged =
+    "Patient's need for verbal cueing during obstacle course navigation and observed fatigue during sustained jumping activity indicate that motor planning, bilateral coordination, and endurance remain areas requiring skilled therapeutic intervention to support functional participation in age-appropriate gross motor activities.";
+
+  it('rewrites the exact judge-flagged sentence to present tense and keeps the grounded content', () => {
+    expect(hasUnsupportedContinuityNecessity(flagged)).toBe(false); // not the strip's business
+    const out = removeCaseAContinuityWording(flagged, false, false);
+    expect(out).not.toMatch(/\bremain/i);
+    expect(out).toContain('endurance are areas requiring skilled therapeutic intervention to support functional participation');
+    expect(out).toContain("Patient's need for verbal cueing during obstacle course navigation");
+  });
+
+  it('agrees in number and covers the tailed forms', () => {
+    expect(removeCaseAContinuityWording('Motor planning remains an area requiring support.', false, false)).toBe('Motor planning is an area requiring support.');
+    expect(removeCaseAContinuityWording('Endurance and balance remain priorities for intervention.', false, false)).toBe('Endurance and balance are priorities for intervention.');
+    expect(removeCaseAContinuityWording('Bilateral coordination remains a focus of treatment.', false, false)).toBe('Bilateral coordination is a focus of treatment.');
+  });
+
+  it('leaves observations and CASE B alone', () => {
+    const observation = 'Patient was asked to remain seated between trials and remained calm throughout.';
+    expect(removeCaseAContinuityWording(observation, false, false)).toBe(observation);
+    expect(removeCaseAContinuityWording(flagged, true, false)).toBe(flagged);
+  });
+});
