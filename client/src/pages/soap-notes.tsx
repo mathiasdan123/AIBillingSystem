@@ -30,6 +30,7 @@ import { sumTimeBlockRates } from "@/lib/timeBlocks";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
+import { fromDraftBilling, toDraftBilling } from "@/lib/soapDraftBilling";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
@@ -398,20 +399,16 @@ export default function SoapNotes() {
     patientId: selectedPatient,
     onRestore: (draft) => {
       if (draft.subjective || draft.objective || draft.assessment || draft.plan) {
-        // Reset CPT/billing fields explicitly — never carry over from the
-        // previous patient's note. If billing data is needed for this draft,
-        // the user re-runs "Generate".
+        // Billing comes back from THIS patient's draft (the draft is keyed by
+        // therapist + patient), never carried over from the previous
+        // patient's in-memory note. A draft saved before the billing column
+        // existed restores with empty billing, exactly as before.
         setGeneratedNote({
           subjective: draft.subjective ?? "",
           objective: draft.objective ?? "",
           assessment: draft.assessment ?? "",
           plan: draft.plan ?? "",
-          cptCodes: [],
-          activityCptPairings: [],
-          totalReimbursement: 0,
-          billingRationale: "",
-          auditNotes: [],
-          timeBlocks: [],
+          ...fromDraftBilling(draft.billing),
         });
         generatedNoteForPatientRef.current = selectedPatient;
       }
@@ -447,12 +444,22 @@ export default function SoapNotes() {
       plan: generatedNote.plan,
       location,
       sessionType,
+      // Codes, pairings, time blocks, rationale and total ride along so the
+      // review state survives a trip to another page (QA 2026-11-18).
+      billing: toDraftBilling(generatedNote),
     });
   }, [
     generatedNote?.subjective,
     generatedNote?.objective,
     generatedNote?.assessment,
     generatedNote?.plan,
+    // Billing edits (pairing changes re-derive codes/blocks/total) must
+    // re-arm the autosave too, or the draft keeps the pre-edit codes.
+    generatedNote?.cptCodes,
+    generatedNote?.activityCptPairings,
+    generatedNote?.timeBlocks,
+    generatedNote?.billingRationale,
+    generatedNote?.totalReimbursement,
     selectedPatient,
     saveDraft,
     location,

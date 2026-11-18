@@ -92,7 +92,7 @@ interface Claim {
 }
 
 // Comprehensive claim detail component with tabs for billing, payments, and status
-function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
+export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
   claim: any;
   lineItems: any[];
   loadingLineItems: boolean;
@@ -111,6 +111,19 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   /** Refetch the claim's line items after one is added. */
   onLineItemAdded?: () => void;
 }) {
+  // `claimProp` is the list row the user clicked — a snapshot. Editing a line
+  // item recalculates the claim total server-side and invalidates every
+  // /api/claims* query, so the list row updated while this modal kept
+  // showing the stale snapshot ($300 after a 3→2 unit edit that the row
+  // already showed as $200; QA sweep 2026-11-18). Read the claim live here;
+  // the snapshot only covers the first paint before the fetch lands.
+  const { data: liveClaim } = useQuery<any>({
+    queryKey: [`/api/claims/${claimProp.id}`],
+    enabled: !!claimProp.id,
+    retry: false,
+  });
+  const claim: any = liveClaim ?? claimProp;
+
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const { toast } = useToast();
 
