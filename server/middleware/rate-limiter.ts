@@ -386,54 +386,6 @@ export const apiLimiter = createRateLimiter('api', {
 });
 
 /**
- * Rate limiter for the MCP OAuth authorize-page form (POST /authorize/callback)
- *
- * The form submits an MCP API key to complete a Claude Desktop connector
- * authorization. It sits at the site root, outside the /api general limiter,
- * so until this existed it was an unthrottled online brute-force surface for
- * API keys (CodeQL #134). Per IP, its own budget: sharing authLimiter's with
- * the login page would let one surface's failures lock the other (the same
- * reason mfaChallengeLimiter is separate). 10 per 15 minutes is generous for
- * a person pasting a key once or twice and useless for guessing a 256-bit key.
- *
- * Apply to: POST /authorize/callback
- */
-export const mcpOAuthCallbackLimiter = createRateLimiter('mcp-oauth-callback', {
-  maxRequests: parseInt(process.env.RATE_LIMIT_MAX_MCP_OAUTH_CALLBACK || '10', 10),
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  description: 'MCP OAuth callback rate limiter',
-  keyGenerator: authKeyGenerator,
-  message: 'Too many authorization attempts. Please try again in 15 minutes.',
-});
-/**
- * Rate limiter for the MCP transport (/mcp)
- *
- * Every request to /mcp, authenticated or not, costs a bearer-token
- * verification and an API-key hash lookup in the database before any JSON-RPC
- * work. The router is mounted at the site root, outside the /api general
- * limiter, so an unauthenticated caller could drive that lookup without any
- * throttle (CodeQL #135). This caps requests per IP per minute and is mounted
- * on the router BEFORE bearer auth, so excess traffic never reaches the
- * verifier or the database.
- *
- * Why per-IP and why 120/min: the caller is not identified until after the
- * lookup this limiter protects, so IP is the only key available at this point.
- * A legitimate MCP client (Claude Desktop) issues human-paced tool calls, a
- * handful per minute; 120/min leaves ample room for bursts while bounding an
- * anonymous probe to two lookups per second. Override with
- * RATE_LIMIT_MAX_MCP_TRANSPORT_PER_MIN if a real integration needs more.
- *
- * Apply to: all methods on /mcp (POST handles JSON-RPC; GET/DELETE answer 405
- * but still run bearer auth first).
- */
-export const mcpTransportLimiter = createRateLimiter('mcp-transport', {
-  maxRequests: parseInt(process.env.RATE_LIMIT_MAX_MCP_TRANSPORT_PER_MIN || '120', 10),
-  windowMs: 60 * 1000, // 1 minute
-  description: 'MCP transport rate limiter',
-  keyGenerator: authKeyGenerator,
-  message: 'Too many MCP requests from this address. Please slow down and retry in a minute.',
-});
-/**
  * Rate limiter for file upload endpoints
  *
  * Stricter limits due to resource-intensive operations:

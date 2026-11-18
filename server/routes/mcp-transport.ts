@@ -27,7 +27,7 @@ import {
 } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { TherapyBillOAuthProvider } from '../mcp/oauth-provider';
 import { authenticateKey } from '../mcp/auth';
-import { mcpTransportLimiter } from '../middleware/rate-limiter';
+import { mcpTransportLimiter } from '../middleware/mcpRateLimits';
 import { createMcpServer } from '../mcp/server';
 import logger from '../services/logger';
 import type { McpPracticeContext } from '../mcp/types';

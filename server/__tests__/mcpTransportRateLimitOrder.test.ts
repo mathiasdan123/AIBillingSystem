@@ -37,6 +37,7 @@ vi.mock('../mcp/server', async () => {
   };
 });
 vi.mock('../services/redisClient', () => ({
+  initRedisClient: () => null,
   getRedisClient: () => null,
   isRedisReady: () => false,
   isRedisConfigured: () => false,
@@ -48,7 +49,7 @@ vi.mock('../services/logger', () => ({
 import express from 'express';
 import request from 'supertest';
 import mcpTransportRouter from '../routes/mcp-transport';
-import { clearRateLimitStore, stopCleanupInterval } from '../middleware/rate-limiter';
+import { mcpTransportLimiter } from '../middleware/mcpRateLimits';
 
 const MCP_HEADERS = {
   'Content-Type': 'application/json',
@@ -59,14 +60,15 @@ const PING = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pin
 
 function makeApp() {
   const app = express();
-  app.set('trust proxy', true);
+  app.set('trust proxy', 1);
   app.use(express.json());
   app.use('/mcp', mcpTransportRouter);
   return app;
 }
 
-beforeEach(() => {
-  clearRateLimitStore();
+beforeEach(async () => {
+  // express-rate-limit's in-memory store lives for the module; reset the IPs these tests use.
+  for (const ip of ['203.0.113.77', '203.0.113.78']) await mcpTransportLimiter.resetKey(ip);
   bearerCalls.n = 0;
   authenticateKey.mockClear();
 });
@@ -81,7 +83,7 @@ describe('/mcp rate limiter ordering', () => {
     expect(authenticateKey).toHaveBeenCalledTimes(3);
 
     const res = await request(app).post('/mcp').set(MCP_HEADERS).set('X-Forwarded-For', '203.0.113.77').send(PING).expect(429);
-    expect(res.body.error).toBe('RATE_LIMIT_EXCEEDED');
+    expect(res.body.error).toMatch(/Too many MCP requests/);
     // The fourth request never reached auth or the database.
     expect(bearerCalls.n).toBe(3);
     expect(authenticateKey).toHaveBeenCalledTimes(3);
@@ -96,4 +98,3 @@ describe('/mcp rate limiter ordering', () => {
   });
 });
 
-stopCleanupInterval();
