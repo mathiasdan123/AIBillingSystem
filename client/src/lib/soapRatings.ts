@@ -7,8 +7,14 @@
  * while the generate request's global `assessment` object came from a
  * separate form section the therapist never touched. The server now carries
  * the per-exercise ratings and derives a blank global field from them; the
- * page does the same derivation here so the request body itself is right
- * and the global selects reflect what the therapist chose.
+ * page does the same derivation here so the request body itself is right.
+ *
+ * The derivation is applied at READ time only (buildRequestAssessment for
+ * the request, and for displaying the global selects), never written back
+ * into the global state. Review on #471: writing it back made a derived
+ * value indistinguishable from a typed one, so after Apply to All "Minimal
+ * Assist" a second Apply to All "Moderate Assist" still sent Minimal. Only a
+ * value set on the global control itself counts as typed.
  */
 
 export interface SoapActivityRatings {
