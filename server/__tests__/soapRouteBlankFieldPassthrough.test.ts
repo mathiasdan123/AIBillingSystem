@@ -89,6 +89,18 @@ describe('POST /api/ai/generate-soap-billing — blank field passthrough', () =>
     expect(sentRequest.planNextSteps).not.toBe('Continue Current Goals');
   });
 
+  it('does not default an omitted assessment object to fabricated observations', async () => {
+    await request(app)
+      .post('/api/ai/generate-soap-billing')
+      .send({ patientId: 7, activities: ['Obstacle Course'], duration: 45 })
+      .expect(200);
+    const sent = mockGenerate.mock.calls[0][0];
+    // The old default invented "Stable" / "Minimal Assist" / "Adequate" /
+    // "Mild Difficulty" / "Needed Minimal Supports" as if the therapist had
+    // documented them. Every field must now arrive blank ("not documented").
+    expect(sent.assessment).toEqual({ performance: '', assistance: '', strength: '', motorPlanning: '', sensoryRegulation: '' });
+  });
+
   it('still passes through a real, therapist-supplied mood and plan unchanged', async () => {
     await request(app)
       .post('/api/ai/generate-soap-billing')

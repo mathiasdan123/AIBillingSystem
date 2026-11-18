@@ -255,11 +255,20 @@ export async function generateSoapNoteAndBilling(
   // Calculate available billing units
   const billingUnits = Math.floor(request.duration / 15);
 
+  // What the fallback template may legitimately refer to. Same two facts the
+  // AI path's CASE A / CASE B rules key on: without a prior plan there is no
+  // home program to "continue", and without goals on file there are no
+  // "current treatment goals" to address.
+  const fallbackContext: FallbackContext = {
+    hasPriorPlan: !!priorSessions?.[0]?.plan,
+    hasGoals: !!(treatmentGoals && treatmentGoals.length > 0),
+  };
+
   // Forced fallback (demo-only test fixture, see GenerateSoapOptions): same
   // function, same inputs as the real outage path, no model call, no spend.
   if (options.forceFallback) {
     console.log("Using fallback rule-based SOAP generation (forced by demo test fixture)");
-    return fallbackGeneration(request, patient, billingUnits);
+    return applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request);
   }
 
   // Check if Anthropic is available
@@ -267,7 +276,7 @@ export async function generateSoapNoteAndBilling(
   if (!client) {
     // Use fallback generation when AI is not available
     console.log("Using fallback rule-based SOAP generation (no API key)");
-    return fallbackGeneration(request, patient, billingUnits);
+    return applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request);
   }
 
   // Build the AI prompt
@@ -363,8 +372,50 @@ export async function generateSoapNoteAndBilling(
   } catch (error) {
     console.error("AI generation error:", error);
     // Fallback to rule-based generation if AI fails
-    return fallbackGeneration(request, patient, billingUnits);
+    return applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request);
   }
+}
+
+/**
+ * Price a finished response at the practice's configured per-code rates,
+ * exactly as validateAndEnhanceResponse does for the AI path. Without this the
+ * fallback priced every code at the flat $289 estimate while the AI path used
+ * the practice's real fee (e.g. $100 in the demo), so the same session showed
+ * a different dollar figure depending on which generator ran (therapybill-qa
+ * #2 retest). A configured practice rate wins; codes without one keep the
+ * estimate rate. Any lookup failure leaves the response unchanged.
+ */
+export async function applyPracticeCptRates(
+  response: AiSoapBillingResponse,
+  request: AiSoapBillingRequest,
+): Promise<AiSoapBillingResponse> {
+  if (!request.practiceId) return response;
+  const perCodeRates = new Map<string, number>();
+  try {
+    const catalog = await storage.getCptCodes();
+    for (const code of response.cptCodes) {
+      const cpt = catalog.find((c: any) => c.code === code.code);
+      if (!cpt) continue;
+      const rateStr = await storage.resolvePracticeCptRate(request.practiceId, cpt.id);
+      if (rateStr !== null && rateStr !== undefined) perCodeRates.set(code.code, parseFloat(rateStr));
+    }
+  } catch (e) {
+    logger.warn('Per-code practice rate lookup failed for fallback SOAP billing estimate', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return response;
+  }
+  if (perCodeRates.size === 0) return response;
+  for (const code of response.cptCodes) {
+    const realRate = perCodeRates.get(code.code);
+    if (realRate !== undefined) code.reimbursement = realRate * code.units;
+  }
+  for (const block of response.timeBlocks) {
+    const realRate = perCodeRates.get(block.code);
+    if (realRate !== undefined) block.rate = realRate;
+  }
+  response.totalReimbursement = response.cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
+  return response;
 }
 
 export function buildSystemPrompt(insuranceData: any): string {
@@ -1642,10 +1693,24 @@ export async function validateAndEnhanceResponse(
 /**
  * Fallback generation if AI is unavailable
  */
+/** What the fallback template may refer to; both default to false (CASE A). */
+export interface FallbackContext {
+  /** A prior signed note with a Plan exists, so "continue current ..." has a referent. */
+  hasPriorPlan?: boolean;
+  /** Active treatment goals are on file, so "current treatment goals" exist. */
+  hasGoals?: boolean;
+}
+
+/** True only for a non-blank string: '' and undefined are "not documented". */
+function documented(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 export function fallbackGeneration(
   request: AiSoapBillingRequest,
   patient: any,
-  billingUnits: number
+  billingUnits: number,
+  context: FallbackContext = {},
 ): AiSoapBillingResponse {
 
   // Use manual rate override if provided, otherwise use default $289/unit
@@ -1753,9 +1818,31 @@ export function fallbackGeneration(
   const subjective = ensureSubjectivePresent([caregiverLine, moodLine].filter(Boolean).join('\n\n'));
 
   // Build objective section — grounded ONLY in the provided activities and
-  // assessment fields. No invented trials, cue counts, equipment specifics, or
-  // assistance-level progression.
-  const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${request.activities.map(a => `• ${a}`).join('\n')}\n\nAssistance level: ${request.assessment.assistance}.\n\nClinical observations as documented by the treating therapist:\n• Overall performance: ${request.assessment.performance}\n• Strength/endurance: ${request.assessment.strength}\n• Motor planning: ${request.assessment.motorPlanning}\n• Sensory regulation: ${request.assessment.sensoryRegulation}${request.assessment.posturalControl ? `\n• Postural control: ${request.assessment.posturalControl}` : ''}${request.assessment.fineMotor ? `\n• Fine motor: ${request.assessment.fineMotor}` : ''}${request.assessment.bilateralCoordination ? `\n• Bilateral coordination: ${request.assessment.bilateralCoordination}` : ''}`;
+  // the assessment fields the therapist actually filled in. A blank field is
+  // OMITTED: the template used to print "Assistance level: ." and
+  // "• Strength/endurance: " for blank inputs (therapybill-qa #2 retest),
+  // which is an empty label in a legal document. The route no longer
+  // substitutes defaults for a missing assessment object, so '' and
+  // undefined both mean "not documented" here.
+  const a = (request.assessment ?? {}) as Partial<AiSoapBillingRequest['assessment']>;
+  const observationLines = (
+    [
+      ['Overall performance', a.performance],
+      ['Strength/endurance', a.strength],
+      ['Motor planning', a.motorPlanning],
+      ['Sensory regulation', a.sensoryRegulation],
+      ['Postural control', a.posturalControl],
+      ['Fine motor', a.fineMotor],
+      ['Bilateral coordination', a.bilateralCoordination],
+    ] as Array<[string, unknown]>
+  )
+    .filter(([, v]) => documented(v))
+    .map(([label, v]) => `• ${label}: ${(v as string).trim()}`);
+  const assistanceLine = documented(a.assistance) ? `\n\nAssistance level: ${a.assistance.trim()}.` : '';
+  const observationsBlock = observationLines.length
+    ? `\n\nClinical observations as documented by the treating therapist:\n${observationLines.join('\n')}`
+    : `\n\nClinical observations: not documented for this session beyond the activities listed.`;
+  const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${request.activities.map(a => `• ${a}`).join('\n')}${assistanceLine}${observationsBlock}`;
 
   // Build assessment section — clinical interpretation anchored to the
   // observations actually provided; no fabricated reflexes, prior-session
@@ -1765,32 +1852,57 @@ export function fallbackGeneration(
   // the documented observations actually show deficits. On a thin note, skip
   // the sentence entirely — a generic necessity claim weakens documentation
   // more than leaving it out.
-  const hasDocumentedDeficits = [
-    request.assessment.strength,
-    request.assessment.motorPlanning,
-    request.assessment.sensoryRegulation,
-  ].some((f) => /poor|decreas|difficult|limit|delay|reduc/i.test(f));
+  const hasDocumentedDeficits = [a.strength, a.motorPlanning, a.sensoryRegulation]
+    .filter(documented)
+    .some((f) => /poor|decreas|difficult|limit|delay|reduc/i.test(f));
   const necessityParagraph = hasDocumentedDeficits
     ? `\n\nSkilled OT was required to grade and adapt the above activities to the patient's documented deficits in the areas noted above, supporting safer and more effective functional participation. Continued skilled occupational therapy is indicated to address these documented deficits.`
     : '';
   // Same blank-field rule as the Subjective section: an unset mood is
   // omitted, never defaulted into a sentence that would otherwise read
   // "presented as  and participated..." (literal double space) or assert a
-  // presentation that was never documented.
+  // presentation that was never documented. The assistance level is treated
+  // the same way: "with assistance" is only written when a level was entered.
   const presentedAsClause = request.mood ? `presented as ${request.mood.toLowerCase()} and ` : '';
-  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy with ${request.assessment.assistance.toLowerCase()} assistance. Skilled clinical analysis and therapist-directed adaptation were provided to support performance across the documented activities.\n\nFunctional performance this session: ${request.assessment.performance}. Strength/endurance: ${request.assessment.strength}. Motor planning: ${request.assessment.motorPlanning}. Sensory regulation: ${request.assessment.sensoryRegulation}.${necessityParagraph}`;
+  const assistanceClause = documented(a.assistance) ? ` with ${a.assistance.trim().toLowerCase()} assistance` : '';
+  const performanceSentences = (
+    [
+      ['Functional performance this session', a.performance],
+      ['Strength/endurance', a.strength],
+      ['Motor planning', a.motorPlanning],
+      ['Sensory regulation', a.sensoryRegulation],
+    ] as Array<[string, unknown]>
+  )
+    .filter(([, v]) => documented(v))
+    .map(([label, v]) => `${label}: ${(v as string).trim()}.`)
+    .join(' ');
+  const assessment = `${patientName} ${presentedAsClause}participated in skilled occupational therapy${assistanceClause}. Skilled clinical analysis and therapist-directed adaptation were provided to support performance across the documented activities.${performanceSentences ? `\n\n${performanceSentences}` : ''}${necessityParagraph}`;
 
-  // Build plan section. Home-program wording follows the reviewer's guidance:
-  // when no new home program was provided, do not invent one or imply parent
-  // education occurred — note continuation of current strategies. Next
-  // session focus is similarly omitted entirely when blank, rather than
-  // rendering a bare "• " or the literal string "undefined".
+  // Build plan section. Mirrors the AI path's CASE A / CASE B rules:
+  //  - "Continue occupational therapy to address current treatment goals" is
+  //    written only when goals are on file (hasGoals); otherwise it asserts a
+  //    plan of care that does not exist.
+  //  - With no home program entered: "Reviewed continuation of current home
+  //    strategies" only when a prior plan exists (hasPriorPlan) to continue;
+  //    otherwise "No home program assigned this session." Never invent one or
+  //    imply parent education occurred.
+  //  - Next-session bullets come only from what the therapist typed, and the
+  //    whole subsection is omitted when both fields are blank.
+  const { hasPriorPlan = false, hasGoals = false } = context;
   const nextSessionBullets = [request.planNextSteps, request.nextSessionFocus]
-    .filter((item): item is string => !!item)
-    .map((item) => `• ${item}`)
+    .filter(documented)
+    .map((item) => `• ${item.trim()}`)
     .join('\n');
-  const nextSessionSection = nextSessionBullets ? `Next session focus:\n${nextSessionBullets}\n\n` : '';
-  const plan = `Continue occupational therapy to address current treatment goals.\n\n${nextSessionSection}Home program:\n${request.homeProgram ? `• ${request.homeProgram}` : '• Reviewed continuation of current home strategies; no changes to home program at this time.'}`;
+  const nextSessionSection = nextSessionBullets ? `Next session focus:\n${nextSessionBullets}` : '';
+  const goalsOpener = hasGoals ? 'Continue occupational therapy to address current treatment goals.' : '';
+  const homeProgramLine = documented(request.homeProgram)
+    ? `• ${request.homeProgram.trim()}`
+    : hasPriorPlan
+      ? '• Reviewed continuation of current home strategies; no changes to home program at this time.'
+      : '• No home program assigned this session.';
+  const plan = [goalsOpener, nextSessionSection, `Home program:\n${homeProgramLine}`]
+    .filter(Boolean)
+    .join('\n\n');
 
   return {
     subjective,

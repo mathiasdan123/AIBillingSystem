@@ -18,6 +18,7 @@ const { mockStorage, streamCalls } = vi.hoisted(() => ({
     getTreatmentGoals: vi.fn(async () => []),
     getRecentSoapNotesForPatient: vi.fn(async () => []),
     getCptCodes: vi.fn(async () => []),
+    resolvePracticeCptRate: vi.fn(async () => null),
   },
   streamCalls: [] as unknown[],
 }));
@@ -98,6 +99,31 @@ describe('forceFallback option', () => {
     // No fabricated age may leak into the fallback note for a blank DOB.
     const text = [result.subjective, result.objective, result.assessment, result.plan].join(' ');
     expect(text).not.toMatch(/\b56\s*years?\b/i);
+  });
+
+  it('prices the fallback at the practice\'s configured per-code rate, like the AI path (QA #2 retest)', async () => {
+    // Demo practice: every treatment code configured at $100, not the $289 estimate.
+    mockStorage.getCptCodes.mockResolvedValueOnce([
+      { id: 1, code: '97530' }, { id: 2, code: '97112' }, { id: 3, code: '97110' },
+    ]);
+    mockStorage.resolvePracticeCptRate.mockResolvedValue('100.00');
+
+    const result = await generateSoapNoteAndBilling(BASE_REQUEST, { forceFallback: true });
+
+    expect(result.cptCodes.length).toBeGreaterThan(0);
+    for (const code of result.cptCodes) expect(code.reimbursement).toBe(100 * code.units);
+    for (const block of result.timeBlocks) expect(block.rate).toBe(100);
+    expect(result.totalReimbursement).toBe(result.cptCodes.reduce((s, c) => s + c.reimbursement, 0));
+    expect(mockStorage.resolvePracticeCptRate).toHaveBeenCalledWith(1, expect.any(Number));
+  });
+
+  it('keeps the flat estimate when the practice has no configured rate for a code', async () => {
+    mockStorage.getCptCodes.mockResolvedValueOnce([{ id: 1, code: '97530' }, { id: 2, code: '97112' }, { id: 3, code: '97110' }]);
+    mockStorage.resolvePracticeCptRate.mockResolvedValue(null);
+
+    const result = await generateSoapNoteAndBilling(BASE_REQUEST, { forceFallback: true });
+
+    for (const code of result.cptCodes) expect(code.reimbursement).toBe(289 * code.units);
   });
 
   it('without the option, the AI path is still attempted (contrast)', async () => {
