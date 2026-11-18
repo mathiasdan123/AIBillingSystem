@@ -28,6 +28,8 @@
 import { storage } from '../storage';
 import { getPool } from '../db';
 import logger from './logger';
+import { getBusinessTimeZone, zonedAddDays, zonedDateString, zonedInstant } from '../utils/timezone';
+import { zonedTimeString } from '../utils/dateOnly';
 import type { Practice } from '@shared/schema';
 
 // Advisory-lock key that serializes concurrent ensureDemoPractice() calls, so
@@ -41,16 +43,26 @@ export const DEMO_PRACTICE_NAME = 'Bright Steps Pediatric Therapy (Demo)';
 // submit_claim refuses demo practices, so this is never sent to a payer.
 const DEMO_NPI = '0000000001';
 
-/** A day at a fixed clock time, offset from today. */
+/**
+ * A day at a fixed PRACTICE wall-clock time, offset from today.
+ *
+ * Built in the business timezone (America/New_York unless TIMEZONE is set),
+ * not the process zone: on ECS the process runs in UTC, so the previous
+ * `setHours(9)` seeded "9:00 AM" appointments at 09:00Z = 4:00 AM Eastern.
+ * They only LOOKED right because the calendar grid was rendering UTC hours
+ * (fixed 2026-11-18); once the grid rendered local time the demo day would
+ * have started at 4 AM. Same helper the booking route uses to store a
+ * patient's requested slot.
+ */
 function dayAt(offsetDays: number, hour = 10, minute = 0): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  d.setHours(hour, minute, 0, 0);
-  return d;
+  const tz = getBusinessTimeZone();
+  const day = zonedDateString(zonedAddDays(new Date(), offsetDays, tz), tz);
+  return zonedInstant(day, `${hour}:${minute}`, tz);
 }
-/** YYYY-MM-DD offset from today. */
+/** YYYY-MM-DD (practice calendar day) offset from today. */
 function isoDate(offsetDays: number): string {
-  return dayAt(offsetDays).toISOString().split('T')[0];
+  const tz = getBusinessTimeZone();
+  return zonedDateString(zonedAddDays(new Date(), offsetDays, tz), tz);
 }
 
 /**
@@ -154,6 +166,8 @@ export async function ensureDemoPractice(): Promise<Practice> {
       await normalizeDemoRates(existing.id);
       await repairDemoRowFlags(existing.id);
       await ensureDemoFixturePatients(existing.id);
+      const therapistId = await ensureDemoTherapist(existing.id);
+      await repairDemoSeededAppointments(existing.id, therapistId);
       return existing;
     }
   }
@@ -195,6 +209,8 @@ export async function ensureDemoPractice(): Promise<Practice> {
     await normalizeDemoRates(practice.id);
     await repairDemoRowFlags(practice.id);
     await ensureDemoFixturePatients(practice.id);
+    const therapistId = await ensureDemoTherapist(practice.id);
+    await repairDemoSeededAppointments(practice.id, therapistId);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
@@ -242,6 +258,125 @@ export const DEMO_FIXTURE_PATIENTS = [
  * Create any QA fixture patient the demo practice does not have yet.
  * Idempotent: looks each fixture up by email within this practice first.
  */
+/**
+ * The demo practice's one therapist user. Every demo LOGIN account is an
+ * admin (DEMO_ACCOUNTS in routes/auth.ts), and /api/therapists lists only
+ * role='therapist' users, so until this existed the New Appointment dialog's
+ * therapist picker had zero options in the demo and every demo appointment
+ * was saved unassigned (QA sweep 2026-11-18). This user has no password and
+ * cannot log in; it exists to be picked. The id is deterministic so the
+ * upsert is idempotent across logins and re-seeds.
+ */
+export const DEMO_THERAPIST = {
+  firstName: 'Maya',
+  lastName: 'Chen',
+  credentials: 'OTR/L',
+  email: 'maya.chen@demo.therapybill.com',
+  // Clearly-fake placeholder like DEMO_NPI; never reaches a payer.
+  npiNumber: '0000000002',
+};
+
+export async function ensureDemoTherapist(practiceId: number): Promise<string> {
+  const existing = await storage.getTherapistsByPractice(practiceId);
+  if (existing.length > 0) return existing[0].id;
+  const created = await storage.upsertUser({
+    id: `demo-therapist-${practiceId}`,
+    email: DEMO_THERAPIST.email,
+    firstName: DEMO_THERAPIST.firstName,
+    lastName: DEMO_THERAPIST.lastName,
+    credentials: DEMO_THERAPIST.credentials,
+    npiNumber: DEMO_THERAPIST.npiNumber,
+    practiceId,
+    role: 'therapist',
+  } as any);
+  logger.info('Demo therapist user created', { practiceId, userId: created.id });
+  return created.id;
+}
+
+/** Title seedDemoData gives every appointment it creates. */
+export const DEMO_SEED_APPOINTMENT_TITLE = 'Occupational Therapy';
+// What the seed intends, in practice wall-clock hours: 9 + (i % 6) → 9..14.
+const SEED_FIRST_HOUR = 9;
+const SEED_LAST_HOUR = 14;
+
+/**
+ * True for a start time the OLD seed wrote: `setHours(9 + i % 6)` in the
+ * process zone, UTC on ECS, i.e. an instant at exactly HH:00:00.000Z with HH
+ * in 9..14 whose practice-local hour is therefore outside 9..14 (4–9 AM
+ * Eastern). The new seed writes practice-local 9..14 = 13..19Z, so it never
+ * matches; neither does anything a demo visitor books through the dialog at
+ * a sane hour (a 9:00 AM Eastern booking is 14:00Z, local hour 9 → excluded).
+ * In a practice whose zone IS UTC the two seeds coincide and nothing matches.
+ */
+export function isProcessZoneSeedTime(start: Date, timeZone: string): boolean {
+  if (start.getUTCMinutes() !== 0 || start.getUTCSeconds() !== 0 || start.getUTCMilliseconds() !== 0) return false;
+  const utcHour = start.getUTCHours();
+  if (utcHour < SEED_FIRST_HOUR || utcHour > SEED_LAST_HOUR) return false;
+  const localHour = parseInt(zonedTimeString(start, timeZone).slice(0, 2), 10);
+  return localHour < SEED_FIRST_HOUR || localHour > SEED_LAST_HOUR;
+}
+
+/**
+ * One-time repair for demo practices seeded before 2026-11-18, when
+ * seedDemoData built appointment times with setHours() in the process zone.
+ * On ECS that is UTC, so "9:00 AM" appointments were stored at 09:00Z = 4:00
+ * AM Eastern. The calendar grid rendered UTC hours back then, which hid it;
+ * once the grid rendered local time (PR #465) those rows drew at 4–9 AM and
+ * fell off the 8 AM grid. Also assigns the demo therapist to seeded rows
+ * that predate the therapist user.
+ *
+ * Idempotent and cheap: one practice-scoped read per demo login; after the
+ * first pass nothing matches and nothing is written. Scope is the demo
+ * practice id only (callers pass it from ensureDemoPractice), the seed's
+ * title, and the predicate above, so hand-booked demo appointments are left
+ * alone. Appointments carry no explicit "seeded" marker; the title plus an
+ * exact-hour UTC instant at a nonsensical local hour is the safest available
+ * signature. Never blocks a demo login: failures are logged.
+ */
+export async function repairDemoSeededAppointments(
+  practiceId: number,
+  therapistId: string,
+): Promise<{ retimed: number; assigned: number }> {
+  const result = { retimed: 0, assigned: 0 };
+  try {
+    const tz = getBusinessTimeZone();
+    const rows = await storage.getAppointments(practiceId);
+    for (const appt of rows) {
+      if (appt.title !== DEMO_SEED_APPOINTMENT_TITLE) continue;
+      const patch: Record<string, unknown> = {};
+      const start = new Date(appt.startTime as any);
+      if (isProcessZoneSeedTime(start, tz)) {
+        // The UTC hour the old seed wrote IS the practice-local hour it meant.
+        const intendedHour = start.getUTCHours();
+        const localDay = zonedDateString(start, tz);
+        const newStart = zonedInstant(localDay, `${intendedHour}:00`, tz);
+        const durationMs = appt.endTime
+          ? Math.max(new Date(appt.endTime as any).getTime() - start.getTime(), 15 * 60 * 1000)
+          : 45 * 60 * 1000;
+        patch.startTime = newStart;
+        patch.endTime = new Date(newStart.getTime() + durationMs);
+        result.retimed++;
+      }
+      if (!appt.therapistId) {
+        patch.therapistId = therapistId;
+        result.assigned++;
+      }
+      if (Object.keys(patch).length > 0) {
+        await storage.updateAppointment(appt.id, patch as any);
+      }
+    }
+    if (result.retimed || result.assigned) {
+      logger.info('Repaired demo seeded appointments', { practiceId, ...result });
+    }
+  } catch (error) {
+    logger.warn('Could not repair demo seeded appointments', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return result;
+}
+
 export async function ensureDemoFixturePatients(practiceId: number): Promise<number> {
   let created = 0;
   for (const f of DEMO_FIXTURE_PATIENTS) {
@@ -283,6 +418,9 @@ const DEMO_CLAIMS = [
 ];
 
 async function seedDemoData(practiceId: number): Promise<void> {
+  // Therapist first so the seeded appointments can be assigned to someone.
+  const therapistId = await ensureDemoTherapist(practiceId);
+
   // Patients (isDemo=false — see module header). createPatient encrypts PHI.
   const patientIds: number[] = [];
   for (let i = 0; i < DEMO_PATIENTS.length; i++) {
@@ -322,8 +460,9 @@ async function seedDemoData(practiceId: number): Promise<void> {
     await storage.createAppointment({
       practiceId,
       patientId: patientIds[a.patientIdx],
+      therapistId,
       isDemo: false,
-      title: 'Occupational Therapy',
+      title: DEMO_SEED_APPOINTMENT_TITLE,
       startTime: start,
       endTime: end,
       durationMinutes: 45,

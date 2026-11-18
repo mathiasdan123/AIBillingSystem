@@ -6,6 +6,7 @@ import { withAudit } from '../audit';
 import { withMcpMutationGate } from '../confirmation';
 import { rejectIfDemoDataMessage } from '../../services/bulkEligibilityService';
 import type { McpPracticeContext } from '../types';
+import { zonedInstant } from '../../utils/timezone';
 
 export function registerAppointmentTools(
   server: McpServer,
@@ -400,7 +401,10 @@ export function registerAppointmentTools(
           throw new Error('Patient not found in this practice.');
         }
         const duration = input.duration || 60;
-        const startTime = new Date(`${input.date}T${input.time}:00`);
+        // The caller's date + time are practice wall clock. `new Date(`${date}T${time}`)`
+        // built the instant in the PROCESS zone (UTC on ECS), booking a "09:00"
+        // request at 9:00 AM UTC = 4:00 AM Eastern. Same helper booking.ts uses.
+        const startTime = zonedInstant(input.date, input.time);
         if (isNaN(startTime.getTime())) {
           throw new Error('Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).');
         }

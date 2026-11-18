@@ -10,11 +10,12 @@ import { ToastAction } from "@/components/ui/toast";
 import { openBlanche } from "@/lib/blancheControl";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
-import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, ClipboardList, Send, ExternalLink, CreditCard, Pencil } from "lucide-react";
+import { Plus, Search, Users, Phone, Mail, Calendar, Shield, CheckCircle, XCircle, AlertCircle, Loader2, RefreshCw, DollarSign, TrendingUp, Upload, FileText, CheckCircle2, ListChecks, ClipboardCheck, ClipboardList, Send, ExternalLink, CreditCard, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import PatientIntakeForm from "@/components/PatientIntakeForm";
 import RecordExistingConsentDialog from "@/components/RecordExistingConsentDialog";
 import CostEstimationCard from "@/components/PatientInsuranceData/CostEstimationCard";
@@ -576,6 +577,12 @@ export default function Patients() {
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [insuranceEditOpen, setInsuranceEditOpen] = useState(false);
   const [recordConsentOpen, setRecordConsentOpen] = useState(false);
+  // Archive (QA 2026-11-18: no delete or archive control existed). Archived
+  // patients leave the default list, search and pickers; the "Archived" view
+  // lists them for unarchiving. Nothing is deleted.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+
   // Inline demographics editing on the Details tab.
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailsForm, setDetailsForm] = useState({
@@ -740,6 +747,46 @@ export default function Patients() {
 
   // Handle both paginated response { data: [...] } and legacy plain array
   const patients = Array.isArray(patientsResponse) ? patientsResponse : patientsResponse?.data || patientsResponse;
+
+  // Archived view: a separate query so the default list (and every other
+  // consumer of ['/api/patients']) never sees archived rows.
+  const { data: archivedResponse } = useQuery({
+    queryKey: ['/api/patients', '?archived=only'],
+    enabled: isAuthenticated && showArchived,
+    retry: false,
+  }) as any;
+  const archivedPatients = Array.isArray(archivedResponse) ? archivedResponse : archivedResponse?.data || [];
+
+  const archiveMutation = useMutation({
+    mutationFn: async (patientId: number) => {
+      const res = await apiRequest("PATCH", `/api/patients/${patientId}/archive`);
+      return res.json();
+    },
+    onSuccess: (updated: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/patients'] });
+      setArchiveDialogOpen(false);
+      setSelectedPatient(null);
+      toast({ title: "Patient archived", description: `${updated.firstName} ${updated.lastName} is hidden from lists and pickers. Use "Show archived" to restore.` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Couldn't archive patient", description: String(error?.message ?? "").replace(/^\d{3}:\s*/, "") || "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: async (patientId: number) => {
+      const res = await apiRequest("PATCH", `/api/patients/${patientId}/unarchive`);
+      return res.json();
+    },
+    onSuccess: (updated: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/patients'] });
+      setSelectedPatient((prev: any) => (prev ? { ...prev, ...updated } : prev));
+      toast({ title: "Patient restored", description: `${updated.firstName} ${updated.lastName} is back in the active list.` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Couldn't restore patient", description: String(error?.message ?? "").replace(/^\d{3}:\s*/, "") || "Please try again.", variant: "destructive" });
+    },
+  });
 
   const checkEligibilityMutation = useMutation({
     mutationFn: async (data: { patientId: number; insuranceId?: number }) => {
@@ -1096,7 +1143,7 @@ export default function Patients() {
     return null;
   }
 
-  const filteredPatients = (patients as any[])?.filter((patient: any) => {
+  const filteredPatients = ((showArchived ? archivedPatients : patients) as any[])?.filter((patient: any) => {
     const fullName = `${patient.firstName} ${patient.lastName}`.toLowerCase();
     const email = patient.email?.toLowerCase() || "";
     const phone = patient.phone?.toLowerCase() || "";
@@ -1158,6 +1205,15 @@ export default function Patients() {
               className="pl-10 min-h-[44px]"
             />
           </div>
+          <Button
+            variant={showArchived ? "secondary" : "outline"}
+            onClick={() => setShowArchived((v) => !v)}
+            className="whitespace-nowrap min-h-[44px] text-xs md:text-sm"
+            data-testid="toggle-show-archived"
+          >
+            <Archive className="w-4 h-4 mr-1 md:mr-2" />
+            {showArchived ? "Viewing archived" : "Show archived"}
+          </Button>
           {selectedPatientIds.size > 0 && (
             <Button
               onClick={() => bulkEligibilityMutation.mutate(Array.from(selectedPatientIds))}
@@ -1252,6 +1308,11 @@ export default function Patients() {
                     <CardTitle className="text-lg flex items-center gap-2">
                       <span>{patient.firstName} {patient.lastName}</span>
                       <DemoBadge show={!!(patient as any).isDemo} />
+                      {patient.archivedAt && (
+                        <Badge variant="outline" className="text-muted-foreground" data-testid={`badge-archived-${patient.id}`}>
+                          Archived
+                        </Badge>
+                      )}
                     </CardTitle>
                     <CardDescription>
                       {patient.dateOfBirth && (
@@ -1523,6 +1584,29 @@ export default function Patients() {
                   <ExternalLink className="w-4 h-4 mr-1" />
                   Preview Portal
                 </Button>
+                {selectedPatient.archivedAt ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => unarchiveMutation.mutate(selectedPatient.id)}
+                    disabled={unarchiveMutation.isPending}
+                    data-testid="button-unarchive-patient"
+                  >
+                    <ArchiveRestore className="w-4 h-4 mr-1" />
+                    Unarchive
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => setArchiveDialogOpen(true)}
+                    data-testid="button-archive-patient"
+                  >
+                    <Archive className="w-4 h-4 mr-1" />
+                    Archive patient
+                  </Button>
+                )}
                 {/* Initial Evaluation entry point (Megan: "Is there a
                     possibility to input a client for an initial evaluation?") */}
                 <Button
@@ -1540,6 +1624,36 @@ export default function Patients() {
                 see at-a-glance "this is the Janet who has an appointment
                 today" when there are duplicate patients. Loads on demand
                 when the modal opens. */}
+            {selectedPatient.archivedAt && (
+              <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="archived-notice">
+                This patient is archived: hidden from lists and pickers, and no new appointments or claims can be created until unarchived.
+              </div>
+            )}
+            <AlertDialog open={archiveDialogOpen} onOpenChange={setArchiveDialogOpen}>
+              <AlertDialogContent data-testid="dialog-archive-patient">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Archive {selectedPatient.firstName} {selectedPatient.lastName}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Nothing is deleted. The patient disappears from the patient list, search and scheduling pickers, and no new
+                    appointments or claims can be created for them. Existing notes, claims and appointments stay on file, and you can
+                    unarchive at any time from the Archived view.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="button-cancel-archive-patient">Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={archiveMutation.isPending}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      archiveMutation.mutate(selectedPatient.id);
+                    }}
+                    data-testid="button-confirm-archive-patient"
+                  >
+                    {archiveMutation.isPending ? "Archiving…" : "Archive patient"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <UpcomingAppointmentsSummary patientId={selectedPatient.id} />
             <Tabs defaultValue="details" className="w-full">
               {/* Billing tab shows claim charges and balances — admin/billing
