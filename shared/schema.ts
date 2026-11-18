@@ -4005,8 +4005,16 @@ export const claimFollowUps = pgTable("claim_follow_ups", {
   priority: varchar("priority").default("medium").notNull(), // low, medium, high, urgent
   notes: text("notes"),
   assignedTo: varchar("assigned_to").references(() => users.id),
+  // Date-only semantics: stored as UTC midnight of the calendar day the
+  // biller picked (parseDateOnly). Render from the YYYY-MM-DD part, never
+  // through a local-time Date, or 2027-01-17 shows as Jan 16 in Eastern.
   dueDate: timestamp("due_date"),
   completedAt: timestamp("completed_at"),
+  // Who marked it complete (QA 2026-11-18 work-queue actions).
+  completedBy: varchar("completed_by").references(() => users.id),
+  // Hidden from the open queue until this instant (start of the chosen day
+  // in the practice timezone); null = not snoozed.
+  snoozedUntil: timestamp("snoozed_until"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
