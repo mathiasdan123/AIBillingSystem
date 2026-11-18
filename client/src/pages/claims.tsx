@@ -1206,11 +1206,20 @@ export default function Claims() {
   // column, which the DB default makes true) as sandbox.
   const isSandboxMode = practice ? practice.sandboxMode !== false : false;
 
+  // `archived=include`: this list resolves the patient NAME on every claim
+  // card, the detail dialog and the insurance-fix dialog, and a claim keeps
+  // its patient after the patient is archived. The default list excludes
+  // archived patients (that is what archive means for pickers), which made
+  // an archived patient's existing claims read "Unknown" (QA 2026-11-18,
+  // right after #472). The new-claim picker filters archived rows back out
+  // below (`pickablePatients`); the server refuses a new claim for an
+  // archived patient regardless.
   const { data: patients } = useQuery<any[]>({
-    queryKey: [`/api/patients?practiceId=${practiceId}`],
+    queryKey: [`/api/patients?practiceId=${practiceId}&archived=include`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
+  const pickablePatients = (patients ?? []).filter((p: any) => !p.archivedAt);
 
   // Patient names are PHI-encrypted server-side and can't be searched in SQL, so
   // resolve the search term against the decrypted patient list here and pass the
@@ -2459,7 +2468,7 @@ export default function Claims() {
                                   <p className="text-sm text-muted-foreground py-2">No patient found.</p>
                                 </CommandEmpty>
                                 <CommandGroup>
-                                  {patients?.map((p: any) => (
+                                  {pickablePatients.map((p: any) => (
                                     <CommandItem
                                       key={p.id}
                                       value={`${p.firstName} ${p.lastName}`}

@@ -587,8 +587,11 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
       try {
         const soapNotes = await storage.getSoapNotes(practiceId);
         const sessionSoapNote = soapNotes.find((note: any) => note.sessionId === sessionId);
-        const patients = await storage.getPatients(practiceId);
-        const patient = patients.find((p: any) => p.id === patientId);
+        // By id, not via the practice list: the list excludes archived
+        // patients by default, and a by-id lookup is what every other claim
+        // route uses (QA 2026-11-18). Creation for an archived patient was
+        // already refused above, so this only removes the list round-trip.
+        const patient = await storage.getPatient(patientId);
 
         if (sessionSoapNote && patient) {
           const optimization = await claimOptimizer.optimizeClaim(
