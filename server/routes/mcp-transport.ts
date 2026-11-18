@@ -27,6 +27,7 @@ import {
 } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { TherapyBillOAuthProvider } from '../mcp/oauth-provider';
 import { authenticateKey } from '../mcp/auth';
+import { mcpTransportLimiter } from '../middleware/rate-limiter';
 import { createMcpServer } from '../mcp/server';
 import logger from '../services/logger';
 import type { McpPracticeContext } from '../mcp/types';
@@ -53,6 +54,12 @@ const bearerAuth = requireBearerAuth({
   requiredScopes: [],
   resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpServerUrl),
 });
+
+// Per-IP rate limit on every /mcp request, mounted BEFORE bearer auth so
+// excess (and unauthenticated) traffic is answered 429 without a token
+// verification or an API-key database lookup (CodeQL #135). /mcp is served at
+// the site root, outside the /api general limiter.
+router.use(mcpTransportLimiter);
 
 // ---------------------------------------------------------------------------
 // POST /mcp — Handle MCP JSON-RPC requests (with Bearer auth)

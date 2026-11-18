@@ -125,7 +125,7 @@ History: this step was added 2026-05-28 after a partial outage. Earlier docs cla
 - MFA re-verification timeout: 60 min of PHI **inactivity** for PHI/admin routes, sliding — refreshed by activity via `touchMfaSession` (`MFA_SESSION_TIMEOUT` in `server/middleware/mfa-required.ts`, override `MFA_SESSION_TIMEOUT_MS`). No regulation sets this interval; 164.312(a)(2)(iii) is addressable and speaks of inactivity.
 - MFA required for PHI access routes (HIPAA 45 CFR 164.312(d))
 - PHI encrypted at rest with AES-256-GCM (`PHI_ENCRYPTION_KEY`)
-- Rate limiting: general limiter on `/api` only, keyed per browser session when the request carries a valid signed session cookie (4000 / 15 min) and per IP otherwise (1000 / 15 min); 20 auth / 100 AI-API requests per window
+- Rate limiting: general limiter on `/api` only, keyed per browser session when the request carries a valid signed session cookie (4000 / 15 min) and per IP otherwise (1000 / 15 min); 20 auth / 100 AI-API requests per window. Root-mounted MCP surfaces have their own per-IP limits: `POST /authorize/callback` 10 / 15 min, `/mcp` 120 / min (ahead of bearer auth)
 - Audit trail with tamper detection
 
 ## Deployment

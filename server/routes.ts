@@ -53,7 +53,7 @@ import { auditMiddleware } from "./middleware/auditMiddleware";
 import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware/mfa-required";
 import { mfaSetupRequired } from "./middleware/mfa-setup-required";
 import { requireFinancialRole } from "./middleware/financial-access";
-import { authLimiter } from "./middleware/rate-limiter";
+import { authLimiter, mcpOAuthCallbackLimiter } from "./middleware/rate-limiter";
 import logger from "./services/logger";
 import { cache } from "./services/cacheService";
 import { getRedisClient, isRedisReady } from "./services/redisClient";
@@ -432,8 +432,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // These are required for Claude Desktop's "Add custom connector" flow.
   app.use(getMcpAuthRouter());
 
-  // POST /authorize/callback — custom endpoint for the OAuth authorize page form submission
-  app.post('/authorize/callback', express.json(), async (req, res) => {
+  // POST /authorize/callback — custom endpoint for the OAuth authorize page form submission.
+  // Rate limited per IP (mcpOAuthCallbackLimiter): this form accepts an MCP API
+  // key and sits outside the /api general limiter, so without its own limit it
+  // was an unthrottled brute-force surface for API keys (CodeQL #134).
+  app.post('/authorize/callback', mcpOAuthCallbackLimiter, express.json(), async (req, res) => {
     try {
       const { session_id, api_key } = req.body;
       if (!session_id || !api_key) {
