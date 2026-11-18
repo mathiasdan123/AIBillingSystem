@@ -31,6 +31,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
 import { fromDraftBilling, toDraftBilling } from "@/lib/soapDraftBilling";
+import { applyRatingsToAllActivities, buildRequestAssessment, mergeGlobalAssessment } from "@/lib/soapRatings";
+import { derivePracticeUnitRate, describeUnitRate } from "@/lib/practiceRate";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
@@ -261,7 +263,10 @@ export default function SoapNotes() {
   const [duration, setDuration] = useState(45); // Standard session length
   const [sessionType, setSessionType] = useState("treatment"); // treatment, initial_eval, re_eval
   const [location, setLocation] = useState("Sensory Gym");
-  const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // $289 per 15-min unit
+  const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // replaced by the practice rate once /api/cpt-codes loads
+  // True once the admin typed a rate by hand; the practice-rate pre-fill
+  // never overwrites a manual value.
+  const [rateTouched, setRateTouched] = useState(false);
 
   // Prefill from the calendar: "Write Session Note" on an appointment links
   // here with the visit's patient and date, so the therapist does not have to
@@ -528,6 +533,14 @@ export default function SoapNotes() {
     queryKey: ["/api/cpt-codes"],
     retry: false,
   });
+
+  // Pre-fill Rate/Unit with the practice's configured charge for the session
+  // type's codes (the number generation will actually bill), falling back to
+  // the flat estimate. A hand-typed rate is never overwritten.
+  useEffect(() => {
+    if (rateTouched) return;
+    setRatePerUnit(derivePracticeUnitRate(cptCodes, sessionType).rate);
+  }, [cptCodes, sessionType, rateTouched]);
 
   const { data: existingSoapNotes } = useQuery<SoapNote[]>({
     queryKey: ["/api/soap-notes"],
@@ -814,12 +827,14 @@ export default function SoapNotes() {
     field: keyof ActivityAssessment,
     value: string,
   ) => {
-    setSelectedActivities(prev =>
-      prev.map(a => a.name === activityName
-        ? { ...a, assessment: { ...a.assessment, [field]: value } }
-        : a
-      )
+    const next = selectedActivities.map(a => a.name === activityName
+      ? { ...a, assessment: { ...a.assessment, [field]: value } }
+      : a
     );
+    setSelectedActivities(next);
+    // Same mirroring as Apply to All: a blank global field takes the
+    // per-exercise value once every rated exercise agrees on it.
+    setAssessment(prev => mergeGlobalAssessment(prev, next));
   };
 
   // Pre-sign documentation check (clinician feedback): pass/warn checklist for
@@ -1071,9 +1086,14 @@ export default function SoapNotes() {
     // Check if at least one field is set
     const hasValue = Object.values(applyToAllAssessment).some(v => v !== "");
     if (!hasValue) return;
-    setSelectedActivities(prev =>
-      prev.map(a => ({ ...a, assessment: { ...applyToAllAssessment } }))
-    );
+    const applied = applyRatingsToAllActivities(selectedActivities, applyToAllAssessment);
+    setSelectedActivities(applied);
+    // The ratings the therapist just applied to every exercise ARE the
+    // session's ratings: mirror them into the global Clinical Observations
+    // fields that are still blank, so the generate request carries them
+    // (post-deploy retest of #464: "Minimal Assist" applied here never
+    // reached the note because only this per-exercise state changed).
+    setAssessment(prev => mergeGlobalAssessment(prev, applied));
   };
 
   // Helper to check if activity is selected
@@ -1145,13 +1165,10 @@ export default function SoapNotes() {
           duration,
           sessionType,
           location,
-          assessment: {
-            performance: assessment.performance,
-            assistance: assessment.assistance,
-            strength: assessment.strength,
-            motorPlanning: assessment.motorPlanning,
-            sensoryRegulation: assessment.sensoryRegulation
-          },
+          // Global ratings, with any blank field filled from the per-exercise
+          // ratings when every rated exercise agrees (buildRequestAssessment).
+          // The per-exercise ratings themselves travel in activityAssessments.
+          assessment: buildRequestAssessment(assessment, selectedActivities),
           planNextSteps: planNextSteps,
           nextSessionFocus: nextSessionFocus,
           homeProgram: homeProgram || undefined,
@@ -1687,9 +1704,9 @@ export default function SoapNotes() {
                     <Label className="text-xs text-muted-foreground">Session Type</Label>
                     <Select value={sessionType} onValueChange={(v) => {
                       setSessionType(v);
-                      if (v === 'initial_eval') setRatePerUnit(550);
-                      else if (v === 're_eval') setRatePerUnit(400);
-                      else setRatePerUnit(DEFAULT_UNIT_RATE);
+                      // Rate follows the session type via the practice-rate
+                      // effect above (practice charge when configured, else
+                      // the flat estimate) unless the admin typed one.
                     }}>
                       <SelectTrigger className="mt-1">
                         <SelectValue />
@@ -1721,11 +1738,15 @@ export default function SoapNotes() {
                       <Input
                         type="number"
                         value={ratePerUnit}
-                        onChange={(e) => setRatePerUnit(parseFloat(e.target.value) || DEFAULT_UNIT_RATE)}
+                        onChange={(e) => { setRateTouched(true); setRatePerUnit(parseFloat(e.target.value) || DEFAULT_UNIT_RATE); }}
                         className="mt-1"
                         min={0}
                         step={0.01}
+                        data-testid="input-rate-per-unit"
                       />
+                      <p className="text-[10px] text-muted-foreground mt-1" data-testid="rate-per-unit-source">
+                        {rateTouched ? "Entered manually" : describeUnitRate(derivePracticeUnitRate(cptCodes, sessionType))}
+                      </p>
                     </div>
                   )}
                 </div>

@@ -22,6 +22,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { normalizeActivityAssessments, deriveGlobalAssessment } from '../utils/soapAssessment';
 import AIReimbursementPredictor from '../aiReimbursementPredictor';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from '../services/voiceService';
@@ -497,19 +498,12 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
   } = req.body;
 
   // Per-activity therapist narratives ("what happened / how did the patient
-  // respond") — the primary objective input per clinician feedback. Only the
-  // name + narrative go to the model; structured ratings stay optional data.
-  const activityDetails = Array.isArray(activityAssessments)
-    ? activityAssessments
-        .filter((a: any) => a && typeof a.name === 'string')
-        .map((a: any) => ({
-          name: String(a.name),
-          response:
-            typeof a.response === 'string' && a.response.trim()
-              ? a.response.trim().slice(0, 2000)
-              : undefined,
-        }))
-    : undefined;
+  // respond") — the primary objective input per clinician feedback — PLUS the
+  // per-activity structured ratings. This used to keep only name + narrative,
+  // which dropped "Minimal Assist" chosen via Apply to All / per exercise on
+  // the floor (post-deploy retest of #464, 2026-11-18); the generators then
+  // said assistance was not assessed. See server/utils/soapAssessment.ts.
+  const activityDetails = normalizeActivityAssessments(activityAssessments);
 
   if (!patientId || !activities || !Array.isArray(activities) || activities.length === 0) {
     return res.status(400).json({
@@ -602,13 +596,15 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         // therapist observations the generators then narrated as fact. Empty
         // strings keep the required shape and are treated as "not documented"
         // by both the prompt builder and the fallback template.
-        assessment: assessment || {
-          performance: '',
-          assistance: '',
-          strength: '',
-          motorPlanning: '',
-          sensoryRegulation: '',
-        },
+        //
+        // A blank global field IS filled from the per-activity ratings when
+        // every rated activity agrees (deriveGlobalAssessment): that value is
+        // the therapist's own entry, made through a different control, not
+        // an invented default. Disagreement leaves the global blank.
+        assessment: deriveGlobalAssessment(
+          assessment && typeof assessment === 'object' ? assessment : null,
+          activityDetails,
+        ),
         planNextSteps: planNextSteps || '',
         nextSessionFocus,
         homeProgram,
