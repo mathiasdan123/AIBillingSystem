@@ -111,6 +111,8 @@ export const storage = {
   getPatientsByEmail: patientFns.getPatientsByEmail,
   updatePatient: patientFns.updatePatient,
   softDeletePatient: patientFns.softDeletePatient,
+  archivePatient: patientFns.archivePatient,
+  unarchivePatient: patientFns.unarchivePatient,
   getAllPatients: patientFns.getAllPatients,
   searchPatients: patientFns.searchPatients,
   countAllPatients: patientFns.countAllPatients,

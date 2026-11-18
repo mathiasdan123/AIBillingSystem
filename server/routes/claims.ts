@@ -565,6 +565,25 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
     const { patientId, insuranceId, totalAmount, submittedAmount, sessionId, billingOrder, primaryClaimId } = req.body;
     const practiceId = getAuthorizedPracticeId(req);
 
+    // Tenant guard (2026-11-18): the patient must exist in the caller's
+    // practice. storage.createClaim is a plain insert and the schema only
+    // checks patientId is a positive integer, so until this check a claim
+    // could be filed under one practice for another practice's patient,
+    // and every later route that loads the claim's patient (submit,
+    // superbill, statements) would then read that patient's record. 404,
+    // not 403, so cross-practice ids are not confirmed. A lookup FAILURE
+    // is also a 404 here: creating a claim against a patient we could not
+    // verify is the wrong default. (insuranceId is not checked: insurances
+    // is a global payer catalog with no practice column.)
+    const patient: any = Number.isInteger(Number(patientId)) ? await storage.getPatient(Number(patientId)) : null;
+    if (!patient || patient.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    // An archived patient takes no new claims (QA 2026-11-18).
+    if (patient.archivedAt) {
+      return res.status(400).json({ message: 'This patient is archived. Unarchive the patient before creating a claim.' });
+    }
+
     const prefix = billingOrder === 'secondary' ? 'SEC' : 'CLM';
     const claimNumber = generateSecureClaimNumber(prefix);
 
@@ -576,10 +595,16 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
       try {
         const soapNotes = await storage.getSoapNotes(practiceId);
         const sessionSoapNote = soapNotes.find((note: any) => note.sessionId === sessionId);
-        const patients = await storage.getPatients(practiceId);
-        const patient = patients.find((p: any) => p.id === patientId);
+        // By id, not via the practice list: the list excludes archived
+        // patients by default, and a by-id lookup is what every other claim
+        // route uses (QA 2026-11-18). Creation for an archived patient was
+        // already refused above, so this only removes the list round-trip.
+        const patient = await storage.getPatient(patientId);
 
-        if (sessionSoapNote && patient) {
+        // Tenant guard: a patient id from another practice must never reach
+        // the AI review (it would read that patient's record). Skip the
+        // review entirely unless the patient belongs to the caller's practice.
+        if (sessionSoapNote && patient && patient.practiceId === practiceId) {
           const optimization = await claimOptimizer.optimizeClaim(
             sessionSoapNote,
             patient,

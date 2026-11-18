@@ -32,6 +32,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -1205,11 +1206,20 @@ export default function Claims() {
   // column, which the DB default makes true) as sandbox.
   const isSandboxMode = practice ? practice.sandboxMode !== false : false;
 
+  // `archived=include`: this list resolves the patient NAME on every claim
+  // card, the detail dialog and the insurance-fix dialog, and a claim keeps
+  // its patient after the patient is archived. The default list excludes
+  // archived patients (that is what archive means for pickers), which made
+  // an archived patient's existing claims read "Unknown" (QA 2026-11-18,
+  // right after #472). The new-claim picker filters archived rows back out
+  // below (`pickablePatients`); the server refuses a new claim for an
+  // archived patient regardless.
   const { data: patients } = useQuery<any[]>({
-    queryKey: [`/api/patients?practiceId=${practiceId}`],
+    queryKey: [`/api/patients?practiceId=${practiceId}&archived=include`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
+  const pickablePatients = (patients ?? []).filter((p: any) => !p.archivedAt);
 
   // Patient names are PHI-encrypted server-side and can't be searched in SQL, so
   // resolve the search term against the decrypted patient list here and pass the
@@ -1599,12 +1609,22 @@ export default function Claims() {
     },
   });
 
+  // Draft claim pending deletion, confirmed through an in-page AlertDialog.
+  // QA 2026-11-18: the row menu called window.confirm() from the menu item's
+  // click handler. A native confirm() blocks the event loop while Radix's
+  // DropdownMenu is mid-close (pointer-events locked on <body>, focus being
+  // returned to the trigger), and the tab froze with no dialog visible,
+  // reproduced twice. The menu item now only records which claim to delete;
+  // the dialog renders outside the menu and runs the mutation on confirm.
+  const [claimPendingDelete, setClaimPendingDelete] = useState<Claim | null>(null);
+
   const deleteClaimMutation = useMutation({
     mutationFn: async (claimId: number) => {
       const res = await apiRequest("DELETE", `/api/claims/${claimId}`);
       return res.json();
     },
     onSuccess: () => {
+      setClaimPendingDelete(null);
       invalidateClaims();
       toast({ title: "Draft claim deleted" });
     },
@@ -2181,6 +2201,20 @@ export default function Claims() {
     return patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown';
   };
 
+  // Non-blocking heads-up when submitting a claim for an archived patient
+  // (QA 2026-11-18). Archive hides the patient from pickers and blocks NEW
+  // claims; an existing draft is still legitimate billing for past services
+  // and must go out, so this only tells the biller what they are looking at.
+  const notifyIfPatientArchived = (patientId: number) => {
+    const patient = patients?.find(p => p.id === patientId);
+    if (patient?.archivedAt) {
+      toast({
+        title: "This patient is archived",
+        description: `${patient.firstName} ${patient.lastName} is archived. The claim will still be submitted.`,
+      });
+    }
+  };
+
   const getInsuranceName = (insuranceId: number) => {
     const insurance = insurances?.find(i => i.id === insuranceId);
     return insurance?.name || 'Unknown';
@@ -2448,7 +2482,7 @@ export default function Claims() {
                                   <p className="text-sm text-muted-foreground py-2">No patient found.</p>
                                 </CommandEmpty>
                                 <CommandGroup>
-                                  {patients?.map((p: any) => (
+                                  {pickablePatients.map((p: any) => (
                                     <CommandItem
                                       key={p.id}
                                       value={`${p.firstName} ${p.lastName}`}
@@ -3301,6 +3335,7 @@ export default function Claims() {
                             size="sm"
                             onClick={() => {
                               setSelectedClaim(claim);
+                              notifyIfPatientArchived(claim.patientId);
                               setPreSubmitClaimId(claim.id);
                               predictDenialRisk(claim.id);
                             }}
@@ -3318,7 +3353,7 @@ export default function Claims() {
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" aria-label={`Actions for claim ${claim.claimNumber}`} data-testid={`menu-trigger-claim-${claim.id}`}>
                             <MoreVertical className="w-4 h-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -3352,15 +3387,7 @@ export default function Claims() {
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      `Delete draft claim ${claim.claimNumber}? It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.`,
-                                    )
-                                  ) {
-                                    deleteClaimMutation.mutate(claim.id);
-                                  }
-                                }}
+                                onClick={() => setClaimPendingDelete(claim)}
                                 data-testid={`menu-delete-claim-${claim.id}`}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
@@ -4127,6 +4154,34 @@ export default function Claims() {
             />
           )}
         </PrintLayout>
+
+        {/* Delete-draft confirmation. Rendered outside the row menu so the
+            menu finishes closing before any modal appears. */}
+        <AlertDialog open={!!claimPendingDelete} onOpenChange={(open) => { if (!open) setClaimPendingDelete(null); }}>
+          <AlertDialogContent data-testid="dialog-delete-claim">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete draft claim {claimPendingDelete?.claimNumber}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-delete-claim">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteClaimMutation.isPending}
+                onClick={(e) => {
+                  // Keep the dialog open until the request settles.
+                  e.preventDefault();
+                  if (claimPendingDelete) deleteClaimMutation.mutate(claimPendingDelete.id);
+                }}
+                data-testid="button-confirm-delete-claim"
+              >
+                {deleteClaimMutation.isPending ? "Deleting…" : "Delete draft"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
