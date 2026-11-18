@@ -29,6 +29,7 @@ import {
   removeCaseAContinuityWording,
   stripUnsupportedPlanClosing,
   softenUnsupportedDeficitInRationale,
+  softenUnsupportedDeficitInProse,
   requestHasObservations,
 } from '../services/aiSoapBillingService';
 
@@ -175,8 +176,79 @@ describe('requestHasObservations', () => {
   });
 });
 
+// Pipeline eval run 44350312853 (PR #467), P6 sample 1: the gate's deficit
+// check reads every section, but the softener ran on rationales only, so an
+// Assessment deficit claim with every observation blank failed the gate with
+// no backstop in the way. Same rewrite, same gate, now on S/O/A/P as well.
+describe('softenUnsupportedDeficitInProse', () => {
+  it('rewrites attributed deficits in Assessment prose to activity demands and keeps the rest of the sentence', () => {
+    const assessment =
+      'Trampoline and obstacle course work targets motor planning and endurance. ' +
+      'Skilled intervention addresses underlying strength and endurance deficits that limit participation in age-appropriate play.';
+    const out = softenUnsupportedDeficitInProse(assessment);
+    expect(hasUnsupportedDeficitAssertion(out)).toBe(false);
+    expect(out).toContain('Trampoline and obstacle course work targets motor planning and endurance.');
+    expect(out).toMatch(/strength and endurance demands that limit participation/);
+  });
+
+  it('covers each detector shape', () => {
+    for (const sentence of [
+      "Graded tasks to address the patient's postural control deficits.",
+      'Demonstrates decreased core strength during climbing.',
+      'Deficits in motor planning were evident during the obstacle course.',
+      'Activities were selected for her identified bilateral coordination deficits.',
+    ]) {
+      expect(hasUnsupportedDeficitAssertion(softenUnsupportedDeficitInProse(sentence))).toBe(false);
+    }
+  });
+
+  it('leaves targeting language untouched', () => {
+    const fine = 'Obstacle course demands sequencing, motor planning and sustained attention.';
+    expect(softenUnsupportedDeficitInProse(fine)).toBe(fine);
+  });
+});
+
 describe('validateAndEnhanceResponse with no observations', () => {
-  it('softens deficit language in rationales but leaves the Assessment prose alone', async () => {
+  it('rewrites a deficit assertion in the Assessment, Objective and Plan when no observations were supplied', async () => {
+    const aiResponse = {
+      subjective: 'No subjective information was entered for this session.',
+      objective: 'Session conducted in Sensory gym for 45 minutes. Obstacle course work revealed decreased core strength.',
+      assessment: 'Skilled intervention addresses underlying strength and endurance deficits affecting functional play.',
+      plan: 'Next session will target bilateral coordination to address identified motor planning deficits.',
+      cptCodes: [{ code: '97530', name: 'Therapeutic Activities', units: 3, rationale: 'Dynamic functional activities.', activitiesAssigned: ['Obstacle Course', 'Trampoline'] }],
+      activityCptPairings: [
+        { activity: 'Obstacle Course', code: '97530', rationale: 'Functional task.' },
+        { activity: 'Trampoline', code: '97530', rationale: 'Targets endurance.' },
+      ],
+      billingRationale: 'Coded for dynamic activities.',
+      auditNotes: [],
+    };
+    const out = await validateAndEnhanceResponse(aiResponse, baseRequest, 3, false, false);
+    for (const section of [out.objective, out.assessment, out.plan]) {
+      expect(hasUnsupportedDeficitAssertion(section)).toBe(false);
+    }
+    expect(out.assessment).toMatch(/strength and endurance demands affecting functional play/);
+    expect(out.objective).toContain('Session conducted in Sensory gym for 45 minutes.');
+  });
+
+  it('leaves deficit prose alone when an observation supports it', async () => {
+    const aiResponse = {
+      subjective: 'No subjective information was entered for this session.',
+      objective: 'Obstacle course work revealed decreased core strength.',
+      assessment: 'Skilled intervention addresses underlying strength deficits noted today.',
+      plan: 'Next session: bilateral coordination.',
+      cptCodes: [{ code: '97530', name: 'Therapeutic Activities', units: 3, rationale: 'Dynamic functional activities.', activitiesAssigned: ['Obstacle Course'] }],
+      activityCptPairings: [{ activity: 'Obstacle Course', code: '97530', rationale: 'Functional task.' }],
+      billingRationale: 'Coded for dynamic activities.',
+      auditNotes: [],
+    };
+    const withObservation = { ...baseRequest, assessment: { ...baseRequest.assessment, strength: 'Poor core strength on climbing' } };
+    const out = await validateAndEnhanceResponse(aiResponse, withObservation, 3, false, false);
+    expect(out.objective).toContain('decreased core strength');
+    expect(out.assessment).toContain('underlying strength deficits');
+  });
+
+  it('softens deficit language in rationales; prose without a deficit claim is untouched', async () => {
     const aiResponse = {
       subjective: 'No subjective information was entered for this session.',
       objective: 'Session conducted in Sensory gym for 45 minutes.',

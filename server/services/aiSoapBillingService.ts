@@ -1532,12 +1532,23 @@ export function requestHasObservations(request: AiSoapBillingRequest): boolean {
   return (request.activityDetails || []).some((d) => d.response && d.response.trim().length > 0);
 }
 
-// Rationale fields ONLY (short, provider-facing coding text, never S/O/A/P
-// prose): when nothing was observed, "deficits" the model attributes to the
-// patient become "demands" of the activity, which is the claim the input
-// actually supports. Pipeline eval run 2026-11-04T20-50, P6 sample 3: a
-// rationale asserted deficits with every observation field blank.
-export function softenUnsupportedDeficitInRationale(text: string): string {
+// When nothing was observed, "deficits" the model attributes to the patient
+// become "demands" of the activity, which is the claim the input actually
+// supports. A REWRITE, not an excision: the sentence keeps its shape and its
+// targeting content.
+//
+// History: this was rationale-only (pipeline eval run 2026-11-04T20-50, P6
+// sample 3) on the reasoning that deficit prose in the Assessment should be
+// regenerated rather than edited. The release gate's P6 check reads every
+// section, though, so with no prose backstop the gate rode on the model
+// never writing one in three samples. Pipeline eval run 44350312853 on PR
+// #467 (P6 sample 1) failed exactly that way: a deficit assertion in the
+// Assessment with every observation field blank, after the same scenario
+// passed 3/3 on the previous run. The rewrite now applies to S/O/A/P too,
+// gated identically on requestHasObservations() being false -- when there
+// are no observations, there is no reading of "the patient's deficits" that
+// is grounded, so the rewrite can only move a sentence toward the truth.
+function softenUnsupportedDeficitLanguage(text: string, where: "a billing rationale" | "note prose"): string {
   if (!text || !hasUnsupportedDeficitAssertion(text)) return text;
   const out = text
     .replace(/\b(underlying|patient'?s|his|her|their|identified|existing|noted|documented|observed)\s+((?:[\w/-]+\s+){0,3})deficits?\b/gi, (_m, _lead, mid) => `${mid}demands`)
@@ -1545,11 +1556,21 @@ export function softenUnsupportedDeficitInRationale(text: string): string {
     .replace(/\bdeficits?\s+(in|with|of)\s+/gi, "demands on ")
     .replace(/\b(weakness|decreased|reduced|poor|impaired|limited)\s+((?:[\w/-]+\s+){0,2})(strength|endurance|postural\s+control|core\s+stability|motor\s+planning|balance|coordination)\b/gi, (_m, _adj, mid, noun) => `${mid}${noun} demands`)
     .replace(/[ \t]{2,}/g, " ");
-  logger.warn("Softened undocumented deficit language in a billing rationale (no observations supplied)", {
+  logger.warn(`Softened undocumented deficit language in ${where} (no observations supplied)`, {
     originalLength: text.length,
     softenedLength: out.length,
   });
   return out;
+}
+
+/** Rationale fields (short, provider-facing coding text). */
+export function softenUnsupportedDeficitInRationale(text: string): string {
+  return softenUnsupportedDeficitLanguage(text, "a billing rationale");
+}
+
+/** S/O/A/P prose. Callers gate on requestHasObservations() === false. */
+export function softenUnsupportedDeficitInProse(text: string): string {
+  return softenUnsupportedDeficitLanguage(text, "note prose");
 }
 
 // ---------------------------------------------------------------------------
@@ -1923,9 +1944,14 @@ export async function validateAndEnhanceResponse(
   // if the patient shows pain" -- see PRECAUTION_LEAD_IN); therapist-action
   // claims are checked in Objective and Assessment only -- the Plan
   // legitimately says what the therapist WILL grade next time.
+  // With no observations at all, a deficit the model attributes to the
+  // patient is rewritten to the activity's demands (see
+  // softenUnsupportedDeficitLanguage), in every section, same gate as the
+  // rationale softener.
   const groundProse = (text: string, withActions: boolean) => {
     const negatives = stripUnsupportedNegativeFindings(text, evidence);
-    return withActions ? stripUnsupportedTherapistActions(negatives, evidence) : negatives;
+    const actions = withActions ? stripUnsupportedTherapistActions(negatives, evidence) : negatives;
+    return noObservations ? softenUnsupportedDeficitInProse(actions) : actions;
   };
   for (const pairing of activityCptPairings) {
     if (pairing.rationale) pairing.rationale = cleanRationale(pairing.rationale);
