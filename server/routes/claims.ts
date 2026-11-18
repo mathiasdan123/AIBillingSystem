@@ -565,15 +565,23 @@ router.post('/', isAuthenticated, validate(createClaimSchema), async (req: any, 
     const { patientId, insuranceId, totalAmount, submittedAmount, sessionId, billingOrder, primaryClaimId } = req.body;
     const practiceId = getAuthorizedPracticeId(req);
 
-    // An archived patient takes no new claims (QA 2026-11-18). Defensive
-    // lookup: only an archived patient is refused here.
-    try {
-      const patient: any = Number.isInteger(Number(patientId)) ? await storage.getPatient(Number(patientId)) : null;
-      if (patient?.archivedAt) {
-        return res.status(400).json({ message: 'This patient is archived. Unarchive the patient before creating a claim.' });
-      }
-    } catch {
-      /* lookup failure: fall through to the existing create path */
+    // Tenant guard (2026-11-18): the patient must exist in the caller's
+    // practice. storage.createClaim is a plain insert and the schema only
+    // checks patientId is a positive integer, so until this check a claim
+    // could be filed under one practice for another practice's patient,
+    // and every later route that loads the claim's patient (submit,
+    // superbill, statements) would then read that patient's record. 404,
+    // not 403, so cross-practice ids are not confirmed. A lookup FAILURE
+    // is also a 404 here: creating a claim against a patient we could not
+    // verify is the wrong default. (insuranceId is not checked: insurances
+    // is a global payer catalog with no practice column.)
+    const patient: any = Number.isInteger(Number(patientId)) ? await storage.getPatient(Number(patientId)) : null;
+    if (!patient || patient.practiceId !== practiceId) {
+      return res.status(404).json({ message: 'Patient not found' });
+    }
+    // An archived patient takes no new claims (QA 2026-11-18).
+    if (patient.archivedAt) {
+      return res.status(400).json({ message: 'This patient is archived. Unarchive the patient before creating a claim.' });
     }
 
     const prefix = billingOrder === 'secondary' ? 'SEC' : 'CLM';

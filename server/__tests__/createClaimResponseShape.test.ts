@@ -36,6 +36,9 @@ vi.mock('../storage', () => ({
     createClaim: H.createClaim,
     getSoapNotes: vi.fn(async () => []),
     getPatients: vi.fn(async () => []),
+    // POST /api/claims now requires the patient to exist in the caller's
+    // practice (practiceId 1 in this harness) before creating anything.
+    getPatient: vi.fn(async (id: number) => ({ id, practiceId: 1, firstName: 'Jude', lastName: 'Spero', archivedAt: null })),
   },
 }));
 vi.mock('../aiClaimOptimizer', () => ({
