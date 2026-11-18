@@ -10,8 +10,25 @@ name: SOAP Generation Pipeline Eval (release gate)
 # the raw diagnostic still flags (because it bypasses every backstop by
 # design) is NOT a failure here unless it survives the real pipeline.
 #
-# LABEL GATING (required check #6): spend is gated entirely by the job-level
-# `if:` below (the `ready-for-eval` label), NOT by the workflow trigger.
+# GATING (required check #6): spend is gated entirely by the job-level
+# `if:` on `pipeline-eval` below, NOT by the workflow trigger. Since
+# 2026-11-18 the gate has two ways to open:
+#
+#   1. AUTOMATIC -- the PR touches any file on the SOAP generation path
+#      (the six files under TRIGGER COVERAGE below). The `changes` job
+#      lists the PR's changed files via the GitHub API and sets
+#      `soap_path_touched`; no label is needed. Closes the coverage gap
+#      documented on QA #2: before this, an unlabeled PR that changed the
+#      prompt builders or provider routing merged with pipeline-eval
+#      "skipped", so the gate was only as good as someone remembering to
+#      label the PR.
+#   2. OPT-IN -- the `ready-for-eval` label, unchanged, for any PR that
+#      does not touch those files but where a human still wants the eval
+#      (e.g. a storage refactor outside storage/index.ts, or a dependency
+#      bump that changes the Anthropic SDK).
+#
+# The path detection is done by a JOB, never by a workflow-level `paths:`
+# filter, for the reason below.
 #
 # FIXED 2026-11-02: the trigger originally also carried a `paths:` filter
 # (the list under TRIGGER COVERAGE below), on the theory that an unrelated
@@ -25,29 +42,42 @@ name: SOAP Generation Pipeline Eval (release gate)
 # workflow was wired in as required. A job's `if:` evaluating false
 # produces a "skipped" conclusion, which DOES satisfy a required check --
 # only the workflow-level `paths:` filter (no run created at all) causes
-# the stuck-forever failure mode. So: the workflow now triggers on every
-# PR unconditionally; the `if:` below is the only gate, for both "should
-# this actually spend money" and "does a status get reported for every
-# commit" at once.
+# the stuck-forever failure mode. So: the workflow triggers on every PR
+# unconditionally; the `changes` job always runs (cheap: one API call, no
+# checkout, no npm ci); and the `if:` on `pipeline-eval` is the only gate,
+# for both "should this actually spend money" and "does a status get
+# reported for every commit" at once.
 #
-#   - A PR that doesn't carry `ready-for-eval` gets an instant "skipped"
-#     status -- satisfies the required check, never pending-forever.
+#   - A PR that neither touches the path nor carries `ready-for-eval` gets
+#     an instant "skipped" status -- satisfies the required check, never
+#     pending-forever.
+#   - A PR that touches the path runs the eval on open and on every push
+#     (`synchronize`), whether or not it is labeled. There is no way to
+#     opt OUT of the eval for such a PR short of editing this workflow --
+#     and editing this workflow is itself on the path list.
 #   - Adding the label fires a real run tied to the commit present at that
 #     moment (the `labeled` trigger below).
 #   - Any LATER push re-fires via the `synchronize` trigger (re-checked
-#     against the label by the same `if:`) -- so a passing run is always
-#     tied to the CURRENT head commit's code AND the eval config in that
-#     same commit. A push after a passing run invalidates it; the label is
-#     never a one-time token that reuses an old result.
+#     against both the label and the path list by the same `if:`) -- so a
+#     passing run is always tied to the CURRENT head commit's code AND the
+#     eval config in that same commit. A push after a passing run
+#     invalidates it; the label is never a one-time token that reuses an
+#     old result.
 #   - Removing and re-adding the label (or closing the label dialog without
 #     re-adding) does not forge a pass -- GitHub's required-checks model
 #     keys a check's state to a commit SHA, not to the label's current
 #     on/off state, so there's no path to showing green without an actual
 #     run against that SHA.
+#   - FAIL-CLOSED: if the `changes` job itself fails (API outage, token
+#     problem), `pipeline-eval` still runs rather than skipping. A detection
+#     failure must never silently turn into "eval skipped" on a prompt PR;
+#     the cost of a spurious eval run is a few dollars, the cost of a
+#     missed one is a fabrication regression reaching production.
 #
 # TRIGGER COVERAGE (requirement #5): every file that can change the final
-# output still matters for deciding WHEN to label a PR `ready-for-eval` --
-# it's just no longer a workflow-level path filter (see the fix above):
+# output. Touching any of these on a PR runs the eval automatically (the
+# `changes` job below -- keep its SOAP_PATH_FILES list in sync with this
+# list; the two are the same six files):
 #   - server/services/aiSoapBillingService.ts   (prompt builders, every
 #                                                 backstop, the pipeline
 #                                                 function itself, final
@@ -75,7 +105,7 @@ name: SOAP Generation Pipeline Eval (release gate)
 # Anthropic-side model changes between PRs; this workflow only spends
 # anything on a labeled PR or workflow_dispatch, by design, to keep
 # routine PRs from ever costing money even though every one of them now
-# triggers (cheaply) the workflow itself.
+# triggers (cheaply) the workflow itself and its `changes` job.
 
 on:
   pull_request:
@@ -89,13 +119,77 @@ on:
     types: [opened, reopened, labeled, synchronize]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  # Decides whether this PR touches the SOAP generation path. Runs on every
+  # PR event (cheap: one API call, no checkout) so `pipeline-eval` always
+  # has an answer. On workflow_dispatch there is no PR, so it is skipped
+  # and `pipeline-eval` runs unconditionally (see its `if:`).
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      soap_path_touched: ${{ steps.detect.outputs.soap_path_touched }}
+    steps:
+      - name: Detect SOAP generation path files in this PR
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Keep in sync with TRIGGER COVERAGE at the top of this file.
+          SOAP_PATH_FILES: |
+            server/services/aiSoapBillingService.ts
+            server/services/aiProvider.ts
+            server/utils/phiAiGuard.ts
+            server/storage/index.ts
+            scripts/eval-soap-generation-pipeline.ts
+            .github/workflows/eval-prompt-pipeline.yml
+        run: |
+          set -euo pipefail
+          # The PR files endpoint lists every file changed relative to the
+          # merge base, which is exactly the set the eval cares about -- a
+          # `git diff` against a shallow checkout would need fetch-depth
+          # tuning and still miss files changed on the base since branching.
+          # --paginate covers PRs over 30 files.
+          gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[].filename' > changed-files.txt
+          echo "PR #${PR_NUMBER} changed $(wc -l < changed-files.txt) file(s)"
+          touched="false"
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if grep -qxF -- "$path" changed-files.txt; then
+              echo "::notice::SOAP generation path file touched: $path -- pipeline-eval will run"
+              touched="true"
+            fi
+          done <<< "$SOAP_PATH_FILES"
+          if [ "$touched" = "false" ]; then
+            echo "No SOAP generation path files touched; pipeline-eval runs only if labeled ready-for-eval"
+          fi
+          echo "soap_path_touched=$touched" >> "$GITHUB_OUTPUT"
+
   pipeline-eval:
     name: pipeline-eval
     runs-on: ubuntu-latest
+    needs: changes
     # The only gate, for both "should this spend money" and "does a status
-    # get reported for every commit" at once -- see FIXED 2026-11-02 above.
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready-for-eval')
+    # get reported for every commit" at once -- see GATING above.
+    #
+    # `!cancelled()` instead of the implicit success() requirement on
+    # `needs`: when `changes` is skipped (workflow_dispatch) or FAILS, this
+    # job must still be evaluated, not auto-skipped. The path test is
+    # written as `!= 'false'` rather than `== 'true'` so a failed/absent
+    # detection (empty output) opens the gate -- fail-closed, see GATING.
+    if: >-
+      !cancelled() && (
+        github.event_name == 'workflow_dispatch' ||
+        contains(github.event.pull_request.labels.*.name, 'ready-for-eval') ||
+        needs.changes.outputs.soap_path_touched != 'false'
+      )
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
