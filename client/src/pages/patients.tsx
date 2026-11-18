@@ -579,6 +579,12 @@ export default function Patients() {
   // Inline demographics editing on the Details tab.
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailsForm, setDetailsForm] = useState({
+    // Name + DOB (QA sweep 2026-11-18): quick-added patients (calendar,
+    // walk-in, SOAP) save with no DOB since #457 and this dialog was the only
+    // place to finish the record — yet it had neither field.
+    firstName: "",
+    lastName: "",
+    dateOfBirth: "",
     email: "",
     phone: "",
     addressStreet: "",
@@ -614,6 +620,15 @@ export default function Patients() {
   const updateDetailsMutation = useMutation({
     mutationFn: async () => {
       if (!selectedPatient) throw new Error("No patient selected");
+      const firstName = detailsForm.firstName.trim();
+      const lastName = detailsForm.lastName.trim();
+      // Names are claim-matching identity; the server refuses a blank one too.
+      if (!firstName || !lastName) {
+        throw new Error("First and last name are required.");
+      }
+      if (detailsForm.dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(detailsForm.dateOfBirth)) {
+        throw new Error("Date of birth must be a full date.");
+      }
       const street = detailsForm.addressStreet.trim();
       const city = detailsForm.addressCity.trim();
       const state = detailsForm.addressState.trim().toUpperCase();
@@ -631,6 +646,10 @@ export default function Patients() {
         );
       }
       const res = await apiRequest("PATCH", `/api/patients/${selectedPatient.id}/details`, {
+        firstName,
+        lastName,
+        // "" clears the DOB server-side (stored as null, never a placeholder).
+        dateOfBirth: detailsForm.dateOfBirth,
         email: detailsForm.email,
         phone: detailsForm.phone,
         sex: detailsForm.sex,
@@ -1567,6 +1586,11 @@ export default function Patients() {
                     {
                       const parsed = parseAddressForForm(selectedPatient.address || "");
                       setDetailsForm({
+                        firstName: selectedPatient.firstName || "",
+                        lastName: selectedPatient.lastName || "",
+                        // date column: "YYYY-MM-DD" (or an ISO string from older
+                        // rows) → the first 10 chars are what <input type=date> takes.
+                        dateOfBirth: selectedPatient.dateOfBirth ? String(selectedPatient.dateOfBirth).slice(0, 10) : "",
                         email: selectedPatient.email || "",
                         phone: selectedPatient.phone || "",
                         addressStreet: parsed.street,
@@ -1587,6 +1611,38 @@ export default function Patients() {
               {editingDetails ? (
                 <div className="space-y-3 border rounded-md p-3">
                   <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="edit-patient-first-name">First name</Label>
+                      <Input
+                        id="edit-patient-first-name"
+                        value={detailsForm.firstName}
+                        onChange={(e) => setDetailsForm({ ...detailsForm, firstName: e.target.value })}
+                        data-testid="input-edit-patient-first-name"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-patient-last-name">Last name</Label>
+                      <Input
+                        id="edit-patient-last-name"
+                        value={detailsForm.lastName}
+                        onChange={(e) => setDetailsForm({ ...detailsForm, lastName: e.target.value })}
+                        data-testid="input-edit-patient-last-name"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-patient-dob">Date of birth</Label>
+                      <Input
+                        id="edit-patient-dob"
+                        type="date"
+                        value={detailsForm.dateOfBirth}
+                        max={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => setDetailsForm({ ...detailsForm, dateOfBirth: e.target.value })}
+                        data-testid="input-edit-patient-dob"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Payers match eligibility and claims on name + DOB. Leave blank if unknown.
+                      </p>
+                    </div>
                     <div>
                       <Label htmlFor="edit-patient-email">Email</Label>
                       <Input

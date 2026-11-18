@@ -108,4 +108,41 @@ describe('PATCH /api/patients/:id/details', () => {
 
     expect(H.updatePatient).toHaveBeenCalledWith(10, { phone: null });
   });
+
+  // ---- Name + DOB (QA sweep 2026-11-18): quick-added patients save with no
+  // DOB (#457) and this was the only edit surface, which didn't take it. ----
+
+  it('updates names and date of birth together', async () => {
+    const res = await request(app)
+      .patch('/api/patients/10/details')
+      .send({ firstName: 'Riley', lastName: 'Nodob-Smith', dateOfBirth: '2018-04-12' });
+
+    expect(res.status).toBe(200);
+    expect(H.updatePatient).toHaveBeenCalledWith(10, {
+      firstName: 'Riley',
+      lastName: 'Nodob-Smith',
+      dateOfBirth: '2018-04-12',
+    });
+  });
+
+  it('a blank date of birth clears it to null, never to a placeholder date', async () => {
+    await request(app).patch('/api/patients/10/details').send({ dateOfBirth: '' });
+
+    expect(H.updatePatient).toHaveBeenCalledWith(10, { dateOfBirth: null });
+  });
+
+  it('rejects a malformed or impossible date of birth', async () => {
+    for (const bad of ['04/12/2018', '2018-02-31', 'yesterday']) {
+      const res = await request(app).patch('/api/patients/10/details').send({ dateOfBirth: bad });
+      expect(res.status, bad).toBe(400);
+    }
+    expect(H.updatePatient).not.toHaveBeenCalled();
+  });
+
+  it('rejects a future date of birth', async () => {
+    const res = await request(app).patch('/api/patients/10/details').send({ dateOfBirth: '2999-01-01' });
+
+    expect(res.status).toBe(400);
+    expect(H.updatePatient).not.toHaveBeenCalled();
+  });
 });
