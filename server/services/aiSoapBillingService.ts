@@ -1136,6 +1136,20 @@ REQUIREMENTS (the anti-fabrication rules at the top OVERRIDE all of these):
 const SKILLED_OT_CONTINUATION_CLOSING =
   /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\b(?:continue[sd]?|continuing|remain(?:s|ing)?|ongoing)\b)(?=[^.!?\n]*\b(?:skilled|therap(?:y|eutic|ies)|occupational therapy|\bOT\b|intervention|treatment goals?|plan of care)\b)(?=[^.!?\n]*\b(?:necessary|indicated|need(?:ed|s)?|participat\w*|benefit\w*|receiv\w*|work(?:ing)?\s+toward|establish\w*|address\w*|target\w*|continue\s+with)\b)[^.!?\n]*[.!?]/gim;
 
+// 2026-11-18 (pipeline eval run 44335022493 on PR #467, P1 clean room):
+// "Patient will participate in skilled occupational therapy to address
+// identified areas through graded therapeutic activities targeting motor
+// planning, bilateral coordination, and endurance." -- a plan-of-care promise
+// with NO continuity word (continue/remain/ongoing), so the regex above let
+// it through and only the semantic judge caught it. In CASE A, future-tense
+// participation in skilled therapy IS the continuity claim: there is no plan
+// of care to participate in. Requires BOTH "will <participate|engage|benefit|
+// receive|attend|be seen>" AND a skilled-therapy word, so "Next session will
+// focus on bilateral coordination through graded therapeutic activities"
+// (legitimate: it is the therapist's own next-session field) never matches.
+const CASE_A_FUTURE_SKILLED_PARTICIPATION =
+  /(?:^|(?<=[.!?]\s))(?=[^.!?\n]*\bwill\s+(?:also\s+|likely\s+)?(?:participate|engage|benefit|receive|attend|be\s+seen)\b)(?=[^.!?\n]*\b(?:skilled|occupational\s+therapy|OT\s+(?:services|intervention|sessions?)|therap(?:y|eutic)\s+(?:services|intervention|sessions?))\b)[^.!?\n]*[.!?]/gim;
+
 /**
  * Detection only (no mutation) — exposed so callers like the fabrication
  * eval harness (scripts/eval-plan-fabrication.ts) can assert on whether raw
@@ -1144,9 +1158,12 @@ const SKILLED_OT_CONTINUATION_CLOSING =
  */
 export function hasUnsupportedPlanClosing(plan: string): boolean {
   if (!plan) return false;
-  SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
-  const result = SKILLED_OT_CONTINUATION_CLOSING.test(plan);
-  SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  let result = false;
+  for (const re of [SKILLED_OT_CONTINUATION_CLOSING, CASE_A_FUTURE_SKILLED_PARTICIPATION]) {
+    re.lastIndex = 0;
+    if (re.test(plan)) result = true;
+    re.lastIndex = 0;
+  }
   return result;
 }
 
@@ -1178,9 +1195,11 @@ export function stripUnsupportedPlanClosing(
   });
   if (!hasUnsupportedPlanClosing(plan) && !hasExtra) return plan;
   SKILLED_OT_CONTINUATION_CLOSING.lastIndex = 0;
+  CASE_A_FUTURE_SKILLED_PARTICIPATION.lastIndex = 0;
   for (const re of extras) re.lastIndex = 0;
   const stripped = plan
     .replace(SKILLED_OT_CONTINUATION_CLOSING, "")
+    .replace(CASE_A_FUTURE_SKILLED_PARTICIPATION, "")
     .replace(CASE_A_CONTINUE_FREQUENCY, "")
     .replace(CASE_A_NO_FREQUENCY_LINE, "")
     .replace(CASE_A_HOME_PROGRAM_CARRYOVER, (_m, prefix) => `${prefix ?? ""}No home program assigned this session.`)
@@ -1589,26 +1608,54 @@ const NEGATED_FINDING_TOPICS: RegExp[] = [
 ];
 const NEGATION_WORD = /\b(?:no|not|without|denie[ds]|absen(?:t|ce)|free\s+of|never|none|nor)\b|-free\b/i;
 const SENTENCE_RE = /[^.!?\n]+(?:[.!?]+|(?=\n)|$)/g;
-// A sentence that CONDITIONS on a symptom is not asserting its absence.
-// "Stop the activity if the patient shows pain or fatigue; do not push
-// through" pairs a negation with two topics nobody entered, and is a
-// legitimate precaution (PR #464 review). Conditional / precaution lead-ins
-// anywhere in the sentence exempt it from the negative-finding strip -- in
-// every section, so the Plan keeps its precautions while a fabricated
-// finding there ("No distress was observed.") is still removed.
+// A clause that CONDITIONS on a symptom is not asserting its absence.
+// "Stop the activity if the patient shows pain or fatigue" pairs two topics
+// nobody entered with an instruction, and is a legitimate precaution (PR
+// #464 review). The exemption is deliberately narrow (review on #467, after
+// the first version exempted a whole sentence whenever "when", "pause",
+// "hold", "avoid" or "notify" appeared anywhere in it, which would have let
+// "No signs of fatigue when jumping" and "Tolerated well without discomfort
+// when pauses were taken" survive):
+//   - only FORWARD-LOOKING lead-ins: a conditional about the patient's
+//     future behaviour (if / should / unless <subject> shows|reports|...),
+//     an instruction to stop|discontinue|pause the activity, monitor|watch
+//     for, report any, caregivers were instructed, or an imperative "do not
+//     push|continue|proceed|force ... through <symptom>" (present-tense
+//     instruction verbs only -- "did not show fatigue" is a finding);
+//   - the topic must appear AFTER the lead-in ("if ... pain"), so "No
+//     distress when jumping" is not a precaution;
+//   - judged per CLAUSE, so a fabricated finding joined to a precaution is
+//     still removed while the precaution clause stays.
 const PRECAUTION_LEAD_IN =
-  /\b(?:if|when(?:ever)?|unless|should\s+(?:the\s+)?(?:patient|client|child|he|she|they)|in\s+(?:the\s+)?(?:case|event)\s+of|(?:monitor|watch|observe|check|assess|screen)\s+(?:closely\s+)?for|stop|discontinue|pause|hold|cease|avoid|report\s+any|notify|caregivers?\s+(?:were|was)\s+(?:instructed|advised|told|asked)|instruct(?:ed)?\s+to|precaution)\b/i;
+  /\b(?:(?:if|should|unless)\s+(?:the\s+)?\w+\s+(?:shows?|exhibits?|reports?|complains?|develops?|experiences?|demonstrates?|displays?|appears?|becomes?|has|have)|(?:stop|discontinue|pause|end|terminate)\s+(?:the\s+)?(?:activity|activities|session|task|exercise|intervention|trial)|(?:monitor|watch|observe|screen)\s+(?:closely\s+)?for|report\s+any|(?:caregivers?|parents?|family|patient)\s+(?:was|were|are|is)\s+(?:instructed|advised|asked|told)|(?:do\s+not|don't|not\s+to|never)\s+(?:push|continue|proceed|force|exceed|progress|advance|resume|work)\b)/i;
+const NEG_CLAUSE_SPLIT = /[,;]|\s+(?:and|but|while|whereas|then)\s+/i;
 
-function unsupportedNegatedTopics(sentence: string, evidence: GroundingEvidence): { unsupported: RegExp[]; supported: RegExp[] } {
-  const unsupported: RegExp[] = [];
-  const supported: RegExp[] = [];
-  if (!NEGATION_WORD.test(sentence)) return { unsupported, supported };
-  if (PRECAUTION_LEAD_IN.test(sentence)) return { unsupported, supported };
-  for (const topic of NEGATED_FINDING_TOPICS) {
-    if (!topic.test(sentence)) continue;
-    (topic.test(evidence.text) ? supported : unsupported).push(topic);
+interface NegatedTopicScan {
+  /** Negated topics with no entered support -- fabricated negatives. */
+  unsupported: RegExp[];
+  /** Negated topics the entered fields or account mention. */
+  supported: RegExp[];
+  /** Topics inside a forward-looking precaution clause (kept, never stripped). */
+  exempt: RegExp[];
+}
+
+function unsupportedNegatedTopics(sentence: string, evidence: GroundingEvidence): NegatedTopicScan {
+  const scan: NegatedTopicScan = { unsupported: [], supported: [], exempt: [] };
+  for (const clause of sentence.split(NEG_CLAUSE_SPLIT)) {
+    const lead = PRECAUTION_LEAD_IN.exec(clause);
+    const afterLead = lead ? clause.slice(lead.index + lead[0].length) : "";
+    const negated = NEGATION_WORD.test(clause);
+    for (const topic of NEGATED_FINDING_TOPICS) {
+      if (!topic.test(clause)) continue;
+      if (lead && topic.test(afterLead)) {
+        scan.exempt.push(topic);
+        continue;
+      }
+      if (!negated) continue;
+      (topic.test(evidence.text) ? scan.supported : scan.unsupported).push(topic);
+    }
   }
-  return { unsupported, supported };
+  return scan;
 }
 
 /** Detection only (no mutation) -- mirrors hasUnsupportedMoodClause, but input-aware. */
@@ -1636,13 +1683,17 @@ function tidyProse(text: string): string {
 export function stripUnsupportedNegativeFindings(text: string, evidence: GroundingEvidence): string {
   if (!text || !hasUnsupportedNegativeFinding(text, evidence)) return text;
   const out = text.replace(SENTENCE_RE, (sentence) => {
-    const { unsupported, supported } = unsupportedNegatedTopics(sentence, evidence);
+    const { unsupported, supported, exempt } = unsupportedNegatedTopics(sentence, evidence);
     if (unsupported.length === 0) return sentence;
-    // Nothing in the sentence is grounded: drop the whole sentence.
-    if (supported.length === 0) return "";
-    // Mixed ("reported no pain and showed no observable distress"): cut only
-    // the clause carrying each unsupported topic; if no clause-shaped match
-    // can be found, dropping the sentence beats leaving the fabrication.
+    // Nothing in the sentence is grounded or protected: drop the whole
+    // sentence (a conclusion hung on the fabricated finding goes with it).
+    if (supported.length === 0 && exempt.length === 0) return "";
+    // Mixed ("reported no pain and showed no observable distress"; "No
+    // distress was observed, and stop the activity if the patient shows
+    // fatigue"): cut only the clause carrying each unsupported topic, keep
+    // the grounded or precaution clause. If no clause-shaped match can be
+    // found, or the topic is still unsupported afterwards, dropping the
+    // sentence beats leaving the fabrication.
     let kept = sentence;
     for (const topic of unsupported) {
       const clause = new RegExp(
@@ -1650,10 +1701,16 @@ export function stripUnsupportedNegativeFindings(text: string, evidence: Groundi
         "i",
       );
       const next = kept.replace(clause, "");
-      if (next === kept || topic.test(next)) return "";
+      if (next === kept) return "";
+      if (unsupportedNegatedTopics(next, evidence).unsupported.includes(topic)) return "";
       kept = next;
     }
-    return kept;
+    // A removed leading clause leaves ", and stop the activity..." or
+    // "; monitor for fatigue..." behind.
+    kept = kept.replace(/^(\s*)[,;]\s*/, "$1");
+    kept = kept.replace(/^(\s*)(?:and|but|while|with|or|then|whereas|so)\s+/i, "$1");
+    kept = kept.replace(/^(\s*)([a-z])/, (_m, ws: string, ch: string) => ws + ch.toUpperCase());
+    return kept.trim().split(/\s+/).length < 3 ? "" : kept;
   });
   const stripped = tidyProse(out);
   logger.warn("Stripped negative finding(s) the session input never stated", {

@@ -130,6 +130,55 @@ describe('stripUnsupportedNegativeFindings', () => {
     const plan = 'Continue trampoline work next session. No distress was observed, so intensity can increase.';
     expect(stripUnsupportedNegativeFindings(plan, evidence)).toBe('Continue trampoline work next session.');
   });
+
+  // Review on #467: the first exemption fired on ANY "when", "pause",
+  // "hold", "avoid" or "notify" anywhere in the sentence. These are findings
+  // dressed in precaution vocabulary and must still be stripped.
+  it('negative controls: findings phrased with "when"/"pauses" are not precautions', () => {
+    for (const fabricated of [
+      'No signs of fatigue when jumping.',
+      'Tolerated well without discomfort when pauses were taken.',
+      'No distress when transitioning between activities.',
+      'Patient denied discomfort when asked at the end of the session.',
+      'Held the position without complaint whenever prompted.',
+    ]) {
+      // ("Patient denied pain when asked" is deliberately NOT here: the account
+      // says "no pain", so that negative is supported and must be kept.)
+      expect(hasUnsupportedNegativeFinding(fabricated, evidence)).toBe(true);
+      expect(stripUnsupportedNegativeFindings(`Trampoline jumping targets endurance. ${fabricated}`, evidence)).toBe(
+        'Trampoline jumping targets endurance.',
+      );
+    }
+  });
+
+  it('the topic must follow the lead-in: a finding BEFORE a precaution in the same clause is still a finding', () => {
+    expect(hasUnsupportedNegativeFinding('No distress noted; monitor for fatigue next time.', evidence)).toBe(true);
+    expect(stripUnsupportedNegativeFindings('No distress noted; monitor for fatigue next time.', evidence)).toBe(
+      'Monitor for fatigue next time.',
+    );
+  });
+
+  it('a fabricated finding joined to a precaution: the finding goes, the precaution clause stays', () => {
+    expect(
+      stripUnsupportedNegativeFindings('No distress was observed, and stop the activity if the patient shows fatigue.', evidence),
+    ).toBe('Stop the activity if the patient shows fatigue.');
+    expect(
+      stripUnsupportedNegativeFindings('Discontinue the session if the patient reports pain, and no fatigue was noted today.', evidence),
+    ).toBe('Discontinue the session if the patient reports pain.');
+  });
+
+  it('forward-looking precautions with the narrowed lead-ins all survive', () => {
+    for (const precaution of [
+      'Stop the activity if the patient shows pain or fatigue; do not push through.',
+      'Pause the exercise should Riley report discomfort.',
+      'Monitor for signs of distress; do not continue past the first complaint.',
+      'Caregivers were instructed to report any complaints of pain, and not to push through fatigue.',
+      'Discontinue the trial unless the patient has no pain at rest.',
+    ]) {
+      expect(hasUnsupportedNegativeFinding(precaution, evidence)).toBe(false);
+      expect(stripUnsupportedNegativeFindings(precaution, evidence)).toBe(precaution);
+    }
+  });
 });
 
 describe('stripUnsupportedTherapistActions', () => {

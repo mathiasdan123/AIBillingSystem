@@ -60,6 +60,39 @@ describe('stripUnsupportedPlanClosing', () => {
     }
   });
 
+  it('strips a future-tense skilled-participation promise with no continuity word (pipeline eval run 44335022493, PR #467)', () => {
+    const judgeFlagged =
+      'Patient will participate in skilled occupational therapy to address identified areas through graded therapeutic activities targeting motor planning, bilateral coordination, and endurance.';
+    expect(hasUnsupportedPlanClosing(judgeFlagged)).toBe(true);
+    const plan =
+      'Next session will focus on bilateral coordination and sustained attention as documented by the treating therapist.\n\n' +
+      'No home program assigned this session.\n\n' +
+      judgeFlagged;
+    const stripped = stripUnsupportedPlanClosing(plan, noPlanContext, noGoalsContext);
+    expect(stripped).not.toMatch(/will participate|skilled/i);
+    expect(stripped).toContain('Next session will focus on bilateral coordination and sustained attention as documented by the treating therapist.');
+    expect(stripped).toContain('No home program assigned this session.');
+    for (const variant of [
+      'Riley will benefit from skilled occupational therapy services to address these areas.',
+      'Patient will receive occupational therapy to address motor planning and endurance.',
+      'He will attend occupational therapy twice weekly per the plan of care.',
+      'Patient will engage in skilled therapeutic intervention targeting bilateral coordination.',
+    ]) {
+      expect(hasUnsupportedPlanClosing(variant)).toBe(true);
+      expect(stripUnsupportedPlanClosing(variant, noPlanContext, noGoalsContext)).toBe('');
+    }
+    // CASE B: a plan of care exists, so the sentence is a true statement about it.
+    expect(stripUnsupportedPlanClosing(judgeFlagged, true, false)).toBe(judgeFlagged);
+    // Negative controls: the therapist's own next-session field and non-therapy futures.
+    for (const legitimate of [
+      'Next session will focus on bilateral coordination and sustained attention through graded therapeutic activities.',
+      'Patient will practice jumping at home three times this week.',
+      'Caregiver will bring the home exercise log to the next visit.',
+    ]) {
+      expect(hasUnsupportedPlanClosing(legitimate)).toBe(false);
+    }
+  });
+
   it('does NOT catch bare necessity claims with no continuity word (documented, deliberate gap)', () => {
     // These 3 of the 16 live-run failures assert medical necessity with
     // nothing to ground it in, same underlying problem as the cases above --
