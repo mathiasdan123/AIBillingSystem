@@ -12,6 +12,8 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       createPatient: vi.fn(),
       createAppointment: vi.fn(),
       createClaim: vi.fn(),
+      getTherapistsByPractice: vi.fn(),
+      upsertUser: vi.fn(),
     },
     mockClient,
     // pool.query is the un-pooled path used by normalizeDemoRates and
@@ -26,7 +28,9 @@ vi.mock('../storage', () => ({ storage: mockStorage }));
 vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../db', () => ({ getPool: vi.fn(async () => mockPool) }));
 
-import { ensureDemoPractice } from '../services/demoPractice';
+import { ensureDemoPractice, DEMO_THERAPIST } from '../services/demoPractice';
+import { zonedDateString } from '../utils/timezone';
+import { zonedTimeString } from '../utils/dateOnly';
 
 describe('ensureDemoPractice', () => {
   beforeEach(() => {
@@ -37,6 +41,14 @@ describe('ensureDemoPractice', () => {
     mockStorage.createClaim.mockResolvedValue({ id: 1 });
     // Default: no fixture patient exists yet.
     mockStorage.getPatientsByEmail.mockResolvedValue([]);
+    // Default: no therapist user yet. Like the real table, an upserted
+    // therapist is visible to the next getTherapistsByPractice call.
+    const therapistUsers: any[] = [];
+    mockStorage.getTherapistsByPractice.mockImplementation(async () => [...therapistUsers]);
+    mockStorage.upsertUser.mockImplementation(async (u: any) => {
+      therapistUsers.push({ id: u.id, role: u.role });
+      return { id: u.id };
+    });
   });
 
   it('creates an isolated demo practice (isDemo=true, sandbox) and seeds it when none exists', async () => {
@@ -126,5 +138,73 @@ describe('ensureDemoPractice', () => {
 
     expect(mockStorage.createPatient).toHaveBeenCalledTimes(1);
     expect(mockStorage.createPatient.mock.calls[0][0].practiceId).toBe(99);
+  });
+
+  // ---- Demo therapist (QA sweep 2026-11-18: empty therapist picker) ----
+
+  it('seeds a therapist user on a fresh demo practice and assigns every seeded appointment to them', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue(undefined);
+    mockStorage.createPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([]);
+
+    await ensureDemoPractice();
+
+    const upserts = mockStorage.upsertUser.mock.calls.map((c) => c[0]);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).toMatchObject({
+      id: 'demo-therapist-99',
+      practiceId: 99,
+      role: 'therapist',
+      email: DEMO_THERAPIST.email,
+    });
+    const appts = mockStorage.createAppointment.mock.calls.map((c) => c[0]);
+    expect(appts.length).toBeGreaterThan(0);
+    for (const a of appts) expect(a.therapistId).toBe('demo-therapist-99');
+  });
+
+  it('adds the therapist to an ALREADY seeded demo practice that has none, and only once', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+    mockStorage.getPatientsByEmail.mockResolvedValue([{ id: 2, practiceId: 99 }]);
+
+    await ensureDemoPractice();
+    expect(mockStorage.upsertUser).toHaveBeenCalledTimes(1);
+    expect(mockStorage.upsertUser.mock.calls[0][0]).toMatchObject({ id: 'demo-therapist-99', role: 'therapist' });
+
+    // Next login: the therapist exists → nothing to upsert.
+    mockStorage.upsertUser.mockClear();
+    mockStorage.getTherapistsByPractice.mockResolvedValue([{ id: 'demo-therapist-99', role: 'therapist' }]);
+    await ensureDemoPractice();
+    expect(mockStorage.upsertUser).not.toHaveBeenCalled();
+  });
+
+  // ---- Seeded appointment times are practice wall clock, not process-zone ----
+
+  it('seeds appointments at 9:00 AM practice time (America/New_York) regardless of the process timezone', async () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = 'UTC'; // what ECS runs as
+    try {
+      mockStorage.getDemoPractice.mockResolvedValue(undefined);
+      mockStorage.createPractice.mockResolvedValue({ id: 99, isDemo: true });
+      mockStorage.getPatients.mockResolvedValue([]);
+
+      await ensureDemoPractice();
+
+      const appts = mockStorage.createAppointment.mock.calls.map((c) => c[0]);
+      // Plan entry 0 is seeded at hour 9 + (0 % 6) = 9:00, offset -7 days.
+      const first = appts[0];
+      expect(first.startTime).toBeInstanceOf(Date);
+      expect(zonedTimeString(first.startTime, 'America/New_York')).toBe('09:00');
+      expect(zonedTimeString(first.endTime, 'America/New_York')).toBe('09:45');
+      // Under the old setHours() seed this was 09:00 UTC = 04:00/05:00 Eastern.
+      expect(first.startTime.getUTCHours()).not.toBe(9);
+      // Offset -7 lands on the practice calendar day a week ago, not the UTC one.
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      expect(zonedDateString(first.startTime, 'America/New_York')).toBe(
+        zonedDateString(weekAgo, 'America/New_York'),
+      );
+    } finally {
+      if (originalTz === undefined) delete process.env.TZ; else process.env.TZ = originalTz;
+    }
   });
 });
