@@ -14,6 +14,8 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       createClaim: vi.fn(),
       getTherapistsByPractice: vi.fn(),
       upsertUser: vi.fn(),
+      getAppointments: vi.fn(),
+      updateAppointment: vi.fn(),
     },
     mockClient,
     // pool.query is the un-pooled path used by normalizeDemoRates and
@@ -28,7 +30,7 @@ vi.mock('../storage', () => ({ storage: mockStorage }));
 vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../db', () => ({ getPool: vi.fn(async () => mockPool) }));
 
-import { ensureDemoPractice, DEMO_THERAPIST } from '../services/demoPractice';
+import { ensureDemoPractice, DEMO_THERAPIST, isProcessZoneSeedTime, repairDemoSeededAppointments } from '../services/demoPractice';
 import { zonedDateString } from '../utils/timezone';
 import { zonedTimeString } from '../utils/dateOnly';
 
@@ -41,6 +43,9 @@ describe('ensureDemoPractice', () => {
     mockStorage.createClaim.mockResolvedValue({ id: 1 });
     // Default: no fixture patient exists yet.
     mockStorage.getPatientsByEmail.mockResolvedValue([]);
+    // Default: nothing to repair.
+    mockStorage.getAppointments.mockResolvedValue([]);
+    mockStorage.updateAppointment.mockImplementation(async (id: number, patch: any) => ({ id, ...patch }));
     // Default: no therapist user yet. Like the real table, an upserted
     // therapist is visible to the next getTherapistsByPractice call.
     const therapistUsers: any[] = [];
@@ -206,5 +211,108 @@ describe('ensureDemoPractice', () => {
     } finally {
       if (originalTz === undefined) delete process.env.TZ; else process.env.TZ = originalTz;
     }
+  });
+
+  // ---- One-time repair of appointments seeded at 09:00Z by the old code ----
+
+  describe('repair of process-zone seeded appointments (PR #465 follow-up)', () => {
+    const NY = 'America/New_York';
+    // What the old seed wrote on a UTC ECS task for "9:00" and "12:00".
+    const OLD_9 = new Date('2026-11-10T09:00:00.000Z'); // 4:00 AM EST
+    const OLD_12_SUMMER = new Date('2026-07-14T12:00:00.000Z'); // 8:00 AM EDT
+    // 14:00Z IS 9:00 AM EST -- exactly what the new seed (and a visitor
+    // booking 9 AM) writes. Must never be touched.
+    const NEW_9 = new Date('2026-11-10T14:00:00.000Z');
+    const seeded = (id: number, start: Date, extra: any = {}) => ({
+      id,
+      practiceId: 99,
+      title: 'Occupational Therapy',
+      startTime: start,
+      endTime: new Date(start.getTime() + 45 * 60 * 1000),
+      therapistId: null,
+      status: 'scheduled',
+      ...extra,
+    });
+
+    it('isProcessZoneSeedTime: exact-hour 09:00Z-14:00Z instants at an absurd local hour, nothing else', () => {
+      expect(isProcessZoneSeedTime(OLD_9, NY)).toBe(true);
+      expect(isProcessZoneSeedTime(OLD_12_SUMMER, NY)).toBe(true);
+      expect(isProcessZoneSeedTime(NEW_9, NY)).toBe(false);
+      // Not on the hour → hand-made.
+      expect(isProcessZoneSeedTime(new Date('2026-11-10T09:30:00.000Z'), NY)).toBe(false);
+      // Outside the seed's hour band.
+      expect(isProcessZoneSeedTime(new Date('2026-11-10T08:00:00.000Z'), NY)).toBe(false);
+      expect(isProcessZoneSeedTime(new Date('2026-11-10T15:00:00.000Z'), NY)).toBe(false);
+      // A UTC practice: old and new seed coincide, nothing is old-shaped.
+      expect(isProcessZoneSeedTime(OLD_9, 'UTC')).toBe(false);
+    });
+
+    it('moves 09:00Z rows to 9:00 AM practice time on the same local day, keeps duration, assigns the therapist', async () => {
+      mockStorage.getAppointments.mockResolvedValue([seeded(1, OLD_9), seeded(2, OLD_12_SUMMER)]);
+
+      const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
+
+      expect(out).toEqual({ retimed: 2, assigned: 2 });
+      expect(mockStorage.getAppointments).toHaveBeenCalledWith(99);
+      const [id1, p1] = mockStorage.updateAppointment.mock.calls[0];
+      expect(id1).toBe(1);
+      expect(zonedTimeString(p1.startTime, NY)).toBe('09:00');
+      expect(zonedDateString(p1.startTime, NY)).toBe('2026-11-10');
+      expect(p1.endTime.getTime() - p1.startTime.getTime()).toBe(45 * 60 * 1000);
+      expect(p1.therapistId).toBe('demo-therapist-99');
+      const [, p2] = mockStorage.updateAppointment.mock.calls[1];
+      expect(zonedTimeString(p2.startTime, NY)).toBe('12:00');
+      expect(zonedDateString(p2.startTime, NY)).toBe('2026-07-14');
+    });
+
+    it('leaves rows already at local 9:00 untouched and is a no-op on a second pass', async () => {
+      mockStorage.getAppointments.mockResolvedValue([seeded(3, NEW_9, { therapistId: 'demo-therapist-99' })]);
+
+      const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
+
+      expect(out).toEqual({ retimed: 0, assigned: 0 });
+      expect(mockStorage.updateAppointment).not.toHaveBeenCalled();
+    });
+
+    it('only assigns the therapist (no re-time) on a seeded row that is correctly timed but unassigned', async () => {
+      mockStorage.getAppointments.mockResolvedValue([seeded(4, NEW_9)]);
+      const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
+      expect(out).toEqual({ retimed: 0, assigned: 1 });
+      const [, patch] = mockStorage.updateAppointment.mock.calls[0];
+      expect(patch).toEqual({ therapistId: 'demo-therapist-99' });
+    });
+
+    it('never touches an appointment a demo visitor created by hand (different title), even at an odd hour', async () => {
+      mockStorage.getAppointments.mockResolvedValue([
+        seeded(5, OLD_9, { title: 'Individual Therapy' }),
+        seeded(6, OLD_9, { title: 'Speech Therapy' }),
+      ]);
+      const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
+      expect(out).toEqual({ retimed: 0, assigned: 0 });
+      expect(mockStorage.updateAppointment).not.toHaveBeenCalled();
+    });
+
+    it('runs from ensureDemoPractice, scoped to the demo practice id, on the already-seeded fast path', async () => {
+      mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
+      mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+      mockStorage.getPatientsByEmail.mockResolvedValue([{ id: 2, practiceId: 99 }]);
+      mockStorage.getTherapistsByPractice.mockResolvedValue([{ id: 'demo-therapist-99', role: 'therapist' }]);
+      mockStorage.getAppointments.mockResolvedValue([seeded(7, OLD_9)]);
+
+      await ensureDemoPractice();
+
+      expect(mockStorage.getAppointments).toHaveBeenCalledTimes(1);
+      expect(mockStorage.getAppointments).toHaveBeenCalledWith(99);
+      expect(mockStorage.updateAppointment).toHaveBeenCalledTimes(1);
+      const [id, patch] = mockStorage.updateAppointment.mock.calls[0];
+      expect(id).toBe(7);
+      expect(zonedTimeString(patch.startTime, NY)).toBe('09:00');
+      expect(patch.therapistId).toBe('demo-therapist-99');
+    });
+
+    it('a storage failure during repair is logged and does not break the demo login', async () => {
+      mockStorage.getAppointments.mockRejectedValue(new Error('db down'));
+      await expect(repairDemoSeededAppointments(99, 'demo-therapist-99')).resolves.toEqual({ retimed: 0, assigned: 0 });
+    });
   });
 });

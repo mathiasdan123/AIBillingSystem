@@ -29,6 +29,7 @@ import { storage } from '../storage';
 import { getPool } from '../db';
 import logger from './logger';
 import { getBusinessTimeZone, zonedAddDays, zonedDateString, zonedInstant } from '../utils/timezone';
+import { zonedTimeString } from '../utils/dateOnly';
 import type { Practice } from '@shared/schema';
 
 // Advisory-lock key that serializes concurrent ensureDemoPractice() calls, so
@@ -165,7 +166,8 @@ export async function ensureDemoPractice(): Promise<Practice> {
       await normalizeDemoRates(existing.id);
       await repairDemoRowFlags(existing.id);
       await ensureDemoFixturePatients(existing.id);
-      await ensureDemoTherapist(existing.id);
+      const therapistId = await ensureDemoTherapist(existing.id);
+      await repairDemoSeededAppointments(existing.id, therapistId);
       return existing;
     }
   }
@@ -207,7 +209,8 @@ export async function ensureDemoPractice(): Promise<Practice> {
     await normalizeDemoRates(practice.id);
     await repairDemoRowFlags(practice.id);
     await ensureDemoFixturePatients(practice.id);
-    await ensureDemoTherapist(practice.id);
+    const therapistId = await ensureDemoTherapist(practice.id);
+    await repairDemoSeededAppointments(practice.id, therapistId);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
@@ -288,6 +291,90 @@ export async function ensureDemoTherapist(practiceId: number): Promise<string> {
   } as any);
   logger.info('Demo therapist user created', { practiceId, userId: created.id });
   return created.id;
+}
+
+/** Title seedDemoData gives every appointment it creates. */
+export const DEMO_SEED_APPOINTMENT_TITLE = 'Occupational Therapy';
+// What the seed intends, in practice wall-clock hours: 9 + (i % 6) → 9..14.
+const SEED_FIRST_HOUR = 9;
+const SEED_LAST_HOUR = 14;
+
+/**
+ * True for a start time the OLD seed wrote: `setHours(9 + i % 6)` in the
+ * process zone, UTC on ECS, i.e. an instant at exactly HH:00:00.000Z with HH
+ * in 9..14 whose practice-local hour is therefore outside 9..14 (4–9 AM
+ * Eastern). The new seed writes practice-local 9..14 = 13..19Z, so it never
+ * matches; neither does anything a demo visitor books through the dialog at
+ * a sane hour (a 9:00 AM Eastern booking is 14:00Z, local hour 9 → excluded).
+ * In a practice whose zone IS UTC the two seeds coincide and nothing matches.
+ */
+export function isProcessZoneSeedTime(start: Date, timeZone: string): boolean {
+  if (start.getUTCMinutes() !== 0 || start.getUTCSeconds() !== 0 || start.getUTCMilliseconds() !== 0) return false;
+  const utcHour = start.getUTCHours();
+  if (utcHour < SEED_FIRST_HOUR || utcHour > SEED_LAST_HOUR) return false;
+  const localHour = parseInt(zonedTimeString(start, timeZone).slice(0, 2), 10);
+  return localHour < SEED_FIRST_HOUR || localHour > SEED_LAST_HOUR;
+}
+
+/**
+ * One-time repair for demo practices seeded before 2026-11-18, when
+ * seedDemoData built appointment times with setHours() in the process zone.
+ * On ECS that is UTC, so "9:00 AM" appointments were stored at 09:00Z = 4:00
+ * AM Eastern. The calendar grid rendered UTC hours back then, which hid it;
+ * once the grid rendered local time (PR #465) those rows drew at 4–9 AM and
+ * fell off the 8 AM grid. Also assigns the demo therapist to seeded rows
+ * that predate the therapist user.
+ *
+ * Idempotent and cheap: one practice-scoped read per demo login; after the
+ * first pass nothing matches and nothing is written. Scope is the demo
+ * practice id only (callers pass it from ensureDemoPractice), the seed's
+ * title, and the predicate above, so hand-booked demo appointments are left
+ * alone. Appointments carry no explicit "seeded" marker; the title plus an
+ * exact-hour UTC instant at a nonsensical local hour is the safest available
+ * signature. Never blocks a demo login: failures are logged.
+ */
+export async function repairDemoSeededAppointments(
+  practiceId: number,
+  therapistId: string,
+): Promise<{ retimed: number; assigned: number }> {
+  const result = { retimed: 0, assigned: 0 };
+  try {
+    const tz = getBusinessTimeZone();
+    const rows = await storage.getAppointments(practiceId);
+    for (const appt of rows) {
+      if (appt.title !== DEMO_SEED_APPOINTMENT_TITLE) continue;
+      const patch: Record<string, unknown> = {};
+      const start = new Date(appt.startTime as any);
+      if (isProcessZoneSeedTime(start, tz)) {
+        // The UTC hour the old seed wrote IS the practice-local hour it meant.
+        const intendedHour = start.getUTCHours();
+        const localDay = zonedDateString(start, tz);
+        const newStart = zonedInstant(localDay, `${intendedHour}:00`, tz);
+        const durationMs = appt.endTime
+          ? Math.max(new Date(appt.endTime as any).getTime() - start.getTime(), 15 * 60 * 1000)
+          : 45 * 60 * 1000;
+        patch.startTime = newStart;
+        patch.endTime = new Date(newStart.getTime() + durationMs);
+        result.retimed++;
+      }
+      if (!appt.therapistId) {
+        patch.therapistId = therapistId;
+        result.assigned++;
+      }
+      if (Object.keys(patch).length > 0) {
+        await storage.updateAppointment(appt.id, patch as any);
+      }
+    }
+    if (result.retimed || result.assigned) {
+      logger.info('Repaired demo seeded appointments', { practiceId, ...result });
+    }
+  } catch (error) {
+    logger.warn('Could not repair demo seeded appointments', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return result;
 }
 
 export async function ensureDemoFixturePatients(practiceId: number): Promise<number> {
@@ -375,7 +462,7 @@ async function seedDemoData(practiceId: number): Promise<void> {
       patientId: patientIds[a.patientIdx],
       therapistId,
       isDemo: false,
-      title: 'Occupational Therapy',
+      title: DEMO_SEED_APPOINTMENT_TITLE,
       startTime: start,
       endTime: end,
       durationMinutes: 45,
