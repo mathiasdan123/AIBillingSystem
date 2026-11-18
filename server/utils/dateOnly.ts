@@ -96,3 +96,50 @@ export function zonedTimeString(date: Date, timeZone: string): string {
     minute: '2-digit',
   }).format(date);
 }
+
+/**
+ * Numeric US date ("4/11/2018") from a YYYY-MM-DD string, formatted in UTC
+ * against the UTC-midnight date so it can never shift a day with server TZ.
+ * `new Date('2018-04-11').toLocaleDateString('en-US')` printed Apr 12 on a
+ * server east of UTC and Apr 10 west of it (QA 2026-11-18: an appeal letter
+ * printed a patient's DOB one day off). A Date or a timestamp string is
+ * formatted in the practice timezone. Returns `fallback` for blank/invalid.
+ */
+export function formatDateOnlyShort(
+  value: string | Date | null | undefined,
+  fallback = '',
+): string {
+  if (value == null || value === '') return fallback;
+  const options = { year: 'numeric', month: 'numeric', day: 'numeric' } as const;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return fallback;
+    return value.toLocaleDateString('en-US', { ...options, timeZone: getBusinessTimeZone() });
+  }
+  const str = String(value);
+  const hasTime = str.includes('T') && str.length > 10;
+  if (!hasTime) {
+    const parsed = parseDateOnly(str);
+    if (parsed) return parsed.toLocaleDateString('en-US', { ...options, timeZone: 'UTC' });
+    return fallback;
+  }
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return fallback;
+  return d.toLocaleDateString('en-US', { ...options, timeZone: getBusinessTimeZone() });
+}
+
+/** YYYY-MM-DD for a UTC-midnight Date (inverse of parseDateOnly). */
+export function toDateOnlyString(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Calendar arithmetic on a YYYY-MM-DD string, entirely in UTC so a DST
+ * transition or server TZ can never move the result by a day.
+ * Returns null when `dateStr` is not a valid date-only string.
+ */
+export function addDaysToDateOnly(dateStr: string, days: number): string | null {
+  const parsed = parseDateOnly(dateStr);
+  if (!parsed) return null;
+  const shifted = new Date(parsed.getTime() + days * 24 * 60 * 60 * 1000);
+  return toDateOnlyString(shifted);
+}

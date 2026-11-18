@@ -22,9 +22,97 @@ import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import { appealGenerator } from '../aiAppealGenerator';
 import { recordAppealOutcome } from '../services/appealOutcomeLearningService';
+import {
+  type AppealGrounding,
+  type AppealGroundingInputs,
+  assessAppealReadiness,
+  buildAppealGrounding,
+  computeAppealDeadline,
+  defaultAppealGroundingLookups,
+  describeDeadlineBasis,
+  emptyAppealGrounding,
+  filterUnsupportedKeyArguments,
+  isValidDateOnly,
+  normalizeGroundingInputs,
+  stripUnsupportedAppealAssertions,
+} from '../services/appealGroundingService';
 import logger from '../services/logger';
 
 const router = Router();
+
+/**
+ * Everything the letter generator and the readiness check need for one
+ * claim: the practice letterhead, the patient identifiers, the line items,
+ * and the grounding (what records exist + what the biller entered). Shared
+ * by create and regenerate so the two can never drift (QA 2026-11-18).
+ */
+async function buildLetterContext(req: any, practiceId: number, claim: any, inputs: AppealGroundingInputs) {
+  const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
+  const lineItems = await storage.getClaimLineItems(claim.id);
+  const formattedLineItems = (lineItems || []).map((item: any) => ({
+    cptCode: item.cptCodeId ? { code: String(item.cptCodeId), description: '' } : undefined,
+    icd10Code: item.diagnosisCodeId ? { code: String(item.diagnosisCodeId), description: '' } : undefined,
+    units: item.units || 1,
+    amount: item.amount || '0',
+  }));
+  // Fetch the practice so the rendered letter uses the real practice name,
+  // NPI, address, phone — appeals letters are sent to payers and must
+  // identify the billing provider. Placeholders only if the row is missing,
+  // and the readiness check then refuses to call the letter ready.
+  const practiceRecord = await storage.getPractice(practiceId);
+  // The signer is whoever is preparing the appeal; the biller can change the
+  // name in the editable letter. Older storage stubs have no getUser.
+  let providerName: string | null = null;
+  const userId = req.user?.claims?.sub;
+  if (userId && typeof (storage as any).getUser === 'function') {
+    try {
+      const user = await (storage as any).getUser(userId);
+      const full = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
+      providerName = full || null;
+    } catch {
+      providerName = null;
+    }
+  }
+  const practice = {
+    name: practiceRecord?.name ?? 'Practice',
+    npi: practiceRecord?.npi ?? null,
+    address: practiceRecord?.address ?? null,
+    phone: practiceRecord?.phone ?? null,
+    providerName,
+  };
+  const patientData = patient ? {
+    firstName: patient.firstName,
+    lastName: patient.lastName,
+    dateOfBirth: patient.dateOfBirth,
+    insuranceProvider: patient.insuranceProvider,
+    insuranceId: patient.insuranceId,
+  } : { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null, insuranceProvider: null, insuranceId: null };
+
+  const grounding: AppealGrounding = await buildAppealGrounding(
+    { practiceId, patientId: claim.patientId, claim, inputs },
+    defaultAppealGroundingLookups(storage),
+  );
+  let planBenefits: any = null;
+  if (claim.patientId && typeof (storage as any).getPatientPlanBenefits === 'function') {
+    try {
+      planBenefits = await (storage as any).getPatientPlanBenefits(claim.patientId);
+    } catch {
+      planBenefits = null;
+    }
+  }
+  return { patient, practiceRecord, practice, patientData, formattedLineItems, grounding, planBenefits };
+}
+
+function readinessFor(ctx: Awaited<ReturnType<typeof buildLetterContext>>, claim: any, letter: string | null | undefined, denialDate: string | null | undefined) {
+  return assessAppealReadiness({
+    letter,
+    practice: ctx.practice,
+    patient: ctx.patient,
+    claim,
+    grounding: ctx.grounding,
+    denialDate,
+  });
+}
 
 // Helper to get authorized practiceId from request
 const getAuthorizedPracticeId = (req: any): number => {
@@ -143,6 +231,8 @@ router.get('/appeals', isAuthenticated, async (req: any, res) => {
       const patient = claim?.patientId ? appealPatientsMap.get(claim.patientId) : undefined;
       return {
         ...appeal,
+        deadlineBasis: describeDeadlineBasis(appeal),
+        readinessIssues: Array.isArray(appeal.readinessIssues) ? appeal.readinessIssues : [],
         claim: claim ? {
           id: claim.id,
           claimNumber: claim.claimNumber,
@@ -173,6 +263,10 @@ router.get('/appeals/:id', isAuthenticated, async (req: any, res) => {
 
     res.json({
       ...appeal,
+      // Where the filing deadline came from, for the drawer ("Denial date +
+      // 180 days (payer plan appeal rights)" / "estimated — verify").
+      deadlineBasis: describeDeadlineBasis(appeal as any),
+      readinessIssues: Array.isArray((appeal as any).readinessIssues) ? (appeal as any).readinessIssues : [],
       claim: claim ? {
         id: claim.id,
         claimNumber: claim.claimNumber,
@@ -203,6 +297,12 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
     if (!claimId) {
       return res.status(400).json({ message: 'claimId is required' });
     }
+    if (deadlineDate != null && deadlineDate !== '' && !isValidDateOnly(deadlineDate)) {
+      return res.status(400).json({ message: 'deadlineDate must be a valid YYYY-MM-DD date' });
+    }
+    if (req.body.denialDate != null && req.body.denialDate !== '' && !isValidDateOnly(req.body.denialDate)) {
+      return res.status(400).json({ message: 'denialDate must be a valid YYYY-MM-DD date' });
+    }
 
     // Get the claim
     const claim = await storage.getClaim(claimId);
@@ -214,68 +314,71 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'Can only create appeal for denied claims' });
     }
 
-    // Get patient info for AI appeal generation
-    const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
+    // What the biller told us that no record can: urgent service, a
+    // retro-auth request, extra grounds, the denial date from the EOB. The
+    // letter may assert these ONLY because they are here.
+    const groundingInputs = normalizeGroundingInputs(req.body);
 
-    // Generate AI appeal letter
+    // Letterhead, identifiers, line items, and the grounding (what records
+    // actually exist for this patient). One failure here must not produce a
+    // letter that claims records exist: the context falls back to "nothing
+    // on file", and the readiness check reports it.
+    let ctx: Awaited<ReturnType<typeof buildLetterContext>> | null = null;
     let appealResult = null;
     try {
-      // Get line items for the claim
-      const lineItems = await storage.getClaimLineItems(claimId);
-      const formattedLineItems = lineItems.map((item: any) => ({
-        cptCode: item.cptCodeId ? { code: String(item.cptCodeId), description: '' } : undefined,
-        icd10Code: item.diagnosisCodeId ? { code: String(item.diagnosisCodeId), description: '' } : undefined,
-        units: item.units || 1,
-        amount: item.amount || '0',
-      }));
-      // Fetch the authenticated practice so the rendered letter uses the real
-      // practice name, NPI, address, phone — appeals letters are sent to payers
-      // and must identify the billing provider. Falls back to safe placeholders
-      // only if the practice row is missing (shouldn't happen in normal flow).
-      const practiceRecord = await storage.getPractice(practiceId);
-      const practice = {
-        name: practiceRecord?.name ?? 'Practice',
-        npi: practiceRecord?.npi ?? null,
-        address: practiceRecord?.address ?? null,
-        phone: practiceRecord?.phone ?? null,
-      };
-      const patientData = patient ? {
-        firstName: patient.firstName,
-        lastName: patient.lastName,
-        dateOfBirth: patient.dateOfBirth,
-        insuranceProvider: patient.insuranceProvider,
-        insuranceId: patient.insuranceId,
-      } : { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null, insuranceProvider: null, insuranceId: null };
-
+      ctx = await buildLetterContext(req, practiceId, claim, groundingInputs);
       appealResult = await appealGenerator.generateAppeal(
         { ...claim, denialReason: claim.denialReason || 'No reason provided' },
-        formattedLineItems,
-        patientData,
-        practice
+        ctx.formattedLineItems,
+        ctx.patientData,
+        ctx.practice,
+        ctx.grounding,
       );
     } catch (aiError) {
       logger.error('Error generating AI appeal', { error: aiError instanceof Error ? aiError.message : String(aiError) });
     }
+    const grounding = ctx?.grounding ?? emptyAppealGrounding(groundingInputs);
 
-    // Calculate deadline (default: 60 days from now if not specified)
-    const calculatedDeadline = deadlineDate ||
-      new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // Belt and braces: whatever generated the letter, nothing unsupported
+    // reaches the stored text or the structured arguments.
+    const appealLetter = appealResult ? stripUnsupportedAppealAssertions(appealResult.appealLetter, grounding) : null;
+    const keyArguments = appealResult ? filterUnsupportedKeyArguments(appealResult.keyArguments, grounding) : null;
+
+    // Deadline: denial date + a window with a recorded source. A deadline the
+    // biller typed in the form wins and is recorded as manual.
+    const basis = computeAppealDeadline({
+      denialDate: groundingInputs.denialDate,
+      planBenefits: ctx?.planBenefits,
+      practice: ctx?.practiceRecord as any,
+    });
+    const manualDeadline = deadlineDate ? String(deadlineDate).slice(0, 10) : null;
+
+    // "Ready" is earned, not assumed: no placeholders, identifiers present,
+    // clinical records on file, denial date known, no unsupported assertion.
+    const readiness = ctx
+      ? readinessFor(ctx, claim, appealLetter, groundingInputs.denialDate)
+      : { ready: false, issues: ['Letter context could not be loaded'] };
 
     const appeal = await storage.createAppeal({
       claimId,
       practiceId,
       appealLevel: 'initial',
-      status: appealResult ? 'ready' : 'draft',
+      status: appealLetter && readiness.ready ? 'ready' : 'draft',
       denialCategory: appealResult?.denialCategory || null,
-      deadlineDate: calculatedDeadline,
+      deadlineDate: manualDeadline ?? basis.deadlineDate,
+      denialDate: groundingInputs.denialDate ?? null,
+      deadlineSource: manualDeadline ? 'manual' : basis.source,
+      deadlinePolicyDays: manualDeadline ? null : basis.policyDays,
+      groundingInputs: groundingInputs as any,
+      readinessIssues: readiness.issues as any,
       appealedAmount: claim.totalAmount,
-      appealLetter: appealResult?.appealLetter || null,
+      appealLetter,
       // Tier A #2 — persist the AI's structured arguments so future appeals
       // for the same payer + denial category can learn from outcomes.
-      keyArguments: appealResult?.keyArguments ?? null,
+      keyArguments: keyArguments as any,
       notes,
       supportingDocs: [],
-    });
+    } as any);
 
     // Update claim status to appeal
     await storage.updateClaim(claimId, { status: 'appeal' });
@@ -284,6 +387,8 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
       message: 'Appeal created successfully',
       appeal: {
         ...appeal,
+        deadlineBasis: describeDeadlineBasis(appeal as any),
+        readinessIssues: readiness.issues,
         aiGenerated: !!appealResult,
         successProbability: appealResult?.successProbability,
         suggestedActions: appealResult?.suggestedActions,
@@ -310,8 +415,63 @@ router.patch('/appeals/:id', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ message: 'Cannot modify resolved appeals' });
     }
 
+    // Editable deadline: a date-only value, recorded as set manually so the
+    // drawer stops showing a computed basis for it.
+    if ('deadlineDate' in updates) {
+      if (!isValidDateOnly(updates.deadlineDate)) {
+        return res.status(400).json({ message: 'deadlineDate must be a valid YYYY-MM-DD date' });
+      }
+      updates.deadlineSource = 'manual';
+      updates.deadlinePolicyDays = null;
+    }
+    if ('denialDate' in updates && updates.denialDate != null && updates.denialDate !== '' && !isValidDateOnly(updates.denialDate)) {
+      return res.status(400).json({ message: 'denialDate must be a valid YYYY-MM-DD date' });
+    }
+    if ('denialDate' in updates && updates.denialDate === '') updates.denialDate = null;
+
+    // Whenever the letter changes, or someone asks for "ready", re-run the
+    // readiness check against the letter as it will be stored. A letter
+    // cannot be marked ready while it still carries placeholders, missing
+    // identifiers or an assertion nothing on record supports (QA 2026-11-18).
+    const wantsReady = updates.status === 'ready';
+    const letterChanged = 'appealLetter' in updates;
+    if (wantsReady || letterChanged) {
+      const claim = await storage.getClaim(existingAppeal.claimId);
+      const letter = letterChanged ? updates.appealLetter : existingAppeal.appealLetter;
+      const denialDate = 'denialDate' in updates ? updates.denialDate : (existingAppeal as any).denialDate;
+      let readiness: { ready: boolean; issues: string[] };
+      try {
+        const ctx = await buildLetterContext(
+          req,
+          existingAppeal.practiceId,
+          claim ?? { id: existingAppeal.claimId, patientId: null },
+          ((existingAppeal as any).groundingInputs ?? {}) as AppealGroundingInputs,
+        );
+        readiness = readinessFor(ctx, claim, letter, denialDate);
+        if (letterChanged && typeof letter === 'string') {
+          // The biller's own edits are theirs; an unsupported assertion is
+          // surfaced as a readiness issue, not silently rewritten.
+          updates.appealLetter = letter;
+        }
+      } catch (error) {
+        logger.error('Readiness check failed', { error: error instanceof Error ? error.message : String(error) });
+        readiness = { ready: false, issues: ['Readiness could not be verified'] };
+      }
+      updates.readinessIssues = readiness.issues;
+      if (wantsReady && !readiness.ready) {
+        return res.status(400).json({
+          message: 'This appeal is not ready to send yet',
+          readinessIssues: readiness.issues,
+        });
+      }
+    }
+
     const updatedAppeal = await storage.updateAppealRecord(appealId, updates);
-    res.json(updatedAppeal);
+    res.json({
+      ...updatedAppeal,
+      deadlineBasis: describeDeadlineBasis(updatedAppeal as any),
+      readinessIssues: Array.isArray((updatedAppeal as any).readinessIssues) ? (updatedAppeal as any).readinessIssues : [],
+    });
   } catch (error) {
     logger.error('Error updating appeal', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to update appeal' });
@@ -423,8 +583,18 @@ router.post('/appeals/:id/escalate', isAuthenticated, async (req: any, res) => {
       notes: (appeal.notes || '') + '\n\nEscalated to ' + nextLevel,
     });
 
-    // Get claim for new appeal
-    const claim = await storage.getClaim(appeal.claimId);
+    if (newDeadlineDate != null && newDeadlineDate !== '' && !isValidDateOnly(newDeadlineDate)) {
+      return res.status(400).json({ message: 'newDeadlineDate must be a valid YYYY-MM-DD date' });
+    }
+
+    // The next level's window runs from the day this level was lost (today),
+    // using the same source logic as creation; a date the biller supplies is
+    // recorded as manual. The biller can edit it in the drawer either way.
+    const practiceRecord = await storage.getPractice(appeal.practiceId);
+    const basis = computeAppealDeadline({
+      denialDate: new Date().toISOString().slice(0, 10),
+      practice: practiceRecord as any,
+    });
 
     // Create new appeal at next level
     const newAppeal = await storage.createAppeal({
@@ -433,12 +603,16 @@ router.post('/appeals/:id/escalate', isAuthenticated, async (req: any, res) => {
       appealLevel: nextLevel,
       status: 'draft',
       denialCategory: appeal.denialCategory,
-      deadlineDate: newDeadlineDate ||
-        new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      deadlineDate: newDeadlineDate ? String(newDeadlineDate).slice(0, 10) : basis.deadlineDate,
+      denialDate: (appeal as any).denialDate ?? null,
+      deadlineSource: newDeadlineDate ? 'manual' : basis.source,
+      deadlinePolicyDays: newDeadlineDate ? null : basis.policyDays,
+      groundingInputs: (appeal as any).groundingInputs ?? null,
+      readinessIssues: ['No appeal letter yet'],
       appealedAmount: appeal.appealedAmount,
       notes: notes || `Escalated from ${appeal.appealLevel}`,
       supportingDocs: appeal.supportingDocs as any,
-    });
+    } as any);
 
     res.json({
       message: `Appeal escalated to ${nextLevel}`,
@@ -465,54 +639,50 @@ router.post('/appeals/:id/regenerate-letter', isAuthenticated, async (req: any, 
       return res.status(404).json({ message: 'Associated claim not found' });
     }
 
-    const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
-
-    // Generate new AI appeal letter
-    const lineItems = await storage.getClaimLineItems(appeal.claimId);
-    const formattedLineItems = lineItems.map((item: any) => ({
-      cptCode: item.cptCodeId ? { code: String(item.cptCodeId), description: '' } : undefined,
-      icd10Code: item.diagnosisCodeId ? { code: String(item.diagnosisCodeId), description: '' } : undefined,
-      units: item.units || 1,
-      amount: item.amount || '0',
-    }));
     // Use appeal.practiceId since this route doesn't take practiceId from the
     // session — appeals are scoped by their owning practice column. The
-    // returned record's name/NPI/address/phone are stamped into the letter.
-    const practiceRecord = appeal.practiceId
-      ? await storage.getPractice(appeal.practiceId)
-      : null;
-    const practice = {
-      name: practiceRecord?.name ?? 'Practice',
-      npi: practiceRecord?.npi ?? null,
-      address: practiceRecord?.address ?? null,
-      phone: practiceRecord?.phone ?? null,
-    };
-    const patientData = patient ? {
-      firstName: patient.firstName,
-      lastName: patient.lastName,
-      dateOfBirth: patient.dateOfBirth,
-      insuranceProvider: patient.insuranceProvider,
-      insuranceId: patient.insuranceId,
-    } : { firstName: 'Unknown', lastName: 'Patient', dateOfBirth: null, insuranceProvider: null, insuranceId: null };
+    // grounding inputs saved at creation (urgent, retro-auth, extra grounds)
+    // still apply; the body may refresh them.
+    const storedInputs = ((appeal as any).groundingInputs ?? {}) as AppealGroundingInputs;
+    const groundingInputs: AppealGroundingInputs = Object.keys(req.body ?? {}).some((k) =>
+      ['urgentService', 'retroAuthRequested', 'retroAuthReference', 'additionalGrounds', 'denialDate'].includes(k))
+      ? { ...storedInputs, ...normalizeGroundingInputs({ ...storedInputs, ...req.body }) }
+      : storedInputs;
+    if (additionalContext && typeof additionalContext === 'string' && additionalContext.trim()) {
+      groundingInputs.additionalGrounds = [groundingInputs.additionalGrounds, additionalContext.trim()].filter(Boolean).join(' ');
+    }
+    const ctx = await buildLetterContext(req, appeal.practiceId, claim, groundingInputs);
 
     const appealResult = await appealGenerator.generateAppeal(
       { ...claim, denialReason: claim.denialReason || 'No reason provided' },
-      formattedLineItems,
-      patientData,
-      practice
+      ctx.formattedLineItems,
+      ctx.patientData,
+      ctx.practice,
+      ctx.grounding,
     );
+    const appealLetter = stripUnsupportedAppealAssertions(appealResult.appealLetter, ctx.grounding);
+    const denialDate = groundingInputs.denialDate ?? (appeal as any).denialDate ?? null;
+    const readiness = readinessFor(ctx, claim, appealLetter, denialDate);
 
-    // Update appeal with new letter
+    // Update appeal with new letter. Regeneration never promotes to ready on
+    // its own; readiness decides, exactly as at creation.
     const updatedAppeal = await storage.updateAppealRecord(appealId, {
-      appealLetter: appealResult.appealLetter,
+      appealLetter,
       denialCategory: appealResult.denialCategory,
-      keyArguments: (appealResult as any)?.keyArguments ?? null,
-      status: 'ready',
-    });
+      keyArguments: filterUnsupportedKeyArguments(appealResult.keyArguments, ctx.grounding) as any,
+      groundingInputs: groundingInputs as any,
+      denialDate,
+      readinessIssues: readiness.issues as any,
+      status: readiness.ready ? 'ready' : 'draft',
+    } as any);
 
     res.json({
       message: 'Appeal letter regenerated',
-      appeal: updatedAppeal,
+      appeal: {
+        ...updatedAppeal,
+        deadlineBasis: describeDeadlineBasis(updatedAppeal as any),
+        readinessIssues: readiness.issues,
+      },
       successProbability: appealResult.successProbability,
       suggestedActions: appealResult.suggestedActions,
     });

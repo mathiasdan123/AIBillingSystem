@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { daysUntilDateOnly, formatDateOnly } from "@/lib/dateOnly";
 import {
   AlertCircle, CheckCircle, Clock, XCircle, DollarSign,
   FileText, TrendingUp, ArrowRight, RefreshCw, Loader2,
@@ -47,6 +49,21 @@ interface Appeal {
   status: string;
   denialCategory: string | null;
   deadlineDate: string | null;
+  // Where the deadline came from (server-computed label), the denial date it
+  // runs from, and the facts the biller entered at creation.
+  deadlineBasis?: string;
+  deadlineSource?: string | null;
+  deadlinePolicyDays?: number | null;
+  denialDate?: string | null;
+  groundingInputs?: {
+    urgentService?: boolean;
+    retroAuthRequested?: boolean;
+    retroAuthReference?: string | null;
+    additionalGrounds?: string | null;
+    denialDate?: string | null;
+  } | null;
+  // Why the letter is not ready to send. Empty = ready.
+  readinessIssues?: string[];
   submittedDate: string | null;
   resolvedDate: string | null;
   appealedAmount: string | null;
@@ -65,6 +82,22 @@ interface Appeal {
   };
   patientName?: string;
 }
+
+/** What the biller tells us at Create Appeal that no record can supply. */
+interface CreateAppealForm {
+  denialDate: string;
+  urgentService: boolean;
+  retroAuthRequested: boolean;
+  retroAuthReference: string;
+  additionalGrounds: string;
+}
+const emptyCreateForm = (): CreateAppealForm => ({
+  denialDate: "",
+  urgentService: false,
+  retroAuthRequested: false,
+  retroAuthReference: "",
+  additionalGrounds: "",
+});
 
 interface DeniedClaim {
   id: number;
@@ -97,6 +130,8 @@ export default function Appeals() {
   const [showResolveDialog, setShowResolveDialog] = useState(false);
   const [editedLetter, setEditedLetter] = useState("");
   const [editedNotes, setEditedNotes] = useState("");
+  const [editedDeadline, setEditedDeadline] = useState("");
+  const [createForm, setCreateForm] = useState<CreateAppealForm>(emptyCreateForm());
   const [resolveOutcome, setResolveOutcome] = useState<"won" | "lost" | "partial">("won");
   const [recoveredAmount, setRecoveredAmount] = useState("");
   const [insurerResponse, setInsurerResponse] = useState("");
@@ -137,20 +172,34 @@ export default function Appeals() {
 
   // Create appeal mutation
   const createAppealMutation = useMutation({
-    mutationFn: async (claimId: number) => {
-      const response = await apiRequest("POST", "/api/appeals", { claimId });
+    mutationFn: async ({ claimId, form }: { claimId: number; form: CreateAppealForm }) => {
+      // The letter may only assert urgency, a retro-auth request or extra
+      // grounds because the biller said so here; the server records them
+      // with the appeal and the generator reads them from there.
+      const response = await apiRequest("POST", "/api/appeals", {
+        claimId,
+        denialDate: form.denialDate || undefined,
+        urgentService: form.urgentService,
+        retroAuthRequested: form.retroAuthRequested,
+        retroAuthReference: form.retroAuthRequested ? form.retroAuthReference || undefined : undefined,
+        additionalGrounds: form.additionalGrounds || undefined,
+      });
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/appeals'] });
       queryClient.invalidateQueries({ queryKey: ['/api/appeals/denied-claims'] });
       queryClient.invalidateQueries({ queryKey: ['/api/appeals/dashboard'] });
+      const issues: string[] = Array.isArray(data?.appeal?.readinessIssues) ? data.appeal.readinessIssues : [];
       toast({
         title: "Appeal Created",
-        description: "AI appeal letter has been generated",
+        description: issues.length === 0
+          ? "The appeal letter is ready for your review"
+          : `Draft saved — ${issues.length} item${issues.length === 1 ? "" : "s"} to resolve before it is ready to send`,
       });
       setShowCreateDialog(false);
       setSelectedDeniedClaim(null);
+      setCreateForm(emptyCreateForm());
     },
     onError: (error: any) => {
       toast({
@@ -167,8 +216,13 @@ export default function Appeals() {
       const response = await apiRequest("PATCH", `/api/appeals/${id}`, updates);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/appeals'] });
+      // Keep the open drawer in step with what the server now holds
+      // (readiness issues, deadline basis), not the list row it was opened from.
+      if (data && typeof data === "object" && "id" in data) {
+        setSelectedAppeal((prev) => (prev && prev.id === data.id ? { ...prev, ...data } : prev));
+      }
       toast({
         title: "Appeal Updated",
         description: "Changes saved successfully",
@@ -297,12 +351,10 @@ export default function Appeals() {
     ['won', 'lost', 'partial'].includes(a.status)
   ) || [];
 
-  // Calculate days until deadline
-  const getDaysUntilDeadline = (deadline: string | null) => {
-    if (!deadline) return null;
-    const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-    return days;
-  };
+  // Calculate days until deadline. deadlineDate is a date-only column:
+  // compared day-to-day, never via new Date(str) (UTC midnight), which
+  // rendered 2027-01-17 as Jan 16 and miscounted the days (QA 2026-11-18).
+  const getDaysUntilDeadline = (deadline: string | null) => daysUntilDateOnly(deadline);
 
   // Get urgency color based on deadline
   const getUrgencyColor = (deadline: string | null) => {
@@ -315,9 +367,14 @@ export default function Appeals() {
   };
 
   // Get status badge variant
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, readinessIssues?: string[]) => {
     switch (status) {
-      case 'draft': return <Badge variant="secondary"><FileText className="w-3 h-3 mr-1" />Draft</Badge>;
+      case 'draft':
+        // A draft that the server has checked and found wanting says so;
+        // "Ready" is only ever set after that check passes.
+        return readinessIssues && readinessIssues.length > 0
+          ? <Badge variant="secondary" data-testid="badge-draft-needs-review"><AlertTriangle className="w-3 h-3 mr-1" />Draft — needs review</Badge>
+          : <Badge variant="secondary"><FileText className="w-3 h-3 mr-1" />Draft</Badge>;
       case 'ready': return <Badge variant="default" className="bg-blue-500"><CheckCircle className="w-3 h-3 mr-1" />Ready</Badge>;
       case 'submitted': return <Badge variant="default" className="bg-purple-500"><Send className="w-3 h-3 mr-1" />Submitted</Badge>;
       case 'in_review': return <Badge variant="default" className="bg-orange-500"><Clock className="w-3 h-3 mr-1" />In Review</Badge>;
@@ -332,6 +389,7 @@ export default function Appeals() {
     setSelectedAppeal(appeal);
     setEditedLetter(appeal.appealLetter || "");
     setEditedNotes(appeal.notes || "");
+    setEditedDeadline(appeal.deadlineDate ? appeal.deadlineDate.slice(0, 10) : "");
     setShowDetailSheet(true);
   };
 
@@ -540,7 +598,7 @@ export default function Appeals() {
                             <p className="font-medium text-slate-900">{appeal.patientName}</p>
                             <p className="text-sm text-slate-500">#{appeal.claim?.claimNumber}</p>
                           </div>
-                          {getStatusBadge(appeal.status)}
+                          {getStatusBadge(appeal.status, appeal.readinessIssues)}
                         </div>
                         <div className="flex justify-between items-center mb-2">
                           <span className="text-lg font-bold text-slate-700">
@@ -643,7 +701,8 @@ export default function Appeals() {
             <DialogHeader>
               <DialogTitle>Create Appeal</DialogTitle>
               <DialogDescription>
-                AI will generate an appeal letter for this denied claim
+                A draft letter is built from the records on file for this patient. It only states
+                what those records and the fields below support; you review and edit it before sending.
               </DialogDescription>
             </DialogHeader>
             {selectedDeniedClaim && (
@@ -668,6 +727,65 @@ export default function Appeals() {
                     <p className="text-sm mt-1">{selectedDeniedClaim.denialReason || "No reason provided"}</p>
                   </div>
                 </div>
+
+                {/* Facts no record can supply. Each one unlocks a sentence in the
+                    letter; left blank, the letter says nothing about it. */}
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="appeal-denial-date">Denial date (from the EOB / remittance)</Label>
+                    <Input
+                      id="appeal-denial-date"
+                      type="date"
+                      value={createForm.denialDate}
+                      onChange={(e) => setCreateForm({ ...createForm, denialDate: e.target.value })}
+                      data-testid="input-appeal-denial-date"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The filing deadline is counted from this date. Without it the deadline is an estimate.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="appeal-urgent"
+                      checked={createForm.urgentService}
+                      onCheckedChange={(v) => setCreateForm({ ...createForm, urgentService: v === true })}
+                      data-testid="checkbox-appeal-urgent"
+                    />
+                    <Label htmlFor="appeal-urgent" className="font-normal leading-tight">
+                      The service was urgent and could not wait for prior authorization
+                    </Label>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="appeal-retro-auth"
+                      checked={createForm.retroAuthRequested}
+                      onCheckedChange={(v) => setCreateForm({ ...createForm, retroAuthRequested: v === true })}
+                      data-testid="checkbox-appeal-retro-auth"
+                    />
+                    <Label htmlFor="appeal-retro-auth" className="font-normal leading-tight">
+                      A retroactive authorization request has been submitted to the payer
+                    </Label>
+                  </div>
+                  {createForm.retroAuthRequested && (
+                    <Input
+                      placeholder="Retro-auth reference / confirmation number (optional)"
+                      value={createForm.retroAuthReference}
+                      onChange={(e) => setCreateForm({ ...createForm, retroAuthReference: e.target.value })}
+                      data-testid="input-appeal-retro-auth-ref"
+                    />
+                  )}
+                  <div>
+                    <Label htmlFor="appeal-additional-grounds">Additional grounds (optional, included verbatim)</Label>
+                    <Textarea
+                      id="appeal-additional-grounds"
+                      rows={2}
+                      value={createForm.additionalGrounds}
+                      onChange={(e) => setCreateForm({ ...createForm, additionalGrounds: e.target.value })}
+                      placeholder="e.g. Payer confirmed by phone on 11/10 that no authorization was required for this code."
+                      data-testid="textarea-appeal-additional-grounds"
+                    />
+                  </div>
+                </div>
               </div>
             )}
             <DialogFooter>
@@ -675,7 +793,7 @@ export default function Appeals() {
                 Cancel
               </Button>
               <Button
-                onClick={() => selectedDeniedClaim && createAppealMutation.mutate(selectedDeniedClaim.id)}
+                onClick={() => selectedDeniedClaim && createAppealMutation.mutate({ claimId: selectedDeniedClaim.id, form: createForm })}
                 disabled={createAppealMutation.isPending}
               >
                 {createAppealMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -749,7 +867,7 @@ export default function Appeals() {
             <SheetHeader>
               <SheetTitle className="flex items-center justify-between">
                 Appeal Details
-                {selectedAppeal && getStatusBadge(selectedAppeal.status)}
+                {selectedAppeal && getStatusBadge(selectedAppeal.status, selectedAppeal.readinessIssues)}
               </SheetTitle>
               <SheetDescription>
                 {selectedAppeal?.claim?.claimNumber} - {selectedAppeal?.patientName}
@@ -774,20 +892,86 @@ export default function Appeals() {
                       <span className="text-slate-600">Appeal Level</span>
                       <Badge variant="outline">{selectedAppeal.appealLevel.replace('_', ' ')}</Badge>
                     </div>
-                    {selectedAppeal.deadlineDate && (
+                    {selectedAppeal.denialDate && (
                       <div className="flex justify-between">
-                        <span className="text-slate-600">Deadline</span>
-                        <span className={getDaysUntilDeadline(selectedAppeal.deadlineDate)! < 7 ? "text-red-600 font-medium" : ""}>
-                          {new Date(selectedAppeal.deadlineDate).toLocaleDateString()}
-                        </span>
+                        <span className="text-slate-600">Denial date</span>
+                        <span data-testid="text-appeal-denial-date">{formatDateOnly(selectedAppeal.denialDate)}</span>
                       </div>
                     )}
+                    <div className="flex justify-between items-start gap-3">
+                      <span className="text-slate-600 pt-1.5">Filing deadline</span>
+                      <div className="text-right space-y-1">
+                        {/* Date-only value: formatted from its parts so 2027-01-17
+                            reads Jan 17 in every zone. Editable; a manual date is
+                            recorded as such on the server. */}
+                        <div className="flex items-center justify-end gap-2">
+                          <span
+                            className={(getDaysUntilDeadline(selectedAppeal.deadlineDate) ?? 99) < 7 ? "text-red-600 font-medium" : ""}
+                            data-testid="text-appeal-deadline"
+                          >
+                            {formatDateOnly(selectedAppeal.deadlineDate, undefined, "Not set")}
+                          </span>
+                          {!['won', 'lost', 'partial'].includes(selectedAppeal.status) && (
+                            <>
+                              <Input
+                                type="date"
+                                className="h-7 w-[150px] text-xs"
+                                value={editedDeadline}
+                                onChange={(e) => setEditedDeadline(e.target.value)}
+                                aria-label="Edit filing deadline"
+                                data-testid="input-appeal-deadline"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={!editedDeadline || editedDeadline === (selectedAppeal.deadlineDate || "").slice(0, 10) || updateAppealMutation.isPending}
+                                onClick={() => updateAppealMutation.mutate({ id: selectedAppeal.id, updates: { deadlineDate: editedDeadline } })}
+                                data-testid="button-save-deadline"
+                              >
+                                Save date
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                        {selectedAppeal.deadlineBasis && (
+                          <p className="text-xs text-muted-foreground" data-testid="text-appeal-deadline-basis">
+                            {selectedAppeal.deadlineBasis}
+                          </p>
+                        )}
+                      </div>
+                    </div>
                     <div className="pt-2 border-t">
                       <p className="text-slate-600 mb-1">Denial Reason:</p>
                       <p>{selectedAppeal.claim?.denialReason || "Not specified"}</p>
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Readiness: the server's list of what still blocks "Ready".
+                    Placeholders in the letter, missing letterhead, no clinical
+                    records on file, an assertion nothing on record supports. */}
+                {Array.isArray(selectedAppeal.readinessIssues) && selectedAppeal.readinessIssues.length > 0 &&
+                  !['won', 'lost', 'partial', 'submitted', 'in_review'].includes(selectedAppeal.status) && (
+                  <Card className="border-amber-300 bg-amber-50" data-testid="card-readiness-issues">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2 text-amber-900">
+                        <AlertTriangle className="w-4 h-4" />
+                        Before this can be marked ready
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="list-disc pl-5 space-y-1 text-sm text-amber-900">
+                        {selectedAppeal.readinessIssues.map((issue, i) => (
+                          <li key={i}>{issue}</li>
+                        ))}
+                      </ul>
+                      <p className="text-xs text-amber-800 mt-2">
+                        Fix these in the letter or the patient record, save, and the check runs again.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Appeal Letter */}
                 <Card>
@@ -862,11 +1046,15 @@ export default function Appeals() {
                         variant="outline"
                         className="w-full"
                         onClick={() => {
+                          // Send the edited letter with the status change so the
+                          // server validates what the biller actually has on
+                          // screen, not a stale stored copy.
                           updateAppealMutation.mutate({
                             id: selectedAppeal.id,
-                            updates: { status: 'ready' },
+                            updates: { status: 'ready', appealLetter: editedLetter, notes: editedNotes },
                           });
                         }}
+                        data-testid="button-mark-ready"
                       >
                         <CheckCircle className="w-4 h-4 mr-2" />
                         Mark Ready for Submission

@@ -81,6 +81,10 @@ export const practices = pgTable("practices", {
   id: serial("id").primaryKey(),
   name: varchar("name").notNull(),
   npi: varchar("npi").unique(),
+  // Default appeal filing window (days after denial) used when the member's
+  // plan documents do not state one. Null = the code's conservative default,
+  // labeled "estimated" in the UI.
+  appealWindowDays: integer("appeal_window_days"),
   taxId: varchar("tax_id"),
   address: text("address"),
   phone: varchar("phone"),
@@ -1820,6 +1824,18 @@ export const appeals = pgTable("appeals", {
   status: varchar("status").default("draft").notNull(), // draft, ready, submitted, in_review, won, lost, partial
   denialCategory: varchar("denial_category"), // medical_necessity, authorization, coding, timely_filing, etc.
   deadlineDate: date("deadline_date"), // Filing deadline (usually 60-180 days from denial)
+  // How deadlineDate was arrived at (QA 2026-11-18: it used to be silently
+  // creation + 60 days with no denial date or payer rule behind it).
+  denialDate: date("denial_date"), // date the payer denied, entered by the biller or taken from the 835
+  deadlineSource: varchar("deadline_source"), // payer_policy | practice_default | estimated | manual
+  deadlinePolicyDays: integer("deadline_policy_days"), // days after denialDate the source allows
+  // Facts the biller supplied in the Create Appeal flow that no record can
+  // supply (urgent service, retro-auth request, extra grounds). The letter
+  // may only assert these when they are here. See appealGroundingService.
+  groundingInputs: jsonb("grounding_inputs"),
+  // Why the letter is not "ready" (placeholders, missing records, unsupported
+  // assertions). Empty array = ready. Recomputed whenever the letter changes.
+  readinessIssues: jsonb("readiness_issues"), // string[]
   submittedDate: timestamp("submitted_date"),
   resolvedDate: timestamp("resolved_date"),
   appealedAmount: decimal("appealed_amount", { precision: 10, scale: 2 }),
