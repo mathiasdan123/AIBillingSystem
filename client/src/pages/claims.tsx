@@ -2201,6 +2201,20 @@ export default function Claims() {
     return patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown';
   };
 
+  // Non-blocking heads-up when submitting a claim for an archived patient
+  // (QA 2026-11-18). Archive hides the patient from pickers and blocks NEW
+  // claims; an existing draft is still legitimate billing for past services
+  // and must go out, so this only tells the biller what they are looking at.
+  const notifyIfPatientArchived = (patientId: number) => {
+    const patient = patients?.find(p => p.id === patientId);
+    if (patient?.archivedAt) {
+      toast({
+        title: "This patient is archived",
+        description: `${patient.firstName} ${patient.lastName} is archived. The claim will still be submitted.`,
+      });
+    }
+  };
+
   const getInsuranceName = (insuranceId: number) => {
     const insurance = insurances?.find(i => i.id === insuranceId);
     return insurance?.name || 'Unknown';
@@ -3321,6 +3335,7 @@ export default function Claims() {
                             size="sm"
                             onClick={() => {
                               setSelectedClaim(claim);
+                              notifyIfPatientArchived(claim.patientId);
                               setPreSubmitClaimId(claim.id);
                               predictDenialRisk(claim.id);
                             }}
