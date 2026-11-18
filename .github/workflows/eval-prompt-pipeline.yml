@@ -75,6 +75,23 @@ name: SOAP Generation Pipeline Eval (release gate)
 #     failure must never silently turn into "eval skipped" on a prompt PR;
 #     the cost of a spurious eval run is a few dollars, the cost of a
 #     missed one is a fabrication regression reaching production.
+#   - DRAFT PRs do not spend (2026-11-18): `pipeline-eval` is skipped while
+#     the PR is a draft and runs on `ready_for_review` (and every push after
+#     that). A draft cannot be merged, so the required check sitting at
+#     "skipped" weakens nothing; it lets a prompt or eval-harness PR be
+#     opened for discussion without a paid run until someone marks it
+#     ready for review; that event starts the first run, and every push
+#     after it runs as usual. Nothing runs while the PR stays a draft.
+#
+# PASS/FAIL POLICY (2026-11-18, see scripts/eval-gate-policy.ts): every
+# deterministic check is zero tolerance. The semantic judge's findings on a
+# sample whose deterministic checks are clean ("judge-only") are tolerated
+# up to ONE per scenario; a second one fails the run. Every judge-only
+# finding, tolerated or not, is printed in the job log, appended to the job
+# summary, and posted on the PR as a comment so a person reviews it. Why:
+# five consecutive PR runs failed on five different first-session
+# continuity phrasings while main passed; at the model's ~6-7% per-sample
+# rate an all-or-nothing 18-sample gate was failing most runs on variance.
 #
 # TRIGGER COVERAGE (requirement #5): every file that can change the final
 # output. Touching any of these on a PR runs the eval automatically (the
@@ -129,12 +146,15 @@ on:
     # the PR's first commit, so the required check sat as "Expected" and
     # blocked merge until someone pushed a second commit. PR #442 hit this
     # the day after the paths: filter fix above for the same reason.
-    types: [opened, reopened, labeled, synchronize]
+    # `ready_for_review`: a draft skips the eval (see GATING); marking it
+    # ready is what starts the first paid run.
+    types: [opened, reopened, labeled, synchronize, ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: read
+  # write: the review step below posts the judge-only findings on the PR.
+  pull-requests: write
 
 jobs:
   # Decides whether this PR touches the SOAP generation path. Runs on every
@@ -201,8 +221,11 @@ jobs:
     # job must still be evaluated, not auto-skipped. The path test is
     # written as `!= 'false'` rather than `== 'true'` so a failed/absent
     # detection (empty output) opens the gate -- fail-closed, see GATING.
+    # `github.event.pull_request.draft != true`: drafts never spend (see
+    # GATING); on workflow_dispatch there is no pull_request and the
+    # comparison is true.
     if: >-
-      !cancelled() && (
+      !cancelled() && github.event.pull_request.draft != true && (
         github.event_name == 'workflow_dispatch' ||
         contains(github.event.pull_request.labels.*.name, 'ready-for-eval') ||
         needs.changes.outputs.soap_path_touched != 'false'
@@ -225,6 +248,30 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           EVAL_SAMPLES_PER_SCENARIO: 3
         run: npm run eval:soap-generation-pipeline
+
+      # Every judge-only finding (tolerated or not) and every hard failure
+      # goes on the PR as a comment, from .eval-results/pipeline-review.md,
+      # which the script writes only when there is something to review. A
+      # fully clean run posts nothing (the green check says enough).
+      - name: Post review summary on the PR
+        if: always() && github.event_name == 'pull_request'
+        # The eval's own verdict is the gate; a failed comment post (token,
+        # rate limit, API hiccup) must not turn a passing run red or mask a
+        # failing one. The findings are still in the job log and the step
+        # summary either way.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ ! -s .eval-results/pipeline-review.md ]; then
+            echo "Nothing to review on this run; no comment posted."
+            exit 0
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file .eval-results/pipeline-review.md
+          echo "Posted the review summary on PR #$PR_NUMBER"
 
       - name: Upload eval results for replay
         if: always()
