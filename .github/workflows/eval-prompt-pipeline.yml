@@ -80,7 +80,8 @@ name: SOAP Generation Pipeline Eval (release gate)
 #     that). A draft cannot be merged, so the required check sitting at
 #     "skipped" weakens nothing; it lets a prompt or eval-harness PR be
 #     opened for discussion without a paid run until someone marks it
-#     ready. Marking it ready IS the approval to spend.
+#     ready for review; that event starts the first run, and every push
+#     after it runs as usual. Nothing runs while the PR stays a draft.
 #
 # PASS/FAIL POLICY (2026-11-18, see scripts/eval-gate-policy.ts): every
 # deterministic check is zero tolerance. The semantic judge's findings on a
@@ -254,6 +255,11 @@ jobs:
       # fully clean run posts nothing (the green check says enough).
       - name: Post review summary on the PR
         if: always() && github.event_name == 'pull_request'
+        # The eval's own verdict is the gate; a failed comment post (token,
+        # rate limit, API hiccup) must not turn a passing run red or mask a
+        # failing one. The findings are still in the job log and the step
+        # summary either way.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
