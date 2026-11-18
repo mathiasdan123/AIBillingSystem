@@ -187,4 +187,18 @@ describe('upsertSoapDraft billing', () => {
     expect(mockDbState.encryptCalls).toHaveLength(1);
     expect(mockDbState.encryptCalls[0].billing).toEqual(billing);
   });
+
+  it('does not add a billing key when the caller omitted it, so the upsert leaves the column alone', async () => {
+    await upsertSoapDraft({
+      practiceId: 1,
+      therapistId: 'therapist-a',
+      patientId: 42,
+      subjective: 'S',
+    } as any);
+    // Drizzle skips undefined keys in INSERT values and in ON CONFLICT SET
+    // (mapUpdateSet filters `value !== undefined`); an absent key is what
+    // keeps a previously saved billing intact across an autosave from a
+    // page that predates the column.
+    expect('billing' in mockDbState.upserts[0]).toBe(false);
+  });
 });

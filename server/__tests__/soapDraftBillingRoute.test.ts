@@ -67,18 +67,32 @@ describe('PUT /api/soap-drafts billing', () => {
     expect(stored.therapistId).toBe('therapist-a');
   });
 
-  it('stores null billing when none is sent (pre-billing clients keep working)', async () => {
+  it('leaves billing UNTOUCHED when the field is absent (a pre-billing page autosaving mid-deploy must not wipe it)', async () => {
     const res = await request(app).put('/api/soap-drafts').send({ patientId: 42, subjective: 'S' });
     expect(res.status).toBe(200);
-    expect(mockStorage.upsertSoapDraft.mock.calls[0][0].billing).toBeNull();
+    const stored = mockStorage.upsertSoapDraft.mock.calls[0][0];
+    // No key at all -- Drizzle then omits the column from INSERT and from
+    // the ON CONFLICT SET, so whatever is stored stays. `null` here would
+    // have cleared a billing the newer page had already saved.
+    expect('billing' in stored).toBe(false);
+    // The prose fields still default to null when absent, as before.
+    expect(stored.objective).toBeNull();
   });
 
-  it('drops a non-object billing payload instead of storing arbitrary JSON', async () => {
+  it('clears billing on an explicit null (the page really has none for this draft)', async () => {
+    const res = await request(app).put('/api/soap-drafts').send({ patientId: 42, subjective: 'S', billing: null });
+    expect(res.status).toBe(200);
+    const stored = mockStorage.upsertSoapDraft.mock.calls[0][0];
+    expect('billing' in stored).toBe(true);
+    expect(stored.billing).toBeNull();
+  });
+
+  it('treats a non-object billing payload as absent: neither stored nor allowed to erase what is there', async () => {
     for (const bad of ['string', 12, true, [1, 2, 3]]) {
       mockStorage.upsertSoapDraft.mockClear();
       const res = await request(app).put('/api/soap-drafts').send({ patientId: 42, subjective: 'S', billing: bad });
       expect(res.status).toBe(200);
-      expect(mockStorage.upsertSoapDraft.mock.calls[0][0].billing).toBeNull();
+      expect('billing' in mockStorage.upsertSoapDraft.mock.calls[0][0]).toBe(false);
     }
   });
 });

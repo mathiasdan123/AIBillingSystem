@@ -54,6 +54,29 @@ router.put("/", isAuthenticated, async (req: any, res) => {
     if (!Number.isInteger(patientId) || patientId <= 0) {
       return res.status(400).json({ message: "patientId is required in body" });
     }
+    // `billing` has THREE states, not two (review on #463):
+    //   - key absent  → leave the stored column as it is. A page loaded
+    //                    before billing shipped autosaves without the key;
+    //                    during a rolling deploy that must not wipe billing
+    //                    a newer page already saved. Drizzle omits undefined
+    //                    keys from both the INSERT values and the ON CONFLICT
+    //                    SET, so the column is simply not written.
+    //   - explicit null → clear it (the page has no billing for this draft).
+    //   - plain object  → store it. Anything else (string, number, array) is
+    //                    malformed; it is treated as absent -- a bad client
+    //                    must not be able to erase billing either -- and
+    //                    logged, so it is visible without being destructive.
+    const billingPatch: { billing?: Record<string, unknown> | null } = {};
+    if ("billing" in (req.body ?? {})) {
+      const b = req.body.billing;
+      if (b === null) {
+        billingPatch.billing = null;
+      } else if (b && typeof b === "object" && !Array.isArray(b)) {
+        billingPatch.billing = b;
+      } else {
+        logger.warn("Ignoring malformed soap draft billing payload", { type: Array.isArray(b) ? "array" : typeof b });
+      }
+    }
     // Whitelist — never trust the client to set practice/therapist scope.
     const draft = await storage.upsertSoapDraft({
       practiceId,
@@ -69,13 +92,9 @@ router.put("/", isAuthenticated, async (req: any, res) => {
       interventions: req.body.interventions ?? null,
       location: req.body.location ?? null,
       sessionType: req.body.sessionType ?? null,
-      // Suggested billing travels with the draft (see schema comment). Only
-      // plain objects are stored; anything else (string, array) is dropped
-      // so a malformed client can't park arbitrary JSON here.
-      billing:
-        req.body.billing && typeof req.body.billing === "object" && !Array.isArray(req.body.billing)
-          ? req.body.billing
-          : null,
+      // Suggested billing travels with the draft (see schema comment). The
+      // key is only present when the client sent one -- see billingPatch.
+      ...billingPatch,
     });
     res.json(draft);
   } catch (error: any) {
