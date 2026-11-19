@@ -22,7 +22,8 @@ import {
   type WebhookEvent,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, gte, lte, lt, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, lte, lt, inArray, or, isNull } from "drizzle-orm";
+import { paymentPostings, type PaymentPosting } from "@shared/schema";
 import { stripImmutable } from "../utils/sanitizeUpdate";
 import {
   encryptPracticePaymentSettingsRecord,
@@ -333,6 +334,29 @@ export async function upsertPracticePaymentSettings(settings: InsertPracticePaym
 
 // ==================== PAYMENT ANALYTICS ====================
 
+/**
+ * Non-reversed insurance payment postings for a practice in a calendar-day
+ * window (payment_date, YYYY-MM-DD, inclusive). The Accounting ledger reads
+ * these next to patient payments: insurance money never lands in
+ * payment_transactions.
+ */
+export async function getPaymentPostingsForPeriod(
+  practiceId: number,
+  startDay?: string,
+  endDay?: string,
+): Promise<PaymentPosting[]> {
+  const conditions: any[] = [
+    eq(paymentPostings.practiceId, practiceId),
+    or(isNull(paymentPostings.reversed), eq(paymentPostings.reversed, false)),
+  ];
+  if (startDay) conditions.push(gte(paymentPostings.paymentDate, startDay));
+  if (endDay) conditions.push(lte(paymentPostings.paymentDate, endDay));
+  return db.select()
+    .from(paymentPostings)
+    .where(and(...conditions))
+    .orderBy(desc(paymentPostings.paymentDate), desc(paymentPostings.id));
+}
+
 export async function getPaymentStats(practiceId: number, startDate?: Date, endDate?: Date): Promise<{
   totalCollected: number;
   totalPending: number;
@@ -341,6 +365,14 @@ export async function getPaymentStats(practiceId: number, startDate?: Date, endD
   averagePayment: number;
   byCategory: { category: string; amount: number; count: number }[];
   byMethod: { type: string; amount: number; count: number }[];
+  /** Non-reversed insurance postings (payment_postings) in the period. */
+  insuranceCollected: number;
+  insurancePostingCount: number;
+  /** The figures the Accounting page shows (QA demo pass 2026-11-19): */
+  totalRevenue: number;
+  insuranceRevenue: number;
+  patientRevenue: number;
+  pendingPayments: number;
 }> {
   const conditions: any[] = [eq(paymentTransactions.practiceId, practiceId)];
   if (startDate) {
@@ -350,9 +382,17 @@ export async function getPaymentStats(practiceId: number, startDate?: Date, endD
     conditions.push(lte(paymentTransactions.createdAt, endDate));
   }
 
-  const transactions = await db.select()
-    .from(paymentTransactions)
-    .where(and(...conditions));
+  const [transactions, postings] = await Promise.all([
+    db.select()
+      .from(paymentTransactions)
+      .where(and(...conditions)),
+    getPaymentPostingsForPeriod(
+      practiceId,
+      startDate ? startDate.toISOString().slice(0, 10) : undefined,
+      endDate ? endDate.toISOString().slice(0, 10) : undefined,
+    ),
+  ]);
+  const insuranceCollected = postings.reduce((sum: number, p: PaymentPosting) => sum + parseFloat(p.paymentAmount || '0'), 0);
 
   const completed = transactions.filter((t: PaymentTransaction) => t.status === 'completed' && t.type === 'payment');
   const pending = transactions.filter((t: PaymentTransaction) => t.status === 'pending');
@@ -386,7 +426,21 @@ export async function getPaymentStats(practiceId: number, startDate?: Date, endD
     .map(([type, data]) => ({ type, ...data }))
     .sort((a, b) => b.amount - a.amount);
 
-  return { totalCollected, totalPending, totalRefunded, transactionCount, averagePayment, byCategory, byMethod };
+  return {
+    totalCollected,
+    totalPending,
+    totalRefunded,
+    transactionCount,
+    averagePayment,
+    byCategory,
+    byMethod,
+    insuranceCollected,
+    insurancePostingCount: postings.length,
+    totalRevenue: totalCollected + insuranceCollected,
+    insuranceRevenue: insuranceCollected,
+    patientRevenue: totalCollected,
+    pendingPayments: totalPending,
+  };
 }
 
 export async function getPatientBalance(patientId: number): Promise<{

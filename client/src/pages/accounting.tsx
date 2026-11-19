@@ -11,33 +11,22 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useToast } from "@/hooks/use-toast";
 import { DollarSign, Download, FileText, TrendingUp, TrendingDown, CreditCard, Receipt, Filter, Plus, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  buildPaymentsCsv,
+  buildQuickBooksIif,
+  buildTaxSummary,
+  labelMethod,
+  type AccountingLedgerRow,
+} from "@/lib/accountingExport";
 
-interface PaymentTransaction {
-  id: number;
-  practiceId: number;
-  patientId?: number;
-  claimId?: number;
-  amount: string;
-  paymentType: "insurance" | "patient" | "copay" | "coinsurance" | "deductible";
-  paymentMethod: "credit_card" | "debit_card" | "ach" | "check" | "cash" | "eft";
-  status: "pending" | "completed" | "failed" | "refunded" | "voided";
-  transactionDate: string;
-  processedAt?: string;
-  stripePaymentIntentId?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-  patient?: { firstName: string; lastName: string };
-}
-
+/** GET /api/payment-transactions/stats — the server computes every figure the cards show. */
 interface PaymentStats {
   totalRevenue: number;
   pendingPayments: number;
   insuranceRevenue: number;
   patientRevenue: number;
   transactionCount: number;
-  completedCount: number;
-  pendingCount: number;
+  insurancePostingCount: number;
 }
 
 export default function AccountingPage() {
@@ -48,21 +37,23 @@ export default function AccountingPage() {
   });
   const [showNewInvoice, setShowNewInvoice] = useState(false);
 
-  // Fetch payment transactions from API
-  const { data: transactions = [], isLoading: loadingTransactions } = useQuery<PaymentTransaction[]>({
-    queryKey: ['/api/payment-transactions', dateRange.start, dateRange.end],
+  // One ledger for the period: patient payments and insurance postings, in
+  // the row shape the table and the exports use. Insurance money is recorded
+  // in payment_postings, never in payment_transactions, so the old
+  // transactions-only list could not show it.
+  const { data: transactions = [], isLoading: loadingTransactions } = useQuery<AccountingLedgerRow[]>({
+    queryKey: ['/api/payment-transactions/ledger', dateRange.start, dateRange.end],
     queryFn: async () => {
       const params = new URLSearchParams({
         startDate: dateRange.start,
         endDate: dateRange.end,
       });
-      const response = await apiRequest('GET', `/api/payment-transactions?${params}`);
+      const response = await apiRequest('GET', `/api/payment-transactions/ledger?${params}`);
       if (!response.ok) throw new Error('Failed to fetch transactions');
       return response.json();
     },
   });
 
-  // Fetch payment stats from API
   const { data: stats, isLoading: loadingStats } = useQuery<PaymentStats>({
     queryKey: ['/api/payment-transactions/stats', dateRange.start, dateRange.end],
     queryFn: async () => {
@@ -76,80 +67,37 @@ export default function AccountingPage() {
     },
   });
 
-  // Calculate local stats if API stats not available
-  const totalRevenue = stats?.totalRevenue ?? transactions.filter(t => t.status === "completed").reduce((sum, t) => sum + parseFloat(t.amount || "0"), 0);
-  const pendingPayments = stats?.pendingPayments ?? transactions.filter(t => t.status === "pending").reduce((sum, t) => sum + parseFloat(t.amount || "0"), 0);
-  const insuranceRevenue = stats?.insuranceRevenue ?? transactions.filter(t => t.paymentType === "insurance" && t.status === "completed").reduce((sum, t) => sum + parseFloat(t.amount || "0"), 0);
-  const patientRevenue = stats?.patientRevenue ?? transactions.filter(t => ["patient", "copay", "coinsurance", "deductible"].includes(t.paymentType) && t.status === "completed").reduce((sum, t) => sum + parseFloat(t.amount || "0"), 0);
+  // The server figures are authoritative; the ledger-derived fallback only
+  // covers the moment before stats arrive.
+  const sumCompleted = (rows: AccountingLedgerRow[]) =>
+    rows.filter((r) => r.status === "completed" && r.type === "payment").reduce((sum, r) => sum + r.amount, 0);
+  const insuranceRevenue = stats?.insuranceRevenue ?? sumCompleted(transactions.filter((r) => r.source === "insurance"));
+  const patientRevenue = stats?.patientRevenue ?? sumCompleted(transactions.filter((r) => r.source === "patient"));
+  const totalRevenue = stats?.totalRevenue ?? insuranceRevenue + patientRevenue;
+  const pendingPayments = stats?.pendingPayments ?? transactions.filter((r) => r.status === "pending").reduce((sum, r) => sum + r.amount, 0);
+  const totals = { totalRevenue, insuranceRevenue, patientRevenue, pendingPayments };
 
-  const exportToCSV = () => {
-    const headers = ["Date", "Patient", "Amount", "Type", "Status", "Method"];
-    const rows = transactions.map(t => [
-      t.transactionDate,
-      t.patient ? `${t.patient.firstName} ${t.patient.lastName}` : "Unknown",
-      parseFloat(t.amount || "0").toFixed(2),
-      t.paymentType,
-      t.status,
-      t.paymentMethod
-    ]);
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv" });
+  const download = (content: string, mime: string, filename: string) => {
+    const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `payments-${dateRange.start}-to-${dateRange.end}.csv`;
+    a.download = filename;
     a.click();
-    toast({ title: "Export Complete", description: "CSV file downloaded successfully" });
+  };
+
+  const exportToCSV = () => {
+    download(buildPaymentsCsv(transactions), "text/csv", `payments-${dateRange.start}-to-${dateRange.end}.csv`);
+    toast({ title: "Export Complete", description: `${transactions.length} payments exported to CSV` });
   };
 
   const exportToQuickBooks = () => {
-    const header = "!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tMEMO\n!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tMEMO\n!ENDTRNS\n";
-    const rows = transactions.filter(t => t.status === "completed").map(t => {
-      const patientName = t.patient ? `${t.patient.firstName} ${t.patient.lastName}` : "Unknown";
-      const date = t.transactionDate.replace(/-/g, "/");
-      const amount = parseFloat(t.amount || "0").toFixed(2);
-      return `TRNS\tDEPOSIT\t${date}\tChecking\t${patientName}\t${amount}\t${t.paymentType} payment\n` +
-        `SPL\tDEPOSIT\t${date}\tTherapy Revenue\t${patientName}\t-${amount}\t${t.paymentType} payment\n` +
-        "ENDTRNS";
-    }).join("\n");
-    const iifContent = header + rows;
-    const blob = new Blob([iifContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `quickbooks-import-${dateRange.start}-to-${dateRange.end}.iif`;
-    a.click();
+    download(buildQuickBooksIif(transactions), "text/plain", `quickbooks-import-${dateRange.start}-to-${dateRange.end}.iif`);
     toast({ title: "Export Complete", description: "QuickBooks IIF file downloaded successfully" });
   };
 
   const exportTaxSummary = () => {
-    const summary = `TAX SUMMARY REPORT
-Period: ${dateRange.start} to ${dateRange.end}
-Generated: ${new Date().toISOString().split("T")[0]}
-
-REVENUE SUMMARY
-===============
-Total Revenue: $${totalRevenue.toFixed(2)}
-  - Insurance Payments: $${insuranceRevenue.toFixed(2)}
-  - Patient Payments: $${patientRevenue.toFixed(2)}
-
-Pending Payments: $${pendingPayments.toFixed(2)}
-
-TRANSACTION COUNT
-=================
-Total Transactions: ${transactions.length}
-Completed: ${transactions.filter(t => t.status === "completed").length}
-Pending: ${transactions.filter(t => t.status === "pending").length}
-
----
-This report is for informational purposes only.
-Consult with a tax professional for tax filing.`;
-    const blob = new Blob([summary], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tax-summary-${dateRange.start}-to-${dateRange.end}.txt`;
-    a.click();
+    download(buildTaxSummary(dateRange, totals, transactions), "text/plain", `tax-summary-${dateRange.start}-to-${dateRange.end}.txt`);
     toast({ title: "Export Complete", description: "Tax summary report downloaded successfully" });
   };
 
@@ -165,16 +113,15 @@ Consult with a tax professional for tax filing.`;
   const getTypeColor = (t: string) => {
     switch (t) {
       case "insurance": return "bg-blue-100 text-blue-800";
-      case "patient": return "bg-purple-100 text-purple-800";
+      case "self_pay": case "balance": return "bg-purple-100 text-purple-800";
       case "copay": case "coinsurance": return "bg-teal-100 text-teal-800";
       case "deductible": return "bg-orange-100 text-orange-800";
+      case "refund": case "write_off": case "adjustment": return "bg-red-100 text-red-800";
       default: return "bg-gray-100 text-gray-800";
     }
   };
-
-  const formatPaymentMethod = (method: string) => {
-    return method.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-  };
+  /** What the Type column shows: the category for a payment, the type itself for refunds and adjustments. */
+  const typeLabel = (r: AccountingLedgerRow) => (r.type === "payment" ? (r.category ?? "payment") : r.type);
 
   const isLoading = loadingTransactions || loadingStats;
 
@@ -215,9 +162,9 @@ Consult with a tax professional for tax filing.`;
                   <DollarSign className="w-6 h-6 text-green-600" />
                 </div>
               </div>
-              <div className="flex items-center mt-2 text-sm text-green-600">
+              <div className="flex items-center mt-2 text-sm text-green-600" data-testid="text-total-revenue-detail">
                 <TrendingUp className="w-4 h-4 mr-1" />
-                {transactions.length} transactions
+                {transactions.length} payments in period
               </div>
             </CardContent>
           </Card>
@@ -258,8 +205,8 @@ Consult with a tax professional for tax filing.`;
                   <FileText className="w-6 h-6 text-blue-600" />
                 </div>
               </div>
-              <div className="text-sm text-slate-500 mt-2">
-                {totalRevenue > 0 ? Math.round((insuranceRevenue / totalRevenue) * 100) : 0}% of revenue
+              <div className="text-sm text-slate-500 mt-2" data-testid="text-insurance-detail">
+                {totalRevenue > 0 ? Math.round((insuranceRevenue / totalRevenue) * 100) : 0}% of revenue · posted ERA and manual postings
               </div>
             </CardContent>
           </Card>
@@ -279,8 +226,8 @@ Consult with a tax professional for tax filing.`;
                   <Receipt className="w-6 h-6 text-purple-600" />
                 </div>
               </div>
-              <div className="text-sm text-slate-500 mt-2">
-                {totalRevenue > 0 ? Math.round((patientRevenue / totalRevenue) * 100) : 0}% of revenue
+              <div className="text-sm text-slate-500 mt-2" data-testid="text-patient-detail">
+                {totalRevenue > 0 ? Math.round((patientRevenue / totalRevenue) * 100) : 0}% of revenue · copays, balances, self-pay
               </div>
             </CardContent>
           </Card>
@@ -378,8 +325,9 @@ Consult with a tax professional for tax filing.`;
                       <thead>
                         <tr className="border-b">
                           <th className="text-left py-3 px-4 font-medium text-slate-600">Date</th>
-                          <th className="text-left py-3 px-4 font-medium text-slate-600">Patient</th>
+                          <th className="text-left py-3 px-4 font-medium text-slate-600">Patient / Payer</th>
                           <th className="text-left py-3 px-4 font-medium text-slate-600">Amount</th>
+                          <th className="text-left py-3 px-4 font-medium text-slate-600">Source</th>
                           <th className="text-left py-3 px-4 font-medium text-slate-600">Type</th>
                           <th className="text-left py-3 px-4 font-medium text-slate-600">Method</th>
                           <th className="text-left py-3 px-4 font-medium text-slate-600">Status</th>
@@ -387,16 +335,20 @@ Consult with a tax professional for tax filing.`;
                       </thead>
                       <tbody>
                         {transactions.map((t) => (
-                          <tr key={t.id} className="border-b hover:bg-slate-50">
-                            <td className="py-3 px-4">{new Date(t.transactionDate).toLocaleDateString()}</td>
-                            <td className="py-3 px-4 font-medium">
-                              {t.patient ? `${t.patient.firstName} ${t.patient.lastName}` : "—"}
-                            </td>
-                            <td className="py-3 px-4">${parseFloat(t.amount || "0").toFixed(2)}</td>
+                          <tr key={t.id} className="border-b hover:bg-slate-50" data-testid={`ledger-row-${t.id}`}>
+                            {/* Date-only value: shown as stored, never through a local-time Date. */}
+                            <td className="py-3 px-4">{t.date}</td>
+                            <td className="py-3 px-4 font-medium">{t.party}</td>
+                            <td className="py-3 px-4">${t.amount.toFixed(2)}</td>
                             <td className="py-3 px-4">
-                              <Badge className={getTypeColor(t.paymentType)}>{t.paymentType}</Badge>
+                              <Badge className={t.source === "insurance" ? "bg-blue-100 text-blue-800" : "bg-purple-100 text-purple-800"}>
+                                {t.source}
+                              </Badge>
                             </td>
-                            <td className="py-3 px-4">{formatPaymentMethod(t.paymentMethod)}</td>
+                            <td className="py-3 px-4">
+                              <Badge className={getTypeColor(typeLabel(t))}>{typeLabel(t)}</Badge>
+                            </td>
+                            <td className="py-3 px-4">{labelMethod(t.method) || "—"}</td>
                             <td className="py-3 px-4">
                               <Badge className={getStatusColor(t.status)}>{t.status}</Badge>
                             </td>
@@ -430,7 +382,7 @@ Consult with a tax professional for tax filing.`;
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                       <div>
                         <div className="font-medium">Insurance Payments</div>
-                        <div className="text-sm text-slate-500">EFT, Check</div>
+                        <div className="text-sm text-slate-500">Posted ERA and manual postings</div>
                       </div>
                       <div className="text-xl font-bold text-blue-600">
                         ${insuranceRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -439,7 +391,7 @@ Consult with a tax professional for tax filing.`;
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                       <div>
                         <div className="font-medium">Patient Payments</div>
-                        <div className="text-sm text-slate-500">Copays, Self-pay</div>
+                        <div className="text-sm text-slate-500">Copays, balances, self-pay</div>
                       </div>
                       <div className="text-xl font-bold text-purple-600">
                         ${patientRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -447,7 +399,7 @@ Consult with a tax professional for tax filing.`;
                     </div>
                     <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg">
                       <div>
-                        <div className="font-medium">Pending Payments</div>
+                        <div className="font-medium">Pending Patient Payments</div>
                         <div className="text-sm text-slate-500">Awaiting processing</div>
                       </div>
                       <div className="text-xl font-bold text-yellow-600">
@@ -465,8 +417,14 @@ Consult with a tax professional for tax filing.`;
                 <CardContent>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                      <span className="font-medium">Total Transactions</span>
+                      <span className="font-medium">Total Payments</span>
                       <span className="text-xl font-bold">{transactions.length}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                      <span className="font-medium">Insurance Postings</span>
+                      <span className="text-xl font-bold text-blue-600">
+                        {transactions.filter(t => t.source === "insurance").length}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
                       <span className="font-medium">Completed</span>
