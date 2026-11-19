@@ -20,6 +20,7 @@ import { mkdtempSync, readdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { Client } from 'pg';
+import { getBusinessTimeZone, zonedAddDays, zonedDateString } from '../utils/timezone';
 
 const DB_URL = process.env.DEMO_PROVISION_DATABASE_URL ?? '';
 const run = DB_URL ? describe : describe.skip;
@@ -141,4 +142,76 @@ run('demo practice provisioning (real Postgres)', () => {
     expect(await count('SELECT count(*)::int AS n FROM claims WHERE practice_id = $1 AND submitted_at IS NOT NULL AND created_at >= submitted_at', [practiceId])).toBe(0);
     expect(await count("SELECT count(*)::int AS n FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%' AND insurance_id IS NULL", [practiceId])).toBe(0);
   }, 60_000);
+
+  // ---- date roll-forward (#491) ----
+
+  const AGE_DAYS = 30;
+  /** Age every seeded row by AGE_DAYS, the way a demo seeded weeks ago looks; hand-made rows are not touched. */
+  async function ageSeededRows() {
+    const d = [practiceId, AGE_DAYS];
+    await client.query(`UPDATE claims SET created_at = created_at - make_interval(days => $2::int), submitted_at = submitted_at - make_interval(days => $2::int), paid_at = paid_at - make_interval(days => $2::int) WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%'`, d);
+    await client.query(`UPDATE remittance_advice SET received_date = received_date - $2::int, check_date = check_date - $2::int, processed_at = processed_at - make_interval(days => $2::int), created_at = created_at - make_interval(days => $2::int) WHERE practice_id = $1`, d);
+    await client.query(`UPDATE remittance_line_items SET service_date = service_date - $2::int, matched_at = matched_at - make_interval(days => $2::int), auto_posted_at = auto_posted_at - make_interval(days => $2::int) WHERE remittance_id IN (SELECT id FROM remittance_advice WHERE practice_id = $1)`, d);
+    await client.query(`UPDATE payment_postings SET payment_date = payment_date - $2::int, posted_at = posted_at - make_interval(days => $2::int), created_at = created_at - make_interval(days => $2::int) WHERE practice_id = $1`, d);
+    await client.query(`UPDATE payment_transactions SET processed_at = processed_at - make_interval(days => $2::int), created_at = created_at - make_interval(days => $2::int) WHERE practice_id = $1`, d);
+    // Age appointments the way the clock does, wall-clock preserved in the practice zone (the raw interval would shift the local time across DST).
+    await client.query(`UPDATE appointments SET start_time = ${demo.shiftTimestampByLocalDaysSql('start_time', '$2', '$4')}, end_time = ${demo.shiftTimestampByLocalDaysSql('end_time', '$2', '$4')} WHERE practice_id = $1 AND notes = $3`, [practiceId, -AGE_DAYS, demo.DEMO_SEED_APPOINTMENT_MARKER, getBusinessTimeZone()]);
+  }
+  const newestPaidDay = async () => (await client.query(`SELECT to_char(max(paid_at) AT TIME ZONE 'UTC' AT TIME ZONE $2, 'YYYY-MM-DD') AS d FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%' AND status = 'paid'`, [practiceId, getBusinessTimeZone()])).rows[0].d as string;
+  const intendedNewestDay = () => zonedDateString(zonedAddDays(new Date(), demo.DEMO_NEWEST_PAID_OFFSET_DAYS, getBusinessTimeZone()), getBusinessTimeZone());
+
+  it('a demo seeded weeks ago is rolled forward by the next login, and three concurrent logins apply the shift exactly once', async () => {
+    // A hand-booked appointment that looks like a seeded one but carries its own notes, and a hand-made claim: neither may move.
+    const [{ id: patientId }] = (await client.query('SELECT id FROM patients WHERE practice_id = $1 ORDER BY id LIMIT 1', [practiceId])).rows;
+    const [{ id: therapistId }] = (await client.query("SELECT id FROM users WHERE practice_id = $1 AND role = 'therapist' LIMIT 1", [practiceId])).rows;
+    const handStart = '2026-10-20 14:00:00';
+    await client.query(`INSERT INTO appointments (practice_id, patient_id, therapist_id, title, notes, start_time, end_time, duration_minutes, status) VALUES ($1, $2, $3, 'Occupational Therapy', 'Parent requested this slot', $4, $4::timestamp + interval '45 minutes', 45, 'scheduled')`, [practiceId, patientId, therapistId, handStart]);
+    await client.query(`INSERT INTO claims (practice_id, patient_id, claim_number, total_amount, status, created_at) VALUES ($1, $2, 'CLM-HANDMADE', '200.00', 'draft', '2026-10-10 12:00:00')`, [practiceId, patientId]);
+
+    expect(await newestPaidDay()).toBe(intendedNewestDay());
+    const before = (await client.query(`SELECT min(r.received_date)::text AS era, min(p.payment_date)::text AS posting, min(t.processed_at)::text AS copay, min(a.start_time)::text AS appt FROM remittance_advice r, payment_postings p, payment_transactions t, appointments a WHERE r.practice_id = $1 AND p.practice_id = $1 AND t.practice_id = $1 AND a.practice_id = $1 AND a.notes = $2`, [practiceId, demo.DEMO_SEED_APPOINTMENT_MARKER])).rows[0];
+
+    await ageSeededRows();
+    expect(await newestPaidDay()).toBe(zonedDateString(zonedAddDays(new Date(), demo.DEMO_NEWEST_PAID_OFFSET_DAYS - AGE_DAYS, getBusinessTimeZone()), getBusinessTimeZone()));
+
+    await Promise.all([demo.ensureDemoPractice(), demo.ensureDemoPractice(), demo.ensureDemoPractice()]);
+
+    // Back to its intended age: shifted once by AGE_DAYS, not three times.
+    expect(await newestPaidDay()).toBe(intendedNewestDay());
+    const after = (await client.query(`SELECT min(r.received_date)::text AS era, min(p.payment_date)::text AS posting, min(t.processed_at)::text AS copay, min(a.start_time)::text AS appt FROM remittance_advice r, payment_postings p, payment_transactions t, appointments a WHERE r.practice_id = $1 AND p.practice_id = $1 AND t.practice_id = $1 AND a.practice_id = $1 AND a.notes = $2`, [practiceId, demo.DEMO_SEED_APPOINTMENT_MARKER])).rows[0];
+    expect(after).toEqual(before);
+    // The copay description names the shifted service date.
+    expect(await count(`SELECT count(*)::int AS n FROM payment_transactions t JOIN remittance_line_items l ON l.claim_id = t.claim_id WHERE t.practice_id = $1 AND t.description NOT LIKE '%' || l.service_date::text || '%'`, [practiceId])).toBe(0);
+    // Hand-made rows did not move; the hand-booked appointment is still on its day.
+    expect((await client.query("SELECT created_at::text AS c FROM claims WHERE claim_number = 'CLM-HANDMADE'")).rows[0].c).toBe('2026-10-10 12:00:00');
+    expect((await client.query("SELECT start_time::text AS s FROM appointments WHERE notes = 'Parent requested this slot'")).rows[0].s).toBe(handStart);
+    // A further login changes nothing.
+    await demo.ensureDemoPractice();
+    expect(await newestPaidDay()).toBe(intendedNewestDay());
+  }, 120_000);
+
+  it('the appointment shift keeps the wall-clock time across the DST change (October EDT to November EST, and March EST to EDT)', async () => {
+    const sql = `SELECT (${demo.shiftTimestampByLocalDaysSql("$1::timestamp", '$2', '$3')})::text AS shifted`;
+    expect((await client.query(sql, ['2026-10-20 14:00:00', 30, 'America/New_York'])).rows[0].shifted).toBe('2026-11-19 15:00:00'); // 10:00 EDT -> 10:00 EST
+    expect((await client.query(sql, ['2026-03-01 15:00:00', 10, 'America/New_York'])).rows[0].shifted).toBe('2026-03-11 14:00:00'); // 10:00 EST -> 10:00 EDT
+    expect((await client.query(sql, ['2026-11-05 15:00:00', 7, 'America/New_York'])).rows[0].shifted).toBe('2026-11-12 15:00:00'); // no change
+  }, 30_000);
+
+  it('a failure in the appointment step rolls the whole shift back, and the next login repairs it in full', async () => {
+    await ageSeededRows();
+    const agedDay = await newestPaidDay();
+    await client.query(`CREATE OR REPLACE FUNCTION demo_block_appt() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'appointment update blocked'; END $$ LANGUAGE plpgsql`);
+    await client.query(`CREATE TRIGGER demo_block_appt BEFORE UPDATE ON appointments FOR EACH ROW EXECUTE FUNCTION demo_block_appt()`);
+    try {
+      await demo.ensureDemoPractice();
+      // Financial rows must not have moved while the appointment step failed.
+      expect(await newestPaidDay()).toBe(agedDay);
+      expect(await count(`SELECT count(*)::int AS n FROM remittance_advice WHERE practice_id = $1 AND received_date > current_date - $2::int`, [practiceId, AGE_DAYS])).toBe(0);
+    } finally {
+      await client.query('DROP TRIGGER IF EXISTS demo_block_appt ON appointments');
+      await client.query('DROP FUNCTION IF EXISTS demo_block_appt()');
+    }
+    await demo.ensureDemoPractice();
+    expect(await newestPaidDay()).toBe(intendedNewestDay());
+  }, 120_000);
 });

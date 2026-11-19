@@ -17,6 +17,7 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       getAppointments: vi.fn(),
       updateAppointment: vi.fn(),
       getPatient: vi.fn(),
+      getPractice: vi.fn(async (id: number) => ({ id, isDemo: true })),
       getClaims: vi.fn(async () => []),
       getInsurances: vi.fn(async () => []),
       updateClaim: vi.fn(),
@@ -47,7 +48,13 @@ import {
   demoEraFileHash,
   ensureDemoPaymentRecords,
   ensureDemoClaimPayers,
+  keepDemoDatesCurrent,
+  calendarDaysBetween,
+  isSeededDemoAppointmentShape,
+  shiftTimestampByLocalDaysSql,
+  DEMO_SEED_APPOINTMENT_MARKER,
   DEMO_SEED_SUBMIT_OFFSET_DAYS,
+  DEMO_NEWEST_PAID_OFFSET_DAYS,
   matchDemoPayer,
   isProcessZoneSeedTime,
   repairDemoSeededAppointments,
@@ -56,7 +63,7 @@ import {
 import { decryptRemittanceLineItem } from '../services/phiEncryptionService';
 import { zonedAddDays, zonedDateString } from '../utils/timezone';
 import { getTableColumns } from 'drizzle-orm';
-import { claims, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates } from '@shared/schema';
+import { claims, claimLineItems, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates, appointments } from '@shared/schema';
 import { zonedTimeString } from '../utils/dateOnly';
 
 describe('ensureDemoPractice', () => {
@@ -291,7 +298,8 @@ describe('ensureDemoPractice', () => {
     });
 
     it('leaves rows already at local 9:00 untouched and is a no-op on a second pass', async () => {
-      mockStorage.getAppointments.mockResolvedValue([seeded(3, NEW_9, { therapistId: 'demo-therapist-99' })]);
+      // Already stamped with the seed marker: nothing left to repair.
+      mockStorage.getAppointments.mockResolvedValue([seeded(3, NEW_9, { therapistId: 'demo-therapist-99', notes: DEMO_SEED_APPOINTMENT_MARKER })]);
 
       const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
 
@@ -299,12 +307,19 @@ describe('ensureDemoPractice', () => {
       expect(mockStorage.updateAppointment).not.toHaveBeenCalled();
     });
 
-    it('only assigns the therapist (no re-time) on a seeded row that is correctly timed but unassigned', async () => {
+    it('stamps the seed marker (once) onto a correctly timed seeded row that predates it', async () => {
+      mockStorage.getAppointments.mockResolvedValue([seeded(3, NEW_9, { therapistId: 'demo-therapist-99', notes: null })]);
+      const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
+      expect(out).toEqual({ retimed: 0, assigned: 0 });
+      expect(mockStorage.updateAppointment).toHaveBeenCalledWith(3, { notes: DEMO_SEED_APPOINTMENT_MARKER });
+    });
+
+    it('only assigns the therapist (no re-time) on a seeded row that is correctly timed but unassigned, and stamps the marker', async () => {
       mockStorage.getAppointments.mockResolvedValue([seeded(4, NEW_9)]);
       const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
       expect(out).toEqual({ retimed: 0, assigned: 1 });
       const [, patch] = mockStorage.updateAppointment.mock.calls[0];
-      expect(patch).toEqual({ therapistId: 'demo-therapist-99' });
+      expect(patch).toEqual({ therapistId: 'demo-therapist-99', notes: DEMO_SEED_APPOINTMENT_MARKER });
     });
 
     it('never touches an appointment a demo visitor created by hand (different title), even at an odd hour', async () => {
@@ -567,6 +582,8 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
     payment_postings: dbColumns(paymentPostings),
     payment_transactions: dbColumns(paymentTransactions),
     practice_cpt_rates: dbColumns(practiceCptRates),
+    claim_line_items: dbColumns(claimLineItems),
+    appointments: dbColumns(appointments),
   };
 
   function checkStatement(sql: string) {
@@ -579,8 +596,8 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
         if (!cols.has(col)) problems.push(`${m[1]}.${col}`);
       }
     }
-    // UPDATE table SET ... / FROM table alias ... : alias.col and bare col = / IS / LIKE / >
-    for (const m of sql.matchAll(/(?:UPDATE|FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?([a-z]))?/g)) {
+    // UPDATE table [alias] SET ... / FROM table alias / JOIN table alias: alias.col references
+    for (const m of sql.matchAll(/(?:UPDATE|FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?([a-z])\b)?/g)) {
       const cols = tables[m[1]];
       if (!cols) continue;
       const alias = m[2];
@@ -604,23 +621,206 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
     });
     mockClient.query.mockImplementation(async (sql: string) => {
       statements.push(String(sql));
-      return /INSERT INTO remittance_advice/.test(sql) ? { rows: [{ id: 501 }], rowCount: 1 } : { rows: [], rowCount: 1 };
+      if (/INSERT INTO remittance_advice/.test(sql)) return { rows: [{ id: 501 }], rowCount: 1 };
+      // A demo seeded 36 days ago, so every statement of the roll-forward runs too.
+      if (/max\(paid_at\)/.test(sql)) return { rows: [{ newest_paid_at: new Date(Date.now() - 36 * 24 * 60 * 60 * 1000) }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
     });
     mockStorage.getPatient.mockResolvedValue({ id: 102, practiceId: 99, firstName: 'Mia', lastName: 'Example', insuranceProvider: 'UnitedHealthcare', insuranceId: 'DEMO1002' });
 
     expect(await ensureDemoPaymentRecords(99)).toBe(1);
     await repairDemoSeededClaimDates(99);
     await ensureDemoClaimPayers(99);
+    expect(await keepDemoDatesCurrent(99)).toBe(30);
 
     expect(statements.length).toBeGreaterThan(4);
     const problems = statements.flatMap(checkStatement);
     expect(problems).toEqual([]);
-    // The exact regression: no statement touches claims.date_of_service.
-    expect(statements.some((q) => /date_of_service/.test(q) && /FROM claims/.test(q))).toBe(false);
+    // The exact regression: no statement reads claims.date_of_service (the alias form the backfill used).
+    expect(statements.some((q) => /\bc\.date_of_service\b/.test(q))).toBe(false);
   });
 
   it('a statement naming a column that does not exist is caught by the guard', () => {
     expect(checkStatement('SELECT c.id, c.date_of_service FROM claims c WHERE c.practice_id = $1')).toEqual(['claims.date_of_service (as c.date_of_service)']);
     expect(checkStatement('INSERT INTO payment_postings (practice_id, bogus_col) VALUES ($1, $2)')).toEqual(['payment_postings.bogus_col']);
+  });
+});
+
+describe('keepDemoDatesCurrent (post-deploy 2026-11-19: a demo seeded weeks ago shows empty month views)', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = new Date('2026-11-19T15:00:00.000Z');
+  const live = new Date('2026-10-26T14:00:00.000Z'); // the live demo's newest payment on 2026-11-19: 24 days old, 18 behind
+
+  /** A client mock whose anchor answers `newest`, recording every statement. */
+  function clientReturning(newest: Date | null, failOn?: RegExp) {
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (failOn && failOn.test(sql)) throw new Error('boom');
+      if (/max\(paid_at\)/.test(sql)) return { rows: [{ newest_paid_at: newest }], rowCount: 1 };
+      if (/UPDATE appointments/.test(sql)) return { rows: [], rowCount: 9 };
+      return { rows: [], rowCount: 1 };
+    });
+  }
+  const statements = () => mockClient.query.mock.calls.map(([sql, params]) => ({ sql: String(sql).trim(), params }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStorage.getPractice.mockResolvedValue({ id: 99, isDemo: true });
+  });
+
+  it('calendarDaysBetween counts whole days', () => {
+    expect(calendarDaysBetween('2026-10-26', '2026-11-13')).toBe(18);
+    expect(calendarDaysBetween('2026-11-13', '2026-11-13')).toBe(0);
+    expect(calendarDaysBetween('2026-11-13', '2026-11-10')).toBe(-3);
+  });
+
+  it('takes the demo advisory lock inside the transaction BEFORE reading the anchor, and commits a no-op at the intended age', async () => {
+    clientReturning(new Date(NOW.getTime() + DEMO_NEWEST_PAID_OFFSET_DAYS * DAY));
+    expect(await keepDemoDatesCurrent(99, { now: NOW })).toBe(0);
+    const sqls = statements().map((s) => s.sql);
+    expect(sqls[0]).toBe('BEGIN');
+    expect(sqls[1]).toMatch(/pg_advisory_xact_lock/);
+    expect(statements()[1].params).toEqual([918273645]);
+    expect(sqls[2]).toMatch(/max\(paid_at\)/);
+    expect(sqls[3]).toBe('COMMIT');
+    expect(sqls.filter((q) => /^UPDATE/.test(q))).toHaveLength(0);
+    // The anchor is never read outside the lock (never on the pool).
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a practice that is not the demo practice', async () => {
+    mockStorage.getPractice.mockResolvedValue({ id: 1, isDemo: false });
+    clientReturning(live);
+    expect(await keepDemoDatesCurrent(1, { now: NOW })).toBe(0);
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a practice with no seeded paid claim', async () => {
+    clientReturning(null);
+    expect(await keepDemoDatesCurrent(99, { now: NOW })).toBe(0);
+    expect(statements().map((s) => s.sql)).toEqual(['BEGIN', expect.stringMatching(/pg_advisory_xact_lock/), expect.stringMatching(/max\(paid_at\)/), 'COMMIT']);
+  });
+
+  it('rolls every seeded row forward by the same whole number of days in ONE transaction, appointments included, scoped to seeded rows', async () => {
+    clientReturning(live);
+    expect(await keepDemoDatesCurrent(99, { now: NOW })).toBe(18);
+
+    const all = statements();
+    expect(all[0].sql).toBe('BEGIN');
+    expect(all[all.length - 1].sql).toBe('COMMIT');
+    const updates = all.filter((c) => /^UPDATE/.test(c.sql));
+    expect(updates.map((c) => c.sql.split(/\s+/)[1])).toEqual([
+      'claims', 'claim_line_items', 'remittance_line_items', 'remittance_advice', 'payment_postings',
+      'payment_transactions', 'payment_transactions', 'appointments',
+    ]);
+    for (const u of updates.slice(0, 6)) expect(u.params).toEqual([99, 18]);
+    expect(updates[0].sql).toMatch(/claim_number LIKE 'DEMO-%'/);
+    expect(updates[1].sql).toMatch(/claim_number LIKE 'DEMO-%'/);
+    expect(updates[3].sql).toMatch(/check_number LIKE 'DEMO-CHK-%'/);
+    expect(updates[4].sql).toMatch(/check_number LIKE 'DEMO-CHK-%'/);
+    expect(updates[5].sql).toMatch(/description LIKE 'Copay for date of service%'/);
+    // The copay description is rewritten from the shifted remittance line.
+    expect(updates[6].sql).toMatch(/SET description = 'Copay for date of service ' \|\| l\.service_date::text/);
+    expect(updates[6].params).toEqual([99]);
+    // Appointments: only rows carrying the seed marker, shifted DST-aware in the practice zone, in the same transaction.
+    expect(updates[7].sql).toMatch(/WHERE practice_id = \$1 AND notes = \$4/);
+    expect(updates[7].sql).toContain(shiftTimestampByLocalDaysSql('start_time', '$2', '$3'));
+    expect(updates[7].params).toEqual([99, 18, 'America/New_York', DEMO_SEED_APPOINTMENT_MARKER]);
+    expect(mockStorage.updateAppointment).not.toHaveBeenCalled();
+  });
+
+  it('a failure in the appointment step rolls back the financial shift too, so the next login repairs everything', async () => {
+    clientReturning(live, /UPDATE appointments/);
+    expect(await keepDemoDatesCurrent(99, { now: NOW })).toBe(0);
+    const sqls = statements().map((s) => s.sql);
+    expect(sqls.filter((q) => /^UPDATE/.test(q)).length).toBeGreaterThan(5);
+    expect(sqls).toContain('ROLLBACK');
+    expect(sqls).not.toContain('COMMIT');
+    // Nothing committed: the anchor is unchanged, so a retry finds the same drift and applies it in full.
+    clientReturning(live);
+    expect(await keepDemoDatesCurrent(99, { now: NOW })).toBe(18);
+  });
+
+  it('two logins racing on the lock apply the shift once: the second recomputes the anchor under the lock and finds no drift', async () => {
+    // A lock that serializes: the second BEGIN/lock waits for the first COMMIT,
+    // and the anchor it then reads reflects the first login's shift.
+    const state = { newest: live, held: false, waiters: [] as Array<() => void> };
+    mockClient.query.mockImplementation(async (sql: string, params?: any[]) => {
+      if (/pg_advisory_xact_lock/.test(sql)) {
+        if (state.held) await new Promise<void>((resolve) => state.waiters.push(resolve));
+        state.held = true;
+        return { rows: [], rowCount: 1 };
+      }
+      if (/max\(paid_at\)/.test(sql)) return { rows: [{ newest_paid_at: state.newest }], rowCount: 1 };
+      if (/^UPDATE claims/.test(String(sql).trim())) {
+        state.newest = new Date(state.newest.getTime() + (params as any[])[1] * DAY);
+      }
+      if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+        state.held = false;
+        state.waiters.shift()?.();
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const [a, b] = await Promise.all([keepDemoDatesCurrent(99, { now: NOW }), keepDemoDatesCurrent(99, { now: NOW })]);
+    expect([a, b].sort()).toEqual([0, 18]);
+    expect(zonedDateString(state.newest, 'America/New_York')).toBe('2026-11-13'); // today - 6, not today + 12
+  });
+
+  it('runs on the caller\'s locked connection when one is given and does not release it', async () => {
+    clientReturning(live);
+    expect(await keepDemoDatesCurrent(99, { client: mockClient as any, now: NOW })).toBe(18);
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.release).not.toHaveBeenCalled();
+  });
+
+  it('shiftTimestampByLocalDaysSql converts through the practice zone so the wall-clock time survives a DST change', () => {
+    const sql = shiftTimestampByLocalDaysSql('start_time', '$2', '$3');
+    expect(sql).toBe("((((start_time) AT TIME ZONE 'UTC') AT TIME ZONE $3) + make_interval(days => $2::int)) AT TIME ZONE $3 AT TIME ZONE 'UTC'");
+  });
+});
+
+describe('seed marker on appointments', () => {
+  it('seedDemoData stamps every appointment it creates', async () => {
+    vi.clearAllMocks();
+    let nextPatientId = 100;
+    mockStorage.createPatient.mockImplementation(async () => ({ id: nextPatientId++ }));
+    mockStorage.createAppointment.mockResolvedValue({ id: 1 });
+    mockStorage.createClaim.mockResolvedValue({ id: 1 });
+    mockStorage.getPatientsByEmail.mockResolvedValue([]);
+    mockStorage.getAppointments.mockResolvedValue([]);
+    mockStorage.getTherapistsByPractice.mockResolvedValue([{ id: 'demo-therapist-99', role: 'therapist' }]);
+    mockStorage.getDemoPractice.mockResolvedValue(undefined);
+    mockStorage.createPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([]);
+    await ensureDemoPractice();
+    const created = mockStorage.createAppointment.mock.calls.map((c) => c[0]);
+    expect(created.length).toBeGreaterThan(0);
+    expect(created.every((a) => a.notes === DEMO_SEED_APPOINTMENT_MARKER)).toBe(true);
+  });
+
+  it('the shape check accepts exactly the seed shape and rejects a hand-booked look-alike', () => {
+    const tz = 'America/New_York';
+    const tenAm = new Date('2026-11-05T15:00:00.000Z'); // 10:00 EST
+    const appt = { title: 'Occupational Therapy', durationMinutes: 45 };
+    expect(isSeededDemoAppointmentShape(appt, tenAm, 'demo-therapist-99', 'demo-therapist-99', tz)).toBe(true);
+    expect(isSeededDemoAppointmentShape(appt, tenAm, 'someone-else', 'demo-therapist-99', tz)).toBe(false);
+    expect(isSeededDemoAppointmentShape({ ...appt, durationMinutes: 60 }, tenAm, 'demo-therapist-99', 'demo-therapist-99', tz)).toBe(false);
+    expect(isSeededDemoAppointmentShape(appt, new Date('2026-11-05T15:30:00.000Z'), 'demo-therapist-99', 'demo-therapist-99', tz)).toBe(false);
+    expect(isSeededDemoAppointmentShape(appt, new Date('2026-11-05T21:00:00.000Z'), 'demo-therapist-99', 'demo-therapist-99', tz)).toBe(false); // 16:00
+    expect(isSeededDemoAppointmentShape({ ...appt, title: 'Follow-up' }, tenAm, 'demo-therapist-99', 'demo-therapist-99', tz)).toBe(false);
+  });
+
+  it('repairDemoSeededAppointments stamps the marker onto a pre-marker seeded row and leaves a row with its own notes alone', async () => {
+    vi.clearAllMocks();
+    const tenAm = new Date('2026-11-05T15:00:00.000Z');
+    mockStorage.getAppointments.mockResolvedValue([
+      { id: 1, title: 'Occupational Therapy', therapistId: 'demo-therapist-99', durationMinutes: 45, startTime: tenAm, endTime: new Date(tenAm.getTime() + 45 * 60 * 1000), notes: null },
+      { id: 2, title: 'Occupational Therapy', therapistId: 'demo-therapist-99', durationMinutes: 45, startTime: tenAm, endTime: null, notes: 'Parent requested morning slot' },
+    ]);
+    mockStorage.updateAppointment.mockImplementation(async (id: number, patch: any) => ({ id, ...patch }));
+    await repairDemoSeededAppointments(99, 'demo-therapist-99');
+    expect(mockStorage.updateAppointment).toHaveBeenCalledTimes(1);
+    expect(mockStorage.updateAppointment).toHaveBeenCalledWith(1, { notes: DEMO_SEED_APPOINTMENT_MARKER });
   });
 });
