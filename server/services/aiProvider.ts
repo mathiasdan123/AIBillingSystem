@@ -36,6 +36,23 @@ export function isAiConfigured(): boolean {
 }
 
 /**
+ * Production must run Claude through Bedrock: that is the provider covered
+ * by the AWS BAA this practice holds. Throws when NODE_ENV is 'production'
+ * and AI_PROVIDER is anything but exactly 'bedrock' (unset included), so a
+ * misconfigured task fails at startup instead of quietly sending server-side
+ * Claude calls — several of which carry PHI — to the direct API. Outside
+ * production (dev, tests, CI) it is a no-op.
+ */
+export function assertProductionAiProvider(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.NODE_ENV !== 'production') return;
+  if (env.AI_PROVIDER === 'bedrock') return;
+  throw new Error(
+    `AI_PROVIDER must be exactly "bedrock" in production (got ${env.AI_PROVIDER === undefined ? 'unset' : JSON.stringify(env.AI_PROVIDER)}). ` +
+      'Set AI_PROVIDER=bedrock on the task definition.',
+  );
+}
+
+/**
  * First-party model ID → Bedrock cross-region inference-profile ID
  * (us.anthropic.*), which is what bedrock-runtime requires for
  * current-generation Claude models. Verified live against this account.

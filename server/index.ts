@@ -85,6 +85,7 @@ import { startScheduler, stopScheduler } from "./scheduler";
 import { initRedisClient, shutdownRedis } from "./services/redisClient";
 import { RedisStore } from "rate-limit-redis";
 import { bruteForceProtection } from "./middleware/rate-limiter";
+import { assertProductionAiProvider } from './services/aiProvider';
 import { swaggerSpec } from "./swagger";
 
 // =============================================================================
@@ -147,11 +148,14 @@ if (isProduction && !isDemoMode) {
     process.exit(1);
   }
 
-  // Warn if no AI provider is configured — AI features will be disabled.
-  // Either ANTHROPIC_API_KEY (direct API) or AI_PROVIDER=bedrock (Claude on
-  // AWS Bedrock via the task role, HIPAA-eligible under the AWS BAA) works.
-  if (!process.env.ANTHROPIC_API_KEY && (process.env.AI_PROVIDER || '').toLowerCase() !== 'bedrock') {
-    console.warn('⚠️  No AI provider configured (ANTHROPIC_API_KEY or AI_PROVIDER=bedrock): AI billing assistant, claim review, and appeal generation will be unavailable.');
+  // Production runs Claude through Bedrock only (task role, covered by the
+  // AWS BAA). Anything else — including an unset AI_PROVIDER, which would
+  // default to the direct API — stops the task here.
+  try {
+    assertProductionAiProvider();
+  } catch (error) {
+    console.error(`FATAL: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
   }
 
   // Warn if Redis is not configured — rate limiting will be per-instance only
