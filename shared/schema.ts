@@ -4052,6 +4052,37 @@ export const insertClaimFollowUpSchema = createInsertSchema(claimFollowUps).omit
 export type ClaimFollowUp = typeof claimFollowUps.$inferSelect;
 export type InsertClaimFollowUp = z.infer<typeof insertClaimFollowUpSchema>;
 
+// Claim Events — append-only history behind the claim detail's Status
+// timeline. The claims row only carries the LATEST state (one submittedAt,
+// one denialReason that reopen clears), so the timeline could show nothing
+// but Created/Submitted/Paid and lost the denial, the appeal, the internal
+// notes and the reopen (QA 2026-11-18, denial follow-up sweep). Every
+// transition appends a row here; nothing is ever updated or deleted.
+// eventType: denied, reopened, submitted, appeal_created, appeal_submitted,
+// appeal_resolved, note_added. metadata holds the small structured facts
+// the UI shows (reason, appealId, level, excerpt); PHI-bearing text stays as
+// short as the summary needs.
+export const claimEvents = pgTable("claim_events", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  eventType: varchar("event_type").notNull(),
+  summary: text("summary").notNull(),
+  metadata: jsonb("metadata"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_claim_events_claim").on(table.claimId, table.createdAt),
+  index("idx_claim_events_practice").on(table.practiceId, table.createdAt),
+]);
+
+export const insertClaimEventSchema = createInsertSchema(claimEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type ClaimEvent = typeof claimEvents.$inferSelect;
+export type InsertClaimEvent = z.infer<typeof insertClaimEventSchema>;
+
 // ==================== Staff Time Tracking ====================
 
 // Time Entries - tracks billable hours per therapist

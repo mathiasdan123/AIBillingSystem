@@ -8,7 +8,7 @@
  * line-item mutations already invalidate.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
@@ -45,7 +45,7 @@ const LINE_ITEMS = [
   { id: 11, cptCodeId: 1, cptCode: { code: '97110', description: 'Therapeutic Exercise' }, units: 2, rate: '100.00', amount: '200.00', dateOfService: '2026-11-18' },
 ];
 
-function renderDetail() {
+function renderDetail(claimOverrides: any = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -63,7 +63,7 @@ function renderDetail() {
   return render(
     <QueryClientProvider client={queryClient}>
       <ClaimFullDetail
-        claim={SNAPSHOT}
+        claim={{ ...SNAPSHOT, ...claimOverrides }}
         lineItems={LINE_ITEMS}
         loadingLineItems={false}
         appeals={[]}
@@ -120,5 +120,135 @@ describe('ClaimFullDetail billed totals', () => {
     await waitFor(() => {
       expect(screen.getByText('Billed Amount').parentElement).toHaveTextContent('$200.00');
     });
+  });
+});
+
+// Radix TabsTrigger activates on mousedown, not click.
+function clickTab(testid: string) {
+  const trigger = screen.getByTestId(testid);
+  fireEvent.mouseDown(trigger, { button: 0 });
+  fireEvent.click(trigger);
+}
+
+/**
+ * Appeals tab after "Create Appeal" (QA 2026-11-18): the claim's status is
+ * 'appeal' and its record lives in the appeals table, but the tab was gated
+ * on status === 'denied' and read only the legacy AI-recommendation rows, so
+ * it said "Appeals are available for denied claims" with an appeal sitting
+ * right there.
+ */
+describe('ClaimFullDetail appeals tab', () => {
+  const FILED = [{ id: 31, claimId: 5, appealLevel: 'initial', status: 'ready', deadlineDate: '2027-01-17', appealedAmount: '300.00' }];
+
+  function route(status: string, filed: any[]) {
+    liveClaim = { ...SNAPSHOT, status };
+    mockApiRequest.mockImplementation(async (_m: string, url: string) => {
+      if (url === '/api/claims/5') return jsonResponse(liveClaim);
+      if (url === '/api/appeals?claimId=5') return jsonResponse(filed);
+      if (url === '/api/claims/5/events') return jsonResponse([]);
+      return jsonResponse([]);
+    });
+  }
+  afterEach(() => { liveClaim = { ...SNAPSHOT, totalAmount: '200.00' }; vi.clearAllMocks(); });
+
+  it("status 'appeal' with one filed appeal lists it, linked to its draft, and never shows the denied-only copy", async () => {
+    route('appeal', FILED);
+    renderDetail({ status: 'appeal' });
+    clickTab('tab-appeals');
+
+    const row = await screen.findByTestId('filed-appeal-31');
+    expect(row).toHaveTextContent('Appeal #31');
+    expect(row).toHaveTextContent('ready');
+    expect(row).toHaveTextContent('Filing deadline 2027-01-17');
+    expect(screen.getByTestId('link-appeal-31')).toHaveAttribute('href', '/appeals?appealId=31');
+    expect(screen.queryByText('Appeals are available for denied claims')).toBeNull();
+  });
+
+  it("status 'denied' with no appeals shows the generate-an-appeal empty state", async () => {
+    route('denied', []);
+    renderDetail({ status: 'denied' });
+    clickTab('tab-appeals');
+
+    expect(await screen.findByText('No appeal generated yet')).toBeInTheDocument();
+    expect(screen.queryByTestId('filed-appeals')).toBeNull();
+    expect(screen.queryByText('Appeals are available for denied claims')).toBeNull();
+  });
+
+  it("a draft claim with no appeals keeps the 'available for denied claims' copy", async () => {
+    route('draft', []);
+    renderDetail({ status: 'draft' });
+    clickTab('tab-appeals');
+
+    expect(await screen.findByText('Appeals are available for denied claims')).toBeInTheDocument();
+  });
+
+  it("status 'denied' WITH a filed appeal shows the appeal above the AI recommendations", async () => {
+    route('denied', FILED);
+    renderDetail({ status: 'denied' });
+    clickTab('tab-appeals');
+
+    expect(await screen.findByTestId('filed-appeal-31')).toBeInTheDocument();
+    expect(screen.getByText('AI Appeal Recommendations')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Status timeline (QA 2026-11-18): only Created/Submitted rendered, from the
+ * claim row. Recorded claim_events now render in order with their summary.
+ */
+describe('ClaimFullDetail status timeline', () => {
+  const EVENTS = [
+    { id: 1, eventType: 'submitted', summary: 'Submitted via stedi', metadata: { isResubmission: false }, createdAt: '2026-11-10T15:00:00.000Z' },
+    { id: 2, eventType: 'denied', summary: 'Denied: CO-197: precertification absent', metadata: { denialReason: 'CO-197: precertification absent' }, createdAt: '2026-11-15T15:00:00.000Z' },
+    { id: 3, eventType: 'appeal_created', summary: 'Appeal created (initial) — letter drafted, status ready; filing deadline 2027-01-17', metadata: { appealId: 31 }, createdAt: '2026-11-18T14:00:00.000Z' },
+    { id: 4, eventType: 'note_added', summary: 'Internal note on appeal #31: Called Aetna; auth was on file.', metadata: { appealId: 31, excerpt: 'Called Aetna; auth was on file.' }, createdAt: '2026-11-18T15:00:00.000Z' },
+    { id: 5, eventType: 'reopened', summary: 'Reopened to draft for correction: add prior auth number', metadata: { previousDenialReason: 'CO-197: precertification absent' }, createdAt: '2026-11-18T16:00:00.000Z' },
+  ];
+
+  afterEach(() => { liveClaim = { ...SNAPSHOT, totalAmount: '200.00' }; vi.clearAllMocks(); });
+
+  it('renders denial, appeal, note and reopen events with their summaries, in order', async () => {
+    liveClaim = { ...SNAPSHOT, status: 'draft', submittedAt: '2026-11-10T15:00:00.000Z' };
+    mockApiRequest.mockImplementation(async (_m: string, url: string) => {
+      if (url === '/api/claims/5') return jsonResponse(liveClaim);
+      if (url === '/api/claims/5/events') return jsonResponse(EVENTS);
+      return jsonResponse([]);
+    });
+    renderDetail({ status: 'draft' });
+    clickTab('tab-status');
+
+    const denied = await screen.findByTestId('claim-event-denied');
+    expect(denied).toHaveTextContent('Denied');
+    expect(denied).toHaveTextContent('CO-197: precertification absent');
+
+    const appeal = screen.getByTestId('claim-event-appeal_created');
+    expect(appeal).toHaveTextContent('Appeal created');
+    expect(appeal.querySelector('a')).toHaveAttribute('href', '/appeals?appealId=31');
+
+    expect(screen.getByTestId('claim-event-note_added')).toHaveTextContent('Called Aetna; auth was on file.');
+
+    const reopened = screen.getByTestId('claim-event-reopened');
+    expect(reopened).toHaveTextContent('Reopened to draft');
+    expect(reopened).toHaveTextContent('Denial reason before reopen: CO-197: precertification absent');
+
+    // Order follows the stored history.
+    const labels = Array.from(document.querySelectorAll('[data-testid^="claim-event-"]')).map((el) => el.getAttribute('data-testid'));
+    expect(labels).toEqual(['claim-event-submitted', 'claim-event-denied', 'claim-event-appeal_created', 'claim-event-note_added', 'claim-event-reopened']);
+
+    // The row-derived "Submitted" entry is not duplicated when a submitted event exists.
+    expect(screen.getAllByText('Submitted')).toHaveLength(1);
+  });
+
+  it('falls back to the row-level denial when no events were recorded (pre-table claims)', async () => {
+    liveClaim = { ...SNAPSHOT, status: 'denied', denialReason: 'CO-4: modifier inconsistent' };
+    mockApiRequest.mockImplementation(async (_m: string, url: string) => {
+      if (url === '/api/claims/5') return jsonResponse(liveClaim);
+      if (url === '/api/claims/5/events') return jsonResponse([]);
+      return jsonResponse([]);
+    });
+    renderDetail({ status: 'denied' });
+    clickTab('tab-status');
+
+    expect(await screen.findByText('CO-4: modifier inconsistent')).toBeInTheDocument();
   });
 });

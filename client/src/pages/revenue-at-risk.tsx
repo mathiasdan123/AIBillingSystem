@@ -74,6 +74,7 @@ const FOLLOW_UP_LABEL: Record<string, string> = {
   aging_90: "Aging 90+ days",
   missing_info: "Missing info",
   underpayment: "Underpaid claim",
+  correction_resubmit: "Correction — resubmit",
 };
 
 function actionFor(item: ActionItem): { label: string; href: string } {
