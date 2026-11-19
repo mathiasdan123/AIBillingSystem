@@ -219,10 +219,36 @@ describe('edi835Parser', () => {
       expect(result.traceNumber).toBe('123456789');
     });
 
-    it('should parse check number from TRN03 when BPR does not have one', () => {
+    it('uses TRN02 (the check/EFT trace) as the check number; BPR10 and TRN03 are the originating company id', () => {
       const result = parse835(AETNA_835);
-      // TRN*1*123456789*1234567890 - element 3 is 1234567890
-      expect(result.payment.checkNumber).toBeDefined();
+      // BPR10 = 1234567890 and TRN*1*123456789*1234567890: TRN02 is the trace,
+      // BPR10 / TRN03 are the payer's originating id, never a check number.
+      expect(result.payment.checkNumber).toBe('123456789');
+      expect(result.payment.originatingCompanyId).toBe('1234567890');
+    });
+
+    it('keeps TRN02 and TRN03 apart when they differ in shape (demo billing test 2026-11-19)', () => {
+      const edi = AETNA_835.replace('TRN*1*123456789*1234567890~', 'TRN*1*QA-CORRECTED-20261119-1318*1888888888~');
+      const result = parse835(edi);
+      expect(result.traceNumber).toBe('QA-CORRECTED-20261119-1318');
+      expect(result.payment.checkNumber).toBe('QA-CORRECTED-20261119-1318');
+      expect(result.payment.checkNumber).not.toBe('1888888888');
+      // BPR10 (1234567890 in this fixture) is the originating id; TRN03 only fills it when BPR10 is empty.
+      expect(result.payment.originatingCompanyId).toBe('1234567890');
+      const noBpr10 = edi.replace('*DA*123456789*1234567890**', '*DA*123456789***');
+      expect(parse835(noBpr10).payment.originatingCompanyId).toBe('1888888888');
+    });
+
+    it('never reads a check number out of BPR10 (the originating company id)', () => {
+      const edi = AETNA_835.replace(/BPR\*([^~]*)~/, (seg) => {
+        const parts = seg.replace(/~$/, '').split('*');
+        while (parts.length < 17) parts.push('');
+        parts[10] = '1999999999';
+        return parts.join('*') + '~';
+      });
+      const result = parse835(edi);
+      expect(result.payment.checkNumber).toBe('123456789');
+      expect(result.payment.originatingCompanyId).toBe('1999999999');
     });
   });
 
