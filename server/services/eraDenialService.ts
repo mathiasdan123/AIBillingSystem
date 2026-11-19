@@ -33,6 +33,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { remittanceLineItems } from '@shared/schema';
 import { storage } from '../storage';
+import type { PaymentEvidence } from './paymentEvidenceService';
 import { recordClaimEvent, clip } from './claimEventService';
 import { processDeniedClaim } from './denialPipelineService';
 import { getAdjustmentGroupDescription, getReasonCodeDescription } from './edi835Parser';
@@ -180,7 +181,9 @@ async function runDenialPipeline(claimId: number): Promise<DenialPipelineState> 
   try {
     const r = await processDeniedClaim(claimId);
     if (r.skippedReason === 'claim_status_appeal') {
-      return { ...NO_PIPELINE, appealReused: true };
+      // The claim is already under appeal; the pipeline did not run and no
+      // appeal was looked up, so nothing is claimed about one.
+      return { ...NO_PIPELINE };
     }
     if (r.skippedReason && r.skippedReason !== 'appeal_exists') {
       return { ...NO_PIPELINE, error: `Denial pipeline skipped: ${r.skippedReason}` };
@@ -378,25 +381,32 @@ export async function applyRemittanceDenialToLine(
 export interface DenialPendingLineLike extends RemittanceLineLike {
   status?: string | null;
   claimId?: number | null;
-  matchType?: string | null;
-  autoPostedAt?: Date | string | null;
   denialAppliedAt?: Date | string | null;
 }
 
 /**
- * Whether a matched line's payment has been recorded, from the line alone
- * (payment postings do not carry the line id): the auto path stamps
- * autoPostedAt once it has posted; the manual match route posts in the
- * same request as the match (matchType 'manual'); matchType NULL is a row
- * matched and posted under the old fused path. A line auto-matched by a
- * match-only pass (ERA_AUTO_POST off) has none of these and is not posted.
+ * A denied line whose denial has not been (fully) applied yet AND whose
+ * payment is recorded (paymentEvidenceService: this line's own posting, not
+ * a marker, not matchType, not another ERA on the claim). Anything but
+ * 'recorded' evidence fails closed: the denial waits for manual review.
  */
-export function isLinePaymentRecorded(line: DenialPendingLineLike): boolean {
-  return line.status === 'matched' && line.claimId != null &&
-    (line.autoPostedAt != null || line.matchType === 'manual' || line.matchType == null);
+export function isDenialPending(line: DenialPendingLineLike, evidence: PaymentEvidence | undefined): boolean {
+  return (
+    line.status === 'matched' &&
+    line.claimId != null &&
+    evidence === 'recorded' &&
+    isDeniedRemittanceLine(line) &&
+    line.denialAppliedAt == null
+  );
 }
 
-/** A posted, denied line whose denial has not been (fully) applied yet. */
-export function isDenialPending(line: DenialPendingLineLike): boolean {
-  return isLinePaymentRecorded(line) && isDeniedRemittanceLine(line) && line.denialAppliedAt == null;
+/** A denied, matched line that is not applied and whose payment is NOT established: needs manual review. */
+export function isDenialAwaitingPayment(line: DenialPendingLineLike, evidence: PaymentEvidence | undefined): boolean {
+  return (
+    line.status === 'matched' &&
+    line.claimId != null &&
+    evidence !== 'recorded' &&
+    isDeniedRemittanceLine(line) &&
+    line.denialAppliedAt == null
+  );
 }

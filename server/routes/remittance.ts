@@ -20,12 +20,13 @@ import { autoMatchRemittance } from '../services/eraAutoMatchService';
 import { ingestRemittance } from '../services/remittanceIngestionService';
 import {
   applyRemittanceDenialToLine,
+  isDenialAwaitingPayment,
   isDenialPending,
   isDeniedRemittanceLine,
-  isLinePaymentRecorded,
   postingReasonFields,
   type ApplyDenialResult,
 } from '../services/eraDenialService';
+import { describePaymentEvidence, remittancePaymentEvidence, type PaymentEvidence } from '../services/paymentEvidenceService';
 import { needsTransmissionEvidence, transmissionEvidence } from '../services/claimTransmissionEvidence';
 import { db } from '../db';
 import {
@@ -37,7 +38,6 @@ import {
   cptCodes,
   patients,
   feeSchedules,
-  paymentPostings,
 } from '@shared/schema';
 import { eq, and, desc, count, sql, ilike, or, lte, gte, inArray } from 'drizzle-orm';
 import { storage } from '../storage';
@@ -287,7 +287,15 @@ router.get('/:id', isAuthenticated, async (req: any, res: Response) => {
     }
 
     if (result.lineItems) {
-      result.lineItems = result.lineItems.map(decryptRemittanceLineItem) as any;
+      const lines = result.lineItems.map(decryptRemittanceLineItem) as any[];
+      // Payment evidence per matched line, from the postings themselves, so
+      // the page can show "Denial pending" (payment recorded) apart from
+      // "payment not recorded — needs manual review".
+      const evidence = await remittancePaymentEvidence(practiceId, result as any, lines);
+      result.lineItems = lines.map((li: any) => ({
+        ...li,
+        paymentEvidence: li.status === 'matched' ? (evidence.get(li.id) ?? 'not_recorded') : null,
+      })) as any;
     }
     res.json(result);
   } catch (error) {
@@ -318,11 +326,14 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
         ? ` ${result.needsReview} line item(s) need manual review.`
         : '';
     const denialNote =
-      result.denialFailures.length > 0
+      (result.denialFailures.length > 0
         ? ` ${result.denialFailures.length} payer denial(s) could not be applied to their claim (payments are recorded); use the line's Retry denial button or run Auto-Match again.`
         : result.denialsApplied > 0
           ? ` ${result.denialsApplied} payer denial(s) applied to their claim.`
-          : '';
+          : '') +
+      (result.denialsAwaitingPayment.length > 0
+        ? ` ${result.denialsAwaitingPayment.length} denied line(s) have no recorded payment and need manual review; their denial was not applied.`
+        : '');
     // No early return on total === 0: autoMatchRemittance has already retried
     // any pending denials, and that outcome must be reported (#497 review).
     res.json({
@@ -339,6 +350,7 @@ router.post('/:id/auto-match', isAuthenticated, async (req: any, res: Response) 
       posted: result.posted,
       denialsApplied: result.denialsApplied,
       denialFailures: result.denialFailures,
+      denialsAwaitingPayment: result.denialsAwaitingPayment,
       needsReview: result.needsReview,
       // Non-empty means money was matched but NOT recorded — must not be
       // presented as a clean success.
@@ -401,9 +413,16 @@ function describeDenialOutcome(
   if (denial.skippedReason === 'claim_reopened') {
     return { message: `${lead} The payer denied the earlier submission (${denial.denialReason}); claim ${claimLabel} stays a draft while you correct it.`, partial: false, denialBlock };
   }
+  if (!denial.pipeline.ran && denial.claimStatus === 'appeal') {
+    return {
+      message: `${lead} The payer denied claim ${claimLabel} (${denial.denialReason}); the claim is already under appeal, so the appeal draft and follow-up steps did not run.`,
+      partial: false,
+      denialBlock,
+    };
+  }
   const statusText = denial.denied
     ? 'is now Denied'
-    : `was already ${denial.claimStatus === 'appeal' ? 'under appeal' : denial.claimStatus === 'denied' ? 'Denied' : denial.claimStatus}`;
+    : `was already ${denial.claimStatus === 'denied' ? 'Denied' : denial.claimStatus}`;
   const appealText = denial.pipeline.appealCreated
     ? `an appeal was drafted${denial.pipeline.appealId ? ` (#${denial.pipeline.appealId})` : ''}`
     : denial.pipeline.appealReused
@@ -419,23 +438,6 @@ function describeDenialOutcome(
     partial: false,
     denialBlock,
   };
-}
-
-/** Does the claim have an active ERA posting? Evidence (read-only) that the line's money is recorded. */
-async function claimHasEraPosting(practiceId: number, claimId: number): Promise<boolean> {
-  const rows = await db
-    .select({ id: paymentPostings.id })
-    .from(paymentPostings)
-    .where(
-      and(
-        eq(paymentPostings.practiceId, practiceId),
-        eq(paymentPostings.claimId, claimId),
-        eq(paymentPostings.source, 'era'),
-        eq(paymentPostings.reversed, false),
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
 }
 
 // ==================== POST /:id/line-items/:lineItemId/retry-denial ====================
@@ -480,12 +482,22 @@ router.post('/:id/line-items/:lineItemId/retry-denial', isAuthenticated, async (
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found in this practice' });
     }
-    // Money first, always: the denial step runs only on a line whose payment
-    // is recorded, so this route can never be a way to skip the posting.
-    if (!isLinePaymentRecorded(lineItem as any) || !(await claimHasEraPosting(practiceId, lineItem.claimId))) {
+    // Money first, always: the denial step runs only on a line whose OWN
+    // payment is established from the postings (paymentEvidenceService), so
+    // this route can never be a way to skip the posting. A failed manual
+    // post, a reversal or ambiguous legacy evidence fails closed here.
+    const siblings = (await db.select().from(remittanceLineItems).where(eq(remittanceLineItems.remittanceId, remittanceId))) as any[];
+    const evidenceMap = await remittancePaymentEvidence(practiceId, remittance as any, siblings);
+    const evidence: PaymentEvidence = evidenceMap.get(lineItemId) ?? 'not_recorded';
+    if (evidence !== 'recorded') {
       return res.status(409).json({
-        message: "This line's payment has not been recorded yet, so its denial cannot be applied. Run Auto-Match to post it first.",
+        message:
+          `This line's denial cannot be applied: ${describePaymentEvidence(evidence)}. ` +
+          (evidence === 'ambiguous'
+            ? 'Check the claim\'s Payments tab against this remittance\'s lines before applying it.'
+            : 'The payment for this line is not on the claim; it needs to be posted (or the line re-matched) by hand first.'),
         code: 'line_not_posted',
+        paymentEvidence: evidence,
       });
     }
 
@@ -510,11 +522,12 @@ router.post('/:id/line-items/:lineItemId/retry-denial', isAuthenticated, async (
 
     if (outcome.applied) {
       // The remittance may now be complete.
-      const allItems = await db.select().from(remittanceLineItems).where(eq(remittanceLineItems.remittanceId, remittanceId));
+      const allItems = (await db.select().from(remittanceLineItems).where(eq(remittanceLineItems.remittanceId, remittanceId))) as any[];
+      const finalEvidence = await remittancePaymentEvidence(practiceId, remittance as any, allItems);
       const done =
         allItems.every((item: any) => item.status === 'matched') &&
-        allItems.every((item: any) => isLinePaymentRecorded(item)) &&
-        !allItems.some((item: any) => isDenialPending(item));
+        allItems.every((item: any) => finalEvidence.get(item.id) === 'recorded') &&
+        !allItems.some((item: any) => isDenialPending(item, finalEvidence.get(item.id)) || isDenialAwaitingPayment(item, finalEvidence.get(item.id)));
       if (done) {
         await db.update(remittanceAdvice).set({ status: 'processed', processedAt: new Date() }).where(eq(remittanceAdvice.id, remittanceId));
       }
@@ -633,14 +646,16 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     // A line already matched to ANOTHER claim is not re-pointed here. There
     // is no supported unmatch/reassign flow; say so plainly.
     if (lineItem.claimId != null && lineItem.claimId !== targetClaimId) {
-      const moneyText = isLinePaymentRecorded(lineItem as any) ? 'its payment is recorded on that claim' : 'no payment is recorded for it';
+      const siblings = (await db.select().from(remittanceLineItems).where(eq(remittanceLineItems.remittanceId, remittanceId))) as any[];
+      const evidence = (await remittancePaymentEvidence(practiceId, remittance as any, siblings)).get(lineItemId) ?? 'not_recorded';
+      const moneyText = evidence === 'recorded' ? 'its payment is recorded on that claim' : `${describePaymentEvidence(evidence)}`;
       return res.status(409).json({
         message:
           `This line is already matched to claim ${lineItem.claimId} and ${moneyText}. ` +
           'Reassigning a matched line to a different claim is not supported here; it stays with that claim.',
         code: 'line_already_matched',
         matchedClaimId: lineItem.claimId,
-        paymentRecorded: isLinePaymentRecorded(lineItem as any),
+        paymentEvidence: evidence,
       });
     }
 
@@ -687,28 +702,42 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     // on the line (denialAppliedAt / denialError) and reported truthfully
     // below; a failure leaves the denial pending for the line's Retry
     // denial button (or Auto-Match), which never posts the payment again.
-    const denialLine = { ...(lineItem as any), claimId: targetClaimId, status: 'matched', matchType: 'manual' };
-    const denial: ApplyDenialResult | null = isDeniedRemittanceLine(denialLine)
-      ? await applyRemittanceDenialToLine(practiceId, denialLine, {
+    // Re-read the remittance's lines (this one is now matched) and establish
+    // this line's payment from the postings — postPayment has returned, so
+    // its row is committed. Only 'recorded' lets the denial step run.
+    const allItems = (await db
+      .select()
+      .from(remittanceLineItems)
+      .where(eq(remittanceLineItems.remittanceId, remittanceId))) as any[];
+    const evidenceMap = await remittancePaymentEvidence(practiceId, remittance as any, allItems);
+    const paymentEvidence: PaymentEvidence = evidenceMap.get(lineItemId) ?? 'not_recorded';
+    const denialLine = allItems.find((item: any) => item.id === lineItemId) ?? { ...(lineItem as any), claimId: targetClaimId, status: 'matched' };
+
+    let denial: ApplyDenialResult | null = null;
+    let denialAwaitingPayment = false;
+    if (isDeniedRemittanceLine(denialLine)) {
+      if (paymentEvidence === 'recorded') {
+        denial = await applyRemittanceDenialToLine(practiceId, denialLine, {
           remittanceId,
           payerName: remittance.payerName,
           checkNumber: remittance.checkNumber ?? null,
           postedBy: req.user?.claims?.sub ?? null,
-        })
-      : null;
+        });
+        if (denial.applied) denialLine.denialAppliedAt = new Date();
+      } else {
+        denialAwaitingPayment = true;
+      }
+    }
 
     // 'processed' means done: every line matched, every line's payment
-    // recorded, and no posted denial still waiting to reach its claim.
-    const allItems = await db
-      .select()
-      .from(remittanceLineItems)
-      .where(eq(remittanceLineItems.remittanceId, remittanceId));
-
+    // established from the postings, and no denied line still waiting.
     const allMatched = allItems.every((item: any) => item.status === 'matched');
-    const allPosted = allItems.every((item: any) => isLinePaymentRecorded(item));
-    const noPendingDenials = !allItems.some((item: any) => isDenialPending(item));
+    const allPosted = allItems.every((item: any) => evidenceMap.get(item.id) === 'recorded');
+    const noDenialWaiting = !allItems.some(
+      (item: any) => isDenialPending(item, evidenceMap.get(item.id)) || isDenialAwaitingPayment(item, evidenceMap.get(item.id)),
+    );
 
-    if (allMatched && allPosted && noPendingDenials) {
+    if (allMatched && allPosted && noDenialWaiting) {
       await db
         .update(remittanceAdvice)
         .set({ status: 'processed', processedAt: new Date() })
@@ -716,17 +745,28 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     }
 
     const label = claim.claimNumber || String(claim.id);
-    const { message, denialBlock, partial } = describeDenialOutcome(
-      denial,
-      label,
-      denial ? `Line matched to claim ${label}. Payment recorded.` : 'Line item matched to claim successfully',
-    );
+    const paymentText = paymentEvidence === 'recorded' ? 'Payment recorded.' : `Payment could not be confirmed on the claim (${describePaymentEvidence(paymentEvidence)}).`;
+    const described = denialAwaitingPayment
+      ? {
+          message:
+            `Line matched to claim ${label}. ${paymentText} The payer's denial was NOT applied because this line's payment is not established; ` +
+            'review the claim\'s Payments tab, then use the line\'s Retry denial button.',
+          partial: true,
+          denialBlock: { applied: false, awaitingPayment: true, paymentEvidence },
+        }
+      : describeDenialOutcome(
+          denial,
+          label,
+          denial ? `Line matched to claim ${label}. ${paymentText}` : paymentEvidence === 'recorded' ? 'Line item matched to claim successfully' : `Line matched to claim ${label}. ${paymentText}`,
+        );
+    const { message, denialBlock, partial } = described;
 
     res.json({
       message,
       lineItemId,
       claimId: targetClaimId,
-      partial,
+      paymentEvidence,
+      partial: partial || paymentEvidence !== 'recorded',
       denied: Boolean(denial?.denied),
       claimStatus: denial?.claimStatus ?? null,
       denialReason: denial && denial.skippedReason !== 'not_denied' ? denial.denialReason : null,

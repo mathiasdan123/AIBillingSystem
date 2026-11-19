@@ -45,7 +45,8 @@ import {
 } from '@shared/schema';
 import { eq, and, desc, sql, ilike, lte } from 'drizzle-orm';
 import { postPayment } from './paymentPostingService';
-import { applyRemittanceDenialToLine, isDenialPending, isLinePaymentRecorded, postingReasonFields } from './eraDenialService';
+import { applyRemittanceDenialToLine, isDenialAwaitingPayment, isDenialPending, postingReasonFields } from './eraDenialService';
+import { remittancePaymentEvidence, type PaymentEvidence } from './paymentEvidenceService';
 import { ensureUnderpaymentFollowUp } from './underpaymentPipelineService';
 import { scoreClaimAgainstRemittanceLine, isAutoMatch } from './eraMatchScoring';
 import { decryptRemittanceLineItem, decryptField } from './phiEncryptionService';
@@ -111,27 +112,43 @@ export interface AutoMatchResult {
    * pending on the line (Retry denial button / Auto-Match retries it).
    */
   denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
+  /**
+   * Denied lines whose payment could not be established from the postings
+   * (failed manual post, reversal, ambiguous legacy data). Not applied;
+   * needs manual review. Never posted here.
+   */
+  denialsAwaitingPayment: Array<{ claimId: number; lineItemId: number; evidence: PaymentEvidence }>;
 }
 
 export interface PendingDenialResult {
   denialsApplied: number;
   denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
+  denialsAwaitingPayment: Array<{ claimId: number; lineItemId: number; evidence: PaymentEvidence }>;
+  /** Payment evidence per matched line, for the caller's completion decision. */
+  evidence: Map<number, PaymentEvidence>;
 }
 
 /**
- * Apply every posted-but-pending denial on a remittance: claim status + CARC
- * reason + appeal draft + follow-up. Never posts money: only lines whose
- * payment is already recorded (isLinePaymentRecorded) are considered.
+ * Apply every pending denial on a remittance: claim status + CARC reason +
+ * appeal draft + follow-up. Never posts money: a line's denial is applied
+ * only when ITS payment is established from the postings
+ * (paymentEvidenceService); otherwise it is reported as awaiting payment.
  */
 export async function retryPendingDenials(
   practiceId: number,
-  remittance: { id: number; payerName: string | null; checkNumber: string | null },
+  remittance: { id: number; payerName: string | null; checkNumber: string | null; checkDate?: string | null; receivedDate?: string | null },
   lineItems: any[],
   postedBy: string | null,
 ): Promise<PendingDenialResult> {
-  const result: PendingDenialResult = { denialsApplied: 0, denialFailures: [] };
+  const evidence = await remittancePaymentEvidence(practiceId, remittance, lineItems);
+  const result: PendingDenialResult = { denialsApplied: 0, denialFailures: [], denialsAwaitingPayment: [], evidence };
   for (const lineItem of lineItems) {
-    if (!isDenialPending(lineItem)) continue;
+    const lineEvidence = evidence.get(lineItem.id);
+    if (isDenialAwaitingPayment(lineItem, lineEvidence)) {
+      result.denialsAwaitingPayment.push({ claimId: lineItem.claimId, lineItemId: lineItem.id, evidence: lineEvidence ?? 'not_recorded' });
+      continue;
+    }
+    if (!isDenialPending(lineItem, lineEvidence)) continue;
     const outcome = await applyRemittanceDenialToLine(practiceId, lineItem, {
       remittanceId: remittance.id,
       payerName: remittance.payerName,
@@ -600,14 +617,10 @@ export async function autoMatchRemittance(
     // failure. If the rollback itself fails, the failure is still visible in
     // postingFailures/logs — biasing toward "posting missed and flagged"
     // over "posting recorded twice", which inflates collections and the fee.
-    const autoPostedAt = new Date();
     await db
       .update(remittanceLineItems)
-      .set({ autoPostedAt })
+      .set({ autoPostedAt: new Date() })
       .where(eq(remittanceLineItems.id, lineItem.id));
-    // Mirror the marker on the in-memory line so the denial step below sees
-    // this line as posted (isLinePaymentRecorded); cleared again on rollback.
-    lineItem.autoPostedAt = autoPostedAt;
 
     // The payment posting is the record the whole money path reads from
     // (A/R, patient statements, and the 6%-of-collections basis). postPayment
@@ -648,7 +661,6 @@ export async function autoMatchRemittance(
         error: postError instanceof Error ? postError.message : String(postError),
       });
       postingFailures.push({ claimId, lineItemId: lineItem.id });
-      lineItem.autoPostedAt = null;
       try {
         await db
           .update(remittanceLineItems)
@@ -671,13 +683,9 @@ export async function autoMatchRemittance(
   // status + CARC reason + appeal draft + follow-up. Each line records its
   // own outcome (denialAppliedAt / denialError), so a failure is visible
   // (Denial pending badge) and retried instead of being lost.
-  const pendingBefore = lineItems.filter((li: any) => isDenialPending(li)).length;
-  const { denialsApplied, denialFailures } = await retryPendingDenials(
-    practiceId,
-    remittance as any,
-    lineItems,
-    postedBy,
-  );
+  const denialOutcome = await retryPendingDenials(practiceId, remittance as any, lineItems, postedBy);
+  const { denialsApplied, denialFailures, denialsAwaitingPayment } = denialOutcome;
+  const pendingBefore = denialsApplied + denialFailures.length;
 
   // Update remittance status. 'processed' means done: every line is matched
   // AND every line has its payment recorded AND no posted denial is still
@@ -691,9 +699,15 @@ export async function autoMatchRemittance(
 
   const allMatched =
     allItems.length > 0 && allItems.every((item: any) => item.status === 'matched');
-  const allPosted = allItems.every((item: any) => isLinePaymentRecorded(item));
-  const noPendingDenials = !allItems.some((item: any) => isDenialPending(item));
-  const processed = allMatched && allPosted && noPendingDenials;
+  // Every line's payment must be established from the postings themselves
+  // (a failed manual post leaves a matched line with no money), and no
+  // denied line may still be waiting — pending or awaiting payment.
+  const finalEvidence = await remittancePaymentEvidence(practiceId, remittance as any, allItems as any[]);
+  const allPosted = allItems.every((item: any) => finalEvidence.get(item.id) === 'recorded');
+  const noDenialWaiting = !allItems.some(
+    (item: any) => isDenialPending(item, finalEvidence.get(item.id)) || isDenialAwaitingPayment(item, finalEvidence.get(item.id)),
+  );
+  const processed = allMatched && allPosted && noDenialWaiting;
 
   await db
     .update(remittanceAdvice)
@@ -712,5 +726,6 @@ export async function autoMatchRemittance(
     postingFailures,
     denialsApplied,
     denialFailures,
+    denialsAwaitingPayment,
   };
 }

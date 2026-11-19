@@ -32,7 +32,7 @@ const RECORD = {
 const PENDING_LINE = {
   id: 31, remittanceId: 500, claimId: 73, patientName: 'Ethan Example', memberId: 'W2', serviceDate: '2026-11-17', cptCode: '97140',
   chargedAmount: '100.00', allowedAmount: null, paidAmount: '0.00', adjustmentAmount: '100.00', status: 'matched', matchType: 'manual',
-  adjustmentReasonCodes: [{ code: 'CO-197', description: 'x' }], remarkCodes: [], claimStatusCode: '4', autoPostedAt: null,
+  adjustmentReasonCodes: [{ code: 'CO-197', description: 'x' }], remarkCodes: [], claimStatusCode: '4', autoPostedAt: null, paymentEvidence: 'recorded',
   denialAppliedAt: null, denialError: 'AI generator unavailable',
 };
 
@@ -81,5 +81,24 @@ describe('Remittance detail with a pending denial', () => {
     await waitFor(() => expect(posts).toContain('/api/remittance/500/line-items/31/retry-denial'));
     expect(posts.filter((p) => /\/match$/.test(p))).toHaveLength(0); // never the posting route
     await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Denial applied', description: expect.stringMatching(/not posted again/) })));
+  });
+});
+
+describe('Remittance detail with a denied line whose payment is not recorded', () => {
+  it('shows "Needs manual review", says the denial was not applied, and keeps Retry denial available', async () => {
+    mockApiRequest.mockImplementation(async (method: string, url: string) => {
+      if (method === 'POST') { posts.push(url); return jsonResponse({ message: 'refused', partial: true }, 409); }
+      if (url === '/api/remittance/500') return jsonResponse({ ...RECORD, lineItems: [{ ...PENDING_LINE, paymentEvidence: 'not_recorded' }], rawData: {} });
+      if (url.startsWith('/api/remittance?')) return jsonResponse({ data: [RECORD], pagination: { page: 1, limit: 20, total: 1, totalPages: 1, hasMore: false } });
+      return jsonResponse([]);
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /view/i }));
+    const note = await screen.findByTestId('payment-unconfirmed-31');
+    expect(note).toHaveTextContent('Needs manual review');
+    expect(note).toHaveTextContent('Payment not recorded on the claim');
+    expect(note).toHaveTextContent("The payer's denial was not applied");
+    expect(screen.queryByTestId('denial-pending-31')).toBeNull();
+    expect(screen.getByTestId('retry-denial-31')).toBeInTheDocument();
   });
 });

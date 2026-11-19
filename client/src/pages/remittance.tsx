@@ -58,22 +58,29 @@ interface RemittanceLineItem {
   autoPostedAt?: string | null;
   denialAppliedAt?: string | null;
   denialError?: string | null;
+  /** Server-computed from the postings themselves (matched lines only): recorded | not_recorded | ambiguous. */
+  paymentEvidence?: 'recorded' | 'not_recorded' | 'ambiguous' | null;
 }
 
-/**
- * A posted, denied line whose claim status / appeal / follow-up step has not
- * gone through. "Posted" mirrors the server's isLinePaymentRecorded: the
- * auto path stamps autoPostedAt, the manual match posts in the same request,
- * matchType null is a legacy fused-path row.
- */
+/** A matched line whose payment the server could not establish from the postings: needs manual review. */
+function isPaymentUnconfirmed(item: RemittanceLineItem): boolean {
+  return item.status === 'matched' && item.claimId != null && item.paymentEvidence != null && item.paymentEvidence !== 'recorded';
+}
+
+/** A denied line, payment recorded, whose claim status / appeal / follow-up step has not gone through. */
 function isDenialPending(item: RemittanceLineItem): boolean {
   return (
     item.status === 'matched' &&
     item.claimId != null &&
     item.claimStatusCode === '4' &&
-    (item.autoPostedAt != null || item.matchType === 'manual' || item.matchType == null) &&
+    item.paymentEvidence === 'recorded' &&
     item.denialAppliedAt == null
   );
+}
+
+/** A denied line that cannot be applied until its payment is sorted out by hand. */
+function isDenialAwaitingPayment(item: RemittanceLineItem): boolean {
+  return isPaymentUnconfirmed(item) && item.claimStatusCode === '4' && item.denialAppliedAt == null;
 }
 
 interface RemittanceDetail extends RemittanceRecord {
@@ -777,6 +784,18 @@ export default function Remittance() {
                                 {reviewReasonLabel(item.matchReviewReason)}
                               </div>
                             </div>
+                          ) : isPaymentUnconfirmed(item) ? (
+                            <div data-testid={`payment-unconfirmed-${item.id}`}>
+                              <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
+                                <AlertCircle className="w-3 h-3 mr-1" /> Needs manual review
+                              </Badge>
+                              <div className="text-xs text-red-700 mt-1 max-w-[180px]">
+                                {item.paymentEvidence === 'ambiguous'
+                                  ? 'Payment evidence is ambiguous: fewer postings than identical lines on this claim.'
+                                  : 'Payment not recorded on the claim (the posting may have failed or been reversed).'}
+                                {isDenialAwaitingPayment(item) ? " The payer's denial was not applied." : ''}
+                              </div>
+                            </div>
                           ) : isDenialPending(item) ? (
                             <div data-testid={`denial-pending-${item.id}`}>
                               <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
@@ -801,7 +820,7 @@ export default function Remittance() {
                               <Link2 className="w-3 h-3 mr-1" /> Match
                             </Button>
                           )}
-                          {isDenialPending(item) && selectedRemittance && (
+                          {(isDenialPending(item) || isDenialAwaitingPayment(item)) && selectedRemittance && (
                             <Button
                               variant="outline"
                               size="sm"

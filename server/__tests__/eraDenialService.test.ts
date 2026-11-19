@@ -45,8 +45,8 @@ import {
   applyRemittanceDenial,
   applyRemittanceDenialToLine,
   denialReasonForLine,
+  isDenialAwaitingPayment,
   isDenialPending,
-  isLinePaymentRecorded,
   isDeniedRemittanceLine,
   postingReasonFields,
 } from '../services/eraDenialService';
@@ -190,7 +190,7 @@ describe('applyRemittanceDenial', () => {
     storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'appeal' });
     pipelineMock.mockResolvedValueOnce({ claimId: 73, appealCreated: false, followUpCreated: false, autoFixesApplied: 0, skippedReason: 'claim_status_appeal' });
     const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
-    expect(result).toMatchObject({ denied: false, claimStatus: 'appeal', applied: true, pipeline: { ran: false, appealReused: true } });
+    expect(result).toMatchObject({ denied: false, claimStatus: 'appeal', applied: true, pipeline: { ran: false, appealReused: false, appealCreated: false } });
     expect(storageStub.updateClaim).not.toHaveBeenCalled();
   });
 
@@ -226,7 +226,7 @@ describe('applyRemittanceDenial', () => {
 });
 
 describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
-  const LINE = { ...DENIED_LINE, claimId: 73, status: 'matched', matchType: 'manual', denialAppliedAt: null };
+  const LINE = { ...DENIED_LINE, claimId: 73, status: 'matched', denialAppliedAt: null };
 
   it('stamps denialAppliedAt and clears denialError when nothing is left to retry', async () => {
     storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
@@ -277,20 +277,22 @@ describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
   });
 });
 
-describe('isLinePaymentRecorded / isDenialPending', () => {
-  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', matchType: 'manual', autoPostedAt: null, denialAppliedAt: null };
-  it('a line\'s payment counts as recorded from the auto marker, a manual match, or a legacy fused-path row', () => {
-    expect(isLinePaymentRecorded(base)).toBe(true); // manual route posts in the same request
-    expect(isLinePaymentRecorded({ ...base, matchType: null })).toBe(true); // legacy fused path
-    expect(isLinePaymentRecorded({ ...base, matchType: 'claim_number', autoPostedAt: new Date() })).toBe(true);
-    // Auto-matched by a match-only pass (ERA_AUTO_POST off): linked, not posted.
-    expect(isLinePaymentRecorded({ ...base, matchType: 'claim_number', autoPostedAt: null })).toBe(false);
-    expect(isLinePaymentRecorded({ ...base, status: 'unmatched', claimId: null })).toBe(false);
+describe('isDenialPending / isDenialAwaitingPayment (payment evidence comes from the postings, never the line)', () => {
+  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', matchType: 'manual', denialAppliedAt: null };
+  it('pending only with recorded evidence; anything else is awaiting payment (fails closed)', () => {
+    expect(isDenialPending(base, 'recorded')).toBe(true);
+    expect(isDenialPending(base, 'not_recorded')).toBe(false);
+    expect(isDenialPending(base, 'ambiguous')).toBe(false);
+    expect(isDenialPending(base, undefined)).toBe(false);
+    expect(isDenialAwaitingPayment(base, 'not_recorded')).toBe(true);
+    expect(isDenialAwaitingPayment(base, 'ambiguous')).toBe(true);
+    expect(isDenialAwaitingPayment(base, undefined)).toBe(true);
+    expect(isDenialAwaitingPayment(base, 'recorded')).toBe(false);
   });
-  it('pending = recorded + denied + not applied', () => {
-    expect(isDenialPending(base)).toBe(true);
-    expect(isDenialPending({ ...base, matchType: 'claim_number', autoPostedAt: null })).toBe(false);
-    expect(isDenialPending({ ...base, denialAppliedAt: new Date() })).toBe(false);
-    expect(isDenialPending({ ...base, claimStatusCode: '1' })).toBe(false);
+  it('neither once applied, not a denial, or unmatched', () => {
+    expect(isDenialPending({ ...base, denialAppliedAt: new Date() }, 'recorded')).toBe(false);
+    expect(isDenialAwaitingPayment({ ...base, denialAppliedAt: new Date() }, 'not_recorded')).toBe(false);
+    expect(isDenialPending({ ...base, claimStatusCode: '1' }, 'recorded')).toBe(false);
+    expect(isDenialAwaitingPayment({ ...base, status: 'unmatched', claimId: null }, 'not_recorded')).toBe(false);
   });
 });
