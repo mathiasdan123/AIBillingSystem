@@ -28,7 +28,8 @@ import {
   patients,
   feeSchedules,
 } from '@shared/schema';
-import { eq, and, desc, count, sql, ilike, or, lte, gte } from 'drizzle-orm';
+import { eq, and, desc, count, sql, ilike, or, lte, gte, inArray } from 'drizzle-orm';
+import { storage } from '../storage';
 import logger from '../services/logger';
 import { encryptRemittanceLineItem, decryptRemittanceLineItem, decryptField } from '../services/phiEncryptionService';
 
@@ -450,43 +451,71 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
 
 // ==================== GET /claims/search ====================
 // Search claims for manual matching (by patient name)
+/**
+ * Claim search for the manual ERA match dialog.
+ *
+ * Patient names are PHI-encrypted at rest (JSON ciphertext in
+ * patients.first_name / last_name). This endpoint used to ILIKE those
+ * columns, which can never match a typed name, and returned the raw
+ * ciphertext objects to the dialog (demo billing test 2026-11-19:
+ * "Ethan Example" found nothing; the claim-number hit showed
+ * {"ciphertext","iv","tag"} as the patient). Names are now resolved from
+ * the practice's decrypted patient list in memory, the claim-number match
+ * stays in SQL, and the response carries the decrypted names.
+ */
 router.get('/claims/search', isAuthenticated, async (req: any, res: Response) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     // Guard against parameter tampering: req.query.q may be an array or object
     // if the client sends repeated/structured params. Require a string.
-    const searchTerm = typeof req.query.q === 'string' ? req.query.q : '';
+    const searchTerm = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
     if (searchTerm.length < 2) {
       return res.json([]);
     }
 
-    const results = await db
+    // Archived patients included: an ERA can arrive for a patient archived since the visit.
+    const practicePatients = await storage.getPatients(practiceId, { archived: 'include' });
+    const patientById = new Map<number, { firstName: string | null; lastName: string | null }>();
+    const term = searchTerm.toLowerCase();
+    const nameMatchIds: number[] = [];
+    for (const p of practicePatients as any[]) {
+      patientById.set(p.id, { firstName: p.firstName ?? null, lastName: p.lastName ?? null });
+      const full = `${p.firstName ?? ''} ${p.lastName ?? ''}`.toLowerCase();
+      if (full.includes(term) || `${p.lastName ?? ''}, ${p.firstName ?? ''}`.toLowerCase().includes(term)) {
+        nameMatchIds.push(p.id);
+      }
+    }
+
+    const matchers = [ilike(claims.claimNumber, `%${searchTerm}%`)];
+    if (nameMatchIds.length > 0) matchers.push(inArray(claims.patientId, nameMatchIds));
+
+    const rows = await db
       .select({
         id: claims.id,
         claimNumber: claims.claimNumber,
-        patientFirstName: patients.firstName,
-        patientLastName: patients.lastName,
+        patientId: claims.patientId,
         totalAmount: claims.totalAmount,
         status: claims.status,
         createdAt: claims.createdAt,
       })
       .from(claims)
-      .innerJoin(patients, eq(claims.patientId, patients.id))
-      .where(
-        and(
-          eq(claims.practiceId, practiceId),
-          or(
-            ilike(patients.firstName, `%${searchTerm}%`),
-            ilike(patients.lastName, `%${searchTerm}%`),
-            ilike(claims.claimNumber, `%${searchTerm}%`),
-          ),
-        )
-      )
+      .where(and(eq(claims.practiceId, practiceId), or(...matchers)))
       .orderBy(desc(claims.createdAt))
       .limit(20);
 
-    res.json(results);
+    res.json(
+      rows.map((r: any) => ({
+        id: r.id,
+        claimNumber: r.claimNumber,
+        patientId: r.patientId,
+        patientFirstName: patientById.get(r.patientId)?.firstName ?? null,
+        patientLastName: patientById.get(r.patientId)?.lastName ?? null,
+        totalAmount: r.totalAmount,
+        status: r.status,
+        createdAt: r.createdAt,
+      })),
+    );
   } catch (error) {
     return safeErrorResponse(res, 500, 'Failed to search claims', error);
   }
