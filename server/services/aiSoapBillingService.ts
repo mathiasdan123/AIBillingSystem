@@ -60,7 +60,26 @@ export interface AiSoapBillingRequest {
    * activity; when present, the model treats it as the authoritative account
    * of that activity.
    */
-  activityDetails?: Array<{ name: string; response?: string }>;
+  activityDetails?: Array<{
+    name: string;
+    response?: string;
+    /**
+     * Per-activity structured ratings, when the therapist rated this activity
+     * (the picker's per-exercise selects or "Apply to All"). Carried so the
+     * note can state the assistance level per activity; a blank global
+     * `assessment` field is also derived from these upstream when every rated
+     * activity agrees (server/utils/soapAssessment.ts).
+     */
+    performance?: string;
+    assistance?: string;
+    strength?: string;
+    motorPlanning?: string;
+    sensoryRegulation?: string;
+    cueingLevel?: string;
+    accuracy?: string;
+    stimulability?: string;
+    carryover?: string;
+  }>;
   mood: string;
   caregiverReport?: string;
   duration: number;
@@ -136,7 +155,92 @@ export interface AiSoapBillingResponse {
    * review especially carefully before signing/billing, so the UI surfaces it.
    */
   generationMode: "ai" | "fallback";
+  /**
+   * Set only when generationMode is "fallback" because a live AI attempt was
+   * made and did not produce a usable note: "ai_output_unparseable" = the
+   * model replied but its JSON could not be parsed even after one retry and
+   * a trailing-comma repair; "ai_call_failed" = the call itself threw (auth,
+   * rate limit, network, abort). Absent for the no-key and forced-fallback
+   * paths, which never attempted a call. Never silent: the same reason is
+   * logged at error level with the underlying message.
+   */
+  fallbackReason?: "ai_output_unparseable" | "ai_call_failed";
 }
+
+/**
+ * Conservative repair for the one malformed-JSON shape the model is known to
+ * emit with stop_reason "end_turn": a trailing comma before a closing `}` or
+ * `]` (eval run 44423563561, P3 sample 1: "Expected double-quoted property
+ * name in JSON at position 4144"). String-aware, so a comma inside a quoted
+ * value is never touched; everything else is left for JSON.parse to reject.
+ */
+export function repairTrailingCommas(json: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < json.length && /\s/.test(json[j])) j++;
+      if (json[j] === "}" || json[j] === "]") continue; // drop the trailing comma
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * Pull the JSON object out of the model's reply (dropping any markdown fence
+ * it added despite the instruction) and parse it. On a SyntaxError, try once
+ * more after repairTrailingCommas; if that does not parse either, rethrow the
+ * ORIGINAL error so the log names the real defect, not the repaired text's.
+ */
+export function parseSoapAiJson(responseText: string): { value: any; repaired: boolean } {
+  const jsonMatch =
+    responseText.match(/```json\n?([\s\S]*?)\n?```/) ||
+    responseText.match(/\{[\s\S]*\}/);
+  const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
+  try {
+    return { value: JSON.parse(jsonStr), repaired: false };
+  } catch (original) {
+    if (!(original instanceof SyntaxError)) throw original;
+    const repaired = repairTrailingCommas(jsonStr);
+    if (repaired === jsonStr) throw original;
+    try {
+      return { value: JSON.parse(repaired), repaired: true };
+    } catch {
+      throw original;
+    }
+  }
+}
+
+/** The model replied, but no attempt produced parseable JSON. */
+export class SoapAiOutputError extends Error {
+  constructor(
+    message: string,
+    readonly attempts: number,
+    readonly cause: unknown,
+  ) {
+    super(message);
+    this.name = "SoapAiOutputError";
+  }
+}
+
+/** One initial call plus one retry on a parse failure. */
+const MAX_AI_OUTPUT_ATTEMPTS = 2;
 
 /**
  * AI-powered SOAP note and billing code generation
@@ -283,7 +387,11 @@ export async function generateSoapNoteAndBilling(
   const systemPrompt = buildSystemPrompt(insuranceData);
   const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals, priorSessions);
 
-  try {
+  // One model call. `attempt` > 1 is the retry after a parse failure: the
+  // route's live preview is already holding the first reply's text, so a
+  // retry forwards no deltas to it (the route's own heartbeat keeps the
+  // connection warm); the final note arrives whole in the 'done' event.
+  const runModelOnce = async (attempt: number) => {
     // Use streaming so we don't hit a long hang on a single request. The SDK
     // auto-retries non-streaming calls on certain errors with a default 10-min
     // timeout, which can push a single "create" call past the ALB's idle
@@ -295,9 +403,10 @@ export async function generateSoapNoteAndBilling(
       // stops at end_turn when the note is complete (~1300-1400 tokens for a
       // typical note; more for a clinically rich session). Keep the ceiling
       // generous so a long-but-legitimate note is never truncated mid-JSON
-      // (truncation fails JSON.parse below → silent fallback to a rule-based
-      // note). Perceived speed comes from streaming the note as it's written,
-      // not from a tight cap. See the audit notes in adversarial review.
+      // (truncation fails the parse below → fallback to a rule-based note,
+      // flagged as such). Perceived speed comes from streaming the note as
+      // it's written, not from a tight cap. See the audit notes in
+      // adversarial review.
       max_tokens: 6000,
       // 0.5. A 0.2 trial (2026-11-04) did not make code choices repeatable
       // (identical inputs still split 97530/97112/97110 across samples) and
@@ -311,10 +420,11 @@ export async function generateSoapNoteAndBilling(
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    if (options.onProgress || options.onTextDelta) {
+    const onTextDelta = attempt === 1 ? options.onTextDelta : undefined;
+    if (options.onProgress || onTextDelta) {
       stream.on("text", (t: string) => {
         options.onProgress?.();
-        options.onTextDelta?.(t);
+        onTextDelta?.(t);
       });
     }
     // Abort the upstream generation if the HTTP client disconnects, so an
@@ -328,18 +438,19 @@ export async function generateSoapNoteAndBilling(
 
     // Output-token visibility for latency diagnosis (alongside the route's
     // durationMs). stop_reason "max_tokens" means the note hit the ceiling and
-    // was truncated — the JSON.parse below then fails and we fall back to a
+    // was truncated — the parse below then fails and we fall back to a
     // rule-based note, so surface it loudly for alerting rather than letting a
     // templated note ship silently.
     if (finalMessage.stop_reason === "max_tokens") {
       logger.warn(
         "SOAP AI generation hit max_tokens — note truncated, will fall back to rule-based",
-        { outputTokens: finalMessage.usage.output_tokens },
+        { outputTokens: finalMessage.usage.output_tokens, attempt },
       );
     } else {
       logger.info("SOAP AI usage", {
         outputTokens: finalMessage.usage.output_tokens,
         stopReason: finalMessage.stop_reason,
+        ...(attempt > 1 ? { attempt } : {}),
       });
     }
 
@@ -350,13 +461,45 @@ export async function generateSoapNoteAndBilling(
     if (!responseText) {
       throw new Error("No response from AI");
     }
+    return { responseText, stopReason: finalMessage.stop_reason };
+  };
 
-    // Strip markdown fencing if Claude added any, then parse
-    const jsonMatch =
-      responseText.match(/```json\n?([\s\S]*?)\n?```/) ||
-      responseText.match(/\{[\s\S]*\}/);
-    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
-    const aiResponse = JSON.parse(jsonStr);
+  try {
+    let aiResponse: any;
+    for (let attempt = 1; ; attempt++) {
+      const { responseText, stopReason } = await runModelOnce(attempt);
+      try {
+        const parsed = parseSoapAiJson(responseText);
+        if (parsed.repaired) {
+          logger.warn("Repaired trailing comma(s) in SOAP AI JSON output", {
+            attempt,
+            stopReason,
+            outputLength: responseText.length,
+          });
+        }
+        aiResponse = parsed.value;
+        break;
+      } catch (parseError) {
+        const message = parseError instanceof Error ? parseError.message : String(parseError);
+        if (
+          !(parseError instanceof SyntaxError) ||
+          attempt >= MAX_AI_OUTPUT_ATTEMPTS ||
+          options.signal?.aborted
+        ) {
+          throw new SoapAiOutputError(
+            `SOAP AI output was not valid JSON after ${attempt} attempt(s): ${message}`,
+            attempt,
+            parseError,
+          );
+        }
+        logger.warn("SOAP AI output was not valid JSON; retrying the model call once", {
+          attempt,
+          error: message,
+          stopReason,
+          outputLength: responseText.length,
+        });
+      }
+    }
 
     // Validate and enhance the response
     const hasMostRecentPlanContext = !!priorSessions?.[0]?.plan;
@@ -370,9 +513,28 @@ export async function generateSoapNoteAndBilling(
     );
 
   } catch (error) {
+    const fallbackReason: NonNullable<AiSoapBillingResponse["fallbackReason"]> =
+      error instanceof SoapAiOutputError ? "ai_output_unparseable" : "ai_call_failed";
     console.error("AI generation error:", error);
-    // Fallback to rule-based generation if AI fails
-    return applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request);
+    // Never silent: a templated note is about to be returned in place of a
+    // generated one. Say why, with the underlying error, at error level.
+    logger.error("SOAP AI generation failed; returning the rule-based FALLBACK note", {
+      fallbackReason,
+      error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof SoapAiOutputError
+        ? {
+            attempts: error.attempts,
+            cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+          }
+        : {}),
+      patientId: request.patientId,
+      practiceId: request.practiceId,
+    });
+    // Fallback to rule-based generation if AI fails, flagged as such.
+    return {
+      ...(await applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request)),
+      fallbackReason,
+    };
   }
 }
 
@@ -416,6 +578,37 @@ export async function applyPracticeCptRates(
   }
   response.totalReimbursement = response.cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
   return response;
+}
+
+/** Human labels for the per-activity ratings, in display order. */
+const ACTIVITY_RATING_LABELS: Array<[keyof NonNullable<AiSoapBillingRequest["activityDetails"]>[number], string]> = [
+  ["assistance", "Assistance"],
+  ["performance", "Performance"],
+  ["strength", "Strength/endurance"],
+  ["motorPlanning", "Motor planning"],
+  ["sensoryRegulation", "Sensory regulation"],
+  ["cueingLevel", "Cueing level"],
+  ["accuracy", "Accuracy"],
+  ["stimulability", "Stimulability"],
+  ["carryover", "Carryover"],
+];
+
+/**
+ * "Assistance: Minimal Assist; Performance: Improved" for one activity, or
+ * null when the therapist rated nothing on it. Used by both the prompt and
+ * the fallback so the two paths describe the same entered facts.
+ */
+export function activityRatingsLine(
+  detail: NonNullable<AiSoapBillingRequest["activityDetails"]>[number] | undefined,
+): string | null {
+  if (!detail) return null;
+  const parts = ACTIVITY_RATING_LABELS
+    .map(([key, label]) => {
+      const v = detail[key];
+      return typeof v === "string" && v.trim() ? `${label}: ${v.trim()}` : null;
+    })
+    .filter((p): p is string => p !== null);
+  return parts.length ? parts.join("; ") : null;
 }
 
 export function buildSystemPrompt(insuranceData: any): string {
@@ -966,9 +1159,15 @@ SUBJECTIVE DATA:
 ACTIVITIES/EXERCISES PERFORMED:
 ${request.activities.map(a => {
   const detail = request.activityDetails?.find(d => d.name === a);
-  return detail?.response
-    ? `- ${a}\n  THERAPIST'S ACCOUNT (primary source for this activity — use its facts, do not embellish): "${detail.response}"`
-    : `- ${a}`;
+  const lines = [`- ${a}`];
+  if (detail?.response) {
+    lines.push(`  THERAPIST'S ACCOUNT (primary source for this activity — use its facts, do not embellish): "${detail.response}"`);
+  }
+  const ratings = activityRatingsLine(detail);
+  if (ratings) {
+    lines.push(`  RATINGS ENTERED FOR THIS ACTIVITY (therapist's own selections — state them for this activity; the assistance level here is documented): ${ratings}`);
+  }
+  return lines.join('\n');
 }).join('\n')}
 ${request.activityDetails?.some(d => d.response) ? `
 The THERAPIST'S ACCOUNT lines above are the primary Objective data. Structure
@@ -1529,7 +1728,9 @@ export function requestHasObservations(request: AiSoapBillingRequest): boolean {
     a.bilateralCoordination, a.endurance, a.engagement,
   ];
   if (ratingFields.some((v) => typeof v === "string" && v.trim().length > 0)) return true;
-  return (request.activityDetails || []).some((d) => d.response && d.response.trim().length > 0);
+  return (request.activityDetails || []).some(
+    (d) => (d.response && d.response.trim().length > 0) || activityRatingsLine(d) !== null,
+  );
 }
 
 // When nothing was observed, "deficits" the model attributes to the patient
@@ -1604,15 +1805,22 @@ export interface GroundingEvidence {
 
 export function groundingEvidenceFor(request: AiSoapBillingRequest): GroundingEvidence {
   const a = (request.assessment ?? {}) as Record<string, unknown>;
+  const details = request.activityDetails ?? [];
   const text = [
-    ...(request.activityDetails ?? []).map((d) => d.response),
+    ...details.map((d) => d.response),
+    // Per-activity ratings are therapist entries too (post-deploy retest of
+    // #464: "Minimal Assist" chosen per exercise must count as documented).
+    ...details.map((d) => activityRatingsLine(d) ?? undefined),
     request.caregiverReport,
     request.mood,
     ...Object.values(a),
   ]
     .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
     .join("\n");
-  return { text, hasAssistance: typeof a.assistance === "string" && a.assistance.trim().length > 0 };
+  const hasAssistance =
+    (typeof a.assistance === "string" && a.assistance.trim().length > 0) ||
+    details.some((d) => typeof d.assistance === "string" && d.assistance.trim().length > 0);
+  return { text, hasAssistance };
 }
 
 // Topics a note can deny. Each is matched both in the output sentence and in
@@ -2241,11 +2449,22 @@ export function fallbackGeneration(
     const detail = request.activityDetails?.find((d) => d.name === activity);
     return detail && documented(detail.response) ? detail.response.trim() : null;
   };
-  const hasAnyAccount = request.activities.some((act) => accountFor(act) !== null);
+  // An entered per-activity rating (e.g. "Minimal Assist" via Apply to All)
+  // is an observation too, so it also suppresses the "none entered" line.
+  const hasAnyAccount = request.activities.some(
+    (act) => accountFor(act) !== null || activityRatingsLine(request.activityDetails?.find((d) => d.name === act)) !== null,
+  );
+  // Per-activity ratings (assistance level first) print under the activity
+  // too: "Minimal Assist" picked per exercise or via Apply to All is an
+  // entered fact about that activity (post-deploy retest of #464).
   const activityLines = request.activities
     .map((act) => {
       const account = accountFor(act);
-      return account ? `• ${act}\n  Therapist's account: ${account}` : `• ${act}`;
+      const ratings = activityRatingsLine(request.activityDetails?.find((d) => d.name === act));
+      const lines = [`• ${act}`];
+      if (account) lines.push(`  Therapist's account: ${account}`);
+      if (ratings) lines.push(`  ${ratings}`);
+      return lines.join('\n');
     })
     .join('\n');
   // A statement about this FORM ("entered"), never about the room ("not
@@ -2253,7 +2472,7 @@ export function fallbackGeneration(
   // was entered -- those are observations.
   const observationsBlock = observationLines.length
     ? `\n\nClinical observations as documented by the treating therapist:\n${observationLines.join('\n')}`
-    : hasAnyAccount
+    : hasAnyAccount || documented(a.assistance)
       ? ''
       : `\n\nClinical observations: none entered for this session beyond the activities listed.`;
   const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${activityLines}${assistanceLine}${observationsBlock}`;

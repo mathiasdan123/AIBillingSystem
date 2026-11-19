@@ -10,6 +10,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { apiErrorMessage } from "@/lib/apiError";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -1091,6 +1092,9 @@ export default function Claims() {
   const [denialPredictionResult, setDenialPredictionResult] = useState<Claim["denialPrediction"]>(null);
   const [predictingDenial, setPredictingDenial] = useState(false);
   const [preSubmitClaimId, setPreSubmitClaimId] = useState<number | null>(null); // set when Submit triggers denial check
+  // Server message from the last failed submission, shown inside the
+  // pre-submit risk dialog (which now stays open until the request settles).
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // Holds the patient ID whose insurance the user is fixing inline from the
   // scrub-error dialog. Null = the fix-insurance dialog is closed.
   const [insuranceFixPatientId, setInsuranceFixPatientId] = useState<number | null>(null);
@@ -1617,21 +1621,32 @@ export default function Claims() {
   // reproduced twice. The menu item now only records which claim to delete;
   // the dialog renders outside the menu and runs the mutation on confirm.
   const [claimPendingDelete, setClaimPendingDelete] = useState<Claim | null>(null);
+  // Server message from the last failed delete, shown inside the confirm
+  // dialog (demo pass 2026-11-19: a 500 produced no visible error at all).
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const deleteClaimMutation = useMutation({
+    // The app-wide default retries a 5xx three times with backoff. For a
+    // DELETE that is both wrong (a destructive call repeating itself) and the
+    // reason the failure looked silent: the error toast only arrived ~7s
+    // later, after the user had moved on.
+    retry: false,
     mutationFn: async (claimId: number) => {
       const res = await apiRequest("DELETE", `/api/claims/${claimId}`);
       return res.json();
     },
     onSuccess: () => {
       setClaimPendingDelete(null);
+      setDeleteError(null);
       invalidateClaims();
       toast({ title: "Draft claim deleted" });
     },
     onError: (error: any) => {
+      const message = apiErrorMessage(error, "Please try again.");
+      setDeleteError(message);
       toast({
         title: "Couldn't delete this claim",
-        description: String(error?.message ?? '').replace(/^\d{3}:\s*/, '') || "Please try again.",
+        description: message,
         variant: "destructive",
       });
     },
@@ -1680,6 +1695,11 @@ export default function Claims() {
     },
     onSuccess: (data) => {
       invalidateClaims();
+      // The pre-submit risk dialog stays open while the request is in flight
+      // (so a failure can be shown in it); the result is in, so close it.
+      setShowDenialPrediction(false);
+      setPreSubmitClaimId(null);
+      setSubmitError(null);
       // Show scrub warnings if present
       if (data.scrubResult?.warnings?.length > 0) {
         setScrubWarnings(data.scrubResult.warnings);
@@ -1706,8 +1726,11 @@ export default function Claims() {
         }, 500);
         return;
       }
-      // Handle scrub failure (422)
+      // Handle scrub failure (422): the scrub-results dialog takes over.
       if (error.status === 422 && error.scrubResult) {
+        setShowDenialPrediction(false);
+        setPreSubmitClaimId(null);
+        setSubmitError(null);
         invalidateClaims();
         setScrubErrors(error.scrubResult.errors || []);
         setScrubWarnings(error.scrubResult.warnings || []);
@@ -1729,9 +1752,16 @@ export default function Claims() {
         }
         return;
       }
+      // Any other refusal (e.g. the demo-practice firewall, a co-sign
+      // requirement): keep the risk dialog open and show the server's own
+      // message in it, as well as in a toast. Demo pass 2026-11-19: the 400
+      // was answered but the dialog had already closed and nothing visible
+      // explained why the claim stayed Draft.
+      const message = apiErrorMessage(error, "Failed to submit claim");
+      setSubmitError(message);
       toast({
-        title: "Error",
-        description: error.message || "Failed to submit claim",
+        title: "Claim was not submitted",
+        description: message,
         variant: "destructive",
       });
     },
@@ -3387,7 +3417,7 @@ export default function Claims() {
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onClick={() => setClaimPendingDelete(claim)}
+                                onClick={() => { setDeleteError(null); setClaimPendingDelete(claim); }}
                                 data-testid={`menu-delete-claim-${claim.id}`}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
@@ -3754,7 +3784,10 @@ export default function Claims() {
       {/* Denial Risk Prediction Dialog */}
       <Dialog open={showDenialPrediction} onOpenChange={(open) => {
         setShowDenialPrediction(open);
-        if (!open) setPreSubmitClaimId(null);
+        if (!open) {
+          setPreSubmitClaimId(null);
+          setSubmitError(null);
+        }
       }}>
         <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -3898,6 +3931,14 @@ export default function Claims() {
                 </div>
               )}
 
+              {preSubmitClaimId && submitError && (
+                <Alert variant="destructive" data-testid="alert-submit-error">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Claim was not submitted</AlertTitle>
+                  <AlertDescription>{submitError}</AlertDescription>
+                </Alert>
+              )}
+
               {/* Action buttons */}
               <div className="flex justify-between items-center pt-2 border-t">
                 <p className="text-xs text-slate-400">
@@ -3922,6 +3963,7 @@ export default function Claims() {
                         size="sm"
                         onClick={() => {
                           setPreSubmitClaimId(null);
+                          setSubmitError(null);
                           setShowDenialPrediction(false);
                         }}
                       >
@@ -3931,9 +3973,10 @@ export default function Claims() {
                         size="sm"
                         variant={denialPredictionResult.riskLevel === 'high' ? 'destructive' : 'default'}
                         onClick={() => {
+                          // Stay open until the server answers: a refusal is
+                          // shown right here (submitError), success closes it.
+                          setSubmitError(null);
                           submitClaimMutation.mutate(preSubmitClaimId);
-                          setPreSubmitClaimId(null);
-                          setShowDenialPrediction(false);
                         }}
                         disabled={submitClaimMutation.isPending}
                       >
@@ -4157,7 +4200,7 @@ export default function Claims() {
 
         {/* Delete-draft confirmation. Rendered outside the row menu so the
             menu finishes closing before any modal appears. */}
-        <AlertDialog open={!!claimPendingDelete} onOpenChange={(open) => { if (!open) setClaimPendingDelete(null); }}>
+        <AlertDialog open={!!claimPendingDelete} onOpenChange={(open) => { if (!open) { setClaimPendingDelete(null); setDeleteError(null); } }}>
           <AlertDialogContent data-testid="dialog-delete-claim">
             <AlertDialogHeader>
               <AlertDialogTitle>Delete draft claim {claimPendingDelete?.claimNumber}?</AlertDialogTitle>
@@ -4165,6 +4208,13 @@ export default function Claims() {
                 It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {deleteError && (
+              <Alert variant="destructive" data-testid="alert-delete-error">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Couldn't delete this claim</AlertTitle>
+                <AlertDescription>{deleteError}</AlertDescription>
+              </Alert>
+            )}
             <AlertDialogFooter>
               <AlertDialogCancel data-testid="button-cancel-delete-claim">Cancel</AlertDialogCancel>
               <AlertDialogAction

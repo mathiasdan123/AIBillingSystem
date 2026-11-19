@@ -86,6 +86,7 @@ interface Patient {
   id: number;
   firstName: string;
   lastName: string;
+  archivedAt?: string | null;
 }
 
 interface AssessmentWithTrend {
@@ -117,10 +118,16 @@ export default function OutcomeMeasures() {
     queryKey: ["/api/outcome-measures/templates"],
   });
 
-  // Fetch patients
+  // Fetch patients. `archived=include` (mirrors #474 on Claims): this
+  // selector chooses whose assessment HISTORY to view, and that history
+  // belongs to the patient after the patient is archived; the default list
+  // excludes archived patients, which hid their history and read their name
+  // as "Choose a patient..." (QA 2026-11-18). Archived patients are listed
+  // with an "(archived)" label; a NEW assessment for one is refused below.
   const { data: patients = [] } = useQuery<Patient[]>({
-    queryKey: ["/api/patients"],
+    queryKey: ["/api/patients", "?archived=include"],
   });
+  const isArchivedPatient = (id: number | null) => !!patients.find((p) => p.id === id)?.archivedAt;
 
   // Fetch structured PDMS-2 assessments for the selected patient
   const { data: pdms2Assessments = [] } = useQuery<Pdms2AssessmentRecord[]>({
@@ -224,6 +231,10 @@ export default function OutcomeMeasures() {
   const handleStartAssessment = (template: OutcomeMeasureTemplate) => {
     if (!selectedPatient) {
       toast({ title: "Select Patient", description: "Please select a patient first.", variant: "destructive" });
+      return;
+    }
+    if (isArchivedPatient(selectedPatient)) {
+      toast({ title: "Patient is archived", description: "Unarchive the patient before recording a new assessment. Existing assessments can still be viewed.", variant: "destructive" });
       return;
     }
     setSelectedTemplate(template);
@@ -712,6 +723,7 @@ export default function OutcomeMeasures() {
                               }`}
                             />
                             {patient.firstName} {patient.lastName}
+                            {patient.archivedAt ? <span className="ml-2 text-xs text-muted-foreground">(archived)</span> : null}
                           </CommandItem>
                         ))}
                       </CommandGroup>
@@ -781,6 +793,10 @@ export default function OutcomeMeasures() {
                   onClick={() => {
                     if (!selectedPatient) {
                       toast({ title: "Select Patient", description: "Please select a patient first.", variant: "destructive" });
+                      return;
+                    }
+                    if (isArchivedPatient(selectedPatient)) {
+                      toast({ title: "Patient is archived", description: "Unarchive the patient before recording a new assessment. Existing assessments can still be viewed.", variant: "destructive" });
                       return;
                     }
                     setPdms2Workflow({ existing: null });

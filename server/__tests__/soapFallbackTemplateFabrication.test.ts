@@ -223,6 +223,39 @@ describe('fallbackGeneration — activity account passthrough and no unsupported
   });
 });
 
+/**
+ * Post-deploy retest of #464 (2026-11-18): "Minimal Assist" selected via
+ * Apply to All / per exercise reached neither path. The route now carries
+ * per-activity ratings in activityDetails and derives the global; the
+ * template must print both.
+ */
+describe('fallbackGeneration — assistance level reaches the Objective', () => {
+  it('prints a per-activity assistance level under its activity', () => {
+    const out = fallbackGeneration(
+      request({
+        activities: ['Trampoline - Strengthening'],
+        activityDetails: [{ name: 'Trampoline - Strengthening', response: 'five sets of ten jumps', assistance: 'Minimal Assist' }],
+      }),
+      PATIENT, 3,
+    );
+    expect(out.objective).toContain("• Trampoline - Strengthening\n  Therapist's account: five sets of ten jumps\n  Assistance: Minimal Assist");
+  });
+
+  it('prints the global assistance level (as derived by the route from Apply to All) as the session line', () => {
+    const out = fallbackGeneration(
+      request({
+        activities: ['Trampoline - Strengthening'],
+        activityDetails: [{ name: 'Trampoline - Strengthening', assistance: 'Minimal Assist', performance: 'Improved' }],
+        assessment: { performance: '', assistance: 'Minimal Assist', strength: '', motorPlanning: '', sensoryRegulation: '' },
+      }),
+      PATIENT, 3,
+    );
+    expect(out.objective).toContain('Assistance level: Minimal Assist.');
+    expect(out.objective).toContain('  Assistance: Minimal Assist; Performance: Improved');
+    expect(out.objective).not.toMatch(/none entered/);
+  });
+});
+
 describe('fallbackGeneration — prior plan and goals on file (CASE B)', () => {
   it('may refer to current goals and continue the existing home program', () => {
     const out = fallbackGeneration(request(), PATIENT, 3, { hasPriorPlan: true, hasGoals: true });

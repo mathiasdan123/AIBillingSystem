@@ -52,6 +52,33 @@ describe('buildUserPrompt — narrative-first Objective input', () => {
   });
 });
 
+describe('buildUserPrompt — per-activity structured ratings', () => {
+  it('lists the ratings entered for an activity beside its account, and the derived global level', () => {
+    const prompt = buildUserPrompt(
+      baseRequest({
+        activities: ['Trampoline - Strengthening'],
+        activityDetails: [
+          { name: 'Trampoline - Strengthening', response: 'five sets of ten jumps', assistance: 'Minimal Assist', strength: 'Fair' },
+        ],
+        assessment: { performance: '', assistance: 'Minimal Assist', strength: '', motorPlanning: '', sensoryRegulation: '' },
+      }),
+      patient, 3, null,
+    );
+    expect(prompt).toContain('RATINGS ENTERED FOR THIS ACTIVITY');
+    expect(prompt).toContain('Assistance: Minimal Assist; Strength/endurance: Fair');
+    expect(prompt).toContain('- Assistance Level Required: Minimal Assist');
+    expect(prompt).not.toContain('Assistance Level Required: (not assessed)');
+  });
+
+  it('omits the ratings line when nothing was rated on the activity', () => {
+    const prompt = buildUserPrompt(
+      baseRequest({ activityDetails: [{ name: 'Swing', response: 'Calm throughout.' }] }),
+      patient, 3, null,
+    );
+    expect(prompt).not.toContain('RATINGS ENTERED FOR THIS ACTIVITY');
+  });
+});
+
 describe('buildUserPrompt — active treatment goals as grounded context', () => {
   const goals = [
     {

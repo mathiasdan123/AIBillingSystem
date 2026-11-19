@@ -31,6 +31,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
 import { fromDraftBilling, toDraftBilling } from "@/lib/soapDraftBilling";
+import { applyRatingsToAllActivities, buildRequestAssessment, mergeGlobalAssessment } from "@/lib/soapRatings";
+import { derivePracticeUnitRate, describeUnitRate } from "@/lib/practiceRate";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
@@ -261,7 +263,10 @@ export default function SoapNotes() {
   const [duration, setDuration] = useState(45); // Standard session length
   const [sessionType, setSessionType] = useState("treatment"); // treatment, initial_eval, re_eval
   const [location, setLocation] = useState("Sensory Gym");
-  const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // $289 per 15-min unit
+  const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // replaced by the practice rate once /api/cpt-codes loads
+  // True once the admin typed a rate by hand; the practice-rate pre-fill
+  // never overwrites a manual value.
+  const [rateTouched, setRateTouched] = useState(false);
 
   // Prefill from the calendar: "Write Session Note" on an appointment links
   // here with the visit's patient and date, so the therapist does not have to
@@ -528,6 +533,14 @@ export default function SoapNotes() {
     queryKey: ["/api/cpt-codes"],
     retry: false,
   });
+
+  // Pre-fill Rate/Unit with the practice's configured charge for the session
+  // type's codes (the number generation will actually bill), falling back to
+  // the flat estimate. A hand-typed rate is never overwritten.
+  useEffect(() => {
+    if (rateTouched) return;
+    setRatePerUnit(derivePracticeUnitRate(cptCodes, sessionType).rate);
+  }, [cptCodes, sessionType, rateTouched]);
 
   const { data: existingSoapNotes } = useQuery<SoapNote[]>({
     queryKey: ["/api/soap-notes"],
@@ -814,12 +827,17 @@ export default function SoapNotes() {
     field: keyof ActivityAssessment,
     value: string,
   ) => {
-    setSelectedActivities(prev =>
-      prev.map(a => a.name === activityName
-        ? { ...a, assessment: { ...a.assessment, [field]: value } }
-        : a
-      )
+    const next = selectedActivities.map(a => a.name === activityName
+      ? { ...a, assessment: { ...a.assessment, [field]: value } }
+      : a
     );
+    setSelectedActivities(next);
+    // Deliberately NOT mirrored into the global `assessment` state. The
+    // global fields hold only what the therapist set on the global controls;
+    // the per-exercise values are derived at request time
+    // (buildRequestAssessment) and for display (effectiveAssessment). Review
+    // on #471: mirroring made the derived value look typed, so a later
+    // Apply to All could never update it (Minimal → Moderate stayed Minimal).
   };
 
   // Pre-sign documentation check (clinician feedback): pass/warn checklist for
@@ -1071,9 +1089,12 @@ export default function SoapNotes() {
     // Check if at least one field is set
     const hasValue = Object.values(applyToAllAssessment).some(v => v !== "");
     if (!hasValue) return;
-    setSelectedActivities(prev =>
-      prev.map(a => ({ ...a, assessment: { ...applyToAllAssessment } }))
-    );
+    const applied = applyRatingsToAllActivities(selectedActivities, applyToAllAssessment);
+    setSelectedActivities(applied);
+    // Not mirrored into the global `assessment` state (see
+    // updateActivityAssessment): the generate request derives a blank global
+    // field from these per-exercise values every time, so a second Apply to
+    // All with a different level is what gets sent.
   };
 
   // Helper to check if activity is selected
@@ -1145,13 +1166,10 @@ export default function SoapNotes() {
           duration,
           sessionType,
           location,
-          assessment: {
-            performance: assessment.performance,
-            assistance: assessment.assistance,
-            strength: assessment.strength,
-            motorPlanning: assessment.motorPlanning,
-            sensoryRegulation: assessment.sensoryRegulation
-          },
+          // Global ratings, with any blank field filled from the per-exercise
+          // ratings when every rated exercise agrees (buildRequestAssessment).
+          // The per-exercise ratings themselves travel in activityAssessments.
+          assessment: buildRequestAssessment(assessment, selectedActivities),
           planNextSteps: planNextSteps,
           nextSessionFocus: nextSessionFocus,
           homeProgram: homeProgram || undefined,
@@ -1687,9 +1705,9 @@ export default function SoapNotes() {
                     <Label className="text-xs text-muted-foreground">Session Type</Label>
                     <Select value={sessionType} onValueChange={(v) => {
                       setSessionType(v);
-                      if (v === 'initial_eval') setRatePerUnit(550);
-                      else if (v === 're_eval') setRatePerUnit(400);
-                      else setRatePerUnit(DEFAULT_UNIT_RATE);
+                      // Rate follows the session type via the practice-rate
+                      // effect above (practice charge when configured, else
+                      // the flat estimate) unless the admin typed one.
                     }}>
                       <SelectTrigger className="mt-1">
                         <SelectValue />
@@ -1721,11 +1739,27 @@ export default function SoapNotes() {
                       <Input
                         type="number"
                         value={ratePerUnit}
-                        onChange={(e) => setRatePerUnit(parseFloat(e.target.value) || DEFAULT_UNIT_RATE)}
+                        onChange={(e) => {
+                          // Empty or 0 means "no manual rate": fall back to the
+                          // derived practice rate rather than pinning the flat
+                          // estimate as "Entered manually" (review on #471).
+                          const typed = parseFloat(e.target.value);
+                          if (!Number.isFinite(typed) || typed <= 0) {
+                            setRateTouched(false);
+                            setRatePerUnit(derivePracticeUnitRate(cptCodes, sessionType).rate);
+                          } else {
+                            setRateTouched(true);
+                            setRatePerUnit(typed);
+                          }
+                        }}
                         className="mt-1"
                         min={0}
                         step={0.01}
+                        data-testid="input-rate-per-unit"
                       />
+                      <p className="text-[10px] text-muted-foreground mt-1" data-testid="rate-per-unit-source">
+                        {rateTouched ? "Entered manually" : describeUnitRate(derivePracticeUnitRate(cptCodes, sessionType))}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -2338,10 +2372,23 @@ export default function SoapNotes() {
                   <summary className="text-xs text-purple-700 cursor-pointer select-none hover:underline mb-2">
                     Optional overall ratings
                   </summary>
+                {/* Shown values are the per-exercise ratings when every rated
+                    exercise agrees (derived on every render, never written into
+                    the global state); choosing a value here overrides them. */}
+                {(() => {
+                  const effective = mergeGlobalAssessment(assessment, selectedActivities);
+                  const derived = (["performance", "assistance", "strength", "motorPlanning", "sensoryRegulation"] as const)
+                    .filter((f) => !assessment[f] && effective[f]);
+                  return derived.length > 0 ? (
+                    <p className="text-[10px] text-muted-foreground mb-1" data-testid="overall-ratings-derived-hint">
+                      Filled from the per-exercise ratings; choose a value here to override.
+                    </p>
+                  ) : null;
+                })()}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-2">
                   <div>
                     <Label className="text-xs text-muted-foreground">Performance</Label>
-                    <Select value={assessment.performance} onValueChange={(v) => setAssessment({...assessment, performance: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).performance} onValueChange={(v) => setAssessment({...assessment, performance: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2354,7 +2401,7 @@ export default function SoapNotes() {
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Assistance</Label>
-                    <Select value={assessment.assistance} onValueChange={(v) => setAssessment({...assessment, assistance: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).assistance} onValueChange={(v) => setAssessment({...assessment, assistance: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2367,7 +2414,7 @@ export default function SoapNotes() {
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Strength</Label>
-                    <Select value={assessment.strength} onValueChange={(v) => setAssessment({...assessment, strength: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).strength} onValueChange={(v) => setAssessment({...assessment, strength: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2380,7 +2427,7 @@ export default function SoapNotes() {
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Motor Planning</Label>
-                    <Select value={assessment.motorPlanning} onValueChange={(v) => setAssessment({...assessment, motorPlanning: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).motorPlanning} onValueChange={(v) => setAssessment({...assessment, motorPlanning: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2393,7 +2440,7 @@ export default function SoapNotes() {
                   </div>
                   <div className="md:col-span-2">
                     <Label className="text-xs text-muted-foreground">Sensory Regulation</Label>
-                    <Select value={assessment.sensoryRegulation} onValueChange={(v) => setAssessment({...assessment, sensoryRegulation: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).sensoryRegulation} onValueChange={(v) => setAssessment({...assessment, sensoryRegulation: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
