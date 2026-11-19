@@ -3272,6 +3272,15 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
+    // The payer the claim is billed to (not the chart's plan) and the
+    // claim-level date of service, so the analysis reasons about this claim
+    // (QA demo pass 2026-11-19, item 5).
+    let insuranceName: string | null = null;
+    if (claim.insuranceId) {
+      const insurance = (await storage.getInsurances()).find((i: any) => i.id === claim.insuranceId);
+      insuranceName = insurance?.name ?? null;
+    }
+
     // Run prediction
     const prediction = await predictDenial(
       {
@@ -3280,6 +3289,8 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
         totalAmount: claim.totalAmount,
         status: claim.status,
         insuranceId: claim.insuranceId,
+        insuranceName,
+        dateOfService: (claim as any).dateOfService ?? null,
         sessionId: claim.sessionId,
       },
       enrichedLineItems,

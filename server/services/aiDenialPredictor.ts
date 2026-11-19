@@ -38,7 +38,43 @@ interface ClaimInput {
   totalAmount: string;
   status?: string | null;
   insuranceId?: number | null;
+  /** Name of the payer the CLAIM is billed to (claims.insuranceId -> insurances.name). */
+  insuranceName?: string | null;
+  /** Claim-level date of service (YYYY-MM-DD). Line items may carry their own. */
+  dateOfService?: string | null;
   sessionId?: number | null;
+}
+
+/**
+ * The payer the analysis should reason about: the claim's own payer first,
+ * the patient's chart plan only when the claim carries none (QA demo pass
+ * 2026-11-19, item 5: the re-analysis after "Submit Anyway" used the chart's
+ * insurance instead of the claim's).
+ */
+export function resolvePayerForAnalysis(
+  claim: Pick<ClaimInput, 'insuranceName'>,
+  patient: Pick<PatientInput, 'insuranceProvider'>,
+): { label: string; source: 'claim' | 'patient_chart' | 'unknown' } {
+  const claimPayer = claim.insuranceName?.trim();
+  if (claimPayer) return { label: claimPayer, source: 'claim' };
+  const chartPayer = patient.insuranceProvider?.trim();
+  if (chartPayer) return { label: chartPayer, source: 'patient_chart' };
+  return { label: 'Unknown', source: 'unknown' };
+}
+
+/**
+ * The service dates the analysis can see: each line item's own date, else
+ * the claim's date of service. Empty only when neither exists (the model
+ * used to be told "Not specified" for every line and reported a missing
+ * service date on a claim that had one).
+ */
+export function effectiveServiceDates(
+  claim: Pick<ClaimInput, 'dateOfService'>,
+  lineItems: Pick<LineItemInput, 'dateOfService'>[],
+): string[] {
+  const dates = lineItems.map((li) => li.dateOfService || claim.dateOfService || null).filter((d): d is string => !!d);
+  if (dates.length === 0 && claim.dateOfService) return [claim.dateOfService];
+  return dates;
 }
 
 interface LineItemInput {
@@ -220,11 +256,22 @@ function runRuleBasedChecks(
     });
   }
 
-  // Check for timely filing (basic check using date of service)
-  if (lineItems.length > 0) {
-    const oldestService = lineItems
-      .filter((li) => li.dateOfService)
-      .map((li) => new Date(li.dateOfService!))
+  // Check for timely filing (basic check using date of service). Line items
+  // without their own date fall back to the claim's date of service.
+  const serviceDates = effectiveServiceDates(claim, lineItems);
+  // (With no line items at all, the "no line items" issue above already says it.)
+  if (serviceDates.length === 0 && lineItems.length > 0) {
+    issues.push({
+      category: "Missing Data",
+      description: "No date of service on the claim or its line items",
+      suggestion: "Set the date of service before submitting; payers reject service lines without one",
+      severity: "critical",
+    });
+  }
+  if (serviceDates.length > 0) {
+    const oldestService = serviceDates
+      .map((d) => new Date(d))
+      .filter((d) => !Number.isNaN(d.getTime()))
       .sort((a, b) => a.getTime() - b.getTime())[0];
 
     if (oldestService) {
@@ -518,8 +565,9 @@ export async function predictDenial(
     units: li.units,
     modifier: li.modifier || "None",
     amount: li.amount,
-    dateOfService: li.dateOfService || "Not specified",
+    dateOfService: li.dateOfService || claim.dateOfService || "Not specified",
   }));
+  const payer = resolvePayerForAnalysis(claim, patient);
 
   const soapSummary = soapNote
     ? {
@@ -555,7 +603,8 @@ ${buildDateGuidance()}
 
 CLAIM DETAILS:
 - Total Amount: $${claim.totalAmount}
-- Insurance Provider: ${patient.insuranceProvider || "Unknown"}
+- Date of Service: ${claim.dateOfService || (lineItems.find((li) => li.dateOfService)?.dateOfService ?? "Not specified")}
+- Insurance Provider (payer this claim is billed to): ${payer.label}${payer.source === 'patient_chart' ? " (from the patient's chart; the claim carries no payer)" : ""}
 - Patient DOB: ${patient.dateOfBirth || "Unknown"}
 
 LINE ITEMS:
