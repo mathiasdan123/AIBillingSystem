@@ -26,6 +26,7 @@
  */
 
 import crypto from 'crypto';
+import type { PoolClient } from 'pg';
 import { storage } from '../storage';
 import { getPool } from '../db';
 import logger from './logger';
@@ -155,27 +156,12 @@ async function normalizeDemoRates(practiceId: number): Promise<void> {
 }
 
 export async function ensureDemoPractice(): Promise<Practice> {
-  // Fast path: already provisioned + seeded — no lock needed.
-  const existing = await storage.getDemoPractice();
-  if (existing) {
-    const patients = await storage.getPatients(existing.id);
-    if (patients.length > 0) {
-      await normalizeDemoRates(existing.id);
-      await repairDemoRowFlags(existing.id);
-      await ensureDemoFixturePatients(existing.id);
-      const therapistId = await ensureDemoTherapist(existing.id);
-      await repairDemoSeededAppointments(existing.id, therapistId);
-      await repairDemoSeededClaimDates(existing.id);
-      await ensureDemoClaimPayers(existing.id);
-      await ensureDemoPaymentRecords(existing.id);
-      await keepDemoDatesCurrent(existing.id, therapistId);
-      return existing;
-    }
-  }
-
-  // Slow path (first provision, or a prior run that crashed mid-seed): take a
-  // session advisory lock on a dedicated connection so concurrent callers
-  // serialize instead of double-creating/seeding.
+  // Every demo login, first provision or not, runs under one session-level
+  // advisory lock on a dedicated connection. The repairs below read and then
+  // write (the date roll-forward in particular computes a shift from what it
+  // reads), so two simultaneous "Try Free Demo" clicks must serialize rather
+  // than both apply the same shift. The lock is released on this same
+  // connection before it returns to the pool.
   const pool = await getPool();
   const client = await pool.connect();
   try {
@@ -207,21 +193,30 @@ export async function ensureDemoPractice(): Promise<Practice> {
       logger.info('Demo practice dataset seeded', { practiceId: practice.id });
     }
 
-    await normalizeDemoRates(practice.id);
-    await repairDemoRowFlags(practice.id);
-    await ensureDemoFixturePatients(practice.id);
-    const therapistId = await ensureDemoTherapist(practice.id);
-    await repairDemoSeededAppointments(practice.id, therapistId);
-    await repairDemoSeededClaimDates(practice.id);
-    await ensureDemoClaimPayers(practice.id);
-    await ensureDemoPaymentRecords(practice.id);
-    await keepDemoDatesCurrent(practice.id, therapistId);
+    await runDemoRepairs(practice.id, client);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
     await client.query('SELECT pg_advisory_unlock($1)', [DEMO_LOCK_KEY]).catch(() => {});
     client.release();
   }
+}
+
+/**
+ * The login-time repairs, in order, for an already-seeded demo practice.
+ * `client` is the connection holding the demo advisory lock; the date
+ * roll-forward runs its transaction on it.
+ */
+async function runDemoRepairs(practiceId: number, client: PoolClient): Promise<void> {
+  await normalizeDemoRates(practiceId);
+  await repairDemoRowFlags(practiceId);
+  await ensureDemoFixturePatients(practiceId);
+  const therapistId = await ensureDemoTherapist(practiceId);
+  await repairDemoSeededAppointments(practiceId, therapistId);
+  await repairDemoSeededClaimDates(practiceId);
+  await ensureDemoClaimPayers(practiceId);
+  await ensureDemoPaymentRecords(practiceId);
+  await keepDemoDatesCurrent(practiceId, { client });
 }
 
 // Fake-but-realistic pediatric OT/ST caseload. Names are obviously demo.
@@ -300,6 +295,13 @@ export async function ensureDemoTherapist(practiceId: number): Promise<string> {
 
 /** Title seedDemoData gives every appointment it creates. */
 export const DEMO_SEED_APPOINTMENT_TITLE = 'Occupational Therapy';
+/**
+ * Stored in appointments.notes by the seed (and stamped onto pre-marker
+ * seeded rows by repairDemoSeededAppointments). The only thing the date
+ * roll-forward matches on: a hand-booked appointment that happens to share
+ * the seed title and therapist is never moved.
+ */
+export const DEMO_SEED_APPOINTMENT_MARKER = 'seeded-demo-appointment';
 // What the seed intends, in practice wall-clock hours: 9 + (i % 6) → 9..14.
 const SEED_FIRST_HOUR = 9;
 const SEED_LAST_HOUR = 14;
@@ -338,6 +340,22 @@ export function isProcessZoneSeedTime(start: Date, timeZone: string): boolean {
  * exact-hour UTC instant at a nonsensical local hour is the safest available
  * signature. Never blocks a demo login: failures are logged.
  */
+/** The full seed shape, used only to stamp the marker onto rows seeded before it existed. */
+export function isSeededDemoAppointmentShape(
+  appt: { title?: string | null; durationMinutes?: number | null },
+  start: Date,
+  therapistId: string | null | undefined,
+  demoTherapistId: string,
+  timeZone: string,
+): boolean {
+  if (appt.title !== DEMO_SEED_APPOINTMENT_TITLE) return false;
+  if (therapistId !== demoTherapistId) return false;
+  if ((appt.durationMinutes ?? 45) !== 45) return false;
+  const local = zonedTimeString(start, timeZone); // HH:mm
+  const hour = parseInt(local.slice(0, 2), 10);
+  return local.slice(3, 5) === '00' && hour >= SEED_FIRST_HOUR && hour <= SEED_LAST_HOUR;
+}
+
 export async function repairDemoSeededAppointments(
   practiceId: number,
   therapistId: string,
@@ -365,6 +383,15 @@ export async function repairDemoSeededAppointments(
       if (!appt.therapistId) {
         patch.therapistId = therapistId;
         result.assigned++;
+      }
+      // Rows seeded before the marker existed: stamp it when the row has the
+      // whole seed shape (seed title, the demo therapist, 45 minutes, on the
+      // hour, 9-14 practice time, no notes of its own). A hand-booked
+      // appointment would have to match all of that to be mistaken for one.
+      const effectiveStart = (patch.startTime as Date | undefined) ?? start;
+      const effectiveTherapist = (patch.therapistId as string | undefined) ?? appt.therapistId;
+      if (!appt.notes && isSeededDemoAppointmentShape(appt, effectiveStart, effectiveTherapist, therapistId, tz)) {
+        patch.notes = DEMO_SEED_APPOINTMENT_MARKER;
       }
       if (Object.keys(patch).length > 0) {
         await storage.updateAppointment(appt.id, patch as any);
@@ -472,6 +499,7 @@ async function seedDemoData(practiceId: number): Promise<void> {
       therapistId,
       isDemo: false,
       title: DEMO_SEED_APPOINTMENT_TITLE,
+      notes: DEMO_SEED_APPOINTMENT_MARKER,
       startTime: start,
       endTime: end,
       durationMinutes: 45,
@@ -516,6 +544,15 @@ export function calendarDaysBetween(fromDay: string, toDay: string): number {
 }
 
 /**
+ * DST-aware shift of a stored-UTC `timestamp` column by whole days in the
+ * practice zone: the wall-clock time is preserved (10:00 EDT in October
+ * becomes 10:00 EST in November). `daysParam` / `tzParam` are placeholders.
+ */
+export function shiftTimestampByLocalDaysSql(column: string, daysParam: string, tzParam: string): string {
+  return `((((${column}) AT TIME ZONE 'UTC') AT TIME ZONE ${tzParam}) + make_interval(days => ${daysParam}::int)) AT TIME ZONE ${tzParam} AT TIME ZONE 'UTC'`;
+}
+
+/**
  * Keep the seeded demo on today's calendar.
  *
  * Every seeded date is an offset from the moment the practice was seeded,
@@ -525,46 +562,82 @@ export function calendarDaysBetween(fromDay: string, toDay: string): number {
  * empty even though the payment rows were there (post-deploy check
  * 2026-11-19). Appointments seeded "this week" were likewise weeks past.
  *
- * On every demo login, if the newest seeded paid claim is older than its
- * intended DEMO_NEWEST_PAID_OFFSET_DAYS, every seeded row moves forward by
- * the same whole number of days so their relative order and spacing are
- * unchanged: the DEMO-* claims (created, submitted, paid), the demo ERAs and
- * their lines, the ERA postings, the copays the backfill wrote, and the
- * seeded appointments (shifted in the practice zone, so a 10:00 visit stays
- * at 10:00). Hand-made demo data (other claim numbers, other check numbers,
- * appointments with another title) is left alone. A no-op once current;
- * never blocks a demo login.
+ * If the newest seeded paid claim is older than its intended
+ * DEMO_NEWEST_PAID_OFFSET_DAYS, every seeded row moves forward by the same
+ * whole number of days, so relative order and spacing are unchanged: the
+ * DEMO-* claims (created, submitted, paid) and their line items, the demo
+ * ERAs and their lines, the ERA postings, the copays the backfill wrote
+ * (their description's service date rewritten), and the appointments that
+ * carry DEMO_SEED_APPOINTMENT_MARKER (shifted in the practice zone, so a
+ * 10:00 visit stays at 10:00 across a DST change). Hand-made demo data is
+ * left alone.
+ *
+ * Concurrency and atomicity (review of #491): everything, the anchor read
+ * included, happens in ONE transaction that first takes the demo advisory
+ * lock (transaction-scoped; re-entrant for a caller already holding the
+ * session lock), so two simultaneous logins cannot both apply the shift,
+ * and a failure anywhere, the appointment update included, rolls the whole
+ * shift back so the next login repairs it in full. Refuses a practice that
+ * is not the demo practice. A no-op once current; never blocks a login.
  */
-export async function keepDemoDatesCurrent(practiceId: number, therapistId?: string): Promise<number> {
+export async function keepDemoDatesCurrent(
+  practiceId: number,
+  opts: { client?: PoolClient; now?: Date } = {},
+): Promise<number> {
+  const ownClient = !opts.client;
+  let client: PoolClient | undefined = opts.client;
   try {
-    const pool = await getPool();
+    const practice = await storage.getPractice(practiceId);
+    if (!practice?.isDemo) {
+      logger.warn('Refusing to roll dates forward: not the demo practice', { practiceId });
+      return 0;
+    }
     const tz = getBusinessTimeZone();
-    const anchor = await pool.query(
-      `SELECT max(paid_at) AS newest_paid_at
-         FROM claims
-        WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%' AND status = 'paid' AND paid_at IS NOT NULL`,
-      [practiceId],
-    );
-    const newestPaidAt = anchor.rows?.[0]?.newest_paid_at;
-    if (!newestPaidAt) return 0;
-    const newestDay = zonedDateString(new Date(newestPaidAt), tz);
-    const intendedDay = zonedDateString(zonedAddDays(new Date(), DEMO_NEWEST_PAID_OFFSET_DAYS, tz), tz);
-    const drift = calendarDaysBetween(newestDay, intendedDay);
-    if (drift <= 0) return 0;
+    const pool = await getPool();
+    const conn: PoolClient = client ?? (client = await pool.connect());
 
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      await client.query(
+      await conn.query('BEGIN');
+      await conn.query('SELECT pg_advisory_xact_lock($1)', [DEMO_LOCK_KEY]);
+
+      // Anchor read under the lock, inside the transaction.
+      const anchor = await conn.query(
+        `SELECT max(paid_at) AS newest_paid_at
+           FROM claims
+          WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%' AND status = 'paid' AND paid_at IS NOT NULL`,
+        [practiceId],
+      );
+      const newestPaidAt = anchor.rows?.[0]?.newest_paid_at;
+      if (!newestPaidAt) {
+        await conn.query('COMMIT');
+        return 0;
+      }
+      const newestDay = zonedDateString(new Date(newestPaidAt), tz);
+      const intendedDay = zonedDateString(zonedAddDays(opts.now ?? new Date(), DEMO_NEWEST_PAID_OFFSET_DAYS, tz), tz);
+      const drift = calendarDaysBetween(newestDay, intendedDay);
+      if (drift <= 0) {
+        await conn.query('COMMIT');
+        return 0;
+      }
+
+      const args = [practiceId, drift];
+      await conn.query(
         `UPDATE claims
             SET created_at = created_at + make_interval(days => $2::int),
                 updated_at = updated_at + make_interval(days => $2::int),
                 submitted_at = submitted_at + make_interval(days => $2::int),
                 paid_at = paid_at + make_interval(days => $2::int)
           WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%'`,
-        [practiceId, drift],
+        args,
       );
-      await client.query(
+      await conn.query(
+        `UPDATE claim_line_items
+            SET date_of_service = date_of_service + $2::int,
+                updated_at = updated_at + make_interval(days => $2::int)
+          WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%')`,
+        args,
+      );
+      await conn.query(
         `UPDATE remittance_line_items
             SET service_date = service_date + $2::int,
                 matched_at = matched_at + make_interval(days => $2::int),
@@ -573,26 +646,26 @@ export async function keepDemoDatesCurrent(practiceId: number, therapistId?: str
           WHERE remittance_id IN (
             SELECT id FROM remittance_advice WHERE practice_id = $1 AND check_number LIKE 'DEMO-CHK-%'
           )`,
-        [practiceId, drift],
+        args,
       );
-      await client.query(
+      await conn.query(
         `UPDATE remittance_advice
             SET received_date = received_date + $2::int,
                 check_date = check_date + $2::int,
                 processed_at = processed_at + make_interval(days => $2::int),
                 created_at = created_at + make_interval(days => $2::int)
           WHERE practice_id = $1 AND check_number LIKE 'DEMO-CHK-%'`,
-        [practiceId, drift],
+        args,
       );
-      await client.query(
+      await conn.query(
         `UPDATE payment_postings
             SET payment_date = payment_date + $2::int,
                 posted_at = posted_at + make_interval(days => $2::int),
                 created_at = created_at + make_interval(days => $2::int)
           WHERE practice_id = $1 AND check_number LIKE 'DEMO-CHK-%'`,
-        [practiceId, drift],
+        args,
       );
-      await client.query(
+      await conn.query(
         `UPDATE payment_transactions
             SET processed_at = processed_at + make_interval(days => $2::int),
                 created_at = created_at + make_interval(days => $2::int),
@@ -601,43 +674,50 @@ export async function keepDemoDatesCurrent(practiceId: number, therapistId?: str
             AND category = 'copay' AND processor = 'manual'
             AND description LIKE 'Copay for date of service%'
             AND claim_id IN (SELECT id FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%')`,
-        [practiceId, drift],
+        args,
       );
-      await client.query('COMMIT');
+      // The copay description quotes the service date; rewrite it from the
+      // (already shifted) remittance line so the text matches the data.
+      await conn.query(
+        `UPDATE payment_transactions t
+            SET description = 'Copay for date of service ' || l.service_date::text || ' (claim ' || c.claim_number || ')'
+           FROM claims c
+           JOIN remittance_line_items l ON l.claim_id = c.id
+          WHERE t.claim_id = c.id
+            AND t.practice_id = $1
+            AND c.claim_number LIKE 'DEMO-%'
+            AND t.category = 'copay' AND t.processor = 'manual'
+            AND t.description LIKE 'Copay for date of service%'`,
+        [practiceId],
+      );
+      const appointments = await conn.query(
+        `UPDATE appointments
+            SET start_time = ${shiftTimestampByLocalDaysSql('start_time', '$2', '$3')},
+                end_time = ${shiftTimestampByLocalDaysSql('end_time', '$2', '$3')},
+                updated_at = now()
+          WHERE practice_id = $1 AND notes = $4`,
+        [practiceId, drift, tz, DEMO_SEED_APPOINTMENT_MARKER],
+      );
+      await conn.query('COMMIT');
+
+      logger.info('Demo seeded dates rolled forward to today', {
+        practiceId,
+        days: drift,
+        appointmentsShifted: appointments.rowCount ?? 0,
+      });
+      return drift;
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
+      await conn.query('ROLLBACK').catch(() => {});
       throw error;
-    } finally {
-      client.release();
     }
-
-    // Seeded appointments: shift by whole days in the practice zone so the
-    // wall-clock time holds (zonedAddDays floors to midnight; the time of
-    // day is put back with zonedInstant, as the seed itself does).
-    const shiftInstant = (d: Date): Date =>
-      zonedInstant(zonedDateString(zonedAddDays(d, drift, tz), tz), zonedTimeString(d, tz), tz);
-    let appointmentsShifted = 0;
-    const rows = await storage.getAppointments(practiceId);
-    for (const appt of rows) {
-      if (appt.title !== DEMO_SEED_APPOINTMENT_TITLE) continue;
-      if (therapistId && appt.therapistId && appt.therapistId !== therapistId) continue;
-      const start = new Date(appt.startTime as any);
-      const end = appt.endTime ? new Date(appt.endTime as any) : null;
-      await storage.updateAppointment(appt.id, {
-        startTime: shiftInstant(start),
-        endTime: end ? shiftInstant(end) : undefined,
-      } as any);
-      appointmentsShifted++;
-    }
-
-    logger.info('Demo seeded dates rolled forward to today', { practiceId, days: drift, appointmentsShifted });
-    return drift;
   } catch (error) {
     logger.warn('Could not roll demo seeded dates forward', {
       practiceId,
       error: error instanceof Error ? error.message : String(error),
     });
     return 0;
+  } finally {
+    if (ownClient && client) client.release();
   }
 }
 
