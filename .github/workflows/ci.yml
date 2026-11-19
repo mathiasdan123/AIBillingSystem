@@ -87,7 +87,8 @@ jobs:
       - name: Demo provisioning against real Postgres
         env:
           DEMO_PROVISION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/demo_provision
-          PHI_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          # Quoted: an all-digit value is a YAML integer, which arrived as "0".
+          PHI_ENCRYPTION_KEY: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
           SESSION_SECRET: ci-demo-provision-session-secret-not-a-real-secret
           TIMEZONE: America/New_York
         run: npm run test:demo-provision

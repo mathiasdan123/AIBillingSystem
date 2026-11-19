@@ -67,7 +67,11 @@ run('demo practice provisioning (real Postgres)', () => {
     // The server's db module reads DATABASE_URL at import time, so the
     // environment is set before the dynamic imports below.
     process.env.DATABASE_URL = DB_URL;
-    process.env.PHI_ENCRYPTION_KEY ||= 'a'.repeat(64);
+    // A throwaway key unless a valid one is given (CI once passed an unquoted
+    // all-digit value, which YAML turned into the integer 0).
+    if (!/^[0-9a-fA-F]{64}$/.test(process.env.PHI_ENCRYPTION_KEY ?? '')) {
+      process.env.PHI_ENCRYPTION_KEY = 'a'.repeat(64);
+    }
     process.env.SESSION_SECRET ||= 'demo-provision-integration-session-secret';
     process.env.TIMEZONE ||= 'America/New_York';
     dbModule = await import('../db');
