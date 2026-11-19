@@ -954,7 +954,6 @@ router.delete('/:id', isAuthenticated, async (req: any, res) => {
       return res.status(409).json({
         message: `This claim still has linked ${linked}, so it can't be deleted.`,
         code: 'has_linked_records',
-        table: error?.table ?? null,
       });
     }
     return safeErrorResponse(res, 500, 'Failed to delete claim', error);

@@ -41,6 +41,10 @@ vi.mock('../services/cacheService', () => ({
 
 import { deleteDraftClaim } from '../storage/claims';
 import { claims, claimLineItems, claimFollowUps, recoveryEvents } from '@shared/schema';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
+
+const render = (where: unknown) => new PgDialect().sqlToQuery(where as SQL);
 
 beforeEach(() => {
   H.deletes.length = 0;
@@ -54,6 +58,28 @@ describe('storage.deleteDraftClaim', () => {
     expect(H.transactions).toBe(1);
     expect(H.deletes.map((d) => d.table)).toEqual([recoveryEvents, claimFollowUps, claimLineItems, claims]);
     // Every statement is scoped to this one claim.
-    for (const d of H.deletes) expect(d.where).toBeTruthy();
+    for (const d of H.deletes) expect(render(d.where).params).toContain(42);
+  });
+
+  it("removes only the draft's own risk-check evidence from recovery_events", async () => {
+    await deleteDraftClaim(42);
+
+    const { sql, params } = render(H.deletes[0].where);
+    expect(sql).toMatch(/"claim_id" = \$1/);
+    expect(sql).toMatch(/"event_type" in \(\$2, \$3\)/);
+    expect(params).toEqual([42, 'denial_risk_flagged', 'denial_risk_remediated']);
+    // Money evidence (underpayment_*, appeal_recovered) is NOT in the list:
+    // if a "draft" has any, the FK blocks the delete and the route says so.
+    expect(params).not.toContain('underpayment_detected');
+    expect(params).not.toContain('underpayment_recovered');
+    expect(params).not.toContain('appeal_recovered');
+  });
+
+  it("deletes the claim row only while it is still a draft", async () => {
+    await deleteDraftClaim(42);
+
+    const { sql, params } = render(H.deletes[3].where);
+    expect(sql).toMatch(/"id" = \$1 and .*"status" = \$2/);
+    expect(params).toEqual([42, 'draft']);
   });
 });

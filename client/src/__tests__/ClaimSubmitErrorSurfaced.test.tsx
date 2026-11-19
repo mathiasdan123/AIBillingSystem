@@ -162,7 +162,7 @@ describe('Delete draft, server answers 500', () => {
   it('a 409 "linked records" answer names the blocking record', async () => {
     mockApiRequest.mockImplementation(async (method: string, url: string) => {
       if (method === 'DELETE') {
-        throw new Error('409: {"message":"This claim still has linked payment postings, so it can\'t be deleted.","code":"has_linked_records","table":"payment_postings"}');
+        throw new Error('409: {"message":"This claim still has linked payment postings, so it can\'t be deleted.","code":"has_linked_records"}');
       }
       if (method === 'POST' && /\/predict-denial$/.test(url)) return jsonResponse(HIGH_RISK);
       if (url.startsWith('/api/patients?')) return jsonResponse([PATIENT]);

@@ -79,8 +79,9 @@ describe('DELETE /api/claims/:id', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('has_linked_records');
-    expect(res.body.table).toBe('payment_postings');
     expect(res.body.message).toMatch(/linked payment postings/);
+    // The readable message is enough; no raw table name in the body.
+    expect(res.body).not.toHaveProperty('table');
   });
 
   it('still answers 500 for an unexpected error', async () => {

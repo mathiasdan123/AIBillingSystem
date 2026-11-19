@@ -370,21 +370,27 @@ export async function deleteDraftClaim(claimId: number): Promise<void> {
   await db.transaction(async (tx: any) => {
     // Rows a DRAFT can legitimately carry, all derived from the draft itself
     // and meaningless once it is gone:
-    //  - recovery_events: the pre-submit risk check writes a count-only
-    //    "denial_risk_flagged" evidence row for a high-risk prediction
-    //    (demo pass 2026-11-19: every draft that had been through Submit
-    //    then failed to delete with a foreign-key violation, surfaced as a
-    //    bare 500). A draft was never transmitted, so it has no monetized
-    //    recovery events to preserve.
+    //  - recovery_events, ONLY the draft's own risk-check evidence: the
+    //    pre-submit check writes a count-only "denial_risk_flagged" row for
+    //    a high-risk prediction (demo pass 2026-11-19: every draft that had
+    //    been through Submit then failed to delete with a foreign-key
+    //    violation, surfaced as a bare 500). Any other event type is money
+    //    evidence (underpayment / appeal recovery) that a true draft cannot
+    //    have; it is deliberately left in place so the FK blocks the delete
+    //    and the route answers 409 instead of erasing ledger history.
     //  - claim_follow_ups: work-queue items pointing at the draft.
     //  - claim_line_items: the draft's own procedures.
-    // Anything else referencing the claim (payments, remittances, appeals)
-    // cannot exist for a true draft; if it does, the FK violation propagates
-    // and the route turns it into a 409 that names the linked record.
-    await tx.delete(recoveryEvents).where(eq(recoveryEvents.claimId, claimId));
+    await tx.delete(recoveryEvents).where(
+      and(
+        eq(recoveryEvents.claimId, claimId),
+        inArray(recoveryEvents.eventType, ['denial_risk_flagged', 'denial_risk_remediated']),
+      ),
+    );
     await tx.delete(claimFollowUps).where(eq(claimFollowUps.claimId, claimId));
     await tx.delete(claimLineItems).where(eq(claimLineItems.claimId, claimId));
-    await tx.delete(claims).where(eq(claims.id, claimId));
+    // status = 'draft' here, not only in the route's pre-check: a submission
+    // landing between that check and this statement must not be erased.
+    await tx.delete(claims).where(and(eq(claims.id, claimId), eq(claims.status, 'draft')));
   });
 }
 
