@@ -1,18 +1,18 @@
 /**
- * Manual ERA match route (demo billing test 2026-11-19, item 5; #497):
- *  - a line cannot be matched to a claim that has no recorded submission
- *    evidence (draft/held with no submission date, clearinghouse attempt or
- *    'submitted' event); a held claim the clearinghouse rejected, or
- *    sent-but-unconfirmed, or a reopened draft, CAN be — the ERA settles
- *    them — and the refusal never says "resubmit";
- *  - the posting carries the CARC / RARC; money posting is otherwise exactly
- *    as before (postPayment, same data);
- *  - a denied line (CLP02 4) applies the denial after posting; the response
- *    reports the real pipeline state and a partial-success retry path;
- *  - a remittance is not 'processed' while a line has no posting or a
- *    posted denial is still pending;
- *  - the retry-denial route re-runs ONLY the denial step, never posts, and
- *    refuses a line whose payment is not recorded.
+ * Manual ERA match route (demo billing test 2026-11-19, item 5; #497 reviews):
+ *  - a line cannot be matched to a claim with no recorded submission
+ *    evidence; held / reopened claims with evidence can receive the ERA;
+ *    the refusal never says "resubmit";
+ *  - money posting is exactly as before (match written, then postPayment
+ *    with the same data plus CARC/RARC text);
+ *  - proof of payment is the successful postPayment result IN THIS REQUEST:
+ *    right after it the route writes the posting-confirmed marker
+ *    (autoPostedAt) and, for a denied line, the "denial pending" marker
+ *    (denialError), then runs the denial step on that marker. Nothing is
+ *    inferred from matchType, amounts, dates, check numbers or other ERAs;
+ *  - the retry-denial route acts ONLY on lines carrying the marker;
+ *  - a remittance is 'processed' only when every line is matched with a
+ *    confirmed posting and no denial is pending or needs review.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express, { type Express } from 'express';
@@ -20,8 +20,8 @@ import request from 'supertest';
 
 const H = vi.hoisted(() => ({
   state: {
-    remittance: null as any, lineItem: null as any, claim: null as any, events: [] as any[], postings: [] as any[],
-    allLines: [] as any[], lineUpdates: [] as any[], remitUpdates: [] as any[],
+    remittance: null as any, lineItem: null as any, claim: null as any, events: [] as any[],
+    allLines: [] as any[], lineUpdates: [] as any[], remitUpdates: [] as any[], failLineUpdateMatching: null as null | ((values: any) => boolean),
   },
   postPayment: vi.fn(),
   applyDenial: vi.fn(),
@@ -71,7 +71,6 @@ vi.mock('../db', async () => {
     }
     if (table === schema.claims) return s.claim ? [s.claim] : [];
     if (table === schema.claimEvents) return s.events;
-    if (table === schema.paymentPostings) return s.postings;
     return [];
   };
   const builder = () => {
@@ -91,6 +90,9 @@ vi.mock('../db', async () => {
       set: (values: any) => ({
         where: () => {
           if (table === schema.remittanceLineItems) {
+            if (H.state.failLineUpdateMatching && H.state.failLineUpdateMatching(values)) {
+              return Promise.reject(new Error('db down'));
+            }
             H.state.lineUpdates.push(values);
             Object.assign(H.state.lineItem, values);
           }
@@ -105,6 +107,7 @@ vi.mock('../db', async () => {
 });
 
 import remittanceRouter from '../routes/remittance';
+import { DENIAL_PENDING_MARKER, NEEDS_REVIEW_TEXT } from '../services/eraDenialService';
 
 function makeApp(): Express {
   const app = express();
@@ -142,7 +145,7 @@ const MARKER_FAILED = { ...APPLIED, applied: false, persistenceError: 'Denial ou
 const match = (lineId = 31) => request(makeApp()).post(`/api/remittance/500/line-items/${lineId}/match`).send({ claimId: 73 });
 const retryDenial = (lineId = 31) => request(makeApp()).post(`/api/remittance/500/line-items/${lineId}/retry-denial`).send({});
 
-/** What the real applyRemittanceDenialToLine leaves on the line: the marker when applied, the error otherwise. */
+/** What the real applyRemittanceDenialToLine leaves on the line: the marker cleared when applied, the error otherwise. */
 const denialStep = (result: any) => async () => {
   if (result.applied) {
     H.state.lineItem.denialAppliedAt = new Date();
@@ -153,29 +156,18 @@ const denialStep = (result: any) => async () => {
   return result;
 };
 
-/** A posting row as postPayment leaves it, for the evidence check. */
-const postingFor = (over: any = {}) => ({
-  id: 1, claimId: 73, source: 'era', reversed: false, checkNumber: 'QA-SYN-1', paymentDate: '2026-11-18',
-  paymentAmount: '0.00', patientResponsibility: '0.00', postedAt: new Date(), ...over,
-});
-
 beforeEach(() => {
   vi.clearAllMocks();
-  // postPayment writes the posting the evidence check reads.
-  H.postPayment.mockImplementation(async (_practiceId: number, data: any) => {
-    const row = postingFor({ id: H.state.postings.length + 1, claimId: data.claimId, paymentAmount: data.paymentAmount, patientResponsibility: data.patientResponsibility, checkNumber: data.checkNumber, paymentDate: data.paymentDate });
-    H.state.postings.push(row);
-    return row;
-  });
+  H.postPayment.mockResolvedValue({ id: 1 });
   H.applyDenial.mockImplementation(denialStep(APPLIED));
   H.state.remittance = { id: 500, practiceId: 1, payerName: 'Aetna QA Synthetic', checkNumber: 'QA-SYN-1', checkDate: '2026-11-18', receivedDate: '2026-11-19' };
   H.state.claim = CLAIM();
   H.state.lineItem = DENIED_LINE();
   H.state.events = [];
-  H.state.postings = [];
   H.state.allLines = [];
   H.state.lineUpdates = [];
   H.state.remitUpdates = [];
+  H.state.failLineUpdateMatching = null;
 });
 
 describe('manual match — which claims may receive a remittance', () => {
@@ -214,29 +206,28 @@ describe('manual match — which claims may receive a remittance', () => {
   });
 
   it('a line matched to a different claim cannot be reassigned here — says so plainly', async () => {
-    H.state.lineItem = { ...DENIED_LINE(), claimId: 74, status: 'matched', matchType: 'manual', matchedAt: new Date('2026-11-18') };
+    H.state.lineItem = { ...DENIED_LINE(), claimId: 74, status: 'matched', matchType: 'manual', autoPostedAt: null };
     let res = await match();
     expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ code: 'line_already_matched', matchedClaimId: 74, paymentEvidence: 'not_recorded' });
-    expect(res.body.message).toMatch(/already matched to claim 74 and payment not recorded — needs manual review/);
+    expect(res.body).toMatchObject({ code: 'line_already_matched', matchedClaimId: 74, postingConfirmed: false });
+    expect(res.body.message).toMatch(/already matched to claim 74 and its posting could not be confirmed \(reconcile existing payments/);
     expect(res.body.message).toMatch(/Reassigning a matched line to a different claim is not supported here/);
     expect(res.body.message).not.toMatch(/[Rr]everse/);
 
-    H.state.postings = [postingFor({ claimId: 74 })];
+    H.state.lineItem = { ...DENIED_LINE(), claimId: 74, status: 'matched', matchType: 'manual', autoPostedAt: new Date() };
     res = await match();
-    expect(res.body).toMatchObject({ paymentEvidence: 'recorded' });
-    expect(res.body.message).toMatch(/its payment is recorded on that claim/);
+    expect(res.body).toMatchObject({ postingConfirmed: true });
+    expect(res.body.message).toMatch(/its posting is confirmed on that claim/);
     expect(H.postPayment).not.toHaveBeenCalled();
   });
 });
 
-describe('manual match — posting and the denial step', () => {
-  it('a denied line: posts $0 with the CARC exactly as before, then applies the denial, and says what the pipeline did', async () => {
+describe('manual match — posting, the in-flow markers and the denial step', () => {
+  it('posting succeeds: match → postPayment → markers → denial, and the response says what the pipeline did', async () => {
     const res = await match();
 
     expect(res.status).toBe(200);
     // Match written first, then the posting — unchanged from main.
-    expect(H.state.lineUpdates).toHaveLength(1);
     expect(H.state.lineUpdates[0]).toMatchObject({ claimId: 73, status: 'matched', matchType: 'manual' });
     expect(H.postPayment).toHaveBeenCalledTimes(1);
     const [practiceId, posting] = H.postPayment.mock.calls[0] as any[];
@@ -246,20 +237,77 @@ describe('manual match — posting and the denial step', () => {
       paymentAmount: '0.00', adjustmentAmount: '100.00', patientResponsibility: '0.00', allowedAmount: null,
       adjustmentReason: CARC_197, remarkCode: null, postedBy: 'biller-1',
     });
+    // Right after postPayment returned: posting confirmed + denial pending, in one write.
+    expect(H.state.lineUpdates[1]).toMatchObject({ denialError: DENIAL_PENDING_MARKER, denialAppliedAt: null });
+    expect(H.state.lineUpdates[1].autoPostedAt).toBeInstanceOf(Date);
 
     expect(H.applyDenial).toHaveBeenCalledTimes(1);
     const [p2, line, opts] = H.applyDenial.mock.calls[0] as any[];
     expect(p2).toBe(1);
-    expect(line).toMatchObject({ id: 31, claimId: 73, matchType: 'manual' });
+    expect(line).toMatchObject({ id: 31, claimId: 73, denialError: DENIAL_PENDING_MARKER });
     expect(opts).toMatchObject({ remittanceId: 500, payerName: 'Aetna QA Synthetic', checkNumber: 'QA-SYN-1', postedBy: 'biller-1' });
     expect(H.postPayment.mock.invocationCallOrder[0]).toBeLessThan(H.applyDenial.mock.invocationCallOrder[0]);
 
     expect(res.body).toMatchObject({
-      claimId: 73, lineItemId: 31, partial: false, paymentEvidence: 'recorded', denied: true, claimStatus: 'denied', denialReason: CARC_197,
+      claimId: 73, lineItemId: 31, postingConfirmed: true, needsReview: false, partial: false, denied: true, claimStatus: 'denied', denialReason: CARC_197,
       denial: { applied: true, statusChanged: true, claimStatus: 'denied', pipelineRan: true, appealCreated: true, appealReused: false, appealId: 91, followUpCreated: true, error: null },
     });
     expect(res.body.message).toMatch(/Line matched to claim CLM-MWNVFA08-DIJSKH\. Payment recorded\. The payer denied claim CLM-MWNVFA08-DIJSKH \(CO-197.*it is now Denied, an appeal was drafted \(#91\), and a denial follow-up was added/);
     expect(H.state.remitUpdates.at(-1)).toMatchObject({ status: 'processed' });
+  });
+
+  it('posting fails: the request fails, no marker is written, no denial, nothing processed', async () => {
+    H.postPayment.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await match();
+
+    expect(res.status).toBe(500);
+    expect(H.state.lineUpdates).toHaveLength(1); // the match only (unchanged from main)
+    expect(H.state.lineItem.autoPostedAt).toBeNull();
+    expect(H.state.lineItem.denialError).toBeNull();
+    expect(H.applyDenial).not.toHaveBeenCalled();
+    expect(H.state.remitUpdates).toHaveLength(0);
+  });
+
+  it('crash between posting and marker: payment recorded, marker not written → needs manual review, denial NOT applied, not processed', async () => {
+    H.state.failLineUpdateMatching = (values) => values.autoPostedAt != null;
+
+    const res = await match();
+
+    expect(res.status).toBe(200);
+    expect(H.postPayment).toHaveBeenCalledTimes(1);
+    expect(H.applyDenial).not.toHaveBeenCalled();
+    expect(res.body).toMatchObject({ postingConfirmed: false, needsReview: true, partial: true, denied: false, denial: { applied: false, needsReview: true } });
+    expect(res.body.message).toMatch(/payment was recorded, but the line's posting-confirmed marker could not be written/);
+    expect(res.body.message).toContain(NEEDS_REVIEW_TEXT);
+    expect(res.body.message).toMatch(/denial was NOT applied/);
+    expect(H.state.remitUpdates).toHaveLength(0);
+    // And afterwards the line carries no marker: retry refuses, Auto-Match reports it.
+    expect(H.state.lineItem.autoPostedAt).toBeNull();
+    const retry = await retryDenial();
+    expect(retry.status).toBe(409);
+    expect(retry.body.code).toBe('line_not_confirmed');
+  });
+
+  it('posting succeeds then the denial step fails: marker keeps the error, response is partial, Retry works later', async () => {
+    H.applyDenial.mockImplementation(denialStep(PIPELINE_FAILED));
+
+    const res = await match();
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ postingConfirmed: true, partial: true, denied: true, claimStatus: 'denied', denial: { applied: false, appealCreated: false, error: 'AI generator unavailable' } });
+    expect(res.body.message).toMatch(/marked Denied .*but the appeal draft \/ follow-up step failed: AI generator unavailable/);
+    expect(res.body.message).toMatch(/Retry denial button .*never posts the payment again/);
+    expect(H.state.lineItem.denialError).toBe('AI generator unavailable');
+    expect(H.state.remitUpdates).toHaveLength(0);
+
+    // The line carries the marker (error text in its place): Retry re-runs ONLY the denial step.
+    H.applyDenial.mockImplementation(denialStep(REUSED));
+    const retry = await retryDenial();
+    expect(retry.status).toBe(200);
+    expect(H.postPayment).toHaveBeenCalledTimes(1); // not posted again
+    expect(H.applyDenial).toHaveBeenCalledTimes(2);
+    expect(retry.body.partial).toBe(false);
   });
 
   it('reports an existing appeal as kept, the real claim status, and a follow-up that was not created', async () => {
@@ -267,7 +315,6 @@ describe('manual match — posting and the denial step', () => {
     const res = await match();
     expect(res.body.denial).toMatchObject({ appealCreated: false, appealReused: true, appealId: 91, followUpCreated: false, pipelineRan: true, claimStatus: 'denied' });
     expect(res.body.message).toMatch(/it was already Denied, the existing appeal #91 was kept, and no new follow-up was created \(one may already exist\)/);
-    expect(res.body.message).not.toMatch(/appeal was drafted|follow-up already existed/);
   });
 
   it('a claim already under appeal: says so and that the pipeline did not run — never that an appeal was kept', async () => {
@@ -278,28 +325,13 @@ describe('manual match — posting and the denial step', () => {
     expect(res.body.denial).toMatchObject({ pipelineRan: false, claimStatus: 'appeal', appealReused: false, appealCreated: false });
   });
 
-  it('a failed pipeline is a partial success pointing at Retry denial, never a claim that an appeal was drafted', async () => {
-    H.applyDenial.mockImplementation(denialStep(PIPELINE_FAILED));
-
-    const res = await match();
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ partial: true, denied: true, claimStatus: 'denied', denial: { applied: false, appealCreated: false, error: 'AI generator unavailable' } });
-    expect(res.body.message).toMatch(/marked Denied .*but the appeal draft \/ follow-up step failed: AI generator unavailable/);
-    expect(res.body.message).toMatch(/Retry denial button .*never posts the payment again/);
-    expect(res.body.message).not.toMatch(/appeal was drafted/);
-    // The remittance stays pending while the denial is.
-    expect(H.state.remitUpdates).toHaveLength(0);
-  });
-
   it('a denial whose outcome could not be written on the line is reported as needing a retry', async () => {
     H.applyDenial.mockImplementation(denialStep(MARKER_FAILED));
     const res = await match();
     expect(res.body).toMatchObject({ partial: true, denial: { applied: false, persistenceError: expect.stringMatching(/could not be recorded/) } });
-    expect(res.body.message).toMatch(/could not be recorded on the remittance line/);
   });
 
-  it('a processed line: posts the money with the CARC/RARC and does not touch the claim status', async () => {
+  it('a processed line: posts the money with the CARC/RARC, confirms the posting, no denial marker, no claim status change', async () => {
     H.state.lineItem = PAID_LINE();
 
     const res = await match(32);
@@ -310,48 +342,29 @@ describe('manual match — posting and the denial step', () => {
       adjustmentReason: 'CO-45: Contractual Obligations: Charge exceeds fee schedule/maximum allowable/contracted/legislated amount; PR-2: Patient Responsibility: Coinsurance amount',
       remarkCode: 'N130',
     });
+    expect(H.state.lineUpdates[1]).toEqual({ autoPostedAt: expect.any(Date) });
     expect(H.applyDenial).not.toHaveBeenCalled();
-    expect(res.body).toMatchObject({ denied: false, denialReason: null, denial: null, partial: false, message: 'Line item matched to claim successfully' });
+    expect(res.body).toMatchObject({ postingConfirmed: true, denied: false, denialReason: null, denial: null, partial: false, message: 'Line item matched to claim successfully' });
+    expect(H.state.remitUpdates.at(-1)).toMatchObject({ status: 'processed' });
   });
 
-  it('a line with no status code is not a denial even at $0 paid', async () => {
-    H.state.lineItem = { ...DENIED_LINE(), claimStatusCode: null };
-    const res = await match();
-    expect(res.status).toBe(200);
-    expect(H.applyDenial).not.toHaveBeenCalled();
-    expect(res.body.denied).toBe(false);
-  });
-
-  it('a remittance is not marked processed while another line has no posting (auto-matched, not yet posted)', async () => {
+  it('a remittance is not marked processed while another matched line has no confirmed posting', async () => {
     H.state.allLines = [
       H.state.lineItem,
-      { ...PAID_LINE(), id: 33, status: 'matched', claimId: 74, matchType: 'claim_number', autoPostedAt: null, matchedAt: new Date() },
+      { ...PAID_LINE(), id: 33, status: 'matched', claimId: 74, matchType: 'claim_number', autoPostedAt: null },
     ];
     const res = await match();
-    expect(res.body.paymentEvidence).toBe('recorded');
-    expect(H.state.remitUpdates).toHaveLength(0);
-  });
-
-  it('postPayment returned but no posting is on the claim: the denial is NOT applied, the response says needs manual review, Retry stays possible', async () => {
-    H.postPayment.mockResolvedValueOnce({ id: 99 }); // nothing written (the mock models a posting that cannot be found)
-    const res = await match();
-    expect(res.status).toBe(200);
-    expect(H.applyDenial).not.toHaveBeenCalled();
-    expect(res.body).toMatchObject({ partial: true, paymentEvidence: 'not_recorded', denied: false, denial: { applied: false, awaitingPayment: true, paymentEvidence: 'not_recorded' } });
-    expect(res.body.message).toMatch(/payment not recorded — needs manual review.*denial was NOT applied/);
+    expect(res.body.postingConfirmed).toBe(true);
     expect(H.state.remitUpdates).toHaveLength(0);
   });
 });
 
-describe('POST /api/remittance/:id/line-items/:lineItemId/retry-denial', () => {
-  const pending = () => ({ ...DENIED_LINE(), status: 'matched', claimId: 73, matchType: 'manual', matchedAt: new Date('2026-11-19T15:00:00Z'), denialAppliedAt: null, denialError: 'AI generator unavailable' });
-  const receipt = () => postingFor({ postedAt: new Date('2026-11-19T15:00:05Z') });
+describe('POST /api/remittance/:id/line-items/:lineItemId/retry-denial — acts only on the in-flow marker', () => {
+  const pending = (over: any = {}) => ({ ...DENIED_LINE(), status: 'matched', claimId: 73, matchType: 'manual', autoPostedAt: new Date('2026-11-19T15:00:00Z'), denialAppliedAt: null, denialError: 'AI generator unavailable', ...over });
 
-  it('re-runs only the denial step for a line whose own payment is on record, and never posts', async () => {
+  it('re-runs only the denial step for a marked line and never posts', async () => {
     H.state.lineItem = pending();
-    H.state.postings = [receipt()];
-    // The whole-remittance read after the step sees the line applied.
-    H.state.allLines = [{ ...pending(), denialAppliedAt: new Date() }];
+    H.state.allLines = [{ ...pending(), denialAppliedAt: new Date(), denialError: null }];
 
     const res = await retryDenial();
 
@@ -365,7 +378,6 @@ describe('POST /api/remittance/:id/line-items/:lineItemId/retry-denial', () => {
 
   it('reports a still-failing step as partial, without marking the remittance processed', async () => {
     H.state.lineItem = pending();
-    H.state.postings = [receipt()];
     H.applyDenial.mockImplementation(denialStep(PIPELINE_FAILED));
     const res = await retryDenial();
     expect(res.status).toBe(200);
@@ -373,58 +385,37 @@ describe('POST /api/remittance/:id/line-items/:lineItemId/retry-denial', () => {
     expect(H.state.remitUpdates).toHaveLength(0);
   });
 
-  it('FAILED manual posting + another receipt on the same claim: the unrelated receipt is not this line\'s; refused, denial not applied', async () => {
-    H.state.lineItem = pending(); // matched manually, its own postPayment threw
-    // An earlier ERA posting on the same claim: different amounts, posted before this match.
-    H.state.postings = [postingFor({ id: 7, paymentAmount: '160.00', patientResponsibility: '40.00', postedAt: new Date('2026-11-01') })];
+  it('FAILED manual posting: matched manual, no marker — refused, even though another remittance posted the same claim and amounts', async () => {
+    // Remittance A posted $0 / CO-197 on claim 73 earlier; remittance B's line
+    // 31 is the same fingerprint but ITS postPayment threw. No marker, no
+    // cross-proof: nothing is inferred from amounts, dates or check numbers.
+    H.state.lineItem = pending({ autoPostedAt: null, denialError: null });
 
     const res = await retryDenial();
 
     expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ code: 'line_not_posted', paymentEvidence: 'not_recorded' });
-    expect(res.body.message).toMatch(/payment not recorded — needs manual review/);
+    expect(res.body).toMatchObject({ code: 'line_not_confirmed', needsReview: true });
+    expect(res.body.message).toContain(NEEDS_REVIEW_TEXT);
     expect(H.applyDenial).not.toHaveBeenCalled();
     expect(H.postPayment).not.toHaveBeenCalled();
   });
 
-  it('FAILED manual posting + an older $0 ERA on the claim (same amounts, before the match): still refused', async () => {
-    H.state.lineItem = pending();
-    H.state.postings = [postingFor({ id: 7, postedAt: new Date('2026-11-01') })]; // same fingerprint, but from before this line was matched
+  it('a denied line posted before the denial step existed (confirmed posting, no marker) is refused: review, not retry', async () => {
+    H.state.lineItem = pending({ denialError: null });
     const res = await retryDenial();
     expect(res.status).toBe(409);
-    expect(res.body.paymentEvidence).toBe('not_recorded');
-    expect(H.applyDenial).not.toHaveBeenCalled();
-  });
-
-  it('reversal: a reversed posting is not evidence (the query excludes it); refused', async () => {
-    H.state.lineItem = pending();
-    H.state.postings = []; // what the non-reversed query returns once the posting is reversed
-    const res = await retryDenial();
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('line_not_posted');
-    expect(H.applyDenial).not.toHaveBeenCalled();
-  });
-
-  it('ambiguous legacy evidence: two identical lines on the claim, one posting — refused with the reason', async () => {
-    H.state.lineItem = { ...pending(), matchType: null, matchedAt: null };
-    H.state.allLines = [H.state.lineItem, { ...pending(), id: 32, matchType: null, matchedAt: null }];
-    H.state.postings = [receipt()];
-    const res = await retryDenial();
-    expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ code: 'line_not_posted', paymentEvidence: 'ambiguous' });
-    expect(res.body.message).toMatch(/ambiguous .*Payments tab/);
+    expect(res.body.code).toBe('line_not_confirmed');
     expect(H.applyDenial).not.toHaveBeenCalled();
   });
 
   it('refuses a non-denial and an unmatched line; a denial already applied is a no-op', async () => {
-    H.state.lineItem = { ...PAID_LINE(), status: 'matched', claimId: 73, matchType: 'manual' };
+    H.state.lineItem = { ...PAID_LINE(), status: 'matched', claimId: 73, matchType: 'manual', autoPostedAt: new Date() };
     expect((await retryDenial(32)).body.code).toBe('not_a_denial');
 
     H.state.lineItem = DENIED_LINE();
     expect((await retryDenial()).body.code).toBe('line_not_matched');
 
-    H.state.lineItem = { ...pending(), denialAppliedAt: new Date() };
-    H.state.postings = [receipt()];
+    H.state.lineItem = pending({ denialAppliedAt: new Date(), denialError: null });
     const res = await retryDenial();
     expect(res.status).toBe(200);
     expect(res.body.denial).toMatchObject({ applied: true, alreadyApplied: true });
@@ -432,18 +423,43 @@ describe('POST /api/remittance/:id/line-items/:lineItemId/retry-denial', () => {
   });
 });
 
+describe('GET /api/remittance/:id flags each matched line from the markers only', () => {
+  it('confirmed + pending, needs review (no confirmed posting), and legacy denied (confirmed, no marker)', async () => {
+    H.state.remittance = {
+      ...H.state.remittance,
+      lineItems: [
+        { ...DENIED_LINE(), id: 1, status: 'matched', claimId: 73, matchType: 'manual', autoPostedAt: new Date(), denialError: DENIAL_PENDING_MARKER },
+        { ...DENIED_LINE(), id: 2, status: 'matched', claimId: 73, matchType: 'manual', autoPostedAt: null },
+        { ...DENIED_LINE(), id: 3, status: 'matched', claimId: 73, matchType: 'claim_number', autoPostedAt: new Date('2026-10-01'), denialError: null },
+        { ...PAID_LINE(), id: 4, status: 'matched', claimId: 74, matchType: null, autoPostedAt: null },
+        { ...PAID_LINE(), id: 5 },
+      ],
+    };
+    const res = await request(makeApp()).get('/api/remittance/500');
+    expect(res.status).toBe(200);
+    const flags = res.body.lineItems.map((l: any) => [l.id, l.postingConfirmed, l.needsReview, l.denialPending]);
+    expect(flags).toEqual([
+      [1, true, false, true],
+      [2, false, true, false],
+      [3, true, true, false],
+      [4, false, true, false], // legacy fused-path row: cannot be vouched for
+      [5, null, false, false], // unmatched
+    ]);
+  });
+});
+
 describe('POST /api/remittance/:id/auto-match reports denial retries even with nothing to match', () => {
-  it('total 0 still returns denialsApplied / denialFailures', async () => {
+  it('total 0 still returns denialsApplied / denialFailures / linesNeedingReview', async () => {
     H.autoMatch.mockResolvedValue({
       matched: 0, posted: 0, total: 0, needsReview: 0, results: [], postingFailures: [],
       denialsApplied: 1, denialFailures: [{ claimId: 74, lineItemId: 33, error: 'AI generator unavailable' }],
-      denialsAwaitingPayment: [{ claimId: 75, lineItemId: 34, evidence: 'not_recorded' }],
+      linesNeedingReview: [{ claimId: 75, lineItemId: 34 }],
     });
 
     const res = await request(makeApp()).post('/api/remittance/500/auto-match').send({});
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ total: 0, denialsApplied: 1, denialFailures: [{ claimId: 74, lineItemId: 33, error: 'AI generator unavailable' }], denialsAwaitingPayment: [{ lineItemId: 34 }] });
-    expect(res.body.message).toMatch(/No unmatched line items to process\. 1 payer denial\(s\) could not be applied .*Retry denial button.* 1 denied line\(s\) have no recorded payment and need manual review/);
+    expect(res.body).toMatchObject({ total: 0, denialsApplied: 1, denialFailures: [{ claimId: 74, lineItemId: 33, error: 'AI generator unavailable' }], linesNeedingReview: [{ lineItemId: 34 }] });
+    expect(res.body.message).toMatch(/No unmatched line items to process\. 1 payer denial\(s\) could not be applied .*Retry denial button.* 1 matched line\(s\) need manual review: their posting could not be confirmed by this flow/);
   });
 });

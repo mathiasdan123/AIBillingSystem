@@ -3487,20 +3487,31 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
    */
   matchReviewReason: varchar("match_review_reason"),
   /**
-   * When the automated path recorded this line's payment posting. Lets a
-   * match-only pass (ERA_AUTO_POST=false) link lines without posting, and the
-   * Auto-Match button later post exactly those — never a line posted already,
-   * never a legacy row (matchType NULL) posted under the old fused path.
+   * When a payment posting for this line was recorded. The automated path
+   * sets it around its own postPayment (lets a match-only pass link lines
+   * without posting, and the Auto-Match button later post exactly those —
+   * never a line posted already, never a legacy row (matchType NULL) posted
+   * under the old fused path). Since #497 the manual match route sets it
+   * too, right after ITS postPayment succeeded: the line's "posting
+   * confirmed" marker that the denial step, the Retry denial route and the
+   * remittance completion rule require. A matched line without it is
+   * "needs manual review" — never inferred from amounts, dates, check
+   * numbers or other postings.
    */
   autoPostedAt: timestamp("auto_posted_at"),
   /**
    * CLP02 4 (denied) lines: the denial was applied to the claim AND the
-   * appeal draft / follow-up pipeline completed. NULL on a posted denied
-   * line means the denial is still pending; the line's Retry denial button
-   * or the Auto-Match button re-runs it. Never touches the posting.
+   * appeal draft / follow-up pipeline completed. NULL with a denialError
+   * means the denial is still pending; the line's Retry denial button or
+   * the Auto-Match button re-runs it. Never touches the posting.
    */
   denialAppliedAt: timestamp("denial_applied_at"),
-  /** Why the last denial application failed; cleared on success. */
+  /**
+   * The "denial pending" marker, written in the same request immediately
+   * after this line's postPayment succeeded (DENIAL_PENDING_MARKER), then
+   * replaced by the step's error text if it failed, and cleared when the
+   * denial is applied. Only lines carrying it are ever retried.
+   */
   denialError: text("denial_error"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [

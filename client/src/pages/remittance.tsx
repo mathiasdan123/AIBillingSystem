@@ -58,29 +58,22 @@ interface RemittanceLineItem {
   autoPostedAt?: string | null;
   denialAppliedAt?: string | null;
   denialError?: string | null;
-  /** Server-computed from the postings themselves (matched lines only): recorded | not_recorded | ambiguous. */
-  paymentEvidence?: 'recorded' | 'not_recorded' | 'ambiguous' | null;
+  /** Server-computed (matched lines only): this flow confirmed the line's posting right after it posted. */
+  postingConfirmed?: boolean | null;
+  /** Server-computed: a matched line this flow cannot vouch for; never applied or retried automatically. */
+  needsReview?: boolean;
+  /** Server-computed: denied, posting confirmed, denial step not completed — safe to retry. */
+  denialPending?: boolean;
 }
 
-/** A matched line whose payment the server could not establish from the postings: needs manual review. */
+const NEEDS_REVIEW_TEXT = "Could not confirm this line's posting. Reconcile existing payments before adding or re-matching anything.";
+
 function isPaymentUnconfirmed(item: RemittanceLineItem): boolean {
-  return item.status === 'matched' && item.claimId != null && item.paymentEvidence != null && item.paymentEvidence !== 'recorded';
+  return item.needsReview === true;
 }
 
-/** A denied line, payment recorded, whose claim status / appeal / follow-up step has not gone through. */
 function isDenialPending(item: RemittanceLineItem): boolean {
-  return (
-    item.status === 'matched' &&
-    item.claimId != null &&
-    item.claimStatusCode === '4' &&
-    item.paymentEvidence === 'recorded' &&
-    item.denialAppliedAt == null
-  );
-}
-
-/** A denied line that cannot be applied until its payment is sorted out by hand. */
-function isDenialAwaitingPayment(item: RemittanceLineItem): boolean {
-  return isPaymentUnconfirmed(item) && item.claimStatusCode === '4' && item.denialAppliedAt == null;
+  return item.denialPending === true;
 }
 
 interface RemittanceDetail extends RemittanceRecord {
@@ -319,13 +312,15 @@ export default function Remittance() {
     },
     onSuccess: (data: any) => {
       toast({
-        title: data?.partial
-          ? "Matched — denial step needs a retry"
-          : data?.denied || data?.claimStatus === 'denied'
-            ? "Matched — claim denied by payer"
-            : "Success",
+        title: data?.needsReview
+          ? "Matched — needs manual review"
+          : data?.partial
+            ? "Matched — denial step needs a retry"
+            : data?.denied || data?.claimStatus === 'denied'
+              ? "Matched — claim denied by payer"
+              : "Success",
         description: data?.message || "Line item matched to claim",
-        variant: data?.partial ? "destructive" : "default",
+        variant: data?.partial || data?.needsReview ? "destructive" : "default",
       });
       queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
       queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
@@ -790,10 +785,8 @@ export default function Remittance() {
                                 <AlertCircle className="w-3 h-3 mr-1" /> Needs manual review
                               </Badge>
                               <div className="text-xs text-red-700 mt-1 max-w-[180px]">
-                                {item.paymentEvidence === 'ambiguous'
-                                  ? 'Payment evidence is ambiguous: fewer postings than identical lines on this claim.'
-                                  : 'Payment not recorded on the claim (the posting may have failed or been reversed).'}
-                                {isDenialAwaitingPayment(item) ? " The payer's denial was not applied." : ''}
+                                {NEEDS_REVIEW_TEXT}
+                                {item.claimStatusCode === '4' && !item.denialAppliedAt ? " The payer's denial was not applied." : ''}
                               </div>
                             </div>
                           ) : isDenialPending(item) ? (
@@ -820,7 +813,7 @@ export default function Remittance() {
                               <Link2 className="w-3 h-3 mr-1" /> Match
                             </Button>
                           )}
-                          {(isDenialPending(item) || isDenialAwaitingPayment(item)) && selectedRemittance && (
+                          {isDenialPending(item) && selectedRemittance && (
                             <Button
                               variant="outline"
                               size="sm"

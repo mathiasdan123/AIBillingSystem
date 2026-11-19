@@ -45,8 +45,10 @@ import {
   applyRemittanceDenial,
   applyRemittanceDenialToLine,
   denialReasonForLine,
-  isDenialAwaitingPayment,
+  DENIAL_PENDING_MARKER,
   isDenialPending,
+  isLineNeedingReview,
+  isPostingConfirmed,
   isDeniedRemittanceLine,
   postingReasonFields,
 } from '../services/eraDenialService';
@@ -277,22 +279,34 @@ describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
   });
 });
 
-describe('isDenialPending / isDenialAwaitingPayment (payment evidence comes from the postings, never the line)', () => {
-  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', matchType: 'manual', denialAppliedAt: null };
-  it('pending only with recorded evidence; anything else is awaiting payment (fails closed)', () => {
-    expect(isDenialPending(base, 'recorded')).toBe(true);
-    expect(isDenialPending(base, 'not_recorded')).toBe(false);
-    expect(isDenialPending(base, 'ambiguous')).toBe(false);
-    expect(isDenialPending(base, undefined)).toBe(false);
-    expect(isDenialAwaitingPayment(base, 'not_recorded')).toBe(true);
-    expect(isDenialAwaitingPayment(base, 'ambiguous')).toBe(true);
-    expect(isDenialAwaitingPayment(base, undefined)).toBe(true);
-    expect(isDenialAwaitingPayment(base, 'recorded')).toBe(false);
+describe('posting confirmed / denial pending / needs review (in-flow markers only, nothing inferred)', () => {
+  const posted = { status: 'matched', claimId: 73, claimStatusCode: '4', autoPostedAt: new Date(), denialAppliedAt: null, denialError: DENIAL_PENDING_MARKER };
+  it('pending = posting confirmed by the flow + denied + marker present + not applied', () => {
+    expect(isPostingConfirmed(posted)).toBe(true);
+    expect(isDenialPending(posted)).toBe(true);
+    expect(isDenialPending({ ...posted, denialError: 'AI generator unavailable' })).toBe(true); // a failed step keeps the marker's place
+    expect(isDenialPending({ ...posted, denialAppliedAt: new Date() })).toBe(false);
+    expect(isDenialPending({ ...posted, claimStatusCode: '1' })).toBe(false);
+    expect(isLineNeedingReview(posted)).toBe(false);
   });
-  it('neither once applied, not a denial, or unmatched', () => {
-    expect(isDenialPending({ ...base, denialAppliedAt: new Date() }, 'recorded')).toBe(false);
-    expect(isDenialAwaitingPayment({ ...base, denialAppliedAt: new Date() }, 'not_recorded')).toBe(false);
-    expect(isDenialPending({ ...base, claimStatusCode: '1' }, 'recorded')).toBe(false);
-    expect(isDenialAwaitingPayment({ ...base, status: 'unmatched', claimId: null }, 'not_recorded')).toBe(false);
+  it('a matched line with no confirmed posting needs review, whatever matchType or amounts say', () => {
+    const failedManual = { ...posted, autoPostedAt: null, denialError: null, matchType: 'manual' };
+    expect(isPostingConfirmed(failedManual)).toBe(false);
+    expect(isDenialPending(failedManual)).toBe(false);
+    expect(isLineNeedingReview(failedManual)).toBe(true);
+    expect(isLineNeedingReview({ ...failedManual, matchType: null, claimStatusCode: '1' })).toBe(true); // legacy fused-path row
+  });
+  it('a denied line posted before the denial step existed (no marker) needs review, not a retry', () => {
+    const legacyDenied = { ...posted, denialError: null };
+    expect(isDenialPending(legacyDenied)).toBe(false);
+    expect(isLineNeedingReview(legacyDenied)).toBe(true);
+    // A posted, processed (non-denied) line is fine.
+    expect(isLineNeedingReview({ ...legacyDenied, claimStatusCode: '1' })).toBe(false);
+  });
+  it('unmatched lines are none of these', () => {
+    const unmatched = { ...posted, status: 'unmatched', claimId: null };
+    expect(isPostingConfirmed(unmatched)).toBe(false);
+    expect(isDenialPending(unmatched)).toBe(false);
+    expect(isLineNeedingReview(unmatched)).toBe(false);
   });
 });

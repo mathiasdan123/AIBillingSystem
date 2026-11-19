@@ -33,7 +33,6 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { remittanceLineItems } from '@shared/schema';
 import { storage } from '../storage';
-import type { PaymentEvidence } from './paymentEvidenceService';
 import { recordClaimEvent, clip } from './claimEventService';
 import { processDeniedClaim } from './denialPipelineService';
 import { getAdjustmentGroupDescription, getReasonCodeDescription } from './edi835Parser';
@@ -381,32 +380,47 @@ export async function applyRemittanceDenialToLine(
 export interface DenialPendingLineLike extends RemittanceLineLike {
   status?: string | null;
   claimId?: number | null;
+  autoPostedAt?: Date | string | null;
   denialAppliedAt?: Date | string | null;
+  denialError?: string | null;
 }
 
 /**
- * A denied line whose denial has not been (fully) applied yet AND whose
- * payment is recorded (paymentEvidenceService: this line's own posting, not
- * a marker, not matchType, not another ERA on the claim). Anything but
- * 'recorded' evidence fails closed: the denial waits for manual review.
+ * Written on a denied line in the same request, immediately after ITS
+ * postPayment succeeded (manual match route and the Auto-Match posting
+ * pass). It is the proof of payment the denial step runs on; the Retry
+ * denial route and Auto-Match's denial retry act ONLY on lines carrying it
+ * (or a later error text in its place). Nothing is ever inferred from
+ * matchType, amounts, dates, check numbers or other postings.
  */
-export function isDenialPending(line: DenialPendingLineLike, evidence: PaymentEvidence | undefined): boolean {
+export const DENIAL_PENDING_MARKER = 'pending: payment posted, denial not yet applied';
+
+/** The line's posting was confirmed by this flow (marker written right after postPayment returned). */
+export function isPostingConfirmed(line: DenialPendingLineLike): boolean {
+  return line.status === 'matched' && line.claimId != null && line.autoPostedAt != null;
+}
+
+/** A denied line whose posting is confirmed and whose denial step has not completed: safe to (re)run. */
+export function isDenialPending(line: DenialPendingLineLike): boolean {
   return (
-    line.status === 'matched' &&
-    line.claimId != null &&
-    evidence === 'recorded' &&
+    isPostingConfirmed(line) &&
     isDeniedRemittanceLine(line) &&
-    line.denialAppliedAt == null
+    line.denialAppliedAt == null &&
+    line.denialError != null
   );
 }
 
-/** A denied, matched line that is not applied and whose payment is NOT established: needs manual review. */
-export function isDenialAwaitingPayment(line: DenialPendingLineLike, evidence: PaymentEvidence | undefined): boolean {
-  return (
-    line.status === 'matched' &&
-    line.claimId != null &&
-    evidence !== 'recorded' &&
-    isDeniedRemittanceLine(line) &&
-    line.denialAppliedAt == null
-  );
+/**
+ * A matched line this flow cannot vouch for: no confirmed posting (a failed
+ * or crashed manual post, a line from before the marker existed), or a
+ * denied line posted before the denial step existed. Never applied or
+ * retried automatically; the biller reconciles existing payments first.
+ */
+export function isLineNeedingReview(line: DenialPendingLineLike): boolean {
+  if (line.status !== 'matched' || line.claimId == null) return false;
+  if (!isPostingConfirmed(line)) return true;
+  return isDeniedRemittanceLine(line) && line.denialAppliedAt == null && line.denialError == null;
 }
+
+export const NEEDS_REVIEW_TEXT =
+  "Could not confirm this line's posting. Reconcile existing payments before adding or re-matching anything.";
