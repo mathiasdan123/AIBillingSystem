@@ -75,9 +75,16 @@ router.get('/appeal-prompt-preview/:claimId', isAuthenticated, async (req: any, 
       return res.status(404).json({ message: `Claim "${idOrNumber}" not found (looked up by ID and by claimNumber)` });
     }
 
+    // Tenant check for everyone except the platform admin. The route already
+    // requires role 'admin', which every practice's own admin has, so a role
+    // condition here would never apply. 404, like the other claim guards, so
+    // a cross-practice probe learns nothing about the claim's existence.
     const userPracticeId = req.userPracticeId;
-    if (claim.practiceId !== userPracticeId && req.userRole !== 'admin') {
-      return res.status(403).json({ message: 'Claim does not belong to your practice' });
+    if (!req.isPlatformAdmin && claim.practiceId !== userPracticeId) {
+      logger.warn('Unauthorized appeal-prompt-preview access attempt', {
+        userId: req.user?.claims?.sub, userPracticeId, claimPracticeId: claim.practiceId, claimId: claim.id,
+      });
+      return res.status(404).json({ message: `Claim "${idOrNumber}" not found (looked up by ID and by claimNumber)` });
     }
 
     // Patient + practice

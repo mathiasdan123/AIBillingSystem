@@ -328,7 +328,10 @@ router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFu
   try {
     const appt = await storage.getAppointment(id);
     if (!appt) return res.status(404).json({ message: 'Appointment not found' });
-    if (req.userRole !== 'admin') {
+    // Tenant check for everyone except the platform admin. Every practice's
+    // own admin has role 'admin', so a role check here is not a tenant check
+    // (same rule as the patients and claims guards).
+    if (!req.isPlatformAdmin) {
       const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
       if (!userPracticeId || appt.practiceId !== userPracticeId) {
         logger.warn('Unauthorized appointment access attempt', {
@@ -1216,7 +1219,8 @@ router.use('/series/:seriesId', isAuthenticated, async (req: any, res: Response,
     if (series.length === 0) {
       return res.status(404).json({ message: 'Series not found' });
     }
-    if (req.userRole !== 'admin') {
+    // Tenant check for everyone except the platform admin (see the /:id guard).
+    if (!req.isPlatformAdmin) {
       const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
       if (!userPracticeId || series.some((a: any) => a.practiceId !== userPracticeId)) {
         logger.warn('Unauthorized appointment-series access attempt', {
