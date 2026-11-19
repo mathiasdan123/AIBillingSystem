@@ -329,13 +329,36 @@ export function unsupportedAppealAssertionKeys(text: string | null | undefined, 
   return Array.from(keys);
 }
 
+/** True for a list marker with nothing after it ("3." or "  12.  "): a numbered item whose text was removed. */
+function isBareListMarker(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 2 || t[t.length - 1] !== '.') return false;
+  for (let i = 0; i < t.length - 1; i++) {
+    if (t[i] < '0' || t[i] > '9') return false;
+  }
+  return true;
+}
+
+// Line by line rather than the multi-line regexes it replaces
+// (/[ \t]+\n/g, /^(\s*\d+)\.\s*$/gm): CodeQL flags those shapes as polynomial
+// on biller-edited text. Same result: trailing spaces left by removed
+// sentences go, a numbered item whose text was removed goes, runs of blank
+// lines collapse to one, and the whole letter is trimmed.
 function tidyLetter(text: string): string {
-  return text
-    .replace(/[ \t]+\n/g, '\n')        // trailing spaces left by removed sentences
-    .replace(/\n{3,}/g, '\n\n')         // collapse blank runs
-    .replace(/^(\s*\d+)\.\s*$/gm, '')   // a numbered item whose text was removed
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  const out: string[] = [];
+  let blankRun = 0;
+  for (const raw of text.split('\n')) {
+    const line = raw.trimEnd();
+    if (isBareListMarker(line)) continue;
+    if (line.length === 0) {
+      blankRun++;
+      if (blankRun > 1) continue;
+    } else {
+      blankRun = 0;
+    }
+    out.push(line);
+  }
+  return out.join('\n').trim();
 }
 
 /**
@@ -380,16 +403,63 @@ export function filterUnsupportedKeyArguments(args: unknown, g: AppealGrounding)
 // ---------------------------------------------------------------------------
 
 /** Bracketed or literal placeholders the generators emit when a field is missing. */
-const PLACEHOLDER_PATTERNS: Array<[RegExp, string]> = [
-  [/\[Practice Address\]/i, 'Practice address is missing from the letterhead'],
-  [/\[Practice Phone\]|\[Phone\]/i, 'Practice phone is missing from the letterhead'],
-  [/\[NPI Number\]|\[NPI\]/i, 'Practice NPI is missing from the letterhead'],
-  [/\[Insurance Company\]/i, 'Payer name is missing'],
-  [/\[Insurance Address\]|\[Payer (?:mailing )?address[^\]]*\]/i, 'Payer mailing address must be filled in'],
-  [/^\s*Provider Name\s*$/im, 'Signer name is a placeholder ("Provider Name")'],
-  [/\[Provider Name\]|\[Signer\]/i, 'Signer name is a placeholder'],
-  [/\[(?:[A-Z][A-Za-z ]+)\]/, 'The letter still contains a bracketed placeholder'],
+/**
+ * Known placeholders the generators emit when a field is missing. Each is a
+ * literal bracketed token (or a fixed list of them) so the test is a plain
+ * substring search; the generic bracket scan and the bare "Provider Name"
+ * line are hand-written scans below, not multi-line regexes (CodeQL flags
+ * /^\s*...\s*$/m and /\[[A-Za-z ]+\]/ as polynomial on free text).
+ */
+const PLACEHOLDER_TOKENS: Array<[string[], string]> = [
+  [['[practice address]'], 'Practice address is missing from the letterhead'],
+  [['[practice phone]', '[phone]'], 'Practice phone is missing from the letterhead'],
+  [['[npi number]', '[npi]'], 'Practice NPI is missing from the letterhead'],
+  [['[insurance company]'], 'Payer name is missing'],
+  [['[insurance address]', '[payer address]', '[payer mailing address]'], 'Payer mailing address must be filled in'],
+  [['[provider name]', '[signer]'], 'Signer name is a placeholder'],
 ];
+const PROVIDER_NAME_LINE_MESSAGE = 'Signer name is a placeholder ("Provider Name")';
+const GENERIC_PLACEHOLDER_MESSAGE = 'The letter still contains a bracketed placeholder';
+
+/** Remove every case-insensitive occurrence of `token` from `text` (one left-to-right pass). */
+function removeToken(text: string, token: string): string {
+  const lower = text.toLowerCase();
+  let out = '';
+  let cursor = 0;
+  for (;;) {
+    const at = lower.indexOf(token, cursor);
+    if (at === -1) break;
+    out += text.slice(cursor, at);
+    cursor = at + token.length;
+  }
+  return out + text.slice(cursor);
+}
+
+/** A line that is exactly "Provider Name" (ignoring surrounding whitespace, any case). */
+function hasProviderNameLine(text: string): boolean {
+  return text.split('\n').some((line) => line.trim().toLowerCase() === 'provider name');
+}
+
+/** "[Something Here]": an open bracket, a capital letter, letters/spaces, a close bracket. */
+function hasBracketedPlaceholder(text: string): boolean {
+  const n = text.length;
+  for (let i = 0; i < n; i++) {
+    if (text[i] !== '[') continue;
+    const first = text[i + 1];
+    if (first === undefined || first < 'A' || first > 'Z') continue;
+    let j = i + 2;
+    while (j < n) {
+      const c = text[j];
+      const isLetter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+      if (!isLetter && c !== ' ') break;
+      j++;
+    }
+    if (j < n && text[j] === ']') return true;
+    // Resume after this bracket; nothing between i and j can start a match.
+    i = j - 1;
+  }
+  return false;
+}
 
 export interface ReadinessContext {
   letter: string | null | undefined;
@@ -422,14 +492,15 @@ export function assessAppealReadiness(ctx: ReadinessContext): { ready: boolean; 
   // specific ones did not already name, so one "[Insurance Address]" is one
   // issue, not two.
   let remaining = letter;
-  const [genericPattern, genericMessage] = PLACEHOLDER_PATTERNS[PLACEHOLDER_PATTERNS.length - 1];
-  for (const [pattern, message] of PLACEHOLDER_PATTERNS.slice(0, -1)) {
-    if (pattern.test(remaining)) {
+  for (const [tokens, message] of PLACEHOLDER_TOKENS) {
+    const lower = remaining.toLowerCase();
+    if (tokens.some((t) => lower.includes(t))) {
       if (!issues.includes(message)) issues.push(message);
-      remaining = remaining.replace(new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'), '');
+      for (const t of tokens) remaining = removeToken(remaining, t);
     }
   }
-  if (genericPattern.test(remaining) && !issues.includes(genericMessage)) issues.push(genericMessage);
+  if (hasProviderNameLine(remaining) && !issues.includes(PROVIDER_NAME_LINE_MESSAGE)) issues.push(PROVIDER_NAME_LINE_MESSAGE);
+  if (hasBracketedPlaceholder(remaining) && !issues.includes(GENERIC_PLACEHOLDER_MESSAGE)) issues.push(GENERIC_PLACEHOLDER_MESSAGE);
   for (const key of unsupportedAppealAssertionKeys(letter, ctx.grounding)) {
     issues.push(`Letter asserts something not on record: ${key.replace(/_/g, ' ')}`);
   }

@@ -345,3 +345,61 @@ describe('splitSentences (linear replacement for the polynomial SENTENCE_RE)', (
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 });
+
+describe('placeholder and tidy scans (linear replacements for the multi-line regexes)', () => {
+  it('flags each known placeholder once, a bare "Provider Name" line, and any other bracketed token', () => {
+    const g = emptyAppealGrounding({ denialDate: '2026-11-10' });
+    const ctx = {
+      letter: 'Bright Steps\n[Practice Address]\n\nTo: [Insurance Address]\n\nBody.\n\nSincerely,\n  provider name  \n[Credentials Here]',
+      practice: { name: 'P', npi: '1', address: 'A', phone: 'P' },
+      patient: { firstName: 'Ava', lastName: 'Sample' },
+      claim: { claimNumber: 'C1' },
+      denialDate: '2026-11-10',
+      grounding: { ...g, hasClinicalDocumentation: true },
+    } as any;
+    const { ready, issues } = assessAppealReadiness(ctx);
+    expect(ready).toBe(false);
+    expect(issues).toContain('Practice address is missing from the letterhead');
+    expect(issues).toContain('Payer mailing address must be filled in');
+    expect(issues).toContain('Signer name is a placeholder ("Provider Name")');
+    expect(issues).toContain('The letter still contains a bracketed placeholder');
+    expect(issues.filter((i) => i.includes('Payer mailing address'))).toHaveLength(1);
+  });
+
+  it('does not treat citations or lowercase brackets as placeholders', () => {
+    const g = emptyAppealGrounding({ denialDate: '2026-11-10' });
+    const ctx = {
+      letter: 'See CPT 97530 [1] and the plan [see attached]. Member ID [ABC-123].',
+      practice: { name: 'P', npi: '1', address: 'A', phone: 'P' },
+      patient: { firstName: 'Ava', lastName: 'Sample' },
+      claim: { claimNumber: 'C1' },
+      denialDate: '2026-11-10',
+      grounding: { ...g, hasClinicalDocumentation: true },
+    } as any;
+    expect(assessAppealReadiness(ctx).issues).toEqual([]);
+  });
+
+  it('strips a sentence, drops the emptied list marker, collapses blank runs and renumbers', () => {
+    const g = emptyAppealGrounding({});
+    const letter = 'GROUNDS FOR APPEAL:\n1. The claim was filed on time.   \n2. The service was urgent and emergent.\n\n\n\n3. Records are enclosed.\n';
+    const out = stripUnsupportedAppealAssertions(letter, g);
+    expect(out).toBe('GROUNDS FOR APPEAL:\n1. The claim was filed on time.\n\n2. Records are enclosed.');
+  });
+
+  it('stays fast on long bracketed and whitespace-heavy input', () => {
+    const g = emptyAppealGrounding({ denialDate: '2026-11-10' });
+    const letter = '[A' + 'a '.repeat(100_000) + 'x\n' + ' '.repeat(100_000) + '\n' + '1.' + ' '.repeat(100_000);
+    const started = Date.now();
+    const { issues } = assessAppealReadiness({
+      letter,
+      practice: { name: 'P', npi: '1', address: 'A', phone: 'P' },
+      patient: { firstName: 'Ava', lastName: 'Sample' },
+      claim: { claimNumber: 'C1' },
+      denialDate: '2026-11-10',
+      grounding: { ...g, hasClinicalDocumentation: true },
+    } as any);
+    stripUnsupportedAppealAssertions(letter, g);
+    expect(issues).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
