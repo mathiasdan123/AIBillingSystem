@@ -19,6 +19,7 @@ import { isAuthenticated } from '../replitAuth';
 import { setMfaVerified, clearMfaVerification, isMfaSessionValid, MFA_PROTECTED_ROUTES, MFA_CONFIG } from '../middleware/mfa-required';
 import { authLimiter, mfaChallengeLimiter } from '../middleware/rate-limiter';
 import logger from '../services/logger';
+import { isDemoLoginEnabled } from '../services/demoLoginGate';
 import { isPlatformAdminEmail } from '../services/platformAdmin';
 
 const router = Router();
@@ -909,6 +910,12 @@ const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastN
 // endpoint can NEVER land on a real practice — the earlier prod exposure was
 // caused by defaulting to the first practice in the DB; that is now impossible.
 router.post('/demo-login', async (req: any, res) => {
+  // Off unless DEMO_LOGIN_ENABLED=true (server/services/demoLoginGate.ts):
+  // a public, credential-free login is not something to leave reachable by
+  // default. 404, as if the route did not exist.
+  if (!isDemoLoginEnabled()) {
+    return res.status(404).json({ message: 'Not found' });
+  }
   try {
     const { hashPassword } = await import('../services/passwordService');
     const { ensureDemoPractice } = await import('../services/demoPractice');

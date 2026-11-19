@@ -37,6 +37,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { storage } from '../storage';
 import logger from '../services/logger';
+import { isDemoLoginEnabled } from '../services/demoLoginGate';
 import { logAuditEvent } from '../middleware/auditMiddleware';
 import { sendEmail } from '../services/emailService';
 
@@ -923,6 +924,10 @@ router.post('/patient-portal/logout', async (req: any, res) => {
 // and one of its seeded fake patients — never a real patient. The earlier prod
 // exposure came from using the first real practice's first real patient.
 router.get('/patient-portal/demo-login', async (req, res) => {
+  // Off unless DEMO_LOGIN_ENABLED=true (server/services/demoLoginGate.ts).
+  if (!isDemoLoginEnabled()) {
+    return res.status(404).json({ message: 'Not found' });
+  }
   try {
     const { ensureDemoPractice } = await import('../services/demoPractice');
     const demoPractice = await ensureDemoPractice();

@@ -9,7 +9,7 @@
  *  - POST /api/setup/make-admin
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express, { type Express } from 'express';
 import request from 'supertest';
 
@@ -465,10 +465,36 @@ describe('auth routes (server/routes/auth.ts)', () => {
 
   describe('POST /api/demo-login', () => {
     beforeEach(() => {
+      // The public demo login is off unless DEMO_LOGIN_ENABLED=true.
+      process.env.DEMO_LOGIN_ENABLED = 'true';
       // ensureDemoPractice() resolves the isolated demo practice; return an
       // already-provisioned one so no create/seed happens in these tests.
       mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
       mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+    });
+    afterEach(() => {
+      delete process.env.DEMO_LOGIN_ENABLED;
+    });
+
+    it('answers 404 and touches nothing when DEMO_LOGIN_ENABLED is not set (the default)', async () => {
+      delete process.env.DEMO_LOGIN_ENABLED;
+      const { ensureDemoPractice } = await import('../services/demoPractice');
+      vi.mocked(ensureDemoPractice).mockClear();
+
+      const res = await request(app).post('/api/demo-login').send({ email: 'demo@therapybill.com' });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ message: 'Not found' });
+      expect(ensureDemoPractice).not.toHaveBeenCalled();
+      expect(mockStorage.getUserByEmail).not.toHaveBeenCalled();
+      expect(mockStorage.createUserWithPassword).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for any value other than true', async () => {
+      process.env.DEMO_LOGIN_ENABLED = '1';
+      expect((await request(app).post('/api/demo-login').send({})).status).toBe(404);
+      process.env.DEMO_LOGIN_ENABLED = 'yes';
+      expect((await request(app).post('/api/demo-login').send({})).status).toBe(404);
     });
 
     it('should log in an existing demo user', async () => {
