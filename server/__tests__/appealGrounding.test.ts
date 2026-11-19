@@ -26,8 +26,10 @@ import {
   hasUnsupportedAppealAssertion,
   normalizeGroundingInputs,
   parseListItem,
+  replaceSentences,
   stripUnsupportedAppealAssertions,
   tidyLetter,
+  MAX_SENTENCE_SCAN_CHARS,
   type AppealGrounding,
   splitSentences,
 } from '../services/appealGroundingService';
@@ -474,5 +476,38 @@ describe('tidyLetter (line-based replacement for /[ \\t]+\\n/g, /\\n{3,}/g and /
     const started = Date.now();
     expect(tidyLetter(text)).toBe('Line one\n\nLast');
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe('sentence scan bounds (CodeQL js/loop-bound-injection)', () => {
+  it('treats a non-string input as empty text', () => {
+    expect(splitSentences(undefined as any)).toEqual([]);
+    expect(splitSentences(null as any)).toEqual([]);
+    expect(splitSentences(42 as any)).toEqual([]);
+    expect(replaceSentences({} as any, (s) => s)).toBe('');
+    expect(hasUnsupportedAppealAssertion(12345 as any, emptyAppealGrounding({}))).toBe(false);
+    expect(stripUnsupportedAppealAssertions(['a'] as any, emptyAppealGrounding({}))).toBe('');
+  });
+
+  it('stops scanning at the cap and leaves everything past it unchanged', () => {
+    const head = 'First sentence. Second sentence.';
+    const filler = 'x'.repeat(MAX_SENTENCE_SCAN_CHARS - head.length);
+    const tail = ' The service was urgent and emergent. Last.';
+    const text = head + filler + tail;
+    expect(text.length).toBeGreaterThan(MAX_SENTENCE_SCAN_CHARS);
+
+    const parts = splitSentences(text);
+    // Only what lies within the cap is reported; the filler run ends at the cap.
+    expect(parts[0]).toBe('First sentence.');
+    expect(parts[1]).toBe(' Second sentence.');
+    expect(parts.join('')).toBe(text.slice(0, MAX_SENTENCE_SCAN_CHARS));
+
+    // replaceSentences never touches the text past the cap, even when the
+    // unsupported assertion there would otherwise be stripped.
+    const g = emptyAppealGrounding({});
+    const replaced = replaceSentences(text, () => '');
+    expect(replaced).toBe(text.slice(MAX_SENTENCE_SCAN_CHARS));
+    expect(hasUnsupportedAppealAssertion(text, g)).toBe(false);
+    expect(stripUnsupportedAppealAssertions(text, g)).toBe(text);
   });
 });

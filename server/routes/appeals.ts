@@ -41,6 +41,9 @@ import { recordClaimEvent, clip } from '../services/claimEventService';
 
 const router = Router();
 
+/** Largest appeal letter body PATCH /api/appeals/:id accepts. */
+export const MAX_LETTER_CHARS = 200_000;
+
 /**
  * Everything the letter generator and the readiness check need for one
  * claim: the practice letterhead, the patient identifiers, the line items,
@@ -432,6 +435,17 @@ router.patch('/appeals/:id', isAuthenticated, async (req: any, res) => {
   try {
     const appealId = parseInt(req.params.id);
     const updates = req.body;
+
+    // A letter is a few thousand characters. Anything near the scan cap is
+    // not a letter; refuse it before any lookup or readiness scan runs.
+    if ('appealLetter' in updates && updates.appealLetter != null) {
+      if (typeof updates.appealLetter !== 'string') {
+        return res.status(400).json({ message: 'appealLetter must be a string' });
+      }
+      if (updates.appealLetter.length > MAX_LETTER_CHARS) {
+        return res.status(400).json({ message: `appealLetter is too long (limit ${MAX_LETTER_CHARS} characters)` });
+      }
+    }
 
     const existingAppeal = await loadAppealForCaller(req, res, appealId);
     if (!existingAppeal) return;

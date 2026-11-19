@@ -271,9 +271,20 @@ export const APPEAL_ASSERTION_RULES: AssertionRule[] = [
 const SENTENCE_TERMINATORS = new Set(['.', '!', '?']);
 
 /** [start, end) spans of each sentence in `text`, in order. Linear in text length. */
+/**
+ * Upper bound on the characters any letter scan walks (CodeQL
+ * js/loop-bound-injection: a request-controlled string length as a loop
+ * bound). Letters are a few thousand characters; the PATCH route refuses
+ * bodies over MAX_LETTER_CHARS, so the cap is never reached in practice.
+ * Text past the cap is left exactly as it is: splitSentences does not
+ * report it and replaceSentences appends it unchanged.
+ */
+export const MAX_SENTENCE_SCAN_CHARS = 1_000_000;
+
 function sentenceSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
-  const n = text.length;
+  if (typeof text !== 'string') return spans;
+  const n = Math.min(text.length, MAX_SENTENCE_SCAN_CHARS);
   let i = 0;
   while (i < n) {
     const ch = text[i];
@@ -292,11 +303,13 @@ function sentenceSpans(text: string): Array<[number, number]> {
 
 /** The sentences of `text`, in order (what the regex match() used to return). */
 export function splitSentences(text: string): string[] {
+  if (typeof text !== 'string') return [];
   return sentenceSpans(text).map(([s, e]) => text.slice(s, e));
 }
 
-/** Rebuild `text` with each sentence passed through `fn`; non-sentence characters are kept as-is. */
-function replaceSentences(text: string, fn: (sentence: string) => string): string {
+/** Rebuild `text` with each sentence passed through `fn`; non-sentence characters (and anything past the scan cap) are kept as-is. */
+export function replaceSentences(text: string, fn: (sentence: string) => string): string {
+  if (typeof text !== 'string') return '';
   let out = '';
   let cursor = 0;
   for (const [s, e] of sentenceSpans(text)) {
@@ -392,7 +405,8 @@ export function tidyLetter(text: string): string {
  * letter does not read "1. ... 3. ...".
  */
 export function stripUnsupportedAppealAssertions(text: string | null | undefined, g: AppealGrounding): string {
-  if (!text || !hasUnsupportedAppealAssertion(text, g)) return text ?? '';
+  if (typeof text !== 'string') return '';
+  if (!text || !hasUnsupportedAppealAssertion(text, g)) return text;
   const stripped = replaceSentences(text, (sentence) => (unsupportedRulesIn(sentence, g).length > 0 ? '' : sentence));
   // Renumber consecutive "N. " lines so removed arguments leave no gaps.
   let counter = 0;
@@ -467,7 +481,8 @@ function hasProviderNameLine(text: string): boolean {
 
 /** "[Something Here]": an open bracket, a capital letter, letters/spaces, a close bracket. */
 function hasBracketedPlaceholder(text: string): boolean {
-  const n = text.length;
+  if (typeof text !== 'string') return false;
+  const n = Math.min(text.length, MAX_SENTENCE_SCAN_CHARS);
   for (let i = 0; i < n; i++) {
     if (text[i] !== '[') continue;
     const first = text[i + 1];

@@ -59,7 +59,9 @@ const PATIENT = { id: 99, firstName: 'Ava', lastName: 'Sample', dateOfBirth: '20
 
 function makeApp(): Express {
   const app = express();
-  app.use(express.json());
+  // The server mounts express.json with a 10mb limit; mirror that so the
+  // oversized-letter case reaches the route's own 400, not the parser's 413.
+  app.use(express.json({ limit: '10mb' }));
   app.use('/api', appealsRouter);
   return app;
 }
@@ -151,6 +153,9 @@ describe('PATCH /api/appeals/:id — manual deadline and the ready gate', () => 
     expect(storageStub.updateAppealRecord).toHaveBeenCalledWith(12, expect.objectContaining({ deadlineDate: '2027-01-17', deadlineSource: 'manual', deadlinePolicyDays: null }));
     expect(res.body.deadlineBasis).toBe('Set manually');
     await request(makeApp()).patch('/api/appeals/12').send({ deadlineDate: '01/17/2027' }).expect(400);
+    // An oversized or non-string letter body is refused before any lookup.
+    await request(makeApp()).patch('/api/appeals/12').send({ appealLetter: 'x'.repeat(200_001) }).expect(400);
+    await request(makeApp()).patch('/api/appeals/12').send({ appealLetter: 42 }).expect(400);
   });
 
   it('refuses "ready" while the letter still has a placeholder, listing the issues; accepts it once fixed', async () => {
