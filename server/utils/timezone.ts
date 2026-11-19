@@ -91,6 +91,9 @@ export function zonedInstant(
   timeStr: string,
   timeZone: string = getBusinessTimeZone()
 ): Date {
+  // Query values can arrive as arrays (?startDate=a&startDate=b); only a
+  // string is a date (CodeQL js/type-confusion-through-parameter-tampering).
+  if (typeof dateStr !== 'string' || typeof timeStr !== 'string') return new Date(NaN);
   const [y, mo, d] = dateStr.slice(0, 10).split('-').map(Number);
   const [hh = 0, mi = 0, ss = 0] = timeStr.split(':').map(Number);
   const desired = Date.UTC(y, mo - 1, d, hh, mi, ss);

@@ -13,6 +13,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { buildLedger, periodBounds } from '../services/accountingLedger';
 
 const router = Router();
 
@@ -108,12 +109,17 @@ router.delete('/payment-methods/:id', isAuthenticated, async (req: any, res) => 
 router.get('/payment-transactions', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
+    // A date-only endDate covers the whole of that day (see periodBounds).
+    const { start, end } = periodBounds(
+      typeof req.query.startDate === 'string' ? req.query.startDate : undefined,
+      typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
+    );
     const filters = {
       patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
       status: req.query.status as string | undefined,
       type: req.query.type as string | undefined,
-      startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
-      endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+      startDate: start,
+      endDate: end,
     };
     const transactions = await storage.getPaymentTransactions(practiceId, filters);
     res.json(transactions);
@@ -126,13 +132,48 @@ router.get('/payment-transactions', isAuthenticated, async (req: any, res) => {
 router.get('/payment-transactions/stats', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
-    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
-    const stats = await storage.getPaymentStats(practiceId, startDate, endDate);
+    const { start, end, startDay, endDay } = periodBounds(
+      typeof req.query.startDate === 'string' ? req.query.startDate : undefined,
+      typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
+    );
+    const stats = await storage.getPaymentStats(practiceId, start, end, { startDay, endDay });
     res.json(stats);
   } catch (error) {
     logger.error('Error fetching payment stats', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to fetch payment stats' });
+  }
+});
+
+/**
+ * GET /api/payment-transactions/ledger?startDate&endDate
+ *
+ * Every payment in the period as one row shape: patient payments
+ * (payment_transactions, with the patient's name) and insurance postings
+ * (payment_postings, with the payer's name). Backs the Accounting page's
+ * history table and its CSV / QuickBooks / tax exports (QA demo pass
+ * 2026-11-19: the page read fields that did not exist).
+ */
+router.get('/payment-transactions/ledger', isAuthenticated, async (req: any, res) => {
+  try {
+    const practiceId = getAuthorizedPracticeId(req);
+    const { start, end, startDay, endDay } = periodBounds(
+      typeof req.query.startDate === 'string' ? req.query.startDate : undefined,
+      typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
+    );
+    const [transactions, postings] = await Promise.all([
+      storage.getPaymentTransactions(practiceId, { startDate: start, endDate: end }),
+      storage.getPaymentPostingsForPeriod(practiceId, startDay, endDay),
+    ]);
+    const patientIds = Array.from(new Set(transactions.map((t: any) => t.patientId).filter((id: any) => typeof id === 'number')));
+    const patients = patientIds.length > 0 ? await storage.getPatientsByIds(patientIds as number[]) : new Map();
+    const names = new Map<number, string>();
+    (patients as Map<number, any>).forEach((patient, id) => {
+      names.set(id, `${patient.firstName ?? ''} ${patient.lastName ?? ''}`.trim());
+    });
+    res.json(buildLedger(transactions as any[], postings as any[], names));
+  } catch (error) {
+    logger.error('Error building payment ledger', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ message: 'Failed to fetch payment ledger' });
   }
 });
 

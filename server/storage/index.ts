@@ -270,6 +270,7 @@ export const storage = {
   getPracticePaymentSettings: paymentFns.getPracticePaymentSettings,
   upsertPracticePaymentSettings: paymentFns.upsertPracticePaymentSettings,
   getPaymentStats: paymentFns.getPaymentStats,
+  getPaymentPostingsForPeriod: paymentFns.getPaymentPostingsForPeriod,
   getPatientBalance: paymentFns.getPatientBalance,
   getPaymentPlanWithInstallments: paymentFns.getPaymentPlanWithInstallments,
   createPatientPayment: paymentFns.createPatientPayment,
