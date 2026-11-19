@@ -46,6 +46,7 @@ import {
   applyRemittanceDenialToLine,
   denialReasonForLine,
   DENIAL_PENDING_MARKER,
+  POSTING_CONFIRMED_MARKER,
   isDenialPending,
   isLineNeedingReview,
   isPostingConfirmed,
@@ -296,12 +297,18 @@ describe('posting confirmed / denial pending / needs review (in-flow markers onl
     expect(isLineNeedingReview(failedManual)).toBe(true);
     expect(isLineNeedingReview({ ...failedManual, matchType: null, claimStatusCode: '1' })).toBe(true); // legacy fused-path row
   });
-  it('a denied line posted before the denial step existed (no marker) needs review, not a retry', () => {
-    const legacyDenied = { ...posted, denialError: null };
-    expect(isDenialPending(legacyDenied)).toBe(false);
-    expect(isLineNeedingReview(legacyDenied)).toBe(true);
-    // A posted, processed (non-denied) line is fine.
-    expect(isLineNeedingReview({ ...legacyDenied, claimStatusCode: '1' })).toBe(false);
+  it('a line carrying only the pre-payment autoPostedAt (no post-success marker) is NOT confirmed: review, never a retry', () => {
+    // The auto path writes autoPostedAt BEFORE postPayment as a re-post
+    // guard; a crash before the payment, or a failed rollback after a failed
+    // payment, leaves exactly this state with no money behind it.
+    const prePaymentOnly = { ...posted, denialError: null };
+    expect(isPostingConfirmed(prePaymentOnly)).toBe(false);
+    expect(isDenialPending(prePaymentOnly)).toBe(false);
+    expect(isLineNeedingReview(prePaymentOnly)).toBe(true);
+    expect(isLineNeedingReview({ ...prePaymentOnly, claimStatusCode: '1' })).toBe(true); // non-denied too
+    // The post-success markers are the proof.
+    expect(isPostingConfirmed({ ...prePaymentOnly, claimStatusCode: '1', denialError: POSTING_CONFIRMED_MARKER })).toBe(true);
+    expect(isPostingConfirmed({ ...prePaymentOnly, denialError: null, denialAppliedAt: new Date() })).toBe(true);
   });
   it('unmatched lines are none of these', () => {
     const unmatched = { ...posted, status: 'unmatched', claimId: null };

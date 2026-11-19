@@ -30,6 +30,7 @@ const H = vi.hoisted(() => ({
     claimUpdates: [] as any[],
     remitUpdates: [] as any[],
     postings: [] as any[],
+    failLineUpdate: null as null | ((values: any) => boolean),
   },
   postPayment: vi.fn(),
   ensureFollowUp: vi.fn(),
@@ -115,6 +116,7 @@ vi.mock('../db', async () => {
           const { claims, remittanceLineItems, remittanceAdvice } = tables();
           const s = H.state;
           if (table === remittanceLineItems) {
+            if (s.failLineUpdate && s.failLineUpdate(values)) return Promise.reject(new Error('db down'));
             const id = paramValues(cond).find((v) => typeof v === 'number');
             const line = s.remittance.lineItems.find((li: any) => li.id === id);
             if (line) Object.assign(line, values);
@@ -142,7 +144,7 @@ vi.mock('../db', async () => {
   return { db, getDb: () => db };
 });
 
-import { DENIAL_PENDING_MARKER } from '../services/eraDenialService';
+import { DENIAL_PENDING_MARKER, POSTING_CONFIRMED_MARKER } from '../services/eraDenialService';
 import {
   matchRemittanceLineItems,
   autoMatchRemittance,
@@ -196,6 +198,7 @@ beforeEach(() => {
     lineItems: [],
   };
   H.state.claims = [];
+  H.state.failLineUpdate = null;
   H.state.claimLines = [];
   H.state.cptCodes = [];
   H.state.feeSchedules = [];
@@ -526,8 +529,9 @@ describe('autoMatchRemittance — denials and reason codes (demo billing test 20
       remarkCode: 'N130',
     });
     expect(H.state.remittance.lineItems[0].autoPostedAt).not.toBeNull();
-    // Processed as primary: a write-off, not a denial — no marker, no denial step.
-    expect(H.state.remittance.lineItems[0].denialError ?? null).toBeNull();
+    // Processed as primary: a write-off, not a denial — the post-success
+    // marker is the posting confirmation, and no denial step runs.
+    expect(H.state.remittance.lineItems[0].denialError).toBe(POSTING_CONFIRMED_MARKER);
     expect(H.applyDenial).not.toHaveBeenCalled();
     expect(H.state.remitUpdates.at(-1).status).toBe('processed');
   });
@@ -658,7 +662,7 @@ describe('autoMatchRemittance — denials and reason codes (demo billing test 20
   it('a remittance is not marked processed while any matched line has no confirmed posting', async () => {
     H.state.claims = [claim()];
     H.state.remittance.lineItems = [
-      line({ id: 1, status: 'matched', claimId: 7, matchType: 'manual', autoPostedAt: new Date('2026-11-18') }),
+      line({ id: 1, status: 'matched', claimId: 7, matchType: 'manual', autoPostedAt: new Date('2026-11-18'), denialError: POSTING_CONFIRMED_MARKER }),
       line({ id: 2, status: 'matched', claimId: 7, matchType: 'claim_number', autoPostedAt: null }),
     ];
     H.postPayment.mockRejectedValueOnce(new Error('db down'));
@@ -666,6 +670,45 @@ describe('autoMatchRemittance — denials and reason codes (demo billing test 20
     const result = await autoMatchRemittance(1, 500, null);
 
     expect(result!.postingFailures).toHaveLength(1);
+    expect(H.state.remitUpdates.at(-1).status).toBe('pending');
+  });
+
+  it('persisted crash state — pre-payment autoPostedAt set, no payment: needs review, not processed, never reposted', async () => {
+    // The auto path wrote autoPostedAt, then the process died before postPayment.
+    H.state.claims = [claim()];
+    H.state.remittance.lineItems = [
+      line({ id: 1, status: 'matched', claimId: 7, matchType: 'claim_number', autoPostedAt: new Date('2026-11-18'), denialError: null, denialAppliedAt: null }),
+    ];
+
+    const result = await autoMatchRemittance(1, 500, null);
+
+    expect(H.postPayment).not.toHaveBeenCalled(); // the re-post guard holds
+    expect(H.applyDenial).not.toHaveBeenCalled();
+    expect(result!.posted).toBe(0);
+    expect(result!.linesNeedingReview).toEqual([{ claimId: 7, lineItemId: 1 }]);
+    expect(H.state.remitUpdates.at(-1).status).toBe('pending');
+  });
+
+  it('postPayment fails AND the marker rollback fails: same — needs review, not processed, never reposted', async () => {
+    H.state.claims = [claim()];
+    H.state.remittance.lineItems = [line({ claimReference: 'CLM-1001' })];
+    H.postPayment.mockRejectedValueOnce(new Error('db down'));
+    H.state.failLineUpdate = (values) => values.autoPostedAt === null; // the rollback write
+
+    const first = await autoMatchRemittance(1, 500, null);
+
+    expect(first!.postingFailures).toEqual([{ claimId: 7, lineItemId: 1 }]);
+    const li = H.state.remittance.lineItems[0];
+    expect(li.autoPostedAt).toBeInstanceOf(Date); // the pre-payment timestamp stuck
+    expect(li.denialError ?? null).toBeNull(); // no post-success marker
+    expect(H.state.remitUpdates.at(-1).status).toBe('pending');
+
+    // Next run: not reposted (guard), not confirmed (no marker), reported for review.
+    H.state.failLineUpdate = null;
+    H.postPayment.mockClear();
+    const second = await autoMatchRemittance(1, 500, null);
+    expect(H.postPayment).not.toHaveBeenCalled();
+    expect(second!.linesNeedingReview).toEqual([{ claimId: 7, lineItemId: 1 }]);
     expect(H.state.remitUpdates.at(-1).status).toBe('pending');
   });
 });

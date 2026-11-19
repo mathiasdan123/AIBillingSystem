@@ -395,9 +395,33 @@ export interface DenialPendingLineLike extends RemittanceLineLike {
  */
 export const DENIAL_PENDING_MARKER = 'pending: payment posted, denial not yet applied';
 
-/** The line's posting was confirmed by this flow (marker written right after postPayment returned). */
+/**
+ * Written on a NON-denied line in the same request, immediately after ITS
+ * postPayment succeeded. The post-success proof for lines that have no
+ * denial step: autoPostedAt alone is not one — the auto path writes it
+ * BEFORE postPayment as a re-post guard (and keeps it when the rollback
+ * after a failed posting also fails), so a line carrying only that
+ * timestamp may have no money behind it.
+ */
+export const POSTING_CONFIRMED_MARKER = 'posted: payment recorded';
+
+/**
+ * The line's posting was confirmed by this flow: a marker written right
+ * after postPayment RETURNED for this line (POSTING_CONFIRMED_MARKER,
+ * DENIAL_PENDING_MARKER or the denial step's later error text), or a
+ * completed denial (denialAppliedAt, set only after such a marker). The
+ * pre-payment autoPostedAt is never proof.
+ *
+ * Known, deliberate limit: a marker proves a historical successful post,
+ * not an active, unreversed payment. The posting reversal path does not
+ * invalidate these markers.
+ */
 export function isPostingConfirmed(line: DenialPendingLineLike): boolean {
-  return line.status === 'matched' && line.claimId != null && line.autoPostedAt != null;
+  return (
+    line.status === 'matched' &&
+    line.claimId != null &&
+    (line.denialAppliedAt != null || line.denialError != null)
+  );
 }
 
 /** A denied line whose posting is confirmed and whose denial step has not completed: safe to (re)run. */
@@ -411,15 +435,15 @@ export function isDenialPending(line: DenialPendingLineLike): boolean {
 }
 
 /**
- * A matched line this flow cannot vouch for: no confirmed posting (a failed
- * or crashed manual post, a line from before the marker existed), or a
- * denied line posted before the denial step existed. Never applied or
- * retried automatically; the biller reconciles existing payments first.
+ * A matched line this flow cannot vouch for: no post-success marker (a
+ * failed or crashed post, a pre-payment autoPostedAt left behind by a
+ * crash or a failed rollback, any line from before the markers existed).
+ * Never applied, retried or reposted automatically; the biller reconciles
+ * existing payments first.
  */
 export function isLineNeedingReview(line: DenialPendingLineLike): boolean {
   if (line.status !== 'matched' || line.claimId == null) return false;
-  if (!isPostingConfirmed(line)) return true;
-  return isDeniedRemittanceLine(line) && line.denialAppliedAt == null && line.denialError == null;
+  return !isPostingConfirmed(line);
 }
 
 export const NEEDS_REVIEW_TEXT =

@@ -107,7 +107,7 @@ vi.mock('../db', async () => {
 });
 
 import remittanceRouter from '../routes/remittance';
-import { DENIAL_PENDING_MARKER, NEEDS_REVIEW_TEXT } from '../services/eraDenialService';
+import { DENIAL_PENDING_MARKER, NEEDS_REVIEW_TEXT, POSTING_CONFIRMED_MARKER } from '../services/eraDenialService';
 
 function makeApp(): Express {
   const app = express();
@@ -214,7 +214,12 @@ describe('manual match — which claims may receive a remittance', () => {
     expect(res.body.message).toMatch(/Reassigning a matched line to a different claim is not supported here/);
     expect(res.body.message).not.toMatch(/[Rr]everse/);
 
+    // Only the pre-payment timestamp: still unconfirmed.
     H.state.lineItem = { ...DENIED_LINE(), claimId: 74, status: 'matched', matchType: 'manual', autoPostedAt: new Date() };
+    res = await match();
+    expect(res.body).toMatchObject({ postingConfirmed: false });
+
+    H.state.lineItem = { ...DENIED_LINE(), claimId: 74, status: 'matched', matchType: 'manual', autoPostedAt: new Date(), denialError: DENIAL_PENDING_MARKER };
     res = await match();
     expect(res.body).toMatchObject({ postingConfirmed: true });
     expect(res.body.message).toMatch(/its posting is confirmed on that claim/);
@@ -342,7 +347,8 @@ describe('manual match — posting, the in-flow markers and the denial step', ()
       adjustmentReason: 'CO-45: Contractual Obligations: Charge exceeds fee schedule/maximum allowable/contracted/legislated amount; PR-2: Patient Responsibility: Coinsurance amount',
       remarkCode: 'N130',
     });
-    expect(H.state.lineUpdates[1]).toEqual({ autoPostedAt: expect.any(Date) });
+    // Post-success proof for a non-denied line: the posting-confirmed marker (autoPostedAt alone is never proof).
+    expect(H.state.lineUpdates[1]).toEqual({ autoPostedAt: expect.any(Date), denialError: POSTING_CONFIRMED_MARKER, denialAppliedAt: null });
     expect(H.applyDenial).not.toHaveBeenCalled();
     expect(res.body).toMatchObject({ postingConfirmed: true, denied: false, denialReason: null, denial: null, partial: false, message: 'Line item matched to claim successfully' });
     expect(H.state.remitUpdates.at(-1)).toMatchObject({ status: 'processed' });
@@ -424,7 +430,7 @@ describe('POST /api/remittance/:id/line-items/:lineItemId/retry-denial — acts 
 });
 
 describe('GET /api/remittance/:id flags each matched line from the markers only', () => {
-  it('confirmed + pending, needs review (no confirmed posting), and legacy denied (confirmed, no marker)', async () => {
+  it('confirmed + pending, needs review (no post-success marker), pre-payment timestamp only, legacy rows', async () => {
     H.state.remittance = {
       ...H.state.remittance,
       lineItems: [
@@ -433,6 +439,8 @@ describe('GET /api/remittance/:id flags each matched line from the markers only'
         { ...DENIED_LINE(), id: 3, status: 'matched', claimId: 73, matchType: 'claim_number', autoPostedAt: new Date('2026-10-01'), denialError: null },
         { ...PAID_LINE(), id: 4, status: 'matched', claimId: 74, matchType: null, autoPostedAt: null },
         { ...PAID_LINE(), id: 5 },
+        { ...PAID_LINE(), id: 6, status: 'matched', claimId: 74, matchType: 'claim_number', autoPostedAt: new Date(), denialError: POSTING_CONFIRMED_MARKER },
+        { ...PAID_LINE(), id: 7, status: 'matched', claimId: 74, matchType: 'claim_number', autoPostedAt: new Date(), denialError: null },
       ],
     };
     const res = await request(makeApp()).get('/api/remittance/500');
@@ -441,9 +449,11 @@ describe('GET /api/remittance/:id flags each matched line from the markers only'
     expect(flags).toEqual([
       [1, true, false, true],
       [2, false, true, false],
-      [3, true, true, false],
+      [3, false, true, false], // denied, pre-payment timestamp only: no proof
       [4, false, true, false], // legacy fused-path row: cannot be vouched for
       [5, null, false, false], // unmatched
+      [6, true, false, false], // non-denied, post-success marker
+      [7, false, true, false], // non-denied, pre-payment timestamp only (crash / failed rollback / legacy auto-post)
     ]);
   });
 });

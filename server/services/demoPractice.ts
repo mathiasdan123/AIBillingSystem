@@ -31,6 +31,7 @@ import { storage } from '../storage';
 import { getPool } from '../db';
 import logger from './logger';
 import { encryptRemittanceLineItem } from './phiEncryptionService';
+import { POSTING_CONFIRMED_MARKER } from './eraDenialService';
 import { getBusinessTimeZone, zonedAddDays, zonedDateString, zonedInstant } from '../utils/timezone';
 import { zonedTimeString } from '../utils/dateOnly';
 import type { Practice } from '@shared/schema';
@@ -273,7 +274,47 @@ async function runDemoRepairs(practiceId: number, client: PoolClient): Promise<v
   await ensureDemoClaimPayers(practiceId);
   await ensureDemoClaimLineItems(practiceId);
   await ensureDemoPaymentRecords(practiceId);
+  await repairDemoPostingMarkers(practiceId);
   await keepDemoDatesCurrent(practiceId, { client });
+}
+
+/**
+ * Demo-only (#497): the seeded ERA lines written before the post-success
+ * marker existed carry only auto_posted_at, which the remittance page now
+ * reads as "needs manual review". Their postings were written by the
+ * backfill in the same transaction as the lines, so they are confirmed:
+ * stamp the marker on exactly those lines (DEMO-CHK remittances of the demo
+ * practice, matched, auto-posted, non-denied, unmarked). Touches no money.
+ */
+export async function repairDemoPostingMarkers(practiceId: number): Promise<number> {
+  try {
+    const pool = await getPool();
+    const result = await pool.query(
+      `UPDATE remittance_line_items l
+          SET denial_error = $2
+         FROM remittance_advice r
+        WHERE r.id = l.remittance_id
+          AND r.practice_id = $1
+          AND r.check_number LIKE 'DEMO-CHK-%'
+          AND l.status = 'matched'
+          AND l.claim_id IS NOT NULL
+          AND l.auto_posted_at IS NOT NULL
+          AND l.denial_error IS NULL
+          AND l.denial_applied_at IS NULL
+          AND (l.claim_status_code IS NULL OR l.claim_status_code <> '4')`,
+      [practiceId, POSTING_CONFIRMED_MARKER],
+    );
+    if (result.rowCount) {
+      logger.info('Demo remittance lines stamped as posting-confirmed', { practiceId, updated: result.rowCount });
+    }
+    return result.rowCount ?? 0;
+  } catch (error) {
+    logger.warn('Could not stamp demo remittance lines as posting-confirmed', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
 }
 
 // Fake-but-realistic pediatric OT/ST caseload. Names are obviously demo.
@@ -1110,15 +1151,19 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
              (remittance_id, claim_id, patient_name, member_id, service_date, cpt_code,
               charged_amount, allowed_amount, paid_amount, adjustment_amount,
               patient_responsibility, contractual_adjustment, adjustment_reason_codes,
-              status, claim_reference, match_type, matched_at, auto_posted_at, created_at)
+              status, claim_reference, match_type, matched_at, auto_posted_at, created_at, denial_error)
            SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb,
-                  'matched', $14, 'claim_number', $15, $15, $15
+                  'matched', $14, 'claim_number', $15, $15, $15, $16
             WHERE NOT EXISTS (SELECT 1 FROM remittance_line_items WHERE remittance_id = $1)`,
           [
             remittanceId, row.id, line.patientName, line.memberId, serviceDay, eraCpt,
             money(total), money(allowed), money(paid), money(writeOff),
             money(patientResp), money(contractual), JSON.stringify(reasonCodes),
             claimNumber, paidAt,
+            // Post-success marker (#497): this line's posting is written in
+            // the same transaction below, so the line is confirmed, not
+            // "needs manual review".
+            POSTING_CONFIRMED_MARKER,
           ],
         );
 

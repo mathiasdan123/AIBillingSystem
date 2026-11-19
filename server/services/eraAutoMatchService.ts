@@ -52,6 +52,7 @@ import {
   isDenialPending,
   isLineNeedingReview,
   isPostingConfirmed,
+  POSTING_CONFIRMED_MARKER,
   postingReasonFields,
 } from './eraDenialService';
 import { ensureUnderpaymentFollowUp } from './underpaymentPipelineService';
@@ -621,6 +622,8 @@ export async function autoMatchRemittance(
     // failure. If the rollback itself fails, the failure is still visible in
     // postingFailures/logs — biasing toward "posting missed and flagged"
     // over "posting recorded twice", which inflates collections and the fee.
+    // This pre-payment timestamp is a re-post guard only, never proof the
+    // payment went through: the post-success marker below is.
     await db
       .update(remittanceLineItems)
       .set({ autoPostedAt: new Date() })
@@ -657,20 +660,24 @@ export async function autoMatchRemittance(
       } as any);
       posted++;
       lineItem.autoPostedAt = lineItem.autoPostedAt ?? new Date();
-      // postPayment returned for THIS line: that is the proof of payment the
-      // denial step needs. Write the durable "denial pending" marker now, in
-      // the same flow; the step below (and any retry) acts only on it.
-      if (isDeniedRemittanceLine(lineItem) && lineItem.denialAppliedAt == null) {
+      // postPayment returned for THIS line: that is the proof of payment.
+      // Write the durable post-success marker now, in the same flow: the
+      // "denial pending" marker for a denied line (the step below and any
+      // retry act only on it), the posting-confirmed marker otherwise. A
+      // marker proves this historical post succeeded, not that the payment
+      // is still unreversed; the reversal path does not clear it.
+      if (lineItem.denialAppliedAt == null) {
+        const marker = isDeniedRemittanceLine(lineItem) ? DENIAL_PENDING_MARKER : POSTING_CONFIRMED_MARKER;
         try {
           await db
             .update(remittanceLineItems)
-            .set({ denialError: DENIAL_PENDING_MARKER, denialAppliedAt: null })
+            .set({ denialError: marker, denialAppliedAt: null })
             .where(eq(remittanceLineItems.id, lineItem.id));
-          lineItem.denialError = DENIAL_PENDING_MARKER;
+          lineItem.denialError = marker;
         } catch (markError) {
           // The payment is recorded; without the marker the line shows
           // "needs manual review" rather than being guessed at.
-          logger.error('ERA auto-match: posting recorded but the denial-pending marker could not be written', {
+          logger.error('ERA auto-match: posting recorded but the post-success marker could not be written', {
             lineItemId: lineItem.id,
             remittanceId: remittance.id,
             error: markError instanceof Error ? markError.message : String(markError),

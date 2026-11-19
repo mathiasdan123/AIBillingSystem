@@ -21,6 +21,7 @@ import { ingestRemittance } from '../services/remittanceIngestionService';
 import {
   applyRemittanceDenialToLine,
   DENIAL_PENDING_MARKER,
+  POSTING_CONFIRMED_MARKER,
   isDenialPending,
   isDeniedRemittanceLine,
   isLineNeedingReview,
@@ -698,19 +699,22 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     // below; a failure leaves the denial pending for the line's Retry
     // denial button (or Auto-Match), which never posts the payment again.
     // postPayment returned for THIS line: that is the proof of payment.
-    // Write the durable markers now, in the same flow: the posting
-    // confirmation (autoPostedAt) and, for a denied line, the "denial
-    // pending" marker the denial step and any retry act on. Nothing is ever
-    // inferred from matchType, amounts, dates, check numbers or other
-    // postings. If this write fails, the payment IS recorded but the line
-    // shows "needs manual review" rather than being guessed at.
+    // Write the durable post-success marker now, in the same flow: the
+    // "denial pending" marker for a denied line (the denial step and any
+    // retry act only on it), the posting-confirmed marker otherwise.
+    // autoPostedAt is set as well so the auto path never considers the line
+    // again, but it is not the proof. Nothing is ever inferred from
+    // matchType, amounts, dates, check numbers or other postings. If this
+    // write fails, the payment IS recorded but the line shows "needs manual
+    // review" rather than being guessed at. A marker proves this historical
+    // post succeeded, not that the payment is still unreversed.
     const isDenial = isDeniedRemittanceLine(lineItem as any);
     let postingConfirmed = false;
     let markerError: string | null = null;
     try {
       await db
         .update(remittanceLineItems)
-        .set(isDenial ? { autoPostedAt: new Date(), denialError: DENIAL_PENDING_MARKER, denialAppliedAt: null } : { autoPostedAt: new Date() })
+        .set({ autoPostedAt: new Date(), denialError: isDenial ? DENIAL_PENDING_MARKER : POSTING_CONFIRMED_MARKER, denialAppliedAt: null })
         .where(eq(remittanceLineItems.id, lineItemId));
       postingConfirmed = true;
     } catch (error) {
@@ -729,7 +733,7 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
       status: 'matched',
       matchType: 'manual',
       autoPostedAt: postingConfirmed ? new Date() : (lineItem as any).autoPostedAt ?? null,
-      denialError: postingConfirmed && isDenial ? DENIAL_PENDING_MARKER : (lineItem as any).denialError ?? null,
+      denialError: postingConfirmed ? (isDenial ? DENIAL_PENDING_MARKER : POSTING_CONFIRMED_MARKER) : (lineItem as any).denialError ?? null,
     };
     let denial: ApplyDenialResult | null = null;
     if (isDenial && isDenialPending(denialLine)) {
