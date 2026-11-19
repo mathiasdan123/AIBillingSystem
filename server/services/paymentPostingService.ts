@@ -39,6 +39,41 @@ function toCents(amount: string | null | undefined): number {
 }
 
 /**
+ * Thrown inside postPayment when the remittance line named by
+ * data.remittanceLineItemId already has an active posting — either seen by
+ * the pre-check or caught as the partial unique index refusing the insert
+ * (the two-simultaneous-requests case). The transaction rolls back; nothing
+ * is posted twice.
+ */
+export class DuplicateLinePostingError extends Error {
+  constructor(public readonly remittanceLineItemId: number, public readonly existingPostingId: number | null) {
+    super(`Remittance line ${remittanceLineItemId} already has an active payment posting${existingPostingId ? ` (#${existingPostingId})` : ''}`);
+    this.name = 'DuplicateLinePostingError';
+  }
+}
+
+const LINE_UNIQUE_INDEX = 'uq_payment_postings_line_active';
+
+function isLineUniqueViolation(error: any): boolean {
+  // drizzle wraps the driver error (DrizzleQueryError { cause: pg error }),
+  // so walk the cause chain for the Postgres unique_violation.
+  for (let e = error, depth = 0; e && depth < 5; e = e.cause, depth++) {
+    if (e.code === '23505' && String(e.constraint ?? e.message ?? '').includes(LINE_UNIQUE_INDEX)) return true;
+  }
+  return false;
+}
+
+/** The active (non-reversed) posting recorded for a remittance line, if any. */
+export async function findLinePosting(remittanceLineItemId: number): Promise<PaymentPosting | null> {
+  const rows = await db
+    .select()
+    .from(paymentPostings)
+    .where(and(eq(paymentPostings.remittanceLineItemId, remittanceLineItemId), eq(paymentPostings.reversed, false)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
  * Post a payment against a claim.
  * Updates the claim status to 'paid' if fully paid, or 'partial' if underpaid.
  */
@@ -87,16 +122,41 @@ export async function postPayment(
         );
     }
 
+    // One posting per remittance line. The pre-check gives a clean answer
+    // for the common retry; the partial unique index on
+    // (remittance_line_item_id) WHERE reversed = false is what makes it hold
+    // under two simultaneous requests — the second insert fails and this
+    // transaction rolls back.
+    const lineId = (data as any).remittanceLineItemId as number | null | undefined;
+    if (lineId != null) {
+      const existing = await tx
+        .select({ id: paymentPostings.id })
+        .from(paymentPostings)
+        .where(and(eq(paymentPostings.remittanceLineItemId, lineId), eq(paymentPostings.reversed, false)))
+        .limit(1);
+      if (existing.length > 0) {
+        throw new DuplicateLinePostingError(lineId, existing[0].id);
+      }
+    }
+
     // Insert the payment posting
     const insertData: InsertPaymentPosting = {
       ...data,
       practiceId,
     };
 
-    const result = await tx
-      .insert(paymentPostings)
-      .values(insertData)
-      .returning();
+    let result: PaymentPosting[];
+    try {
+      result = await tx
+        .insert(paymentPostings)
+        .values(insertData)
+        .returning();
+    } catch (insertError) {
+      if (lineId != null && isLineUniqueViolation(insertError)) {
+        throw new DuplicateLinePostingError(lineId, null);
+      }
+      throw insertError;
+    }
 
     if (result.length === 0) {
       throw new Error('Failed to insert payment posting');
@@ -385,4 +445,32 @@ export async function getDailyPostingSummary(
     postingCount: parseInt(row?.postingCount ?? '0', 10),
     claimsAffected: parseInt(row?.claimsAffected ?? '0', 10),
   };
+}
+
+/**
+ * Post a remittance line's payment with the line as the posting identity.
+ * Idempotent across the auto and manual paths and across retries: if the
+ * line already has an active posting (pre-check or unique index), nothing
+ * is inserted and the committed posting is returned with alreadyPosted.
+ * Any other failure propagates — and then nothing was posted.
+ */
+export async function postRemittanceLinePayment(
+  practiceId: number,
+  data: Omit<InsertPaymentPosting, 'practiceId'> & { remittanceLineItemId: number },
+): Promise<{ posting: PaymentPosting | null; alreadyPosted: boolean }> {
+  try {
+    const posting = await postPayment(practiceId, data);
+    return { posting, alreadyPosted: false };
+  } catch (error) {
+    if (error instanceof DuplicateLinePostingError) {
+      const posting = await findLinePosting(data.remittanceLineItemId);
+      logger.info('Remittance line already posted; not posting again', {
+        practiceId,
+        remittanceLineItemId: data.remittanceLineItemId,
+        existingPostingId: posting?.id ?? error.existingPostingId,
+      });
+      return { posting, alreadyPosted: true };
+    }
+    throw error;
+  }
 }

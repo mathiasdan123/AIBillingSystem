@@ -23,7 +23,10 @@ vi.mock('../db', () => ({
     update: () => ({
       set: (values: any) => ({
         where: () => {
-          if (values && values.__throw) return Promise.reject(new Error('db down'));
+          if ((lineUpdates as any).failNext) {
+            (lineUpdates as any).failNext = false;
+            return Promise.reject(new Error('db down'));
+          }
           lineUpdates.push(values);
           return Promise.resolve([]);
         },
@@ -42,7 +45,9 @@ import {
   applyRemittanceDenial,
   applyRemittanceDenialToLine,
   denialReasonForLine,
+  isDenialAutoRetryable,
   isDenialPending,
+  MAX_AUTO_DENIAL_ATTEMPTS,
   isDeniedRemittanceLine,
   postingReasonFields,
 } from '../services/eraDenialService';
@@ -238,7 +243,8 @@ describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
     pipelineMock.mockRejectedValueOnce(new Error('AI generator unavailable'));
     const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
     expect(result.applied).toBe(false);
-    expect(lineUpdates[0]).toEqual({ denialAppliedAt: null, denialError: 'AI generator unavailable' });
+    expect(lineUpdates[0]).toMatchObject({ denialAppliedAt: null, denialError: 'AI generator unavailable' });
+    expect(lineUpdates[0].denialAttempts).toBeDefined(); // COALESCE(denial_attempts,0)+1
     // The claim did get its denial; only the downstream step is pending.
     expect(storageStub.updateClaim).toHaveBeenCalledWith(73, expect.objectContaining({ status: 'denied' }));
   });
@@ -248,14 +254,38 @@ describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
     const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
     expect(result.applied).toBe(false);
     expect(result.pipeline.error).toBe('storage down');
-    expect(lineUpdates[0]).toEqual({ denialAppliedAt: null, denialError: 'storage down' });
+    expect(lineUpdates[0]).toMatchObject({ denialAppliedAt: null, denialError: 'storage down' });
   });
 
   it('a claim that cannot be found stays pending with the reason recorded', async () => {
     storageStub.getClaim.mockResolvedValue(null);
     const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
     expect(result).toMatchObject({ applied: false, skippedReason: 'claim_not_found' });
-    expect(lineUpdates[0]).toEqual({ denialAppliedAt: null, denialError: 'claim_not_found' });
+    expect(lineUpdates[0]).toMatchObject({ denialAppliedAt: null, denialError: 'claim_not_found' });
+  });
+
+  it('a failed outcome-marker write is reported as a persistence error, not as applied (#497 review)', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
+    (lineUpdates as any).failNext = true;
+    const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
+    // The claim is denied and the pipeline ran…
+    expect(storageStub.updateClaim).toHaveBeenCalledWith(73, expect.objectContaining({ status: 'denied' }));
+    expect(pipelineMock).toHaveBeenCalledWith(73);
+    // …but the line does not say so, so the caller must retry (a no-op on the claim).
+    expect(result.applied).toBe(false);
+    expect(result.persistenceError).toMatch(/could not be recorded on the remittance line .*db down/);
+    expect(result.pipeline.error).toMatch(/could not be recorded/);
+    expect(lineUpdates).toHaveLength(0);
+  });
+});
+
+describe('isDenialAutoRetryable', () => {
+  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', postedAt: new Date(), denialAppliedAt: null };
+  it('stops at MAX_AUTO_DENIAL_ATTEMPTS; pending stays pending for a human retry', () => {
+    expect(isDenialAutoRetryable({ ...base, denialAttempts: 0 })).toBe(true);
+    expect(isDenialAutoRetryable({ ...base, denialAttempts: MAX_AUTO_DENIAL_ATTEMPTS - 1 })).toBe(true);
+    expect(isDenialAutoRetryable({ ...base, denialAttempts: MAX_AUTO_DENIAL_ATTEMPTS })).toBe(false);
+    expect(isDenialPending({ ...base, denialAttempts: MAX_AUTO_DENIAL_ATTEMPTS })).toBe(true);
   });
 });
 

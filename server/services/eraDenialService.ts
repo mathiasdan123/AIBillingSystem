@@ -29,7 +29,7 @@
  * manual Deny button and the 277 status poller do.
  */
 
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { remittanceLineItems } from '@shared/schema';
 import { storage } from '../storage';
@@ -144,6 +144,12 @@ export interface DenialPipelineState {
   error?: string;
 }
 
+/**
+ * Automatic retries (poller, Auto-Match) stop here; the line's "Retry
+ * denial" button always may. A denial retry never posts money.
+ */
+export const MAX_AUTO_DENIAL_ATTEMPTS = 5;
+
 export interface ApplyDenialResult {
   claimId: number;
   /** This call changed the claim's status to 'denied'. */
@@ -159,6 +165,12 @@ export interface ApplyDenialResult {
   applied: boolean;
   skippedReason?: 'not_denied' | 'claim_not_found' | 'claim_has_payments' | 'claim_reopened';
   pipeline: DenialPipelineState;
+  /**
+   * The denial itself went through but its outcome could not be written on
+   * the line (applied is then false so the line is retried; the retry is a
+   * no-op on the claim and only re-records the marker).
+   */
+  persistenceError?: string;
 }
 
 const NO_PIPELINE: DenialPipelineState = { ran: false, appealCreated: false, appealReused: false, followUpCreated: false };
@@ -350,21 +362,40 @@ export async function applyRemittanceDenialToLine(
   try {
     await db
       .update(remittanceLineItems)
-      .set(result.applied ? { denialAppliedAt: new Date(), denialError: null } : { denialAppliedAt: null, denialError: clip(error, REASON_TEXT_LIMIT) })
+      .set(
+        result.applied
+          ? { denialAppliedAt: new Date(), denialError: null }
+          : {
+              denialAppliedAt: null,
+              denialError: clip(error, REASON_TEXT_LIMIT),
+              denialAttempts: sql`COALESCE(${remittanceLineItems.denialAttempts}, 0) + 1`,
+            },
+      )
       .where(eq(remittanceLineItems.id, line.id));
   } catch (markError) {
-    // The denial outcome is still in the result/logs; the line simply stays
-    // pending and is retried next run.
-    logger.error('ERA denial: failed to record the denial outcome on the line', {
-      lineItemId: line.id,
-      error: markError instanceof Error ? markError.message : String(markError),
-    });
+    // The claim already carries whatever this call did; only the line's
+    // record of it is missing. Say so explicitly and leave the line pending:
+    // the retry re-runs an idempotent step and re-writes the marker.
+    const message = markError instanceof Error ? markError.message : String(markError);
+    logger.error('ERA denial: failed to record the denial outcome on the line', { lineItemId: line.id, error: message });
+    result.persistenceError = `Denial outcome could not be recorded on the remittance line (retry needed): ${message}`;
+    result.applied = false;
+    if (!result.pipeline.error) result.pipeline = { ...result.pipeline, error: result.persistenceError };
   }
   return result;
 }
 
+export interface DenialPendingLineLike extends RemittanceLineLike {
+  status?: string | null;
+  claimId?: number | null;
+  autoPostedAt?: Date | string | null;
+  postedAt?: Date | string | null;
+  denialAppliedAt?: Date | string | null;
+  denialAttempts?: number | null;
+}
+
 /** A posted, denied line whose denial has not been (fully) applied yet. */
-export function isDenialPending(line: RemittanceLineLike & { status?: string | null; claimId?: number | null; autoPostedAt?: Date | string | null; postedAt?: Date | string | null; denialAppliedAt?: Date | string | null }): boolean {
+export function isDenialPending(line: DenialPendingLineLike): boolean {
   return (
     line.status === 'matched' &&
     line.claimId != null &&
@@ -372,4 +403,9 @@ export function isDenialPending(line: RemittanceLineLike & { status?: string | n
     (line.autoPostedAt != null || line.postedAt != null) &&
     line.denialAppliedAt == null
   );
+}
+
+/** Pending AND still within the automatic retry budget. */
+export function isDenialAutoRetryable(line: DenialPendingLineLike): boolean {
+  return isDenialPending(line) && (line.denialAttempts ?? 0) < MAX_AUTO_DENIAL_ATTEMPTS;
 }

@@ -1126,11 +1126,12 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
           `INSERT INTO payment_postings
              (practice_id, claim_id, payer_name, check_number, payment_date, payment_amount,
               adjustment_amount, adjustment_reason, patient_responsibility, allowed_amount,
-              copay_amount, source, posted_at, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'CO-45', $8, $9, $8, 'era', $10, $10)`,
+              copay_amount, source, posted_at, created_at, remittance_line_item_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'CO-45', $8, $9, $8, 'era', $10, $10,
+                   (SELECT id FROM remittance_line_items WHERE remittance_id = $11 ORDER BY id LIMIT 1))`,
           [
             practiceId, row.id, payerName, checkNumber, paidDay, money(paid),
-            money(contractual), money(patientResp), money(allowed), paidAt,
+            money(contractual), money(patientResp), money(allowed), paidAt, remittanceId,
           ],
         );
 
