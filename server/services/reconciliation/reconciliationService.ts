@@ -27,6 +27,16 @@ export interface ReconcileResult extends EngineOutcome {
   newExceptions: number;
 }
 
+/**
+ * A remittance that carries money. A $0 remittance (a denial-only or
+ * zero-pay 835) has nothing to deposit, so it is neither an expected
+ * deposit for matching nor "awaiting deposit" on the statement (demo
+ * billing test 2026-11-19, item 7: two $0 synthetic ERAs listed as awaiting).
+ */
+export function isDepositable(r: Pick<RemittanceAdvice, 'totalPaymentAmount'>): boolean {
+  return Math.round(Number(r.totalPaymentAmount) * 100) > 0;
+}
+
 export async function reconcilePractice(practiceId: number, today: string): Promise<ReconcileResult> {
   // Unmatched, posted bank credits for this practice.
   const txns: BankTransaction[] = await db
@@ -52,7 +62,7 @@ export async function reconcilePractice(practiceId: number, today: string): Prom
     .from(remittanceAdvice)
     .where(and(eq(remittanceAdvice.practiceId, practiceId), notInArray(remittanceAdvice.id, matchedRemittanceIds)));
 
-  const expected: ExpectedDeposit[] = remits.map((r: RemittanceAdvice) => ({
+  const expected: ExpectedDeposit[] = remits.filter(isDepositable).map((r: RemittanceAdvice) => ({
     remittanceId: r.id,
     payerName: r.payerName,
     traceNumber: r.checkNumber ?? null,
@@ -175,7 +185,7 @@ export async function depositStatement(
     remittedCents: remits.reduce((s: number, r: RemittanceAdvice) => s + cents(r), 0),
     depositedConfirmedCents: remits.filter((r: RemittanceAdvice) => matchedIds.has(r.id)).reduce((s: number, r: RemittanceAdvice) => s + cents(r), 0),
     awaitingDeposit: remits
-      .filter((r: RemittanceAdvice) => !matchedIds.has(r.id))
+      .filter((r: RemittanceAdvice) => !matchedIds.has(r.id) && isDepositable(r))
       .map((r: RemittanceAdvice) => ({
         remittanceId: r.id,
         payerName: r.payerName,
