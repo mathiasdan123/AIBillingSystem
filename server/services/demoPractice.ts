@@ -168,6 +168,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
       await repairDemoSeededClaimDates(existing.id);
       await ensureDemoClaimPayers(existing.id);
       await ensureDemoPaymentRecords(existing.id);
+      await keepDemoDatesCurrent(existing.id, therapistId);
       return existing;
     }
   }
@@ -214,6 +215,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
     await repairDemoSeededClaimDates(practice.id);
     await ensureDemoClaimPayers(practice.id);
     await ensureDemoPaymentRecords(practice.id);
+    await keepDemoDatesCurrent(practice.id, therapistId);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
@@ -410,6 +412,8 @@ export async function ensureDemoFixturePatients(practiceId: number): Promise<num
 // widgets (which group by paidAt) aren't empty — spread across recent months.
 /** Every seeded submitOffset is serviceOffset + this; the payment backfill and the date repair rely on it. */
 export const DEMO_SEED_SUBMIT_OFFSET_DAYS = 2;
+/** The newest seeded paid claim is paid this many days before "today" (the largest paidOffset below). keepDemoDatesCurrent holds it there. */
+export const DEMO_NEWEST_PAID_OFFSET_DAYS = -6;
 const DEMO_CLAIMS = [
   { patientIdx: 0, status: 'paid', total: '289.00', paid: '241.13', serviceOffset: -68, submitOffset: -66, paidOffset: -50 },
   { patientIdx: 1, status: 'paid', total: '216.00', paid: '198.72', serviceOffset: -40, submitOffset: -38, paidOffset: -22 },
@@ -501,6 +505,139 @@ async function seedDemoData(practiceId: number): Promise<void> {
       updatedAt: paidAt ?? submittedAt ?? createdAt,
       denialReason: c.status === 'denied' ? 'CO-197: Precertification/authorization absent' : null,
     } as any);
+  }
+}
+
+/** Whole calendar days from `fromDay` to `toDay` (YYYY-MM-DD), positive when `toDay` is later. */
+export function calendarDaysBetween(fromDay: string, toDay: string): number {
+  const [fy, fm, fd] = fromDay.split('-').map(Number);
+  const [ty, tm, td] = toDay.split('-').map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+}
+
+/**
+ * Keep the seeded demo on today's calendar.
+ *
+ * Every seeded date is an offset from the moment the practice was seeded,
+ * so a demo seeded weeks ago drifts: by 2026-11-19 the live practice
+ * (seeded 2026-11-01) had its newest payment 24 days old and nothing at all
+ * in November, so Accounting ("This Month"), ERA/835 and Deposits opened
+ * empty even though the payment rows were there (post-deploy check
+ * 2026-11-19). Appointments seeded "this week" were likewise weeks past.
+ *
+ * On every demo login, if the newest seeded paid claim is older than its
+ * intended DEMO_NEWEST_PAID_OFFSET_DAYS, every seeded row moves forward by
+ * the same whole number of days so their relative order and spacing are
+ * unchanged: the DEMO-* claims (created, submitted, paid), the demo ERAs and
+ * their lines, the ERA postings, the copays the backfill wrote, and the
+ * seeded appointments (shifted in the practice zone, so a 10:00 visit stays
+ * at 10:00). Hand-made demo data (other claim numbers, other check numbers,
+ * appointments with another title) is left alone. A no-op once current;
+ * never blocks a demo login.
+ */
+export async function keepDemoDatesCurrent(practiceId: number, therapistId?: string): Promise<number> {
+  try {
+    const pool = await getPool();
+    const tz = getBusinessTimeZone();
+    const anchor = await pool.query(
+      `SELECT max(paid_at) AS newest_paid_at
+         FROM claims
+        WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%' AND status = 'paid' AND paid_at IS NOT NULL`,
+      [practiceId],
+    );
+    const newestPaidAt = anchor.rows?.[0]?.newest_paid_at;
+    if (!newestPaidAt) return 0;
+    const newestDay = zonedDateString(new Date(newestPaidAt), tz);
+    const intendedDay = zonedDateString(zonedAddDays(new Date(), DEMO_NEWEST_PAID_OFFSET_DAYS, tz), tz);
+    const drift = calendarDaysBetween(newestDay, intendedDay);
+    if (drift <= 0) return 0;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE claims
+            SET created_at = created_at + make_interval(days => $2::int),
+                updated_at = updated_at + make_interval(days => $2::int),
+                submitted_at = submitted_at + make_interval(days => $2::int),
+                paid_at = paid_at + make_interval(days => $2::int)
+          WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%'`,
+        [practiceId, drift],
+      );
+      await client.query(
+        `UPDATE remittance_line_items
+            SET service_date = service_date + $2::int,
+                matched_at = matched_at + make_interval(days => $2::int),
+                auto_posted_at = auto_posted_at + make_interval(days => $2::int),
+                created_at = created_at + make_interval(days => $2::int)
+          WHERE remittance_id IN (
+            SELECT id FROM remittance_advice WHERE practice_id = $1 AND check_number LIKE 'DEMO-CHK-%'
+          )`,
+        [practiceId, drift],
+      );
+      await client.query(
+        `UPDATE remittance_advice
+            SET received_date = received_date + $2::int,
+                check_date = check_date + $2::int,
+                processed_at = processed_at + make_interval(days => $2::int),
+                created_at = created_at + make_interval(days => $2::int)
+          WHERE practice_id = $1 AND check_number LIKE 'DEMO-CHK-%'`,
+        [practiceId, drift],
+      );
+      await client.query(
+        `UPDATE payment_postings
+            SET payment_date = payment_date + $2::int,
+                posted_at = posted_at + make_interval(days => $2::int),
+                created_at = created_at + make_interval(days => $2::int)
+          WHERE practice_id = $1 AND check_number LIKE 'DEMO-CHK-%'`,
+        [practiceId, drift],
+      );
+      await client.query(
+        `UPDATE payment_transactions
+            SET processed_at = processed_at + make_interval(days => $2::int),
+                created_at = created_at + make_interval(days => $2::int),
+                updated_at = updated_at + make_interval(days => $2::int)
+          WHERE practice_id = $1
+            AND category = 'copay' AND processor = 'manual'
+            AND description LIKE 'Copay for date of service%'
+            AND claim_id IN (SELECT id FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%')`,
+        [practiceId, drift],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    // Seeded appointments: shift by whole days in the practice zone so the
+    // wall-clock time holds (zonedAddDays floors to midnight; the time of
+    // day is put back with zonedInstant, as the seed itself does).
+    const shiftInstant = (d: Date): Date =>
+      zonedInstant(zonedDateString(zonedAddDays(d, drift, tz), tz), zonedTimeString(d, tz), tz);
+    let appointmentsShifted = 0;
+    const rows = await storage.getAppointments(practiceId);
+    for (const appt of rows) {
+      if (appt.title !== DEMO_SEED_APPOINTMENT_TITLE) continue;
+      if (therapistId && appt.therapistId && appt.therapistId !== therapistId) continue;
+      const start = new Date(appt.startTime as any);
+      const end = appt.endTime ? new Date(appt.endTime as any) : null;
+      await storage.updateAppointment(appt.id, {
+        startTime: shiftInstant(start),
+        endTime: end ? shiftInstant(end) : undefined,
+      } as any);
+      appointmentsShifted++;
+    }
+
+    logger.info('Demo seeded dates rolled forward to today', { practiceId, days: drift, appointmentsShifted });
+    return drift;
+  } catch (error) {
+    logger.warn('Could not roll demo seeded dates forward', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
   }
 }
 
