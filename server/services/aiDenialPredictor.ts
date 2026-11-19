@@ -32,7 +32,7 @@ export interface DenialPredictionResult {
   analyzedAt: string;
 }
 
-interface ClaimInput {
+export interface ClaimInput {
   id: number;
   claimNumber?: string | null;
   totalAmount: string;
@@ -105,6 +105,22 @@ export function serviceDateCoverage(
   }
   if (lineItems.length === 0 && sessionDate) dates.push(sessionDate);
   return { dates, datedLines, undatedLines, linesFromSession, hasSessionDate: !!sessionDate };
+}
+
+/**
+ * The line items with the date each one effectively has: its own, else the
+ * linked session's. With no line items, a lone entry for the session date.
+ * This is the one date set the prompt, the timely-filing rule and the
+ * output guard (sanitizeDateAdvice) all use, so a fabricated "future date
+ * of service" finding is judged against the same dates the model was shown.
+ */
+export function effectiveLineDates(
+  claim: Pick<ClaimInput, 'sessionDate'>,
+  lineItems: Pick<LineItemInput, 'dateOfService'>[],
+): Pick<LineItemInput, 'dateOfService'>[] {
+  const sessionDate = claim.sessionDate?.trim() || null;
+  if (lineItems.length === 0) return sessionDate ? [{ dateOfService: sessionDate }] : [];
+  return lineItems.map((li) => ({ dateOfService: li.dateOfService || sessionDate || null }));
 }
 
 /** Back-compat name: the dates serviceDateCoverage can see. */
@@ -600,7 +616,7 @@ export async function predictDenial(
             : `Found ${ruleIssues.length} potential issue(s) through rule-based analysis. Configure OPENAI_API_KEY for deeper AI analysis.`,
         analyzedAt: new Date().toISOString(),
       },
-      lineItems
+      effectiveLineDates(claim, lineItems)
     );
   }
 
@@ -763,7 +779,7 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
           `Claim analyzed with ${allIssues.length} issue(s) found.`,
         analyzedAt: new Date().toISOString(),
       },
-      lineItems
+      effectiveLineDates(claim, lineItems)
     );
   } catch (error) {
     logger.error("AI denial prediction failed, using rule-based fallback", {
@@ -784,7 +800,7 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
             : `Found ${ruleIssues.length} potential issue(s). AI-enhanced analysis was unavailable due to an error.`,
         analyzedAt: new Date().toISOString(),
       },
-      lineItems
+      effectiveLineDates(claim, lineItems)
     );
   }
 }
