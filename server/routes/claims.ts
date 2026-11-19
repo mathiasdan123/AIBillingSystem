@@ -3260,10 +3260,18 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
       };
     });
 
-    // Get SOAP note if session exists
+    // Get SOAP note and the session's date if a session exists. The claims
+    // table has no date of service: the lines carry it, and the session's
+    // date is the fallback for a line without one.
     let soapNote = null;
+    let sessionDate: string | null = null;
     if (claim.sessionId) {
-      soapNote = await storage.getSoapNoteBySession(claim.sessionId);
+      const [note, session] = await Promise.all([
+        storage.getSoapNoteBySession(claim.sessionId),
+        storage.getTreatmentSession(claim.sessionId).catch(() => undefined),
+      ]);
+      soapNote = note;
+      sessionDate = session?.sessionDate ? String(session.sessionDate).slice(0, 10) : null;
     }
 
     // Get patient
@@ -3272,9 +3280,8 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
-    // The payer the claim is billed to (not the chart's plan) and the
-    // claim-level date of service, so the analysis reasons about this claim
-    // (QA demo pass 2026-11-19, item 5).
+    // The payer the claim is billed to (not the chart's plan), so the
+    // analysis reasons about this claim (QA demo pass 2026-11-19, item 5).
     let insuranceName: string | null = null;
     if (claim.insuranceId) {
       const insurance = (await storage.getInsurances()).find((i: any) => i.id === claim.insuranceId);
@@ -3290,7 +3297,7 @@ router.post('/:id/predict-denial', isAuthenticated, async (req: any, res) => {
         status: claim.status,
         insuranceId: claim.insuranceId,
         insuranceName,
-        dateOfService: (claim as any).dateOfService ?? null,
+        sessionDate,
         sessionId: claim.sessionId,
       },
       enrichedLineItems,
