@@ -61,11 +61,6 @@ function dayAt(offsetDays: number, hour = 10, minute = 0): Date {
   const day = zonedDateString(zonedAddDays(new Date(), offsetDays, tz), tz);
   return zonedInstant(day, `${hour}:${minute}`, tz);
 }
-/** YYYY-MM-DD (practice calendar day) offset from today. */
-function isoDate(offsetDays: number): string {
-  const tz = getBusinessTimeZone();
-  return zonedDateString(zonedAddDays(new Date(), offsetDays, tz), tz);
-}
 
 /**
  * Find or create the isolated demo practice, seeding a representative dataset
@@ -413,6 +408,8 @@ export async function ensureDemoFixturePatients(practiceId: number): Promise<num
 // denial rate, and AR aging. amounts in dollars. paidOffset/submitOffset drive
 // the paidAt/submittedAt timestamps so the monthly-revenue and revenue-trend
 // widgets (which group by paidAt) aren't empty — spread across recent months.
+/** Every seeded submitOffset is serviceOffset + this; the payment backfill and the date repair rely on it. */
+export const DEMO_SEED_SUBMIT_OFFSET_DAYS = 2;
 const DEMO_CLAIMS = [
   { patientIdx: 0, status: 'paid', total: '289.00', paid: '241.13', serviceOffset: -68, submitOffset: -66, paidOffset: -50 },
   { patientIdx: 1, status: 'paid', total: '216.00', paid: '198.72', serviceOffset: -40, submitOffset: -38, paidOffset: -22 },
@@ -482,6 +479,8 @@ async function seedDemoData(practiceId: number): Promise<void> {
   // service, so the row's history reads created → submitted → paid; without
   // it every claim was "created" at seed time, after its own submittedAt
   // (QA demo pass 2026-11-19, item 2). updatedAt is the latest milestone.
+  // The claims table has no date-of-service column (line items carry it), so
+  // the service day lives only in createdAt and the submitOffset above.
   for (let i = 0; i < DEMO_CLAIMS.length; i++) {
     const c = DEMO_CLAIMS[i];
     const createdAt = dayAt(c.serviceOffset, 17);
@@ -496,7 +495,6 @@ async function seedDemoData(practiceId: number): Promise<void> {
       submittedAmount: c.status === 'draft' ? null : c.total,
       paidAmount: c.paid,
       status: c.status,
-      dateOfService: isoDate(c.serviceOffset),
       submittedAt,
       paidAt,
       createdAt,
@@ -668,7 +666,7 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
   try {
     const pool = await getPool();
     const pending = await pool.query(
-      `SELECT c.id, c.claim_number, c.patient_id, c.total_amount, c.paid_amount, c.paid_at, c.date_of_service
+      `SELECT c.id, c.claim_number, c.patient_id, c.total_amount, c.paid_amount, c.paid_at, c.submitted_at
          FROM claims c
         WHERE c.practice_id = $1
           AND c.status = 'paid'
@@ -694,6 +692,15 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
       const allowed = paid + patientResp;
       const paidAt = row.paid_at ? new Date(row.paid_at) : new Date();
       const paidDay = zonedDateString(paidAt, tz);
+      // The claims table carries no date of service (claim_line_items does,
+      // and the seeded claims have none). The seed submits each claim two
+      // days after its service day, so the line's service date is derived
+      // from submitted_at; a claim never submitted falls back to its paid day.
+      // (Post-deploy 2026-11-19: this query selected c.date_of_service, which
+      // does not exist, so the whole backfill failed before writing a row.)
+      const serviceDay = row.submitted_at
+        ? zonedDateString(zonedAddDays(new Date(row.submitted_at), -DEMO_SEED_SUBMIT_OFFSET_DAYS, tz), tz)
+        : paidDay;
       const claimNumber = String(row.claim_number);
       const checkNumber = `DEMO-CHK-${claimNumber.replace(/^DEMO-/, '')}`;
       const payerName = (patient as any).insuranceProvider || 'Demo Health Plan';
@@ -731,7 +738,7 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
                   'matched', $14, 'claim_number', $15, $15, $15
             WHERE NOT EXISTS (SELECT 1 FROM remittance_line_items WHERE remittance_id = $1)`,
           [
-            remittanceId, row.id, line.patientName, line.memberId, row.date_of_service, DEMO_ERA_CPT,
+            remittanceId, row.id, line.patientName, line.memberId, serviceDay, DEMO_ERA_CPT,
             money(total), money(allowed), money(paid), money(writeOff),
             money(patientResp), money(contractual), JSON.stringify(reasonCodes),
             claimNumber, paidAt,
@@ -762,7 +769,7 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
               )`,
             [
               row.patient_id, practiceId, row.id, money(patientResp),
-              `Copay for date of service ${row.date_of_service ?? paidDay} (claim ${claimNumber})`,
+              `Copay for date of service ${serviceDay} (claim ${claimNumber})`,
               copayAt,
             ],
           );
