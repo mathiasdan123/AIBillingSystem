@@ -47,6 +47,27 @@ export const DEMO_PRACTICE_NAME = 'Bright Steps Pediatric Therapy (Demo)';
 const DEMO_NPI = '0000000001';
 
 /**
+ * Fake billing identity for the demo practice (post-merge demo retest of
+ * #493–#496): the pre-submission scrub failed every demo draft with
+ * "Practice Tax ID is missing" (error) and "Practice address is not set"
+ * (warning), so the simulated submit → denial → appeal flow was
+ * unreachable for every prospect. Obviously fake, format-valid values;
+ * nothing here is ever transmitted (the demo practice's submit is a local
+ * simulation and the Stedi path is skipped outright for it).
+ */
+export const DEMO_BILLING_IDENTITY = {
+  npi: DEMO_NPI,
+  taxId: '00-0000000',
+  addressStreet: '123 Demo Way',
+  addressCity: 'Springfield',
+  addressState: 'NJ',
+  addressZip: '07000',
+  address: '123 Demo Way, Springfield, NJ 07000',
+  phone: '(555) 010-0000',
+  billingContactPhone: '(555) 010-0000',
+} as const;
+
+/**
  * A day at a fixed PRACTICE wall-clock time, offset from today.
  *
  * Built in the business timezone (America/New_York unless TIMEZONE is set),
@@ -129,6 +150,37 @@ async function repairDemoRowFlags(practiceId: number): Promise<void> {
   }
 }
 
+/**
+ * Fill in whatever part of the demo practice's fake billing identity is
+ * missing (see DEMO_BILLING_IDENTITY). Goes through storage so the PHI-
+ * encrypted practice fields (tax id among them) are written encrypted.
+ * Only empty fields are written, so a prospect's own edits to the demo
+ * profile are kept, and only the demo practice is ever touched. Returns the
+ * number of fields filled in.
+ */
+export async function ensureDemoBillingIdentity(practiceId: number): Promise<number> {
+  try {
+    const practice = await storage.getPractice(practiceId);
+    if (!practice || !(practice as any).isDemo) return 0;
+    const patch: Record<string, string> = {};
+    for (const [field, value] of Object.entries(DEMO_BILLING_IDENTITY)) {
+      if (!String((practice as any)[field] ?? '').trim()) patch[field] = value;
+    }
+    const filled = Object.keys(patch).length;
+    if (filled === 0) return 0;
+    await storage.updatePractice(practiceId, patch as any);
+    logger.info('Demo practice billing identity filled in', { practiceId, fields: Object.keys(patch) });
+    return filled;
+  } catch (error) {
+    // Never block a demo login over it — the next call retries.
+    logger.warn('Could not fill in the demo practice billing identity', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
+}
+
 async function normalizeDemoRates(practiceId: number): Promise<void> {
   try {
     const pool = await getPool();
@@ -173,13 +225,16 @@ export async function ensureDemoPractice(): Promise<Practice> {
         name: DEMO_PRACTICE_NAME,
         isDemo: true,
         sandboxMode: true,
-        npi: DEMO_NPI,
+        npi: DEMO_BILLING_IDENTITY.npi,
+        taxId: DEMO_BILLING_IDENTITY.taxId,
         email: 'demo@therapybill.com',
-        phone: '(555) 010-0000',
-        addressStreet: '123 Demo Way',
-        addressCity: 'Springfield',
-        addressState: 'NJ',
-        addressZip: '07000',
+        phone: DEMO_BILLING_IDENTITY.phone,
+        billingContactPhone: DEMO_BILLING_IDENTITY.billingContactPhone,
+        address: DEMO_BILLING_IDENTITY.address,
+        addressStreet: DEMO_BILLING_IDENTITY.addressStreet,
+        addressCity: DEMO_BILLING_IDENTITY.addressCity,
+        addressState: DEMO_BILLING_IDENTITY.addressState,
+        addressZip: DEMO_BILLING_IDENTITY.addressZip,
         specialty: 'occupational_therapy',
         onboardingCompleted: true,
       } as any);
@@ -210,6 +265,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
 async function runDemoRepairs(practiceId: number, client: PoolClient): Promise<void> {
   await normalizeDemoRates(practiceId);
   await repairDemoRowFlags(practiceId);
+  await ensureDemoBillingIdentity(practiceId);
   await ensureDemoFixturePatients(practiceId);
   const therapistId = await ensureDemoTherapist(practiceId);
   await repairDemoSeededAppointments(practiceId, therapistId);
