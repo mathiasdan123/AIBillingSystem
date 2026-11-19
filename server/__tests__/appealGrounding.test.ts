@@ -25,7 +25,9 @@ import {
   filterUnsupportedKeyArguments,
   hasUnsupportedAppealAssertion,
   normalizeGroundingInputs,
+  parseListItem,
   stripUnsupportedAppealAssertions,
+  tidyLetter,
   type AppealGrounding,
   splitSentences,
 } from '../services/appealGroundingService';
@@ -401,5 +403,76 @@ describe('placeholder and tidy scans (linear replacements for the multi-line reg
     stripUnsupportedAppealAssertions(letter, g);
     expect(issues).toEqual([]);
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe('parseListItem (linear replacement for the renumber regex /^(\\s*)(\\d+)\\.\\s+(.*)$/)', () => {
+  // The regex CodeQL flagged (polynomial on a line starting "0. " followed by
+  // many spaces). Kept here only as the oracle for ordinary list lines; it is
+  // never run on the pathological input.
+  const LEGACY_LIST_ITEM_RE = /^(\s*)(\d+)\.\s+(.*)$/;
+  const oracle = (line: string) => {
+    const m = LEGACY_LIST_ITEM_RE.exec(line);
+    return m ? { indent: m[1], rest: m[3] } : null;
+  };
+
+  it('matches the legacy regex on ordinary list lines and non-list lines', () => {
+    const lines = [
+      '1. The claim was filed on time.',
+      '  12. Indented item',
+      '\t3.\tTabbed item',
+      '4.  two spaces before text',
+      '5. ',
+      '6.',
+      '7.text without a space',
+      'A. Lettered item',
+      '8 . space before the dot',
+      '',
+      '   ',
+      'Sincerely,',
+      '10. ends with punctuation.',
+      '0. zero is a number too',
+    ];
+    for (const line of lines) {
+      expect(parseListItem(line), JSON.stringify(line)).toEqual(oracle(line));
+    }
+  });
+
+  it('is linear on the input that made the regex polynomial', () => {
+    const line = '0. ' + ' '.repeat(400_000) + 'x';
+    const started = Date.now();
+    const parsed = parseListItem(line);
+    expect(parsed).toEqual({ indent: '', rest: 'x' });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe('tidyLetter (line-based replacement for /[ \\t]+\\n/g, /\\n{3,}/g and /^(\\s*\\d+)\\.\\s*$/gm)', () => {
+  const legacyTidy = (text: string) =>
+    text
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^(\s*\d+)\.\s*$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+  it('matches the legacy regex chain on ordinary letters', () => {
+    const samples = [
+      'GROUNDS FOR APPEAL:\n1. Filed on time.   \n2.\n\n\n\n3. Records enclosed.\n',
+      '\n\nDear Appeals Department,\n\nBody line.\t\n\n\n\n\nSincerely,\n  12.  \n[Provider Name]\n\n',
+      'No list here.',
+      '',
+      '   \n   \n1. only item',
+    ];
+    for (const text of samples) {
+      expect(tidyLetter(text), JSON.stringify(text)).toBe(legacyTidy(text));
+    }
+  });
+
+  it('is linear on whitespace-heavy input', () => {
+    const text = 'Line one' + ' '.repeat(400_000) + '\n' + '\n'.repeat(1000) + '7.' + ' '.repeat(400_000) + '\nLast';
+    const started = Date.now();
+    expect(tidyLetter(text)).toBe('Line one\n\nLast');
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });

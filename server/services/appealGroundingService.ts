@@ -336,7 +336,7 @@ const isDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' 
  * "  3. text" → its indent and text; null for any other line. Hand-parsed
  * for the same reason as tidyLetter (was /^(\s*)(\d+)\.\s+(.*)$/).
  */
-function parseListItem(line: string): { indent: string; rest: string } | null {
+export function parseListItem(line: string): { indent: string; rest: string } | null {
   let i = 0;
   while (isSpace(line[i])) i++;
   let j = i;
@@ -363,12 +363,18 @@ function isBareListMarker(line: string): boolean {
 // on biller-edited text. Same result: trailing spaces left by removed
 // sentences go, a numbered item whose text was removed goes, runs of blank
 // lines collapse to one, and the whole letter is trimmed.
-function tidyLetter(text: string): string {
+export function tidyLetter(text: string): string {
   const out: string[] = [];
   let blankRun = 0;
   for (const raw of text.split('\n')) {
-    const line = raw.trimEnd();
-    if (isBareListMarker(line)) continue;
+    // Trailing spaces/tabs before the line break (was /[ \t]+\n/g).
+    let end = raw.length;
+    while (end > 0 && isSpace(raw[end - 1])) end--;
+    let line = raw.slice(0, end);
+    // A numbered item whose text was removed: the marker goes, the line
+    // stays blank, exactly as the /^(\s*\d+)\.\s*$/gm replacement left it.
+    if (isBareListMarker(line)) line = '';
+    // Runs of blank lines collapse to one (was /\n{3,}/g → '\n\n').
     if (line.length === 0) {
       blankRun++;
       if (blankRun > 1) continue;
