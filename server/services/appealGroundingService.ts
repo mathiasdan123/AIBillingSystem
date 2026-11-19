@@ -329,6 +329,25 @@ export function unsupportedAppealAssertionKeys(text: string | null | undefined, 
   return Array.from(keys);
 }
 
+const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t';
+const isDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' && c <= '9';
+
+/**
+ * "  3. text" → its indent and text; null for any other line. Hand-parsed
+ * for the same reason as tidyLetter (was /^(\s*)(\d+)\.\s+(.*)$/).
+ */
+function parseListItem(line: string): { indent: string; rest: string } | null {
+  let i = 0;
+  while (isSpace(line[i])) i++;
+  let j = i;
+  while (isDigit(line[j])) j++;
+  if (j === i || line[j] !== '.') return null;
+  let k = j + 1;
+  if (!isSpace(line[k])) return null;
+  while (isSpace(line[k])) k++;
+  return { indent: line.slice(0, i), rest: line.slice(k) };
+}
+
 /** True for a list marker with nothing after it ("3." or "  12.  "): a numbered item whose text was removed. */
 function isBareListMarker(line: string): boolean {
   const t = line.trim();
@@ -375,11 +394,11 @@ export function stripUnsupportedAppealAssertions(text: string | null | undefined
   const renumbered = tidyLetter(stripped)
     .split('\n')
     .map((line) => {
-      const m = /^(\s*)(\d+)\.\s+(.*)$/.exec(line);
+      const m = parseListItem(line);
       if (m) {
         counter = lastWasItem ? counter + 1 : 1;
         lastWasItem = true;
-        return `${m[1]}${counter}. ${m[3]}`;
+        return `${m.indent}${counter}. ${m.rest}`;
       }
       if (line.trim().length > 0) lastWasItem = false;
       return line;
