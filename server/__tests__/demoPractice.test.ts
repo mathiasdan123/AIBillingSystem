@@ -19,6 +19,11 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       getPatient: vi.fn(),
       getPractice: vi.fn(async (id: number) => ({ id, isDemo: true })),
       getClaims: vi.fn(async () => []),
+      getClaimLineItems: vi.fn(async () => []),
+      getClaimLineItemsForClaims: vi.fn(async () => new Map()),
+      getCptCodes: vi.fn(async () => []),
+      getIcd10Codes: vi.fn(async () => []),
+      createClaimLineItem: vi.fn(async (li: any) => ({ id: 1, ...li })),
       getInsurances: vi.fn(async () => []),
       updateClaim: vi.fn(),
     },
@@ -48,6 +53,9 @@ import {
   demoEraFileHash,
   ensureDemoPaymentRecords,
   ensureDemoClaimPayers,
+  ensureDemoClaimLineItems,
+  demoCptForTotal,
+  DEMO_ERA_CPT,
   keepDemoDatesCurrent,
   calendarDaysBetween,
   isSeededDemoAppointmentShape,
@@ -631,6 +639,9 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
     expect(await ensureDemoPaymentRecords(99)).toBe(1);
     await repairDemoSeededClaimDates(99);
     await ensureDemoClaimPayers(99);
+    mockStorage.getClaims.mockResolvedValueOnce([{ id: 42, claimNumber: 'DEMO-99-1002', totalAmount: '289.00', createdAt: new Date('2026-10-26T21:00:00.000Z') }]);
+    mockStorage.getCptCodes.mockResolvedValueOnce([{ id: 7, code: '97530', baseRate: '289.00' }]);
+    expect(await ensureDemoClaimLineItems(99)).toBe(1);
     expect(await keepDemoDatesCurrent(99)).toBe(30);
 
     expect(statements.length).toBeGreaterThan(4);
@@ -822,5 +833,90 @@ describe('seed marker on appointments', () => {
     await repairDemoSeededAppointments(99, 'demo-therapist-99');
     expect(mockStorage.updateAppointment).toHaveBeenCalledTimes(1);
     expect(mockStorage.updateAppointment).toHaveBeenCalledWith(1, { notes: DEMO_SEED_APPOINTMENT_MARKER });
+  });
+});
+
+describe('ensureDemoClaimLineItems (billing pass 2026-11-19: seeded claims had totals but no service lines)', () => {
+  const catalog = [
+    { id: 7, code: '97530', baseRate: '289.00' },
+    { id: 8, code: '97110', baseRate: '289.00' },
+    { id: 9, code: '97140', baseRate: '289.00' },
+  ];
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStorage.getCptCodes.mockResolvedValue(catalog);
+    mockStorage.getIcd10Codes.mockResolvedValue([{ id: 3, code: 'F82' }, { id: 4, code: 'F80.9' }]);
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  it('maps the seed totals to the codes the earlier demo dataset used', () => {
+    expect(demoCptForTotal('289.00')).toBe('97530');
+    expect(demoCptForTotal(216)).toBe('97110');
+    expect(demoCptForTotal('150')).toBe('97140');
+    expect(demoCptForTotal('999.99')).toBe(DEMO_ERA_CPT);
+  });
+
+  it('creates one reconciling line per DEMO claim that has none, dated on the service day, and aligns the demo ERA line CPT', async () => {
+    mockStorage.getClaims.mockResolvedValue([
+      { id: 62, claimNumber: 'DEMO-99-1000', totalAmount: '289.00', createdAt: new Date('2026-08-25T21:00:00.000Z') }, // 17:00 EDT Aug 25
+      { id: 63, claimNumber: 'DEMO-99-1001', totalAmount: '216.00', createdAt: new Date('2026-09-22T21:00:00.000Z') },
+      { id: 67, claimNumber: 'DEMO-99-1005', totalAmount: '150.00', createdAt: new Date('2026-10-12T21:00:00.000Z') },
+      { id: 64, claimNumber: 'DEMO-99-1002', totalAmount: '289.00', createdAt: new Date('2026-10-08T21:00:00.000Z') },
+      { id: 71, claimNumber: 'CLM-HAND', totalAmount: '200.00', createdAt: new Date() },
+    ]);
+    mockStorage.getClaimLineItemsForClaims.mockResolvedValue(new Map([[64, [{ id: 1 }]]])); // already has a line
+
+    expect(await ensureDemoClaimLineItems(99)).toBe(3);
+    expect(mockStorage.getClaimLineItemsForClaims).toHaveBeenCalledWith([62, 63, 67, 64]);
+    const lines = mockStorage.createClaimLineItem.mock.calls.map((c) => c[0]);
+    expect(lines.map((l) => [l.claimId, l.cptCodeId, l.rate, l.amount, l.units, l.dateOfService])).toEqual([
+      [62, 7, '289.00', '289.00', 1, '2026-08-25'],
+      [63, 8, '216.00', '216.00', 1, '2026-09-22'],
+      [67, 9, '150.00', '150.00', 1, '2026-10-12'],
+    ]);
+    expect(lines.every((l) => l.icd10CodeId === 3 && l.modifier === 'GO' && l.standardRate === '289.00')).toBe(true);
+    expect(lines[0].rateOverrideReason).toBeNull();
+    expect(lines[1].rateOverrideReason).toBe('Seeded demo charge');
+    // The ERA line of each repaired claim is corrected to the claim's code, scoped to demo remittances.
+    const eraFixes = mockPool.query.mock.calls.filter(([sql]) => /UPDATE remittance_line_items l/.test(String(sql)));
+    expect(eraFixes.map(([, params]) => params)).toEqual([[99, '97530', 62], [99, '97110', 63], [99, '97140', 67]]);
+    expect(String(eraFixes[0][0])).toMatch(/check_number LIKE 'DEMO-CHK-%'/);
+  });
+
+  it('is a no-op when every DEMO claim already has a line, and skips a code missing from the catalog', async () => {
+    mockStorage.getClaims.mockResolvedValue([{ id: 62, claimNumber: 'DEMO-99-1000', totalAmount: '289.00', createdAt: new Date() }]);
+    mockStorage.getClaimLineItemsForClaims.mockResolvedValue(new Map([[62, [{ id: 1 }]]]));
+    expect(await ensureDemoClaimLineItems(99)).toBe(0);
+    expect(mockStorage.getCptCodes).not.toHaveBeenCalled();
+
+    mockStorage.getClaimLineItemsForClaims.mockResolvedValue(new Map());
+    mockStorage.getCptCodes.mockResolvedValue([]);
+    expect(await ensureDemoClaimLineItems(99)).toBe(0);
+    expect(mockStorage.createClaimLineItem).not.toHaveBeenCalled();
+  });
+
+  it('the payment backfill names the claim\'s own line code on the ERA line, and the fallback when the claim has none', async () => {
+    const paidClaim = { id: 42, claim_number: 'DEMO-99-1001', patient_id: 102, total_amount: '216.00', paid_amount: '198.72', paid_at: new Date('2026-11-13T15:00:00.000Z'), submitted_at: new Date('2026-10-28T14:00:00.000Z') };
+    mockStorage.getPatient.mockResolvedValue({ id: 102, practiceId: 99, firstName: 'Liam', lastName: 'Demo', insuranceProvider: 'Aetna', insuranceId: 'DEMO1001' });
+    mockClient.query.mockImplementation(async (sql: string) => (/INSERT INTO remittance_advice/.test(sql) ? { rows: [{ id: 501 }], rowCount: 1 } : { rows: [], rowCount: 1 }));
+    const eraCptParam = () => {
+      const call = mockClient.query.mock.calls.find(([sql]) => /INSERT INTO remittance_line_items/.test(String(sql)))!;
+      return call[1][5];
+    };
+
+    mockStorage.getClaimLineItems.mockResolvedValue([{ id: 1, cptCodeId: 8 }]);
+    mockPool.query.mockResolvedValueOnce({ rows: [paidClaim], rowCount: 1 });
+    expect(await ensureDemoPaymentRecords(99)).toBe(1);
+    expect(eraCptParam()).toBe('97110');
+
+    vi.clearAllMocks();
+    mockStorage.getPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatient.mockResolvedValue({ id: 102, practiceId: 99, firstName: 'Liam', lastName: 'Demo', insuranceProvider: 'Aetna', insuranceId: 'DEMO1001' });
+    mockStorage.getCptCodes.mockResolvedValue(catalog);
+    mockStorage.getClaimLineItems.mockResolvedValue([]);
+    mockClient.query.mockImplementation(async (sql: string) => (/INSERT INTO remittance_advice/.test(sql) ? { rows: [{ id: 501 }], rowCount: 1 } : { rows: [], rowCount: 1 }));
+    mockPool.query.mockResolvedValueOnce({ rows: [paidClaim], rowCount: 1 });
+    expect(await ensureDemoPaymentRecords(99)).toBe(1);
+    expect(eraCptParam()).toBe(DEMO_ERA_CPT);
   });
 });

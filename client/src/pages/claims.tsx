@@ -23,6 +23,7 @@ import {
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Link } from "wouter";
 import { exportToCsv } from "@/lib/exportUtils";
+import { formatDateOnly } from "@/lib/dateOnly";
 import { QueryErrorState } from "@/components/QueryErrorState";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import PrintLayout from "@/components/PrintLayout";
@@ -814,7 +815,9 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
                       <span className="text-sm font-medium">${parseFloat(posting.paymentAmount || '0').toFixed(2)}</span>
                     </div>
                     <span className="text-xs text-slate-500">
-                      {posting.paymentDate ? new Date(posting.paymentDate).toLocaleDateString() : '—'}
+                      {/* payment_date is a calendar day; new Date('YYYY-MM-DD') is UTC midnight and
+                          rendered a day early west of UTC (billing pass 2026-11-19: 11/12 vs Nov 13 everywhere else). */}
+                      {posting.paymentDate ? formatDateOnly(posting.paymentDate) : '—'}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
@@ -2903,7 +2906,7 @@ export default function Claims() {
                               {session.patient?.firstName} {session.patient?.lastName}
                             </span>
                             <Badge variant="outline" className="text-xs">
-                              {new Date(session.sessionDate).toLocaleDateString()}
+                              {formatDateOnly(session.sessionDate)}
                             </Badge>
                           </div>
                           <div className="text-sm text-muted-foreground">

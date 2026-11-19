@@ -215,6 +215,7 @@ async function runDemoRepairs(practiceId: number, client: PoolClient): Promise<v
   await repairDemoSeededAppointments(practiceId, therapistId);
   await repairDemoSeededClaimDates(practiceId);
   await ensureDemoClaimPayers(practiceId);
+  await ensureDemoClaimLineItems(practiceId);
   await ensureDemoPaymentRecords(practiceId);
   await keepDemoDatesCurrent(practiceId, { client });
 }
@@ -869,14 +870,115 @@ export async function repairDemoSeededClaimDates(practiceId: number): Promise<nu
  * demo login.
  */
 export const DEMO_PATIENT_RESPONSIBILITY = 25;
-/** Representative OT treatment code for the remittance line; the seeded claims carry no line items. */
+/** Fallback CPT for a demo remittance line when its claim has no line item to take the code from. */
 export const DEMO_ERA_CPT = '97530';
+
+/**
+ * Service lines for the seeded claims (read-only billing pass 2026-11-19):
+ * the seed set each claim's total but created no claim_line_items, so the
+ * claim detail showed "$289 billed" with no lines while its ERA line named
+ * CPT 97530 at $289. Line persistence itself is fine (a hand-made draft
+ * shows its lines); this is a seed gap, repaired here on every login.
+ *
+ * One line per claim, matching the seed's totals the way the earlier demo
+ * dataset did: $289 = 97530 (therapeutic activities), $216 = 97110
+ * (therapeutic exercises), $150 = 97140 (manual therapy); ICD-10 F82;
+ * modifier GO. The charge is the claim's own total (the catalog's base
+ * rate is recorded as standardRate, with an override reason when they
+ * differ) so the lines reconcile with the claim and its ERA. The date of
+ * service is the claim's created day in the practice zone, the seed's
+ * service day. A demo ERA line whose CPT does not match the claim's line
+ * is corrected to it.
+ */
+export const DEMO_LINE_BY_TOTAL: Record<string, string> = { '289.00': '97530', '216.00': '97110', '150.00': '97140' };
+export const DEMO_LINE_ICD10 = 'F82';
+export const DEMO_LINE_MODIFIER = 'GO';
+
+export function demoCptForTotal(totalAmount: string | number | null | undefined): string {
+  const key = Number(totalAmount ?? 0).toFixed(2);
+  return DEMO_LINE_BY_TOTAL[key] ?? DEMO_ERA_CPT;
+}
+
+export async function ensureDemoClaimLineItems(practiceId: number): Promise<number> {
+  let created = 0;
+  try {
+    const demoClaims = ((await storage.getClaims(practiceId)) ?? []).filter((c: any) => String(c.claimNumber ?? '').startsWith('DEMO-'));
+    if (demoClaims.length === 0) return 0;
+    const linesByClaim = await storage.getClaimLineItemsForClaims(demoClaims.map((c: any) => c.id));
+    const missing = demoClaims.filter((c: any) => (linesByClaim.get(c.id) ?? []).length === 0);
+    if (missing.length === 0) return 0;
+
+    const [cptCodes, icd10Codes] = await Promise.all([storage.getCptCodes(), storage.getIcd10Codes()]);
+    const cptByCode = new Map<string, any>(cptCodes.map((c: any) => [String(c.code), c]));
+    const icd = icd10Codes.find((i: any) => i.code === DEMO_LINE_ICD10) ?? null;
+    const tz = getBusinessTimeZone();
+    const pool = await getPool();
+
+    for (const claim of missing) {
+      const code = demoCptForTotal(claim.totalAmount);
+      const cpt = cptByCode.get(code);
+      if (!cpt) {
+        logger.warn('Demo claim line not created: CPT missing from the catalog', { practiceId, claimId: claim.id, code });
+        continue;
+      }
+      const total = Number(claim.totalAmount ?? 0).toFixed(2);
+      const standardRate = cpt.baseRate != null ? Number(cpt.baseRate).toFixed(2) : null;
+      const serviceDay = zonedDateString(new Date(claim.createdAt ?? Date.now()), tz);
+      await storage.createClaimLineItem({
+        claimId: claim.id,
+        cptCodeId: cpt.id,
+        icd10CodeId: icd?.id ?? null,
+        units: 1,
+        rate: total,
+        amount: total,
+        standardRate,
+        rateOverrideReason: standardRate && standardRate !== total ? 'Seeded demo charge' : null,
+        dateOfService: serviceDay,
+        modifier: DEMO_LINE_MODIFIER,
+        notes: null,
+      } as any);
+      created++;
+      // The demo ERA line for this claim (written before the claim had a line) names the fallback CPT; align it.
+      await pool.query(
+        `UPDATE remittance_line_items l
+            SET cpt_code = $2
+           FROM remittance_advice r
+          WHERE l.remittance_id = r.id
+            AND r.practice_id = $1
+            AND r.check_number LIKE 'DEMO-CHK-%'
+            AND l.claim_id = $3
+            AND l.cpt_code IS DISTINCT FROM $2`,
+        [practiceId, code, claim.id],
+      );
+    }
+    if (created) logger.info('Demo claim service lines created', { practiceId, created });
+  } catch (error) {
+    logger.warn('Could not create demo claim service lines', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return created;
+}
 
 export function demoEraFileHash(practiceId: number, claimNumber: string): string {
   return crypto.createHash('sha256').update(`demo-era:${practiceId}:${claimNumber}`).digest('hex');
 }
 
 const money = (n: number): string => n.toFixed(2);
+
+/** CPT for a demo remittance line: the claim's first service line's code, else the fallback. */
+async function demoEraCptForClaim(claimId: number): Promise<string> {
+  try {
+    const lines = await storage.getClaimLineItems(claimId);
+    const first = lines?.[0];
+    if (!first) return DEMO_ERA_CPT;
+    const cpt = (await storage.getCptCodes()).find((c: any) => c.id === (first as any).cptCodeId);
+    return cpt?.code ? String(cpt.code) : DEMO_ERA_CPT;
+  } catch {
+    return DEMO_ERA_CPT;
+  }
+}
 
 export async function ensureDemoPaymentRecords(practiceId: number): Promise<number> {
   let created = 0;
@@ -902,6 +1004,8 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
       if (!(paid > 0) || !(total >= paid)) continue;
       const patient = await storage.getPatient(row.patient_id);
       if (!patient || patient.practiceId !== practiceId) continue;
+      // The remittance line names the claim's own service code when it has one.
+      const eraCpt = await demoEraCptForClaim(row.id);
 
       const writeOff = total - paid;
       const patientResp = writeOff >= DEMO_PATIENT_RESPONSIBILITY ? DEMO_PATIENT_RESPONSIBILITY : 0;
@@ -955,7 +1059,7 @@ export async function ensureDemoPaymentRecords(practiceId: number): Promise<numb
                   'matched', $14, 'claim_number', $15, $15, $15
             WHERE NOT EXISTS (SELECT 1 FROM remittance_line_items WHERE remittance_id = $1)`,
           [
-            remittanceId, row.id, line.patientName, line.memberId, serviceDay, DEMO_ERA_CPT,
+            remittanceId, row.id, line.patientName, line.memberId, serviceDay, eraCpt,
             money(total), money(allowed), money(paid), money(writeOff),
             money(patientResp), money(contractual), JSON.stringify(reasonCodes),
             claimNumber, paidAt,
