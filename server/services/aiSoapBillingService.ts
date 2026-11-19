@@ -60,7 +60,26 @@ export interface AiSoapBillingRequest {
    * activity; when present, the model treats it as the authoritative account
    * of that activity.
    */
-  activityDetails?: Array<{ name: string; response?: string }>;
+  activityDetails?: Array<{
+    name: string;
+    response?: string;
+    /**
+     * Per-activity structured ratings, when the therapist rated this activity
+     * (the picker's per-exercise selects or "Apply to All"). Carried so the
+     * note can state the assistance level per activity; a blank global
+     * `assessment` field is also derived from these upstream when every rated
+     * activity agrees (server/utils/soapAssessment.ts).
+     */
+    performance?: string;
+    assistance?: string;
+    strength?: string;
+    motorPlanning?: string;
+    sensoryRegulation?: string;
+    cueingLevel?: string;
+    accuracy?: string;
+    stimulability?: string;
+    carryover?: string;
+  }>;
   mood: string;
   caregiverReport?: string;
   duration: number;
@@ -559,6 +578,37 @@ export async function applyPracticeCptRates(
   }
   response.totalReimbursement = response.cptCodes.reduce((sum, c) => sum + c.reimbursement, 0);
   return response;
+}
+
+/** Human labels for the per-activity ratings, in display order. */
+const ACTIVITY_RATING_LABELS: Array<[keyof NonNullable<AiSoapBillingRequest["activityDetails"]>[number], string]> = [
+  ["assistance", "Assistance"],
+  ["performance", "Performance"],
+  ["strength", "Strength/endurance"],
+  ["motorPlanning", "Motor planning"],
+  ["sensoryRegulation", "Sensory regulation"],
+  ["cueingLevel", "Cueing level"],
+  ["accuracy", "Accuracy"],
+  ["stimulability", "Stimulability"],
+  ["carryover", "Carryover"],
+];
+
+/**
+ * "Assistance: Minimal Assist; Performance: Improved" for one activity, or
+ * null when the therapist rated nothing on it. Used by both the prompt and
+ * the fallback so the two paths describe the same entered facts.
+ */
+export function activityRatingsLine(
+  detail: NonNullable<AiSoapBillingRequest["activityDetails"]>[number] | undefined,
+): string | null {
+  if (!detail) return null;
+  const parts = ACTIVITY_RATING_LABELS
+    .map(([key, label]) => {
+      const v = detail[key];
+      return typeof v === "string" && v.trim() ? `${label}: ${v.trim()}` : null;
+    })
+    .filter((p): p is string => p !== null);
+  return parts.length ? parts.join("; ") : null;
 }
 
 export function buildSystemPrompt(insuranceData: any): string {
@@ -1109,9 +1159,15 @@ SUBJECTIVE DATA:
 ACTIVITIES/EXERCISES PERFORMED:
 ${request.activities.map(a => {
   const detail = request.activityDetails?.find(d => d.name === a);
-  return detail?.response
-    ? `- ${a}\n  THERAPIST'S ACCOUNT (primary source for this activity — use its facts, do not embellish): "${detail.response}"`
-    : `- ${a}`;
+  const lines = [`- ${a}`];
+  if (detail?.response) {
+    lines.push(`  THERAPIST'S ACCOUNT (primary source for this activity — use its facts, do not embellish): "${detail.response}"`);
+  }
+  const ratings = activityRatingsLine(detail);
+  if (ratings) {
+    lines.push(`  RATINGS ENTERED FOR THIS ACTIVITY (therapist's own selections — state them for this activity; the assistance level here is documented): ${ratings}`);
+  }
+  return lines.join('\n');
 }).join('\n')}
 ${request.activityDetails?.some(d => d.response) ? `
 The THERAPIST'S ACCOUNT lines above are the primary Objective data. Structure
@@ -1653,7 +1709,9 @@ export function requestHasObservations(request: AiSoapBillingRequest): boolean {
     a.bilateralCoordination, a.endurance, a.engagement,
   ];
   if (ratingFields.some((v) => typeof v === "string" && v.trim().length > 0)) return true;
-  return (request.activityDetails || []).some((d) => d.response && d.response.trim().length > 0);
+  return (request.activityDetails || []).some(
+    (d) => (d.response && d.response.trim().length > 0) || activityRatingsLine(d) !== null,
+  );
 }
 
 // Rationale fields ONLY (short, provider-facing coding text, never S/O/A/P
@@ -1707,15 +1765,22 @@ export interface GroundingEvidence {
 
 export function groundingEvidenceFor(request: AiSoapBillingRequest): GroundingEvidence {
   const a = (request.assessment ?? {}) as Record<string, unknown>;
+  const details = request.activityDetails ?? [];
   const text = [
-    ...(request.activityDetails ?? []).map((d) => d.response),
+    ...details.map((d) => d.response),
+    // Per-activity ratings are therapist entries too (post-deploy retest of
+    // #464: "Minimal Assist" chosen per exercise must count as documented).
+    ...details.map((d) => activityRatingsLine(d) ?? undefined),
     request.caregiverReport,
     request.mood,
     ...Object.values(a),
   ]
     .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
     .join("\n");
-  return { text, hasAssistance: typeof a.assistance === "string" && a.assistance.trim().length > 0 };
+  const hasAssistance =
+    (typeof a.assistance === "string" && a.assistance.trim().length > 0) ||
+    details.some((d) => typeof d.assistance === "string" && d.assistance.trim().length > 0);
+  return { text, hasAssistance };
 }
 
 // Topics a note can deny. Each is matched both in the output sentence and in
@@ -2245,11 +2310,22 @@ export function fallbackGeneration(
     const detail = request.activityDetails?.find((d) => d.name === activity);
     return detail && documented(detail.response) ? detail.response.trim() : null;
   };
-  const hasAnyAccount = request.activities.some((act) => accountFor(act) !== null);
+  // An entered per-activity rating (e.g. "Minimal Assist" via Apply to All)
+  // is an observation too, so it also suppresses the "none entered" line.
+  const hasAnyAccount = request.activities.some(
+    (act) => accountFor(act) !== null || activityRatingsLine(request.activityDetails?.find((d) => d.name === act)) !== null,
+  );
+  // Per-activity ratings (assistance level first) print under the activity
+  // too: "Minimal Assist" picked per exercise or via Apply to All is an
+  // entered fact about that activity (post-deploy retest of #464).
   const activityLines = request.activities
     .map((act) => {
       const account = accountFor(act);
-      return account ? `• ${act}\n  Therapist's account: ${account}` : `• ${act}`;
+      const ratings = activityRatingsLine(request.activityDetails?.find((d) => d.name === act));
+      const lines = [`• ${act}`];
+      if (account) lines.push(`  Therapist's account: ${account}`);
+      if (ratings) lines.push(`  ${ratings}`);
+      return lines.join('\n');
     })
     .join('\n');
   // A statement about this FORM ("entered"), never about the room ("not
@@ -2257,7 +2333,7 @@ export function fallbackGeneration(
   // was entered -- those are observations.
   const observationsBlock = observationLines.length
     ? `\n\nClinical observations as documented by the treating therapist:\n${observationLines.join('\n')}`
-    : hasAnyAccount
+    : hasAnyAccount || documented(a.assistance)
       ? ''
       : `\n\nClinical observations: none entered for this session beyond the activities listed.`;
   const objective = `Session conducted in ${request.location} for ${request.duration} minutes (${billingUnits} billable units).\n\nActivities performed:\n${activityLines}${assistanceLine}${observationsBlock}`;
