@@ -1744,14 +1744,18 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
     // are deliberately isDemo=false, so the per-claim check above misses them.
     // Any "Try Free Demo" prospect is an admin on the demo practice and could
     // otherwise transmit a fabricated 837P through the real Stedi account.
-    // Mirrors the MCP guard in server/mcp/tools/claims.ts.
+    //
+    // Demo billing test 2026-11-19: this used to answer 400
+    // demo_practice_refused, so a prospect could never see the submit →
+    // denial → appeal flow the demo exists to show. The demo practice now
+    // SIMULATES a clearinghouse acceptance instead: the claim goes through the
+    // same scrub and data checks as a real one, is marked submitted with
+    // clearinghouseStatus 'simulated', and NOTHING is transmitted — the Stedi
+    // branch below is skipped outright for a demo practice, whatever key or
+    // insurance it has. Batch submit and the MCP tool still refuse the demo
+    // practice (server/mcp/tools/claims.ts).
     const submitPractice = await storage.getPractice(claim.practiceId);
-    if ((submitPractice as any)?.isDemo) {
-      return res.status(400).json({
-        message: 'This is the demo practice — claims are not transmitted to a real payer.',
-        code: 'demo_practice_refused',
-      });
-    }
+    const demoSimulation = Boolean((submitPractice as any)?.isDemo);
 
     if (claim.status !== 'draft' && claim.status !== 'held') {
       return res.status(400).json({ message: 'Only draft or held claims can be submitted' });
@@ -1874,7 +1878,26 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
     let clearinghouseResult: any = null;
     let submissionMethod = 'manual';
 
-    if (stediApiKey && insurance) {
+    if (demoSimulation) {
+      // Demo practice: a local, clearly-labelled acceptance. No 837P is built
+      // and no clearinghouse is contacted. The result shape mirrors a Stedi
+      // success so the rest of the route (and the timeline) treats it alike.
+      clearinghouseResult = {
+        success: true,
+        simulated: true,
+        status: 'simulated',
+        stediClaimId: null,
+        message: 'Demo practice: submission simulated locally; nothing was transmitted to a clearinghouse or payer.',
+        errors: [],
+        warnings: [],
+      };
+      submissionMethod = 'demo_simulation';
+      logger.info('Demo practice claim submission simulated (nothing transmitted)', {
+        claimId,
+        practiceId: claim.practiceId,
+        dryRun,
+      });
+    } else if (stediApiKey && insurance) {
       // Submit via Stedi
       try {
         const stediService = await import('../services/stediService');
@@ -2102,6 +2125,25 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
     // mark the claim filed and it would drop out of the work queue while
     // nothing had actually been sent to the payer.
     if (dryRun) {
+      // Demo practice: the scrub and data checks above ran; that is all a
+      // demo dry run can validate. Say so rather than claiming a
+      // clearinghouse accepted anything.
+      if (demoSimulation) {
+        return res.json({
+          success: true,
+          dryRun: true,
+          simulated: true,
+          message:
+            'Demo practice: the claim passed local checks. Nothing was sent to a clearinghouse or payer — ' +
+            'submitting will simulate an acceptance here.',
+          errors: [],
+          warnings: [],
+          clearinghouse: clearinghouseResult,
+          submissionMethod,
+          scrubResult,
+        });
+      }
+
       // If the claim never reached Stedi at all (no key, no insurance), the
       // run validated NOTHING. Saying "accepted" there would be the same
       // silence-as-success mistake that let the 404'd endpoints look healthy
@@ -2195,12 +2237,15 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
         claimId,
         practiceId: claim.practiceId ?? getAuthorizedPracticeId(req),
         eventType: 'submitted',
-        summary: isResubmission
-          ? `Resubmitted as a replacement claim (837P frequency 7) via ${submissionMethod}`
-          : `Submitted via ${submissionMethod}`,
+        summary: demoSimulation
+          ? `${isResubmission ? 'Resubmission' : 'Submission'} simulated (demo practice) — nothing was transmitted`
+          : isResubmission
+            ? `Resubmitted as a replacement claim (837P frequency 7) via ${submissionMethod}`
+            : `Submitted via ${submissionMethod}`,
         metadata: {
           isResubmission,
           submissionMethod,
+          simulated: demoSimulation,
           clearinghouseStatus: clearinghouseResult?.status || 'pending',
         },
         createdBy: req.user?.claims?.sub,
@@ -2209,9 +2254,12 @@ router.post('/:id/submit', isAuthenticated, async (req: any, res) => {
 
     res.json({
       success: true,
-      message: submissionMethod === 'stedi'
-        ? 'Claim submitted to clearinghouse successfully'
-        : 'Claim marked as submitted (manual submission)',
+      simulated: demoSimulation,
+      message: demoSimulation
+        ? 'Demo practice: submission simulated. The claim is marked submitted here; nothing was sent to a clearinghouse or payer.'
+        : submissionMethod === 'stedi'
+          ? 'Claim submitted to clearinghouse successfully'
+          : 'Claim marked as submitted (manual submission)',
       claim: updatedClaim,
       clearinghouse: clearinghouseResult,
       submissionMethod,

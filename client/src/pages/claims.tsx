@@ -1309,15 +1309,19 @@ export default function Claims() {
   // and the only place it was visible was Settings — so the first anyone knew
   // of it was a claim they believed they had filed coming back untransmitted.
   // Surface it where claims are actually submitted.
-  const { data: practice } = useQuery<{ id: number; sandboxMode?: boolean }>({
+  const { data: practice } = useQuery<{ id: number; sandboxMode?: boolean; isDemo?: boolean }>({
     queryKey: [`/api/practices/${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
+  // The demo practice simulates submissions locally (see the submit route):
+  // its banner explains that, instead of the sandbox banner's advice to switch
+  // to Live Mode, which a demo prospect cannot and must not follow.
+  const isDemoPractice = practice?.isDemo === true;
   // Default-on: treat "not loaded yet" as NOT sandbox so the banner never
   // flashes on a live practice, but treat an explicit true (or a null/absent
   // column, which the DB default makes true) as sandbox.
-  const isSandboxMode = practice ? practice.sandboxMode !== false : false;
+  const isSandboxMode = practice ? practice.sandboxMode !== false && !isDemoPractice : false;
 
   // `archived=include`: this list resolves the patient NAME on every claim
   // card, the detail dialog and the insurance-fix dialog, and a claim keeps
@@ -1835,10 +1839,12 @@ export default function Claims() {
         setShowScrubResults(true);
       }
       toast({
-        title: data.success ? "Success" : "Error",
-        description: data.submissionMethod === 'stedi'
-          ? "Claim submitted to clearinghouse"
-          : data.message,
+        title: data.simulated ? "Submission simulated (demo)" : data.success ? "Success" : "Error",
+        description: data.simulated
+          ? "Marked submitted here. Nothing was sent to a clearinghouse or payer."
+          : data.submissionMethod === 'stedi'
+            ? "Claim submitted to clearinghouse"
+            : data.message,
         variant: data.success ? "default" : "destructive",
       });
     },
@@ -2522,6 +2528,17 @@ export default function Claims() {
 
   return (
     <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
+      {isDemoPractice && (
+        <Alert className="mb-4" data-testid="alert-demo-practice">
+          <ShieldAlert className="h-4 w-4" />
+          <AlertTitle>Demo practice — submissions are simulated</AlertTitle>
+          <AlertDescription>
+            Submit runs the same checks as a real claim and then records a simulated clearinghouse
+            acceptance here, so you can try the submit, denial and appeal flows. Nothing is sent to a
+            clearinghouse or payer.
+          </AlertDescription>
+        </Alert>
+      )}
       {isSandboxMode && (
         <Alert variant="destructive" className="mb-4" data-testid="alert-sandbox-mode">
           <ShieldAlert className="h-4 w-4" />
