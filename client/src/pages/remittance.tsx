@@ -53,6 +53,27 @@ interface RemittanceLineItem {
   payerClaimId?: string | null;
   matchType?: string | null;
   matchReviewReason?: string | null;
+  /** 835 CLP02: '4' is a payer denial. */
+  claimStatusCode?: string | null;
+  autoPostedAt?: string | null;
+  denialAppliedAt?: string | null;
+  denialError?: string | null;
+  /** Server-computed (matched lines only): this flow confirmed the line's posting right after it posted. */
+  postingConfirmed?: boolean | null;
+  /** Server-computed: a matched line this flow cannot vouch for; never applied or retried automatically. */
+  needsReview?: boolean;
+  /** Server-computed: denied, posting confirmed, denial step not completed — safe to retry. */
+  denialPending?: boolean;
+}
+
+const NEEDS_REVIEW_TEXT = "Could not confirm this line's posting. Reconcile existing payments before adding or re-matching anything.";
+
+function isPaymentUnconfirmed(item: RemittanceLineItem): boolean {
+  return item.needsReview === true;
+}
+
+function isDenialPending(item: RemittanceLineItem): boolean {
+  return item.denialPending === true;
 }
 
 interface RemittanceDetail extends RemittanceRecord {
@@ -259,14 +280,50 @@ export default function Remittance() {
     },
   });
 
+  // Re-runs ONLY the denial step (claim status, appeal draft, follow-up) for
+  // a posted denied line; the server never posts money from this route.
+  const retryDenialMutation = useMutation({
+    mutationFn: async ({ remittanceId, lineItemId }: { remittanceId: number; lineItemId: number }) => {
+      const response = await apiRequest('POST', `/api/remittance/${remittanceId}/line-items/${lineItemId}/retry-denial`);
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: data?.partial ? "Denial still pending" : "Denial applied",
+        description: data?.message || "Denial applied to the claim",
+        variant: data?.partial ? "destructive" : "default",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      if (selectedRemittance) {
+        loadRemittanceDetail(selectedRemittance.id);
+      }
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) return;
+      toast({ title: "Denial retry failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const manualMatchMutation = useMutation({
     mutationFn: async ({ remittanceId, lineItemId, claimId }: { remittanceId: number; lineItemId: number; claimId: number }) => {
       const response = await apiRequest('POST', `/api/remittance/${remittanceId}/line-items/${lineItemId}/match`, { claimId });
       return response.json();
     },
-    onSuccess: () => {
-      toast({ title: "Success", description: "Line item matched to claim" });
+    onSuccess: (data: any) => {
+      toast({
+        title: data?.needsReview
+          ? "Matched — needs manual review"
+          : data?.partial
+            ? "Matched — denial step needs a retry"
+            : data?.denied || data?.claimStatus === 'denied'
+              ? "Matched — claim denied by payer"
+              : "Success",
+        description: data?.message || "Line item matched to claim",
+        variant: data?.partial || data?.needsReview ? "destructive" : "default",
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
       setShowManualMatchDialog(false);
       setMatchingLineItem(null);
       if (selectedRemittance) {
@@ -722,6 +779,26 @@ export default function Remittance() {
                                 {reviewReasonLabel(item.matchReviewReason)}
                               </div>
                             </div>
+                          ) : isPaymentUnconfirmed(item) ? (
+                            <div data-testid={`payment-unconfirmed-${item.id}`}>
+                              <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
+                                <AlertCircle className="w-3 h-3 mr-1" /> Needs manual review
+                              </Badge>
+                              <div className="text-xs text-red-700 mt-1 max-w-[180px]">
+                                {NEEDS_REVIEW_TEXT}
+                                {item.claimStatusCode === '4' && !item.denialAppliedAt ? " The payer's denial was not applied." : ''}
+                              </div>
+                            </div>
+                          ) : isDenialPending(item) ? (
+                            <div data-testid={`denial-pending-${item.id}`}>
+                              <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
+                                <AlertCircle className="w-3 h-3 mr-1" /> Denial pending
+                              </Badge>
+                              <div className="text-xs text-red-700 mt-1 max-w-[180px]">
+                                Payment recorded; the payer's denial has not reached the claim yet.
+                                {item.denialError ? ` Last error: ${item.denialError}` : ''}
+                              </div>
+                            </div>
                           ) : (
                             <StatusBadge status={item.status} />
                           )}
@@ -734,6 +811,19 @@ export default function Remittance() {
                               onClick={() => openManualMatch(item)}
                             >
                               <Link2 className="w-3 h-3 mr-1" /> Match
+                            </Button>
+                          )}
+                          {isDenialPending(item) && selectedRemittance && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mb-1"
+                              data-testid={`retry-denial-${item.id}`}
+                              disabled={retryDenialMutation.isPending}
+                              onClick={() => retryDenialMutation.mutate({ remittanceId: selectedRemittance.id, lineItemId: item.id })}
+                            >
+                              {retryDenialMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                              Retry denial
                             </Button>
                           )}
                           {item.status === 'matched' && item.claimId && (

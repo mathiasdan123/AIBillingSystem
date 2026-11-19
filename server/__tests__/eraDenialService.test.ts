@@ -1,0 +1,319 @@
+/**
+ * ERA denials applied to the claim (demo billing test 2026-11-19, item 5).
+ * A synthetic 835 with CLP02 4, paid $0 and CAS CO-197 $100 matched to a
+ * claim left it in its old status with no denial reason, no appeal and
+ * nothing in the work queue; the Payments tab showed the $100 as a 100%
+ * write-off with no reason code.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const { storageStub, eventMock, pipelineMock, lineUpdates } = vi.hoisted(() => ({
+  storageStub: {
+    getClaim: vi.fn(),
+    updateClaim: vi.fn(async (id: number, data: any) => ({ id, ...data })),
+  },
+  eventMock: vi.fn(async () => undefined),
+  pipelineMock: vi.fn(async (claimId: number) => ({ claimId, appealCreated: true, appealId: 91, followUpCreated: true, autoFixesApplied: 0 })),
+  lineUpdates: [] as any[],
+}));
+
+vi.mock('../storage', () => ({ storage: storageStub }));
+vi.mock('../db', () => ({
+  db: {
+    update: () => ({
+      set: (values: any) => ({
+        where: () => {
+          if ((lineUpdates as any).failNext) {
+            (lineUpdates as any).failNext = false;
+            return Promise.reject(new Error('db down'));
+          }
+          lineUpdates.push(values);
+          return Promise.resolve([]);
+        },
+      }),
+    }),
+  },
+}));
+vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../services/claimEventService', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  recordClaimEvent: eventMock,
+}));
+vi.mock('../services/denialPipelineService', () => ({ processDeniedClaim: pipelineMock }));
+
+import {
+  applyRemittanceDenial,
+  applyRemittanceDenialToLine,
+  denialReasonForLine,
+  DENIAL_PENDING_MARKER,
+  POSTING_CONFIRMED_MARKER,
+  isDenialPending,
+  isLineNeedingReview,
+  isPostingConfirmed,
+  isDeniedRemittanceLine,
+  postingReasonFields,
+} from '../services/eraDenialService';
+
+// The synthetic denial from the demo test, as the 835 parser stores it.
+const DENIED_LINE = {
+  id: 31,
+  cptCode: '97140',
+  chargedAmount: '100.00',
+  paidAmount: '0.00',
+  adjustmentAmount: '100.00',
+  claimStatusCode: '4',
+  adjustmentReasonCodes: [{ code: 'CO-197', description: 'Contractual Obligation: Precertification/authorization/notification absent' }],
+  remarkCodes: [{ code: 'N54', description: 'N54' }],
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  lineUpdates.length = 0;
+  storageStub.updateClaim.mockImplementation(async (id: number, data: any) => ({ id, ...data }));
+  pipelineMock.mockResolvedValue({ claimId: 73, appealCreated: true, appealId: 91, followUpCreated: true, autoFixesApplied: 0 });
+});
+
+describe('isDeniedRemittanceLine', () => {
+  it('is CLP02 = 4, and nothing else', () => {
+    expect(isDeniedRemittanceLine(DENIED_LINE)).toBe(true);
+    // Processed as primary with $0 paid is a zero allowed amount, not a denial.
+    expect(isDeniedRemittanceLine({ ...DENIED_LINE, claimStatusCode: '1' })).toBe(false);
+    // Reversal of a prior payment is its own thing.
+    expect(isDeniedRemittanceLine({ ...DENIED_LINE, claimStatusCode: '22' })).toBe(false);
+    // Legacy rows and uploads without a status are never denials.
+    expect(isDeniedRemittanceLine({ ...DENIED_LINE, claimStatusCode: null })).toBe(false);
+    expect(isDeniedRemittanceLine({ paidAmount: '0.00' })).toBe(false);
+    expect(isDeniedRemittanceLine({ ...DENIED_LINE, claimStatusCode: ' 4 ' })).toBe(true);
+  });
+});
+
+describe('postingReasonFields', () => {
+  it('carries the parser\'s group-prefixed codes with their descriptions', () => {
+    expect(postingReasonFields(DENIED_LINE)).toEqual({
+      adjustmentReason: 'CO-197: Contractual Obligation: Precertification/authorization/notification absent',
+      remarkCode: 'N54',
+    });
+  });
+
+  it('describes the Stedi normalizer\'s bare codes', () => {
+    expect(postingReasonFields({ adjustmentReasonCodes: ['45', '2'], remarkCodes: ['N130', 'M15'] })).toEqual({
+      adjustmentReason: '45: Charge exceeds fee schedule/maximum allowable/contracted/legislated amount; 2: Coinsurance amount',
+      remarkCode: 'N130, M15',
+    });
+  });
+
+  it('is null when the line carries no codes', () => {
+    expect(postingReasonFields({})).toEqual({ adjustmentReason: null, remarkCode: null });
+    expect(postingReasonFields({ adjustmentReasonCodes: 'CO-45' as any, remarkCodes: null })).toEqual({ adjustmentReason: null, remarkCode: null });
+  });
+});
+
+describe('applyRemittanceDenial', () => {
+  it('marks a submitted claim denied with the CARC as the reason, records the event and runs the denial pipeline', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted', claimNumber: 'CLM-MWNVFA08-DIJSKH' });
+
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500, payerName: 'Aetna', checkNumber: 'QA-1', postedBy: 'biller-1' });
+
+    expect(result.denied).toBe(true);
+    expect(result.denialReason).toBe('CO-197: Contractual Obligation: Precertification/authorization/notification absent');
+    expect(storageStub.updateClaim).toHaveBeenCalledWith(73, {
+      status: 'denied',
+      denialReason: 'CO-197: Contractual Obligation: Precertification/authorization/notification absent',
+    });
+    expect(eventMock).toHaveBeenCalledTimes(1);
+    expect(eventMock.mock.calls[0][0]).toMatchObject({
+      claimId: 73,
+      practiceId: 1,
+      eventType: 'denied',
+      summary: 'Denied by Aetna (ERA): CO-197: Contractual Obligation: Precertification/authorization/notification absent',
+      metadata: {
+        source: 'era',
+        remittanceId: 500,
+        remittanceLineItemId: 31,
+        claimStatusCode: '4',
+        adjustmentReasonCodes: ['CO-197'],
+        remarkCodes: ['N54'],
+        previousStatus: 'submitted',
+        statusChanged: true,
+        checkNumber: 'QA-1',
+      },
+      createdBy: 'biller-1',
+    });
+    // Appeal draft + denial_appeal follow-up (Revenue at Risk / Appeals).
+    expect(pipelineMock).toHaveBeenCalledWith(73);
+    expect(result.pipeline).toMatchObject({ ran: true, appealCreated: true, appealReused: false, appealId: 91, followUpCreated: true });
+    expect(result.applied).toBe(true);
+    expect(result.claimStatus).toBe('denied');
+  });
+
+  it('does nothing for a line that is not a denial', async () => {
+    const result = await applyRemittanceDenial(1, 73, { ...DENIED_LINE, claimStatusCode: '1' }, { remittanceId: 500 });
+    expect(result).toMatchObject({ denied: false, skippedReason: 'not_denied' });
+    expect(storageStub.getClaim).not.toHaveBeenCalled();
+    expect(storageStub.updateClaim).not.toHaveBeenCalled();
+    expect(pipelineMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses another practice's claim", async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 2, status: 'submitted' });
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
+    expect(result).toMatchObject({ denied: false, skippedReason: 'claim_not_found' });
+    expect(storageStub.updateClaim).not.toHaveBeenCalled();
+    expect(eventMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a paid/partial claim\'s status (another line paid) and leaves only a timeline note', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'partial' });
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500, payerName: 'Aetna' });
+    expect(result).toMatchObject({ denied: false, skippedReason: 'claim_has_payments' });
+    expect(storageStub.updateClaim).not.toHaveBeenCalled();
+    expect(pipelineMock).not.toHaveBeenCalled();
+    expect(eventMock.mock.calls[0][0]).toMatchObject({
+      eventType: 'note_added',
+      summary: expect.stringMatching(/^ERA denied line 97140: CO-197.*claim stays partial/),
+      metadata: { statusChanged: false, previousStatus: 'partial' },
+    });
+  });
+
+  it('an already-denied claim is not re-flagged, but the appeal / follow-up step still runs (resumable)', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'denied', denialReason: 'CO-197: ...' });
+    pipelineMock.mockResolvedValueOnce({ claimId: 73, appealCreated: false, appealId: 91, followUpCreated: true, autoFixesApplied: 0, skippedReason: 'appeal_exists' });
+
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
+
+    expect(result).toMatchObject({ denied: false, claimStatus: 'denied', applied: true });
+    expect(result.skippedReason).toBeUndefined();
+    expect(storageStub.updateClaim).not.toHaveBeenCalled();
+    expect(eventMock).not.toHaveBeenCalled(); // no second "denied" event
+    expect(pipelineMock).toHaveBeenCalledWith(73);
+    expect(result.pipeline).toMatchObject({ ran: true, appealCreated: false, appealReused: true, appealId: 91, followUpCreated: true });
+  });
+
+  it('a claim already under appeal needs nothing: applied, appeal reused', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'appeal' });
+    pipelineMock.mockResolvedValueOnce({ claimId: 73, appealCreated: false, followUpCreated: false, autoFixesApplied: 0, skippedReason: 'claim_status_appeal' });
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
+    expect(result).toMatchObject({ denied: false, claimStatus: 'appeal', applied: true, pipeline: { ran: false, appealReused: false, appealCreated: false } });
+    expect(storageStub.updateClaim).not.toHaveBeenCalled();
+  });
+
+  it('a thrown pipeline leaves the denial on the claim and marks the result NOT applied (retry later)', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
+    pipelineMock.mockRejectedValueOnce(new Error('AI generator unavailable'));
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
+    expect(result.denied).toBe(true);
+    expect(result.applied).toBe(false);
+    expect(result.pipeline).toMatchObject({ appealCreated: false, followUpCreated: false, error: 'AI generator unavailable' });
+  });
+
+  it('a pipeline that silently drafted no appeal is reported as an error, so it is retried', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
+    pipelineMock.mockResolvedValueOnce({ claimId: 73, appealCreated: false, followUpCreated: true, autoFixesApplied: 0 });
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
+    expect(result.applied).toBe(false);
+    expect(result.pipeline).toMatchObject({ ran: true, followUpCreated: true, error: expect.stringMatching(/Appeal draft was not created/) });
+  });
+
+  it('a reopened draft (transmitted, then reopened) keeps its draft status and gets a timeline note', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'draft', resubmissionCount: 1 });
+    const result = await applyRemittanceDenial(1, 73, DENIED_LINE, { remittanceId: 500 });
+    expect(result).toMatchObject({ denied: false, applied: true, skippedReason: 'claim_reopened', claimStatus: 'draft' });
+    expect(storageStub.updateClaim).not.toHaveBeenCalled();
+    expect(pipelineMock).not.toHaveBeenCalled();
+    expect(eventMock.mock.calls[0][0]).toMatchObject({ eventType: 'note_added', summary: expect.stringMatching(/earlier submission denied line 97140.*draft being corrected/) });
+  });
+
+  it('gives a denied line with no CARC a readable reason', () => {
+    expect(denialReasonForLine({ claimStatusCode: '4', adjustmentReasonCodes: [] })).toMatch(/835 claim status 4, no adjustment reason code/);
+  });
+});
+
+describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
+  const LINE = { ...DENIED_LINE, claimId: 73, status: 'matched', denialAppliedAt: null };
+
+  it('stamps denialAppliedAt and clears denialError when nothing is left to retry', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
+    const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
+    expect(result.applied).toBe(true);
+    expect(lineUpdates).toHaveLength(1);
+    expect(lineUpdates[0].denialAppliedAt).toBeInstanceOf(Date);
+    expect(lineUpdates[0].denialError).toBeNull();
+  });
+
+  it('records the error and leaves denialAppliedAt null when the pipeline failed (money untouched)', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
+    pipelineMock.mockRejectedValueOnce(new Error('AI generator unavailable'));
+    const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
+    expect(result.applied).toBe(false);
+    expect(lineUpdates[0]).toEqual({ denialAppliedAt: null, denialError: 'AI generator unavailable' });
+    // The claim did get its denial; only the downstream step is pending.
+    expect(storageStub.updateClaim).toHaveBeenCalledWith(73, expect.objectContaining({ status: 'denied' }));
+  });
+
+  it('turns a thrown error into a recorded denialError instead of propagating it', async () => {
+    storageStub.getClaim.mockRejectedValueOnce(new Error('storage down'));
+    const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
+    expect(result.applied).toBe(false);
+    expect(result.pipeline.error).toBe('storage down');
+    expect(lineUpdates[0]).toMatchObject({ denialAppliedAt: null, denialError: 'storage down' });
+  });
+
+  it('a claim that cannot be found stays pending with the reason recorded', async () => {
+    storageStub.getClaim.mockResolvedValue(null);
+    const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
+    expect(result).toMatchObject({ applied: false, skippedReason: 'claim_not_found' });
+    expect(lineUpdates[0]).toMatchObject({ denialAppliedAt: null, denialError: 'claim_not_found' });
+  });
+
+  it('a failed outcome-marker write is reported as a persistence error, not as applied (#497 review)', async () => {
+    storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
+    (lineUpdates as any).failNext = true;
+    const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
+    // The claim is denied and the pipeline ran…
+    expect(storageStub.updateClaim).toHaveBeenCalledWith(73, expect.objectContaining({ status: 'denied' }));
+    expect(pipelineMock).toHaveBeenCalledWith(73);
+    // …but the line does not say so, so the caller must retry (a no-op on the claim).
+    expect(result.applied).toBe(false);
+    expect(result.persistenceError).toMatch(/could not be recorded on the remittance line .*db down/);
+    expect(result.pipeline.error).toMatch(/could not be recorded/);
+    expect(lineUpdates).toHaveLength(0);
+  });
+});
+
+describe('posting confirmed / denial pending / needs review (in-flow markers only, nothing inferred)', () => {
+  const posted = { status: 'matched', claimId: 73, claimStatusCode: '4', autoPostedAt: new Date(), denialAppliedAt: null, denialError: DENIAL_PENDING_MARKER };
+  it('pending = posting confirmed by the flow + denied + marker present + not applied', () => {
+    expect(isPostingConfirmed(posted)).toBe(true);
+    expect(isDenialPending(posted)).toBe(true);
+    expect(isDenialPending({ ...posted, denialError: 'AI generator unavailable' })).toBe(true); // a failed step keeps the marker's place
+    expect(isDenialPending({ ...posted, denialAppliedAt: new Date() })).toBe(false);
+    expect(isDenialPending({ ...posted, claimStatusCode: '1' })).toBe(false);
+    expect(isLineNeedingReview(posted)).toBe(false);
+  });
+  it('a matched line with no confirmed posting needs review, whatever matchType or amounts say', () => {
+    const failedManual = { ...posted, autoPostedAt: null, denialError: null, matchType: 'manual' };
+    expect(isPostingConfirmed(failedManual)).toBe(false);
+    expect(isDenialPending(failedManual)).toBe(false);
+    expect(isLineNeedingReview(failedManual)).toBe(true);
+    expect(isLineNeedingReview({ ...failedManual, matchType: null, claimStatusCode: '1' })).toBe(true); // legacy fused-path row
+  });
+  it('a line carrying only the pre-payment autoPostedAt (no post-success marker) is NOT confirmed: review, never a retry', () => {
+    // The auto path writes autoPostedAt BEFORE postPayment as a re-post
+    // guard; a crash before the payment, or a failed rollback after a failed
+    // payment, leaves exactly this state with no money behind it.
+    const prePaymentOnly = { ...posted, denialError: null };
+    expect(isPostingConfirmed(prePaymentOnly)).toBe(false);
+    expect(isDenialPending(prePaymentOnly)).toBe(false);
+    expect(isLineNeedingReview(prePaymentOnly)).toBe(true);
+    expect(isLineNeedingReview({ ...prePaymentOnly, claimStatusCode: '1' })).toBe(true); // non-denied too
+    // The post-success markers are the proof.
+    expect(isPostingConfirmed({ ...prePaymentOnly, claimStatusCode: '1', denialError: POSTING_CONFIRMED_MARKER })).toBe(true);
+    expect(isPostingConfirmed({ ...prePaymentOnly, denialError: null, denialAppliedAt: new Date() })).toBe(true);
+  });
+  it('unmatched lines are none of these', () => {
+    const unmatched = { ...posted, status: 'unmatched', claimId: null };
+    expect(isPostingConfirmed(unmatched)).toBe(false);
+    expect(isDenialPending(unmatched)).toBe(false);
+    expect(isLineNeedingReview(unmatched)).toBe(false);
+  });
+});

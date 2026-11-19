@@ -127,6 +127,8 @@ export async function ingestRemittance(
       // auto-matcher links on. Optional: older callers may not supply them.
       claimReference: (item as any).claimReference ?? null,
       payerClaimId: (item as any).payerClaimId ?? null,
+      // CLP02: '4' marks the line a denial (eraDenialService).
+      claimStatusCode: (item as any).claimStatusCode ?? null,
       serviceDate: item.serviceDate,
       cptCode: item.cptCode,
       chargedAmount: item.chargedAmount != null ? String(item.chargedAmount) : null,

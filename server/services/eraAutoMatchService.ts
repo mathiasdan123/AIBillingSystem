@@ -45,6 +45,16 @@ import {
 } from '@shared/schema';
 import { eq, and, desc, sql, ilike, lte } from 'drizzle-orm';
 import { postPayment } from './paymentPostingService';
+import {
+  applyRemittanceDenialToLine,
+  DENIAL_PENDING_MARKER,
+  isDeniedRemittanceLine,
+  isDenialPending,
+  isLineNeedingReview,
+  isPostingConfirmed,
+  POSTING_CONFIRMED_MARKER,
+  postingReasonFields,
+} from './eraDenialService';
 import { ensureUnderpaymentFollowUp } from './underpaymentPipelineService';
 import { scoreClaimAgainstRemittanceLine, isAutoMatch } from './eraMatchScoring';
 import { decryptRemittanceLineItem, decryptField } from './phiEncryptionService';
@@ -102,6 +112,65 @@ export interface AutoMatchResult {
    * clean success.
    */
   postingFailures: Array<{ claimId: number; lineItemId: number }>;
+  /** Denied (CLP02 4) lines whose claim was marked denied / pipeline completed on this run. */
+  denialsApplied: number;
+  /**
+   * Posted denied lines whose denial could not be applied (claim status,
+   * appeal draft or follow-up). The money IS recorded; the denial stays
+   * pending on the line (Retry denial button / Auto-Match retries it).
+   */
+  denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
+  /**
+   * Matched lines this flow cannot vouch for (no confirmed posting, or a
+   * denial posted before the denial step existed). Never applied or
+   * retried; the biller reconciles first.
+   */
+  linesNeedingReview: Array<{ claimId: number; lineItemId: number }>;
+}
+
+export interface PendingDenialResult {
+  denialsApplied: number;
+  denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
+  linesNeedingReview: Array<{ claimId: number; lineItemId: number }>;
+}
+
+/**
+ * Re-run the denial step on every line carrying the "denial pending"
+ * marker (written right after that line's own postPayment succeeded):
+ * claim status + CARC reason + appeal draft + follow-up. Never posts money
+ * and never infers payment: a denied line without the marker is reported
+ * as needing manual review.
+ */
+export async function retryPendingDenials(
+  practiceId: number,
+  remittance: { id: number; payerName: string | null; checkNumber: string | null },
+  lineItems: any[],
+  postedBy: string | null,
+): Promise<PendingDenialResult> {
+  const result: PendingDenialResult = { denialsApplied: 0, denialFailures: [], linesNeedingReview: [] };
+  for (const lineItem of lineItems) {
+    if (isLineNeedingReview(lineItem)) {
+      result.linesNeedingReview.push({ claimId: lineItem.claimId, lineItemId: lineItem.id });
+      continue;
+    }
+    if (!isDenialPending(lineItem)) continue;
+    const outcome = await applyRemittanceDenialToLine(practiceId, lineItem, {
+      remittanceId: remittance.id,
+      payerName: remittance.payerName,
+      checkNumber: remittance.checkNumber ?? null,
+      postedBy,
+    });
+    if (outcome.applied) {
+      result.denialsApplied++;
+      lineItem.denialAppliedAt = new Date();
+      lineItem.denialError = null;
+    } else {
+      const error = outcome.pipeline.error ?? outcome.skippedReason ?? 'denial not applied';
+      lineItem.denialError = error;
+      result.denialFailures.push({ claimId: lineItem.claimId, lineItemId: lineItem.id, error });
+    }
+  }
+  return result;
 }
 
 interface ClaimCandidate {
@@ -553,6 +622,8 @@ export async function autoMatchRemittance(
     // failure. If the rollback itself fails, the failure is still visible in
     // postingFailures/logs — biasing toward "posting missed and flagged"
     // over "posting recorded twice", which inflates collections and the fee.
+    // This pre-payment timestamp is a re-post guard only, never proof the
+    // payment went through: the post-success marker below is.
     await db
       .update(remittanceLineItems)
       .set({ autoPostedAt: new Date() })
@@ -581,9 +652,38 @@ export async function autoMatchRemittance(
           parseFloat(String((lineItem as any).patientResponsibility ?? '0')).toFixed(2),
         ),
         allowedAmount: lineItem.allowedAmount != null ? String(lineItem.allowedAmount) : null,
+        // CARC / RARC on the posting (adjustmentReason / remarkCode were
+        // never filled by the ERA path, so the Payments tab showed a bare
+        // write-off with no reason).
+        ...postingReasonFields(lineItem),
         postedBy,
       } as any);
       posted++;
+      lineItem.autoPostedAt = lineItem.autoPostedAt ?? new Date();
+      // postPayment returned for THIS line: that is the proof of payment.
+      // Write the durable post-success marker now, in the same flow: the
+      // "denial pending" marker for a denied line (the step below and any
+      // retry act only on it), the posting-confirmed marker otherwise. A
+      // marker proves this historical post succeeded, not that the payment
+      // is still unreversed; the reversal path does not clear it.
+      if (lineItem.denialAppliedAt == null) {
+        const marker = isDeniedRemittanceLine(lineItem) ? DENIAL_PENDING_MARKER : POSTING_CONFIRMED_MARKER;
+        try {
+          await db
+            .update(remittanceLineItems)
+            .set({ denialError: marker, denialAppliedAt: null })
+            .where(eq(remittanceLineItems.id, lineItem.id));
+          lineItem.denialError = marker;
+        } catch (markError) {
+          // The payment is recorded; without the marker the line shows
+          // "needs manual review" rather than being guessed at.
+          logger.error('ERA auto-match: posting recorded but the post-success marker could not be written', {
+            lineItemId: lineItem.id,
+            remittanceId: remittance.id,
+            error: markError instanceof Error ? markError.message : String(markError),
+          });
+        }
+      }
     } catch (postError) {
       // A failed posting must be visible, not swallowed — the claim would
       // otherwise show matched with no money behind it.
@@ -608,10 +708,22 @@ export async function autoMatchRemittance(
     }
   }
 
+  // Denied lines (CLP02 4) whose payment is recorded but whose denial is not
+  // yet applied to the claim: the ones posted just now AND any left pending
+  // by an earlier run or by the manual match route whose denial step
+  // failed. The posting is never repeated here — only the denial: claim
+  // status + CARC reason + appeal draft + follow-up. Each line records its
+  // own outcome (denialAppliedAt / denialError), so a failure is visible
+  // (Denial pending badge) and retried instead of being lost.
+  const denialOutcome = await retryPendingDenials(practiceId, remittance as any, lineItems, postedBy);
+  const { denialsApplied, denialFailures, linesNeedingReview } = denialOutcome;
+  const pendingBefore = denialsApplied + denialFailures.length;
+
   // Update remittance status. 'processed' means done: every line is matched
-  // AND every auto-matched line has its payment recorded. A remittance with
-  // matched-but-unposted lines stays 'pending' so the Auto-Match button
-  // remains available to post them.
+  // AND every line has its payment recorded AND no posted denial is still
+  // waiting to reach its claim. Anything short of that stays 'pending' so
+  // the Auto-Match button (and the line's Retry denial button) remains
+  // available.
   const allItems = await db
     .select()
     .from(remittanceLineItems)
@@ -619,25 +731,30 @@ export async function autoMatchRemittance(
 
   const allMatched =
     allItems.length > 0 && allItems.every((item: any) => item.status === 'matched');
-  const allAutoPosted = allItems.every(
-    (item: any) =>
-      item.matchType == null || item.matchType === 'manual' || item.autoPostedAt != null,
-  );
+  // Every line must carry a posting confirmed by this flow (a failed manual
+  // post leaves a matched line with no money and no marker), and no denied
+  // line may still be pending or in need of review.
+  const allConfirmed = allItems.every((item: any) => isPostingConfirmed(item));
+  const noDenialWaiting = !allItems.some((item: any) => isDenialPending(item) || isLineNeedingReview(item));
+  const processed = allMatched && allConfirmed && noDenialWaiting;
 
   await db
     .update(remittanceAdvice)
     .set({
-      status: allMatched && allAutoPosted ? 'processed' : 'pending',
-      processedAt: allMatched && allAutoPosted ? new Date() : undefined,
+      status: processed ? 'processed' : 'pending',
+      processedAt: processed ? new Date() : undefined,
     })
     .where(eq(remittanceAdvice.id, remittanceId));
 
   return {
     matched: matchOutcome.linked,
     posted,
-    total: matchOutcome.total + carriedForward,
+    total: matchOutcome.total + carriedForward + pendingBefore,
     needsReview: matchOutcome.needsReview,
     results: matchOutcome.results,
     postingFailures,
+    denialsApplied,
+    denialFailures,
+    linesNeedingReview,
   };
 }

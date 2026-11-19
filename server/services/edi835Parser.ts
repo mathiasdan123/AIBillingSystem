@@ -480,6 +480,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
   claimReference: string | null;
   /** CLP07 payer claim control number. */
   payerClaimId: string | null;
+  /** CLP02 claim status: 1/2/3 processed, 4 denied, 22 reversal. */
+  claimStatusCode: string | null;
   serviceDate: string | null;
   cptCode: string | null;
   chargedAmount: number;
@@ -505,6 +507,7 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
     memberId: string | null;
     claimReference: string | null;
     payerClaimId: string | null;
+    claimStatusCode: string | null;
     serviceDate: string | null;
     cptCode: string | null;
     chargedAmount: number;
@@ -540,6 +543,7 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
           memberId: claim.memberId || null,
           claimReference: claim.patientControlNumber || null,
           payerClaimId: claim.payerClaimControlNumber || null,
+          claimStatusCode: claim.claimStatusCode || null,
           serviceDate: svc.serviceDate || null,
           cptCode: svc.procedureCode || null,
           chargedAmount: svc.chargedAmount,
@@ -572,6 +576,7 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
         memberId: claim.memberId || null,
         claimReference: claim.patientControlNumber || null,
         payerClaimId: claim.payerClaimControlNumber || null,
+        claimStatusCode: claim.claimStatusCode || null,
         serviceDate: null,
         cptCode: null,
         chargedAmount: claim.chargedAmount,

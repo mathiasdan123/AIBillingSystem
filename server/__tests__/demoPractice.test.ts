@@ -70,6 +70,7 @@ import {
   repairDemoSeededClaimDates,
   ensureDemoBillingIdentity,
   DEMO_BILLING_IDENTITY,
+  repairDemoPostingMarkers,
 } from '../services/demoPractice';
 import { decryptRemittanceLineItem } from '../services/phiEncryptionService';
 import { zonedAddDays, zonedDateString } from '../utils/timezone';
@@ -496,6 +497,9 @@ describe('ensureDemoPaymentRecords (QA demo pass 2026-11-19, item 1)', () => {
     expect(Number(paid) + Number(patientResp) + Number(contractual)).toBeCloseTo(Number(charged), 2);
     expect(JSON.parse(reasonCodes).map((r: any) => r.code)).toEqual(['CO-45', 'PR-3']);
     expect(line.sql).toMatch(/'matched', \$14, 'claim_number'/);
+    // Post-success marker (#497): the backfill writes the posting in the same transaction, so the line is confirmed.
+    expect(line.sql).toMatch(/denial_error\)/);
+    expect(line.params[15]).toBe('posted: payment recorded');
 
     const posting = calls.find((c) => /INSERT INTO payment_postings/.test(c.sql))!;
     expect(posting.params).toEqual([
@@ -959,5 +963,25 @@ describe('ensureDemoBillingIdentity (post-merge demo retest of #493–#496: scru
     expect(DEMO_BILLING_IDENTITY.taxId).toMatch(/^00-0000000$/); // an EIN prefix of 00 is never issued
     expect(DEMO_BILLING_IDENTITY.address).toBe('123 Demo Way, Springfield, NJ 07000');
     expect(DEMO_BILLING_IDENTITY.billingContactPhone).toMatch(/555/);
+  });
+});
+
+describe('repairDemoPostingMarkers (#497: seeded ERA lines predate the post-success marker)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  it("stamps only the demo practice's DEMO-CHK, matched, auto-posted, non-denied, unmarked lines", async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 3 });
+    expect(await repairDemoPostingMarkers(99)).toBe(3);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/UPDATE remittance_line_items l/);
+    expect(sql).toMatch(/r\.practice_id = \$1/);
+    expect(sql).toMatch(/r\.check_number LIKE 'DEMO-CHK-%'/);
+    expect(sql).toMatch(/l\.auto_posted_at IS NOT NULL/);
+    expect(sql).toMatch(/l\.denial_error IS NULL/);
+    expect(sql).toMatch(/l\.claim_status_code <> '4'/);
+    expect(params).toEqual([99, 'posted: payment recorded']);
+  });
+  it('never blocks a login on an error', async () => {
+    mockPool.query.mockRejectedValueOnce(new Error('boom'));
+    expect(await repairDemoPostingMarkers(99)).toBe(0);
   });
 });

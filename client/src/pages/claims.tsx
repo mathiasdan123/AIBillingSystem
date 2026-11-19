@@ -332,7 +332,7 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
     <Tabs defaultValue="billing" className="w-full">
       <TabsList className="grid w-full grid-cols-4">
         <TabsTrigger value="billing">Billing</TabsTrigger>
-        <TabsTrigger value="payments">Payments</TabsTrigger>
+        <TabsTrigger value="payments" data-testid="tab-payments">Payments</TabsTrigger>
         <TabsTrigger value="status" data-testid="tab-status">Status</TabsTrigger>
         <TabsTrigger value="appeals" data-testid="tab-appeals">Appeals</TabsTrigger>
       </TabsList>
@@ -843,16 +843,23 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
           )}
         </div>
 
-        {/* Adjustment Summary */}
+        {/* Adjustment Summary. A denied claim's adjustment is the denied
+            charge, recoverable by appeal or correction — not a contractual
+            write-off, so the write-off % is not shown for it. */}
         {totalAdjustment > 0 && (
           <div className="border-t pt-4">
             <Label className="text-slate-700 font-semibold text-sm mb-2 block">Adjustment Summary</Label>
-            <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-sm">
+            <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-sm" data-testid="adjustment-summary">
               <div className="flex justify-between">
                 <span>Total Adjustments:</span>
                 <span className="font-medium text-orange-700">${totalAdjustment.toFixed(2)}</span>
               </div>
-              {billed > 0 && (
+              {(claim.status === 'denied' || claim.status === 'appeal') ? (
+                <p className="mt-1 text-xs text-orange-800" data-testid="adjustment-denied-note">
+                  Denied by the payer{claim.denialReason ? ` — ${claim.denialReason}` : ''}. This is not a contractual
+                  write-off: the amount can be recovered by appeal or by correcting and resubmitting.
+                </p>
+              ) : billed > 0 && (
                 <div className="flex justify-between mt-1">
                   <span>Write-off %:</span>
                   <span className="font-medium">{((totalAdjustment / billed) * 100).toFixed(1)}%</span>

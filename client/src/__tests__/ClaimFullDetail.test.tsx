@@ -281,3 +281,53 @@ describe('ClaimFullDetail status timeline', () => {
     expect(await screen.findByText('CO-4: modifier inconsistent')).toBeInTheDocument();
   });
 });
+
+/**
+ * Payments tab on a denied claim (demo billing test 2026-11-19, item 5): a
+ * $0 ERA denial with CAS CO-197 $100 showed "Adjustment: $100" and
+ * "Write-off %: 100.0%" with no reason. The posting now carries the CARC,
+ * and a denied claim's adjustment is labelled as a denial, not a write-off.
+ */
+describe('ClaimFullDetail payments tab — denial vs write-off', () => {
+  afterEach(() => { liveClaim = { ...SNAPSHOT, totalAmount: '200.00' }; vi.clearAllMocks(); });
+
+  const postings = (over: any = {}) => [{
+    id: 9, paymentAmount: '0.00', adjustmentAmount: '100.00', patientResponsibility: '0.00', paymentDate: '2026-11-18',
+    payerName: 'Aetna QA Synthetic', checkNumber: 'QA-SYN-1', source: 'era', reversed: false,
+    adjustmentReason: 'CO-197: Contractual Obligations: Precertification/authorization/notification absent',
+    remarkCode: null, ...over,
+  }];
+
+  function setup(status: string, denialReason: string | null, rows: any[]) {
+    liveClaim = { ...SNAPSHOT, status, denialReason, totalAmount: '100.00', paidAmount: '0.00' };
+    mockApiRequest.mockImplementation(async (_m: string, url: string) => {
+      if (url === '/api/claims/5') return jsonResponse(liveClaim);
+      if (url.startsWith('/api/payment-postings')) return jsonResponse(rows);
+      return jsonResponse([]);
+    });
+    renderDetail({ status, denialReason, totalAmount: '100.00' });
+    clickTab('tab-payments');
+  }
+
+  it('a denied claim shows the CARC on the posting and a denial note instead of a write-off %', async () => {
+    setup('denied', 'CO-197: Contractual Obligations: Precertification/authorization/notification absent', postings());
+
+    const summary = await screen.findByTestId('adjustment-summary');
+    expect(summary).toHaveTextContent('$100.00');
+    expect(summary).not.toHaveTextContent('Write-off %');
+    expect(screen.getByTestId('adjustment-denied-note')).toHaveTextContent(/Denied by the payer — CO-197/);
+    expect(screen.getByTestId('adjustment-denied-note')).toHaveTextContent(/not a contractual write-off/);
+    expect(screen.getByText(/Reason:/).parentElement).toHaveTextContent('CO-197: Contractual Obligations: Precertification/authorization/notification absent');
+  });
+
+  it('a paid claim with a contractual adjustment keeps the write-off %', async () => {
+    setup('paid', null, postings({ paymentAmount: '160.00', adjustmentAmount: '90.00', adjustmentReason: 'CO-45: Contractual Obligations: Charge exceeds fee schedule/maximum allowable/contracted/legislated amount; PR-2: Patient Responsibility: Coinsurance amount' }));
+
+    const summary = await screen.findByTestId('adjustment-summary');
+    expect(summary).toHaveTextContent('Write-off %');
+    expect(summary).toHaveTextContent('90.0%');
+    expect(screen.queryByTestId('adjustment-denied-note')).toBeNull();
+    expect(screen.getByText(/Reason:/).parentElement).toHaveTextContent('CO-45');
+  });
+});
+
