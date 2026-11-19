@@ -20,6 +20,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Real PostgreSQL for the demo-provisioning integration test below. The
+    # demo payment backfill (#483) selected a column the claims table does not
+    # have; its unit tests mock pg, so production found out (2026-11-19).
+    # Starting the container adds ~15-20s to the job.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: demo_provision
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,6 +77,20 @@ jobs:
       # client suite has its own config and never ran in CI before this step.
       - name: Run client tests
         run: npm run test:client
+
+      # Provision the demo practice through the "Try Free Demo" path
+      # (ensureDemoPractice: create, seed, the seeded-practice repairs and the
+      # payment backfill) against the Postgres service, with the schema
+      # generated from shared/schema.ts, and assert the remittance, posting,
+      # copay and payer-link rows exist. The suite self-skips without this
+      # variable, so `npm test` above never needs a database.
+      - name: Demo provisioning against real Postgres
+        env:
+          DEMO_PROVISION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/demo_provision
+          PHI_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          SESSION_SECRET: ci-demo-provision-session-secret-not-a-real-secret
+          TIMEZONE: America/New_York
+        run: npm run test:demo-provision
 
       # End-to-end claims flow against Stedi TEST MODE (real network, fake
       # payer). Submits a claim to the Stedi Test Payer and asserts acceptance.
