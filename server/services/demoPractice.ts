@@ -171,6 +171,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
       const therapistId = await ensureDemoTherapist(existing.id);
       await repairDemoSeededAppointments(existing.id, therapistId);
       await repairDemoSeededClaimDates(existing.id);
+      await ensureDemoClaimPayers(existing.id);
       await ensureDemoPaymentRecords(existing.id);
       return existing;
     }
@@ -216,6 +217,7 @@ export async function ensureDemoPractice(): Promise<Practice> {
     const therapistId = await ensureDemoTherapist(practice.id);
     await repairDemoSeededAppointments(practice.id, therapistId);
     await repairDemoSeededClaimDates(practice.id);
+    await ensureDemoClaimPayers(practice.id);
     await ensureDemoPaymentRecords(practice.id);
     return practice;
   } finally {
@@ -502,6 +504,83 @@ async function seedDemoData(practiceId: number): Promise<void> {
       denialReason: c.status === 'denied' ? 'CO-197: Precertification/authorization absent' : null,
     } as any);
   }
+}
+
+/**
+ * Payer catalog rows the seeded demo payers map to. The insurances table is
+ * a global catalog (Medicare, Aetna, Cigna, UnitedHealth, Blue Cross Blue
+ * Shield, ... plus whatever practices add), while the seed names realistic
+ * plans on the patient chart. A claim with no insuranceId showed its payer
+ * as "Unknown" in the claims list and detail (QA demo pass 2026-11-19,
+ * DEMO-2-1006), and the denial risk analysis had no claim payer to reason
+ * about. Exact match first, then a prefix match either way, so
+ * "UnitedHealthcare" finds the catalog's "UnitedHealth" and "Horizon BCBS
+ * of New Jersey" falls back to the generic Blue Cross Blue Shield row.
+ */
+const DEMO_PAYER_ALIASES: Record<string, string[]> = {
+  'unitedhealthcare': ['unitedhealthcare', 'unitedhealth', 'united healthcare', 'uhc'],
+  'horizon bcbs of new jersey': [
+    'horizon bcbs of new jersey',
+    'horizon blue cross blue shield of new jersey',
+    'horizon bcbs',
+    'blue cross blue shield',
+    'bcbs',
+  ],
+};
+
+export function matchDemoPayer(
+  payerName: string | null | undefined,
+  catalog: Array<{ id: number; name: string | null }>,
+): number | null {
+  const key = (payerName ?? '').trim().toLowerCase();
+  if (!key) return null;
+  const aliases = DEMO_PAYER_ALIASES[key] ?? [key];
+  const names = catalog.map((i) => ({ id: i.id, name: (i.name ?? '').trim().toLowerCase() })).filter((i) => i.name);
+  // Most specific alias first; for each, an exact name beats a prefix match.
+  for (const alias of aliases) {
+    const exact = names.find((i) => i.name === alias);
+    if (exact) return exact.id;
+    const partial = names.find((i) => i.name.startsWith(alias) || alias.startsWith(i.name));
+    if (partial) return partial.id;
+  }
+  return null;
+}
+
+/**
+ * Link every DEMO-* claim that has no payer to the catalog row matching its
+ * patient's chart plan. Runs on every demo login; a no-op once linked.
+ * Never blocks a demo login.
+ */
+export async function ensureDemoClaimPayers(practiceId: number): Promise<number> {
+  let linked = 0;
+  try {
+    const claims = await storage.getClaims(practiceId);
+    const pending = (claims ?? []).filter((c: any) => !c.insuranceId && String(c.claimNumber ?? '').startsWith('DEMO-'));
+    if (pending.length === 0) return 0;
+    const catalog = await storage.getInsurances();
+    const payerByPatient = new Map<number, number | null>();
+    for (const claim of pending) {
+      let insuranceId = payerByPatient.get(claim.patientId);
+      if (insuranceId === undefined) {
+        const patient = await storage.getPatient(claim.patientId);
+        insuranceId =
+          patient && patient.practiceId === practiceId
+            ? matchDemoPayer((patient as any).insuranceProvider, catalog as any)
+            : null;
+        payerByPatient.set(claim.patientId, insuranceId);
+      }
+      if (!insuranceId) continue;
+      await storage.updateClaim(claim.id, { insuranceId } as any);
+      linked++;
+    }
+    if (linked) logger.info('Demo claims linked to payer catalog rows', { practiceId, linked });
+  } catch (error) {
+    logger.warn('Could not link demo claims to payers', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return linked;
 }
 
 /**

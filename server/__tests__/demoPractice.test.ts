@@ -17,6 +17,9 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       getAppointments: vi.fn(),
       updateAppointment: vi.fn(),
       getPatient: vi.fn(),
+      getClaims: vi.fn(async () => []),
+      getInsurances: vi.fn(async () => []),
+      updateClaim: vi.fn(),
     },
     mockClient,
     // pool.query is the un-pooled path used by normalizeDemoRates and
@@ -43,6 +46,8 @@ import {
   DEMO_PATIENT_RESPONSIBILITY,
   demoEraFileHash,
   ensureDemoPaymentRecords,
+  ensureDemoClaimPayers,
+  matchDemoPayer,
   isProcessZoneSeedTime,
   repairDemoSeededAppointments,
   repairDemoSeededClaimDates,
@@ -490,5 +495,50 @@ describe('ensureDemoPaymentRecords (QA demo pass 2026-11-19, item 1)', () => {
     mockStorage.getPatient.mockResolvedValue({ id: 102, practiceId: 1, firstName: 'Real', lastName: 'Person' });
     expect(await ensureDemoPaymentRecords(99)).toBe(0);
     expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+});
+
+describe('demo claim payers (QA demo pass 2026-11-19, item 8: DEMO-2-1006 payer "Unknown")', () => {
+  const catalog = [
+    { id: 1, name: 'Medicare' }, { id: 4, name: 'Aetna' }, { id: 5, name: 'Cigna' },
+    { id: 6, name: 'UnitedHealth' }, { id: 3, name: 'Blue Cross Blue Shield' },
+  ];
+
+  it('maps the seeded chart plans to catalog rows, exact first, then by prefix, then by alias', () => {
+    expect(matchDemoPayer('Aetna', catalog)).toBe(4);
+    expect(matchDemoPayer('UnitedHealthcare', catalog)).toBe(6);
+    expect(matchDemoPayer('Horizon BCBS of New Jersey', catalog)).toBe(3);
+    expect(matchDemoPayer('Horizon BCBS of New Jersey', [...catalog, { id: 9, name: 'Horizon BCBS of NJ' }])).toBe(9);
+    expect(matchDemoPayer('Some Unknown Plan', catalog)).toBeNull();
+    expect(matchDemoPayer(null, catalog)).toBeNull();
+  });
+
+  it('links DEMO-* claims without a payer to their patient plan, once per patient, and leaves others alone', async () => {
+    vi.clearAllMocks();
+    mockStorage.getClaims.mockResolvedValue([
+      { id: 1, claimNumber: 'DEMO-99-1000', patientId: 100, insuranceId: null },
+      { id: 2, claimNumber: 'DEMO-99-1001', patientId: 100, insuranceId: null },
+      { id: 3, claimNumber: 'DEMO-99-1002', patientId: 101, insuranceId: 4 },
+      { id: 4, claimNumber: 'CLM-7', patientId: 102, insuranceId: null },
+      { id: 5, claimNumber: 'DEMO-99-1003', patientId: 103, insuranceId: null },
+    ]);
+    mockStorage.getInsurances.mockResolvedValue(catalog);
+    mockStorage.getPatient.mockImplementation(async (id: number) =>
+      id === 100 ? { id, practiceId: 99, insuranceProvider: 'UnitedHealthcare' }
+      : id === 103 ? { id, practiceId: 1, insuranceProvider: 'Aetna' }
+      : undefined,
+    );
+    expect(await ensureDemoClaimPayers(99)).toBe(2);
+    expect(mockStorage.updateClaim).toHaveBeenCalledTimes(2);
+    expect(mockStorage.updateClaim).toHaveBeenCalledWith(1, { insuranceId: 6 });
+    expect(mockStorage.updateClaim).toHaveBeenCalledWith(2, { insuranceId: 6 });
+    expect(mockStorage.getPatient).toHaveBeenCalledTimes(2); // 100 once, 103 once
+  });
+
+  it('is a no-op (and does not load the catalog) when every demo claim has a payer', async () => {
+    vi.clearAllMocks();
+    mockStorage.getClaims.mockResolvedValue([{ id: 1, claimNumber: 'DEMO-99-1000', patientId: 100, insuranceId: 4 }]);
+    expect(await ensureDemoClaimPayers(99)).toBe(0);
+    expect(mockStorage.getInsurances).not.toHaveBeenCalled();
   });
 });
