@@ -51,6 +51,7 @@ export const storage = {
   getUser: userFns.getUser,
   upsertUser: userFns.upsertUser,
   getAllUsers: userFns.getAllUsers,
+  getUsersByPractice: userFns.getUsersByPractice,
   updateUserRole: userFns.updateUserRole,
   getUserByEmail: userFns.getUserByEmail,
   createUserWithPassword: userFns.createUserWithPassword,
