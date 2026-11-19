@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { storage } from '../../storage';
 import { predictDenial } from '../../services/aiDenialPredictor';
+import { buildPredictDenialClaimInput } from '../../services/claimDenialInputs';
 import { reviewDeniedClaims, suggestClaimCorrection } from '../../services/denialReviewService';
 import { reviewUnderpayments, draftUnderpaymentDispute } from '../../services/underpaymentReviewService';
 import { assessComplianceRisk } from '../../services/complianceRiskService';
@@ -40,7 +41,7 @@ export function registerDenialTools(
       }
 
       return predictDenial(
-        claim as any,
+        await buildPredictDenialClaimInput(claim as any),
         lineItems as any[],
         soapNote,
         patient as any,
