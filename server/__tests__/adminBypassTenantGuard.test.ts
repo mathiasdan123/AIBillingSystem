@@ -62,7 +62,9 @@ describe('appointments.ts — self-pay-invoice tenant guard', () => {
   it('denies a plain admin self-pay-invoicing another practice\'s appointment', async () => {
     mockStorage.getAppointment.mockResolvedValue({ id: 99, practiceId: 1, patientId: 5 });
     const res = await request(buildApp()).post('/api/appointments/99/self-pay-invoice');
-    expect(res.status).toBe(403);
+    // The router-level /:id guard now applies to practice admins too and
+    // answers 404 before this handler's own 403 check is reached.
+    expect(res.status).toBe(404);
     expect(mockStorage.getPatient).not.toHaveBeenCalled();
   });
 
