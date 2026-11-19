@@ -36,6 +36,30 @@ export function isAiConfigured(): boolean {
 }
 
 /**
+ * Production startup check: AI_PROVIDER must be exactly 'bedrock'. Throws
+ * when NODE_ENV is 'production' and the variable is anything else (unset
+ * included), so a misconfigured task fails at startup rather than running
+ * with a different provider. Outside production it is a no-op, and so is the
+ * demo deployment, which runs the production build without a
+ * PHI_ENCRYPTION_KEY (the same exemption the other production startup checks
+ * in server/index.ts use).
+ */
+/** The hosted demo deployment: RENDER set and no real PHI_ENCRYPTION_KEY (mirrors isDemoMode in server/index.ts). */
+export function isDemoDeployment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!env.RENDER && !env.PHI_ENCRYPTION_KEY;
+}
+
+export function assertProductionAiProvider(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.NODE_ENV !== 'production') return;
+  if (isDemoDeployment(env)) return;
+  if (env.AI_PROVIDER === 'bedrock') return;
+  throw new Error(
+    `AI_PROVIDER must be exactly "bedrock" in production (got ${env.AI_PROVIDER === undefined ? 'unset' : JSON.stringify(env.AI_PROVIDER)}). ` +
+      'Set AI_PROVIDER=bedrock on the task definition.',
+  );
+}
+
+/**
  * First-party model ID → Bedrock cross-region inference-profile ID
  * (us.anthropic.*), which is what bedrock-runtime requires for
  * current-generation Claude models. Verified live against this account.

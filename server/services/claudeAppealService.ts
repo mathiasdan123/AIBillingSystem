@@ -639,9 +639,10 @@ export async function generateClaudeAppeal(
 }
 
 /**
- * Check if Claude appeal service is available (API key configured)
+ * Whether Claude-drafted appeals are available: the provider-aware check
+ * (Bedrock via the task role, or a direct-API key). Testing for the API key
+ * alone made every appeal fall back to the template generator on Bedrock.
  */
 export function isClaudeAppealAvailable(): boolean {
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  return !!apiKey;
+  return isAiConfigured();
 }
