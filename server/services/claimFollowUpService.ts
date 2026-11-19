@@ -205,18 +205,30 @@ export async function getFollowUps(
     .orderBy(desc(claimFollowUps.createdAt));
 }
 
+export interface FollowUpUpdates {
+  status?: FollowUpStatus;
+  notes?: string;
+  assignedTo?: string | null;
+  priority?: FollowUpPriority;
+  /** UTC midnight of the chosen calendar day (parseDateOnly); null clears. */
+  dueDate?: Date | null;
+  /** Hidden from the open queue until this instant; null un-snoozes. */
+  snoozedUntil?: Date | null;
+  /** Recorded when status becomes 'completed'. */
+  completedBy?: string | null;
+}
+
 /**
- * Update a follow-up (status, notes, assignment).
+ * Update a follow-up (status, notes, assignment, priority, due date, snooze).
+ *
+ * Completing an item stamps completedAt/completedBy and clears any snooze;
+ * moving it back to pending/in_progress clears both so a reopened item is a
+ * clean open item again (QA sweep 2026-11-18 work-queue actions).
  */
 export async function updateFollowUp(
   id: number,
   practiceId: number,
-  updates: {
-    status?: FollowUpStatus;
-    notes?: string;
-    assignedTo?: string | null;
-    priority?: FollowUpPriority;
-  }
+  updates: FollowUpUpdates
 ): Promise<ClaimFollowUp | undefined> {
   const updateData: Record<string, unknown> = {
     updatedAt: new Date(),
@@ -226,6 +238,11 @@ export async function updateFollowUp(
     updateData.status = updates.status;
     if (updates.status === 'completed') {
       updateData.completedAt = new Date();
+      updateData.completedBy = updates.completedBy ?? null;
+      updateData.snoozedUntil = null;
+    } else if (updates.status === 'pending' || updates.status === 'in_progress') {
+      updateData.completedAt = null;
+      updateData.completedBy = null;
     }
   }
   if (updates.notes !== undefined) {
@@ -236,6 +253,12 @@ export async function updateFollowUp(
   }
   if (updates.priority !== undefined) {
     updateData.priority = updates.priority;
+  }
+  if (updates.dueDate !== undefined) {
+    updateData.dueDate = updates.dueDate;
+  }
+  if (updates.snoozedUntil !== undefined) {
+    updateData.snoozedUntil = updates.snoozedUntil;
   }
 
   const [updated] = await db
@@ -284,6 +307,30 @@ export async function getFollowUpSummary(practiceId: number): Promise<FollowUpSu
   }
 
   return { byStatus, byPriority, total };
+}
+
+/**
+ * Mark a follow-up complete, recording who did it.
+ */
+export async function completeFollowUp(
+  id: number,
+  practiceId: number,
+  completedBy: string | null
+): Promise<ClaimFollowUp | undefined> {
+  return updateFollowUp(id, practiceId, { status: 'completed', completedBy });
+}
+
+/**
+ * Hide a follow-up from the open queue until `until` (an instant; the route
+ * resolves a calendar day to start-of-day in the practice timezone). The
+ * status is untouched so the item comes back exactly as it was.
+ */
+export async function snoozeFollowUp(
+  id: number,
+  practiceId: number,
+  until: Date | null
+): Promise<ClaimFollowUp | undefined> {
+  return updateFollowUp(id, practiceId, { snoozedUntil: until });
 }
 
 /**

@@ -10,7 +10,7 @@
 import { db } from '../db';
 import { decryptField } from './phiEncryptionService';
 import { claimFollowUps, claims, patients, appeals } from '../../shared/schema';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, or, isNull, lte, gt, gte } from 'drizzle-orm';
 import { storage } from '../storage';
 import { getFollowUpSummary } from './claimFollowUpService';
 
@@ -35,7 +35,20 @@ export interface RevenueAtRiskActionItem {
   notes: string | null;
   /** When present, a ready-to-submit appeal already exists for this claim. */
   appealId?: number;
+  status: string;
+  /** ISO instant the item is hidden until (snoozed view only), else null. */
+  snoozedUntil: string | null;
+  completedAt: string | null;
 }
+
+/**
+ * Which slice of the follow-up queue to return (QA sweep 2026-11-18):
+ *  - open:      pending/in_progress, not currently snoozed (the default)
+ *  - snoozed:   pending/in_progress with snoozedUntil in the future
+ *  - completed: status completed, most recent first (last 90 days)
+ */
+export type QueueView = 'open' | 'snoozed' | 'completed';
+export const QUEUE_VIEWS: QueueView[] = ['open', 'snoozed', 'completed'];
 
 export interface RevenueAtRiskSummary {
   atRisk: {
@@ -59,12 +72,15 @@ export interface RevenueAtRiskSummary {
   actionQueue: RevenueAtRiskActionItem[];
 }
 
-export async function getRevenueAtRiskSummary(practiceId: number): Promise<RevenueAtRiskSummary> {
+export async function getRevenueAtRiskSummary(
+  practiceId: number,
+  options: { queue?: QueueView } = {},
+): Promise<RevenueAtRiskSummary> {
   const [appealsDashboard, arAging, followUpSummary, actionQueue] = await Promise.all([
     storage.getAppealsDashboard(practiceId),
     storage.getDaysInAR(practiceId),
     getFollowUpSummary(practiceId),
-    buildActionQueue(practiceId),
+    buildActionQueue(practiceId, options.queue ?? 'open'),
   ]);
 
   // Aging dollars that are genuinely "at risk" — 61+ days unpaid.
@@ -100,7 +116,27 @@ export async function getRevenueAtRiskSummary(practiceId: number): Promise<Reven
  * claim/patient detail and (for denial appeals) the id of the ready appeal
  * the denial pipeline already drafted.
  */
-async function buildActionQueue(practiceId: number): Promise<RevenueAtRiskActionItem[]> {
+export async function buildActionQueue(
+  practiceId: number,
+  view: QueueView = 'open',
+): Promise<RevenueAtRiskActionItem[]> {
+  const now = new Date();
+  const viewCondition =
+    view === 'completed'
+      ? and(
+          eq(claimFollowUps.status, 'completed'),
+          gte(claimFollowUps.completedAt, new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)),
+        )
+      : view === 'snoozed'
+        ? and(
+            inArray(claimFollowUps.status, ['pending', 'in_progress']),
+            gt(claimFollowUps.snoozedUntil, now),
+          )
+        : and(
+            inArray(claimFollowUps.status, ['pending', 'in_progress']),
+            // A snooze that has elapsed is the same as no snooze.
+            or(isNull(claimFollowUps.snoozedUntil), lte(claimFollowUps.snoozedUntil, now)),
+          );
   const rows = await db
     .select({
       followUpId: claimFollowUps.id,
@@ -108,6 +144,9 @@ async function buildActionQueue(practiceId: number): Promise<RevenueAtRiskAction
       priority: claimFollowUps.priority,
       dueDate: claimFollowUps.dueDate,
       notes: claimFollowUps.notes,
+      status: claimFollowUps.status,
+      snoozedUntil: claimFollowUps.snoozedUntil,
+      completedAt: claimFollowUps.completedAt,
       claimId: claims.id,
       claimNumber: claims.claimNumber,
       totalAmount: claims.totalAmount,
@@ -117,12 +156,7 @@ async function buildActionQueue(practiceId: number): Promise<RevenueAtRiskAction
     .from(claimFollowUps)
     .innerJoin(claims, eq(claimFollowUps.claimId, claims.id))
     .leftJoin(patients, eq(claims.patientId, patients.id))
-    .where(
-      and(
-        eq(claimFollowUps.practiceId, practiceId),
-        inArray(claimFollowUps.status, ['pending', 'in_progress']),
-      ),
-    );
+    .where(and(eq(claimFollowUps.practiceId, practiceId), viewCondition));
 
   // Map claimId -> ready appeal id so denial-appeal items can deep-link.
   const claimIds: number[] = Array.from(new Set(rows.map((r: any) => r.claimId as number)));
@@ -159,7 +193,15 @@ async function buildActionQueue(practiceId: number): Promise<RevenueAtRiskAction
     dueDate: r.dueDate ? new Date(r.dueDate).toISOString() : null,
     notes: r.notes,
     appealId: readyAppealByClaim.get(r.claimId),
+    status: r.status,
+    snoozedUntil: r.snoozedUntil ? new Date(r.snoozedUntil).toISOString() : null,
+    completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
   }));
+
+  if (view === 'completed') {
+    items.sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''));
+    return items;
+  }
 
   items.sort((a, b) => {
     const rankDiff = (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);

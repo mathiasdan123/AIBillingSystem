@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -134,6 +135,39 @@ export default function Appeals() {
     enabled: isAuthenticated,
     retry: false,
   });
+
+  // Deep link: Revenue at Risk's "Review appeal" sends /appeals?appealId=N.
+  // Once appeals have loaded, open that appeal's drawer and scroll its card
+  // into view (QA sweep 2026-11-18: the param was ignored, so the link only
+  // landed on the board). Handled once per id so closing the drawer or
+  // opening another appeal is not undone by a re-render; the board shows
+  // every status in one of its two columns, so there is no filter to widen.
+  const search = useSearch();
+  const handledAppealIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const requested = new URLSearchParams(search).get("appealId");
+    if (!requested || !appeals || handledAppealIdRef.current === requested) return;
+    handledAppealIdRef.current = requested;
+    const appeal = appeals.find((a) => String(a.id) === requested);
+    if (!appeal) {
+      toast({
+        title: "Appeal not found",
+        description: `No appeal #${requested} in this practice.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setSelectedAppeal(appeal);
+    setEditedLetter(appeal.appealLetter || "");
+    setEditedNotes(appeal.notes || "");
+    setShowDetailSheet(true);
+    // The card is rendered on the next paint; scrolling is best-effort.
+    setTimeout(() => {
+      document
+        .querySelector(`[data-appeal-id="${appeal.id}"]`)
+        ?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    }, 0);
+  }, [search, appeals, toast]);
 
   // Create appeal mutation
   const createAppealMutation = useMutation({
@@ -533,6 +567,8 @@ export default function Appeals() {
                       key={appeal.id}
                       className={`cursor-pointer hover:shadow-md transition-shadow border ${getUrgencyColor(appeal.deadlineDate)}`}
                       onClick={() => handleOpenDetail(appeal)}
+                      data-appeal-id={appeal.id}
+                      data-testid={`appeal-card-${appeal.id}`}
                     >
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start mb-2">
@@ -604,6 +640,8 @@ export default function Appeals() {
                       appeal.status === 'partial' ? 'border-l-yellow-400' : 'border-l-red-400'
                     }`}
                     onClick={() => handleOpenDetail(appeal)}
+                    data-appeal-id={appeal.id}
+                    data-testid={`appeal-card-${appeal.id}`}
                   >
                     <CardContent className="p-4">
                       <div className="flex justify-between items-start mb-2">
