@@ -133,6 +133,39 @@ run('demo practice provisioning (real Postgres)', () => {
     ]);
   }, 120_000);
 
+  it('the demo practice carries a fake billing identity and a seeded draft passes the pre-submission scrub', async () => {
+    const { storage } = await import('../storage');
+    const practice: any = await storage.getPractice(practiceId);
+    expect(practice.npi).toBe('0000000001');
+    expect(practice.taxId).toBe('00-0000000');
+    expect(practice.address).toBe('123 Demo Way, Springfield, NJ 07000');
+    expect(practice.billingContactPhone).toBeTruthy();
+    // Stored encrypted, not as plain text.
+    const raw = (await client.query('SELECT tax_id FROM practices WHERE id = $1', [practiceId])).rows[0].tax_id;
+    expect(raw).not.toBe('00-0000000');
+    expect(JSON.parse(raw)).toHaveProperty('ciphertext');
+
+    const { scrubClaim } = await import('../services/claimScrubber');
+    const draft = (await client.query(`SELECT id FROM claims WHERE practice_id = $1 AND status = 'draft' AND claim_number LIKE 'DEMO-%' ORDER BY id LIMIT 1`, [practiceId])).rows[0];
+    expect(draft).toBeTruthy();
+    const scrub = await scrubClaim(draft.id, practiceId);
+    expect(scrub.errors).toEqual([]);
+    expect(scrub.warnings).not.toContain('Practice address is not set');
+    expect(scrub.passed).toBe(true);
+  }, 60_000);
+
+  it('a demo practice created before the identity existed (production on 2026-11-19) is repaired by the next login, keeping a prospect\'s own edits', async () => {
+    await client.query(`UPDATE practices SET tax_id = NULL, address = '', billing_contact_phone = NULL, address_city = 'Prospect Town' WHERE id = $1`, [practiceId]);
+    await demo.ensureDemoPractice();
+    const { storage } = await import('../storage');
+    const practice: any = await storage.getPractice(practiceId);
+    expect(practice.taxId).toBe('00-0000000');
+    expect(practice.address).toBe('123 Demo Way, Springfield, NJ 07000');
+    expect(practice.billingContactPhone).toBe('(555) 010-0000');
+    expect(practice.addressCity).toBe('Prospect Town'); // not overwritten
+    await client.query(`UPDATE practices SET address_city = 'Springfield' WHERE id = $1`, [practiceId]);
+  }, 60_000);
+
   it('a second login is a no-op: nothing is duplicated', async () => {
     const before = await count('SELECT (SELECT count(*) FROM remittance_advice) + (SELECT count(*) FROM remittance_line_items) + (SELECT count(*) FROM payment_postings) + (SELECT count(*) FROM payment_transactions) + (SELECT count(*) FROM claims) + (SELECT count(*) FROM patients) AS n');
     const again = await demo.ensureDemoPractice();

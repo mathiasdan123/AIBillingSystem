@@ -18,6 +18,7 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       updateAppointment: vi.fn(),
       getPatient: vi.fn(),
       getPractice: vi.fn(async (id: number) => ({ id, isDemo: true })),
+      updatePractice: vi.fn(async (id: number, data: any) => ({ id, ...data })),
       getClaims: vi.fn(async () => []),
       getClaimLineItems: vi.fn(async () => []),
       getClaimLineItemsForClaims: vi.fn(async () => new Map()),
@@ -67,11 +68,13 @@ import {
   isProcessZoneSeedTime,
   repairDemoSeededAppointments,
   repairDemoSeededClaimDates,
+  ensureDemoBillingIdentity,
+  DEMO_BILLING_IDENTITY,
 } from '../services/demoPractice';
 import { decryptRemittanceLineItem } from '../services/phiEncryptionService';
 import { zonedAddDays, zonedDateString } from '../utils/timezone';
 import { getTableColumns } from 'drizzle-orm';
-import { claims, claimLineItems, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates, appointments } from '@shared/schema';
+import { claims, claimLineItems, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates, appointments, practices } from '@shared/schema';
 import { zonedTimeString } from '../utils/dateOnly';
 
 describe('ensureDemoPractice', () => {
@@ -592,6 +595,7 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
     practice_cpt_rates: dbColumns(practiceCptRates),
     claim_line_items: dbColumns(claimLineItems),
     appointments: dbColumns(appointments),
+    practices: dbColumns(practices),
   };
 
   function checkStatement(sql: string) {
@@ -918,5 +922,42 @@ describe('ensureDemoClaimLineItems (billing pass 2026-11-19: seeded claims had t
     mockPool.query.mockResolvedValueOnce({ rows: [paidClaim], rowCount: 1 });
     expect(await ensureDemoPaymentRecords(99)).toBe(1);
     expect(eraCptParam()).toBe(DEMO_ERA_CPT);
+  });
+});
+
+describe('ensureDemoBillingIdentity (post-merge demo retest of #493–#496: scrub refused every demo draft)', () => {
+  const FULL = { id: 99, isDemo: true, ...DEMO_BILLING_IDENTITY };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStorage.updatePractice.mockImplementation(async (id: number, data: any) => ({ id, ...data }));
+  });
+
+  it('fills only the EMPTY identity fields, through storage (tax id is PHI-encrypted at rest)', async () => {
+    mockStorage.getPractice.mockResolvedValueOnce({ ...FULL, taxId: null, address: '', billingContactPhone: undefined, addressCity: 'Prospect Town' });
+    expect(await ensureDemoBillingIdentity(99)).toBe(3);
+    expect(mockStorage.updatePractice).toHaveBeenCalledTimes(1);
+    expect(mockStorage.updatePractice).toHaveBeenCalledWith(99, {
+      taxId: '00-0000000',
+      address: '123 Demo Way, Springfield, NJ 07000',
+      billingContactPhone: '(555) 010-0000',
+    });
+  });
+
+  it('never touches a non-demo practice, is a no-op when nothing is missing, and never blocks a login on an error', async () => {
+    mockStorage.getPractice.mockResolvedValueOnce({ ...FULL, isDemo: false, taxId: null });
+    expect(await ensureDemoBillingIdentity(99)).toBe(0);
+    mockStorage.getPractice.mockResolvedValueOnce(FULL);
+    expect(await ensureDemoBillingIdentity(99)).toBe(0);
+    expect(mockStorage.updatePractice).not.toHaveBeenCalled();
+    mockStorage.getPractice.mockRejectedValueOnce(new Error('boom'));
+    expect(await ensureDemoBillingIdentity(99)).toBe(0);
+  });
+
+  it('the identity satisfies the pre-submission scrub: NPI and Tax ID present, address set, and is obviously fake', () => {
+    expect(DEMO_BILLING_IDENTITY.npi).toBe('0000000001');
+    expect(DEMO_BILLING_IDENTITY.taxId).toMatch(/^00-0000000$/); // an EIN prefix of 00 is never issued
+    expect(DEMO_BILLING_IDENTITY.address).toBe('123 Demo Way, Springfield, NJ 07000');
+    expect(DEMO_BILLING_IDENTITY.billingContactPhone).toMatch(/555/);
   });
 });
