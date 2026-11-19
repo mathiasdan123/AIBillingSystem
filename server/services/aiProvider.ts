@@ -36,15 +36,22 @@ export function isAiConfigured(): boolean {
 }
 
 /**
- * Production must run Claude through Bedrock: that is the provider covered
- * by the AWS BAA this practice holds. Throws when NODE_ENV is 'production'
- * and AI_PROVIDER is anything but exactly 'bedrock' (unset included), so a
- * misconfigured task fails at startup instead of quietly sending server-side
- * Claude calls — several of which carry PHI — to the direct API. Outside
- * production (dev, tests, CI) it is a no-op.
+ * Production startup check: AI_PROVIDER must be exactly 'bedrock'. Throws
+ * when NODE_ENV is 'production' and the variable is anything else (unset
+ * included), so a misconfigured task fails at startup rather than running
+ * with a different provider. Outside production it is a no-op, and so is the
+ * demo deployment, which runs the production build without a
+ * PHI_ENCRYPTION_KEY (the same exemption the other production startup checks
+ * in server/index.ts use).
  */
+/** The hosted demo deployment: RENDER set and no real PHI_ENCRYPTION_KEY (mirrors isDemoMode in server/index.ts). */
+export function isDemoDeployment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!env.RENDER && !env.PHI_ENCRYPTION_KEY;
+}
+
 export function assertProductionAiProvider(env: NodeJS.ProcessEnv = process.env): void {
   if (env.NODE_ENV !== 'production') return;
+  if (isDemoDeployment(env)) return;
   if (env.AI_PROVIDER === 'bedrock') return;
   throw new Error(
     `AI_PROVIDER must be exactly "bedrock" in production (got ${env.AI_PROVIDER === undefined ? 'unset' : JSON.stringify(env.AI_PROVIDER)}). ` +

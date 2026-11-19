@@ -12,7 +12,7 @@ vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), 
 vi.mock('../db', () => ({ db: {} }));
 vi.mock('../storage', () => ({ storage: {} }));
 
-import { assertProductionAiProvider, isAiConfigured } from '../services/aiProvider';
+import { assertProductionAiProvider, isAiConfigured, isDemoDeployment } from '../services/aiProvider';
 import { isClaudeAppealAvailable } from '../services/claudeAppealService';
 import { isReviewAiAvailable } from '../services/reviewResponseService';
 
@@ -65,5 +65,14 @@ describe('assertProductionAiProvider', () => {
     expect(() => assertProductionAiProvider({ NODE_ENV: 'development' })).not.toThrow();
     expect(() => assertProductionAiProvider({ NODE_ENV: 'test', AI_PROVIDER: 'anthropic' })).not.toThrow();
     expect(() => assertProductionAiProvider({})).not.toThrow();
+  });
+
+  it('exempts the demo deployment (production build on RENDER with no PHI_ENCRYPTION_KEY), like the other startup checks', () => {
+    expect(isDemoDeployment({ RENDER: 'true' })).toBe(true);
+    expect(() => assertProductionAiProvider({ NODE_ENV: 'production', RENDER: 'true' })).not.toThrow();
+    expect(() => assertProductionAiProvider({ NODE_ENV: 'production', RENDER: 'true', AI_PROVIDER: 'anthropic' })).not.toThrow();
+    // A RENDER variable in an environment that has a real PHI key is not the demo: still enforced.
+    expect(isDemoDeployment({ RENDER: 'true', PHI_ENCRYPTION_KEY: 'a'.repeat(64) })).toBe(false);
+    expect(() => assertProductionAiProvider({ NODE_ENV: 'production', RENDER: 'true', PHI_ENCRYPTION_KEY: 'a'.repeat(64) })).toThrow(/must be exactly "bedrock"/);
   });
 });

@@ -148,9 +148,9 @@ if (isProduction && !isDemoMode) {
     process.exit(1);
   }
 
-  // Production runs Claude through Bedrock only (task role, covered by the
-  // AWS BAA). Anything else — including an unset AI_PROVIDER, which would
-  // default to the direct API — stops the task here.
+  // Production requires AI_PROVIDER=bedrock; anything else (unset included)
+  // stops the task here. The demo deployment is exempt with the rest of this
+  // block (isDemoMode above).
   try {
     assertProductionAiProvider();
   } catch (error) {
