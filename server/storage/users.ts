@@ -41,6 +41,22 @@ export async function getAllUsers(): Promise<User[]> {
   return rows.map((r: any) => decryptUserRecord(r) as User);
 }
 
+/**
+ * Users of ONE practice, newest first. The User Management screen must use
+ * this, never getAllUsers(): the users table spans every practice, and any
+ * practice admin (the public demo's anonymous visitors included) was shown
+ * every account on the platform (QA 2026-11-19: real advisors' personal
+ * emails listed in the demo practice's User Management).
+ */
+export async function getUsersByPractice(practiceId: number): Promise<User[]> {
+  const rows = await db
+    .select()
+    .from(users)
+    .where(eq(users.practiceId, practiceId))
+    .orderBy(desc(users.createdAt));
+  return rows.map((r: any) => decryptUserRecord(r) as User);
+}
+
 export async function updateUserRole(id: string, role: string): Promise<User | undefined> {
   const [user] = await db
     .update(users)

@@ -19,6 +19,7 @@ import request from 'supertest';
 const mockStorage = vi.hoisted(() => ({
   getUser: vi.fn(),
   getAllUsers: vi.fn(),
+  getUsersByPractice: vi.fn(),
   updateUserRole: vi.fn(),
   getInviteByEmail: vi.fn(),
   createInvite: vi.fn(),
@@ -204,11 +205,11 @@ describe('auth routes (server/routes/auth.ts)', () => {
   // ---- GET /api/users (admin only) ----
 
   describe('GET /api/users', () => {
-    it('should return user list for admin', async () => {
+    it('should return the caller practice user list for admin', async () => {
       mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', role: 'admin' });
-      mockStorage.getAllUsers.mockResolvedValue([
-        { id: 'u1', email: 'a@example.com', firstName: 'Alice', lastName: 'A', role: 'therapist', createdAt: new Date() },
-        { id: 'u2', email: 'b@example.com', firstName: 'Bob', lastName: 'B', role: 'billing', createdAt: new Date() },
+      mockStorage.getUsersByPractice.mockResolvedValue([
+        { id: 'u1', email: 'a@example.com', firstName: 'Alice', lastName: 'A', role: 'therapist', createdAt: new Date(), passwordHash: 'x', practiceId: 1 },
+        { id: 'u2', email: 'b@example.com', firstName: 'Bob', lastName: 'B', role: 'billing', createdAt: new Date(), passwordHash: 'y', practiceId: 1 },
       ]);
 
       const res = await request(app)
@@ -219,6 +220,19 @@ describe('auth routes (server/routes/auth.ts)', () => {
       expect(res.body[0].id).toBe('u1');
       // Passwords/hashes must not be exposed
       expect(res.body[0].passwordHash).toBeUndefined();
+      // Tenant scope: only the caller's practice (req.userPracticeId = 1),
+      // never the platform-wide list.
+      expect(mockStorage.getUsersByPractice).toHaveBeenCalledWith(1);
+      expect(mockStorage.getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('ignores a ?practiceId for another practice (admin is not a platform admin)', async () => {
+      mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', role: 'admin' });
+      mockStorage.getUsersByPractice.mockResolvedValue([]);
+
+      await request(app).get('/api/users?practiceId=2').expect(200);
+
+      expect(mockStorage.getUsersByPractice).toHaveBeenCalledWith(1);
     });
 
     it('should return 403 for non-admin users', async () => {
@@ -231,6 +245,54 @@ describe('auth routes (server/routes/auth.ts)', () => {
         .expect(403);
 
       expect(res.body.message).toMatch(/Admin role required/i);
+    });
+  });
+
+  // ---- PATCH /api/users/:id/role (tenant-scoped) ----
+
+  describe('PATCH /api/users/:id/role', () => {
+    beforeEach(() => {
+      mockStorage.getUser.mockImplementation(async (id: string) => {
+        if (id === 'admin-user-1') return { id, role: 'admin', practiceId: 1 };
+        if (id === 'same-practice-user') return { id, role: 'therapist', practiceId: 1 };
+        if (id === 'other-practice-user') return { id, role: 'therapist', practiceId: 2 };
+        if (id === 'unassigned-user') return { id, role: 'therapist', practiceId: null };
+        return undefined;
+      });
+      mockStorage.updateUserRole.mockImplementation(async (id: string, role: string) => ({
+        id, email: `${id}@example.com`, firstName: 'X', lastName: 'Y', role,
+      }));
+    });
+
+    it('changes the role of a user in the admin practice', async () => {
+      const res = await request(app)
+        .patch('/api/users/same-practice-user/role')
+        .send({ role: 'billing' })
+        .expect(200);
+      expect(res.body.role).toBe('billing');
+      expect(mockStorage.updateUserRole).toHaveBeenCalledWith('same-practice-user', 'billing');
+    });
+
+    it('refuses (404, not 403) a user in another practice and changes nothing', async () => {
+      const res = await request(app)
+        .patch('/api/users/other-practice-user/role')
+        .send({ role: 'admin' })
+        .expect(404);
+      expect(res.body.message).toBe('User not found');
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it('refuses a user with no practice and an unknown id', async () => {
+      await request(app).patch('/api/users/unassigned-user/role').send({ role: 'admin' }).expect(404);
+      await request(app).patch('/api/users/nobody/role').send({ role: 'admin' }).expect(404);
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it('still rejects an invalid role before any lookup', async () => {
+      await request(app).patch('/api/users/same-practice-user/role').send({ role: 'owner' }).expect(400);
+      // isAdmin looks up the caller; the target is never fetched or changed.
+      expect(mockStorage.getUser).not.toHaveBeenCalledWith('same-practice-user');
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
     });
   });
 

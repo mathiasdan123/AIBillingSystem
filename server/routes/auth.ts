@@ -116,10 +116,12 @@ router.get('/auth/user', isAuthenticated, async (req: any, res) => {
 
 // ==================== USER MANAGEMENT (Admin Only) ====================
 
-// Get all users
-router.get('/users', isAuthenticated, isAdmin, async (req, res) => {
+// Users of the caller's practice. Tenant-scoped (2026-11-19): this listed
+// every user on the platform to any practice admin, demo visitors included.
+router.get('/users', isAuthenticated, isAdmin, async (req: any, res) => {
   try {
-    const users = await storage.getAllUsers();
+    const practiceId = getAuthorizedPracticeId(req);
+    const users = await storage.getUsersByPractice(practiceId);
     const safeUsers = users.map(u => ({
       id: u.id,
       email: u.email,
@@ -148,6 +150,23 @@ router.patch('/users/:id/role', isAuthenticated, isAdmin, async (req: any, res) 
     const currentUserId = req.user?.claims?.sub;
     if (id === currentUserId && role !== 'admin') {
       return res.status(400).json({ message: "You cannot remove your own admin role" });
+    }
+
+    // Tenant check (2026-11-19): user ids are guessable and this changed the
+    // role of whatever id it was given. Same practice only; 404 so an id in
+    // another practice is not confirmed to exist.
+    const practiceId = getAuthorizedPracticeId(req);
+    const target = await storage.getUser(id);
+    if (!target || !target.practiceId || target.practiceId !== practiceId) {
+      if (target) {
+        logger.warn('Cross-practice role change blocked', {
+          adminId: currentUserId,
+          targetUserId: id,
+          adminPracticeId: practiceId,
+          targetPracticeId: target.practiceId,
+        });
+      }
+      return res.status(404).json({ message: "User not found" });
     }
 
     const updatedUser = await storage.updateUserRole(id, role);
