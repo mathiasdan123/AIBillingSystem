@@ -26,7 +26,7 @@ vi.mock('../services/aiLearningService', () => ({
   getRecommendationsForClaim: vi.fn().mockResolvedValue([]),
 }));
 
-import { predictDenial } from '../services/aiDenialPredictor';
+import { predictDenial, resolvePayerForAnalysis, effectiveServiceDates } from '../services/aiDenialPredictor';
 
 // Helper factories
 function makeClaim(overrides: Record<string, any> = {}) {
@@ -513,5 +513,39 @@ describe('denial-prediction date guardrails (output)', () => {
       makePatient()
     );
     expect(JSON.stringify(result)).not.toMatch(/correct the date of service/i);
+  });
+});
+
+describe('claim-level inputs (QA demo pass 2026-11-19, item 5)', () => {
+  it('reasons about the payer the claim is billed to, not the chart plan', () => {
+    expect(resolvePayerForAnalysis({ insuranceName: 'Aetna' }, { insuranceProvider: 'Horizon BCBS' })).toEqual({ label: 'Aetna', source: 'claim' });
+    expect(resolvePayerForAnalysis({ insuranceName: null }, { insuranceProvider: 'Horizon BCBS' })).toEqual({ label: 'Horizon BCBS', source: 'patient_chart' });
+    expect(resolvePayerForAnalysis({ insuranceName: ' ' }, { insuranceProvider: null })).toEqual({ label: 'Unknown', source: 'unknown' });
+  });
+
+  it('falls back to the claim date of service for line items without one', () => {
+    expect(effectiveServiceDates({ dateOfService: '2026-10-26' }, [{ dateOfService: null }, { dateOfService: '2026-10-27' }])).toEqual(['2026-10-26', '2026-10-27']);
+    expect(effectiveServiceDates({ dateOfService: '2026-10-26' }, [])).toEqual(['2026-10-26']);
+    expect(effectiveServiceDates({ dateOfService: null }, [{ dateOfService: null }])).toEqual([]);
+  });
+
+  it('does not report a missing service date when the claim has one and the lines do not', async () => {
+    const lineItem = makeLineItem({ dateOfService: null });
+    const result = await predictDenial(makeClaim({ dateOfService: '2026-10-26' }), [lineItem], makeSoapNote(), makePatient());
+    expect(result.issues.find(i => i.description.includes('No date of service'))).toBeUndefined();
+  });
+
+  it('reports a missing service date only when neither the claim nor its lines carry one', async () => {
+    const lineItem = makeLineItem({ dateOfService: null });
+    const result = await predictDenial(makeClaim(), [lineItem], makeSoapNote(), makePatient());
+    const issue = result.issues.find(i => i.description.includes('No date of service'));
+    expect(issue?.severity).toBe('critical');
+  });
+
+  it('applies the timely-filing check to the claim date of service when lines have none', async () => {
+    const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const result = await predictDenial(makeClaim({ dateOfService: old }), [makeLineItem({ dateOfService: null })], makeSoapNote(), makePatient());
+    const issue = result.issues.find(i => i.category === 'Timely Filing');
+    expect(issue?.severity).toBe('critical');
   });
 });
