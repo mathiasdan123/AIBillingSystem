@@ -249,7 +249,7 @@ describe('fallbackGeneration — blank mood/caregiver report are omitted, not fa
     );
     expect(response.subjective).toContain('presented as cooperative');
     expect(response.subjective).toContain('Caregiver reported: anxious this morning.');
-    expect(response.assessment).toContain('presented as cooperative and participated');
+    expect(response.assessment).toContain('presented as cooperative.');
   });
 });
 

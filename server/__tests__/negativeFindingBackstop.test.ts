@@ -101,6 +101,84 @@ describe('stripUnsupportedNegativeFindings', () => {
     expect(stripUnsupportedNegativeFindings('', evidence)).toBe('');
     expect(hasUnsupportedNegativeFinding('', evidence)).toBe(false);
   });
+
+  // PR #464 review: a sentence that CONDITIONS on a symptom is not asserting
+  // its absence. Precautions pair a negation with pain/fatigue/distress the
+  // input never mentioned and must survive -- in the Plan, where they live,
+  // and anywhere else they appear.
+  it('keeps conditional / precaution sentences in the Plan', () => {
+    const plan =
+      'Next session focus:\n• reassess jumping endurance\n\n' +
+      'Stop the activity if the patient shows pain or fatigue; do not push through. ' +
+      'Monitor for signs of distress and discontinue if discomfort is reported. ' +
+      'Caregivers were instructed to report any complaints of pain after sessions.';
+    expect(hasUnsupportedNegativeFinding(plan, evidence)).toBe(false);
+    expect(stripUnsupportedNegativeFindings(plan, evidence)).toBe(plan);
+  });
+
+  it('keeps a precaution in the Objective too, while still removing a fabricated finding beside it', () => {
+    const objective =
+      'Trampoline jumping targets lower-extremity strength and endurance. ' +
+      'Activity was to be stopped if the patient showed pain or fatigue. ' +
+      'No observable distress was noted.';
+    expect(stripUnsupportedNegativeFindings(objective, evidence)).toBe(
+      'Trampoline jumping targets lower-extremity strength and endurance. Activity was to be stopped if the patient showed pain or fatigue.',
+    );
+  });
+
+  it('a fabricated negative in the Plan is still removed when nothing conditions it', () => {
+    const plan = 'Continue trampoline work next session. No distress was observed, so intensity can increase.';
+    expect(stripUnsupportedNegativeFindings(plan, evidence)).toBe('Continue trampoline work next session.');
+  });
+
+  // Review on #467: the first exemption fired on ANY "when", "pause",
+  // "hold", "avoid" or "notify" anywhere in the sentence. These are findings
+  // dressed in precaution vocabulary and must still be stripped.
+  it('negative controls: findings phrased with "when"/"pauses" are not precautions', () => {
+    for (const fabricated of [
+      'No signs of fatigue when jumping.',
+      'Tolerated well without discomfort when pauses were taken.',
+      'No distress when transitioning between activities.',
+      'Patient denied discomfort when asked at the end of the session.',
+      'Held the position without complaint whenever prompted.',
+    ]) {
+      // ("Patient denied pain when asked" is deliberately NOT here: the account
+      // says "no pain", so that negative is supported and must be kept.)
+      expect(hasUnsupportedNegativeFinding(fabricated, evidence)).toBe(true);
+      expect(stripUnsupportedNegativeFindings(`Trampoline jumping targets endurance. ${fabricated}`, evidence)).toBe(
+        'Trampoline jumping targets endurance.',
+      );
+    }
+  });
+
+  it('the topic must follow the lead-in: a finding BEFORE a precaution in the same clause is still a finding', () => {
+    expect(hasUnsupportedNegativeFinding('No distress noted; monitor for fatigue next time.', evidence)).toBe(true);
+    expect(stripUnsupportedNegativeFindings('No distress noted; monitor for fatigue next time.', evidence)).toBe(
+      'Monitor for fatigue next time.',
+    );
+  });
+
+  it('a fabricated finding joined to a precaution: the finding goes, the precaution clause stays', () => {
+    expect(
+      stripUnsupportedNegativeFindings('No distress was observed, and stop the activity if the patient shows fatigue.', evidence),
+    ).toBe('Stop the activity if the patient shows fatigue.');
+    expect(
+      stripUnsupportedNegativeFindings('Discontinue the session if the patient reports pain, and no fatigue was noted today.', evidence),
+    ).toBe('Discontinue the session if the patient reports pain.');
+  });
+
+  it('forward-looking precautions with the narrowed lead-ins all survive', () => {
+    for (const precaution of [
+      'Stop the activity if the patient shows pain or fatigue; do not push through.',
+      'Pause the exercise should Riley report discomfort.',
+      'Monitor for signs of distress; do not continue past the first complaint.',
+      'Caregivers were instructed to report any complaints of pain, and not to push through fatigue.',
+      'Discontinue the trial unless the patient has no pain at rest.',
+    ]) {
+      expect(hasUnsupportedNegativeFinding(precaution, evidence)).toBe(false);
+      expect(stripUnsupportedNegativeFindings(precaution, evidence)).toBe(precaution);
+    }
+  });
 });
 
 describe('stripUnsupportedTherapistActions', () => {
@@ -133,6 +211,37 @@ describe('stripUnsupportedTherapistActions', () => {
     const text = 'Verbal cues were provided to maintain rhythm and the task was graded to three sets.';
     expect(hasUnsupportedTherapistAction(text, withCues)).toBe(false);
     expect(stripUnsupportedTherapistActions(text, withCues)).toBe(text);
+  });
+
+  // PR #464 review: clause-level removal, so a sentence carrying both an
+  // unsupported action and an entered fact keeps the fact.
+  it('removes only the action clause from a mixed sentence and keeps the entered fact', () => {
+    expect(
+      stripUnsupportedTherapistActions('Riley completed five sets of ten jumps while the therapist graded the task.', evidence),
+    ).toBe('Riley completed five sets of ten jumps.');
+    expect(
+      stripUnsupportedTherapistActions('The therapist graded the task, and Riley completed five sets of ten jumps with one-minute pauses.', evidence),
+    ).toBe('Riley completed five sets of ten jumps with one-minute pauses.');
+    expect(
+      stripUnsupportedTherapistActions('Riley completed five sets of ten jumps; verbal cues were provided between sets.', evidence),
+    ).toBe('Riley completed five sets of ten jumps.');
+  });
+
+  it('still drops a sentence whose every clause claims an action', () => {
+    expect(stripUnsupportedTherapistActions('The therapist graded the jumping bouts and monitored for fatigue.', evidence)).toBe('');
+    expect(stripUnsupportedTherapistActions('Verbal cues were provided to maintain rhythm.', evidence)).toBe('');
+  });
+
+  it('does not flag "adaptive equipment" or the "modified independent" assistance level', () => {
+    const legitimate = [
+      'Riley used adaptive equipment (a jump handle) for the trampoline bouts.',
+      'Adaptive seating was in place for tabletop work.',
+      'Riley was modified independent for transfers on and off the trampoline.',
+    ];
+    for (const text of legitimate) {
+      expect(hasUnsupportedTherapistAction(text, evidence)).toBe(false);
+      expect(stripUnsupportedTherapistActions(text, evidence)).toBe(text);
+    }
   });
 
   it('never flags the payer vocabulary the prompt asks for (skilled, targets, neuromuscular re-education)', () => {

@@ -61,7 +61,8 @@ describe('fallbackGeneration — blank input, no plan or goals on file (CASE A)'
     expect(out.assessment).not.toMatch(/with\s+assistance/i);
     expect(out.assessment).not.toMatch(/with\s+\w*\s*assistance/i);
     expect(out.objective).not.toMatch(/Assistance level/);
-    expect(out.assessment).toContain('Riley participated in skilled occupational therapy.');
+    expect(out.assessment).toContain('Riley attended a 45-minute occupational therapy session.');
+    expect(out.assessment).not.toMatch(/Assistance level/);
   });
 
   it('renders no dangling empty labels anywhere in the note', () => {
@@ -97,7 +98,7 @@ describe('fallbackGeneration — documented input appears, in the therapist\'s w
     expect(out.objective).toContain('• Overall performance: Improved');
     expect(out.objective).toContain('• Motor planning: Mild difficulty');
     expect(out.objective).not.toMatch(/Strength\/endurance|Sensory regulation/);
-    expect(out.assessment).toContain('presented as cooperative and participated in skilled occupational therapy with minimal assistance.');
+    expect(out.assessment).toContain('Riley attended a 45-minute occupational therapy session. Riley presented as cooperative. Assistance level documented: minimal.');
     expect(out.assessment).toContain('Functional performance this session: Improved. Motor planning: Mild difficulty.');
     expect(out.plan).toContain('Next session focus:\n• Grade the obstacle course up one level');
     expect(out.plan).toContain('Home program:\n• Animal walks 5 min daily');
@@ -106,14 +107,17 @@ describe('fallbackGeneration — documented input appears, in the therapist\'s w
 
   it('asserts medical necessity only when a documented observation shows a deficit', () => {
     const thin = fallbackGeneration(request(), PATIENT, 3);
-    expect(thin.assessment).not.toMatch(/medically necessary|Skilled occupational therapy addressed|indicated/);
+    expect(thin.assessment).not.toMatch(/medically necessary|addressed|indicated|skilled/i);
     const deficit = fallbackGeneration(
       request({ assessment: { performance: '', assistance: '', strength: 'Decreased core strength', motorPlanning: '', sensoryRegulation: '' } }),
       PATIENT,
       3,
     );
-    expect(deficit.assessment).toContain('Skilled occupational therapy addressed the deficits documented above');
-    expect(deficit.assessment).toContain('Continued skilled occupational therapy is indicated');
+    expect(deficit.assessment).toContain(
+      'Continued skilled occupational therapy is indicated to address the deficits documented above (strength/endurance: decreased core strength).',
+    );
+    // Names only the rated deficits; never says what the therapy "addressed".
+    expect(deficit.assessment).not.toMatch(/addressed|support(?:ing|ed)? safer/i);
   });
 });
 
@@ -143,7 +147,9 @@ describe('fallbackGeneration — activity account passthrough and no unsupported
   });
 
   it('does not assert skilled analysis or therapist-directed adaptation with no supporting input', () => {
-    expect(out.assessment).toBe('Riley participated in skilled occupational therapy.');
+    expect(out.assessment).toBe('Riley attended a 45-minute occupational therapy session.');
+    // "skilled" appears only in the deficit-gated continuation sentence, never unconditionally.
+    expect(out.assessment).not.toMatch(/skilled/i);
     expect(out.assessment).not.toMatch(/skilled clinical analysis|therapist-directed|adaptation|graded|monitored/i);
   });
 
@@ -172,7 +178,8 @@ describe('fallbackGeneration — activity account passthrough and no unsupported
       PATIENT, 3,
     );
     expect(assistOnly.assessment).not.toMatch(/skilled clinical analysis|therapist-directed|adaptation/i);
-    expect(assistOnly.assessment).toContain('participated in skilled occupational therapy with minimal assistance.');
+    expect(assistOnly.assessment).toContain('Assistance level documented: minimal.');
+    expect(assistOnly.assessment).not.toMatch(/skilled/i);
     expect(assistOnly.objective).toContain('Assistance level: Minimal.');
   });
 
@@ -198,8 +205,8 @@ describe('fallbackGeneration — activity account passthrough and no unsupported
       request({ assessment: { performance: '', assistance: '', strength: 'poor endurance', motorPlanning: '', sensoryRegulation: '' } }),
       PATIENT, 3,
     );
-    expect(out.assessment).toContain('Skilled occupational therapy addressed the deficits documented above');
-    expect(out.assessment).not.toMatch(/grade|adapt|monitor|cue/i);
+    expect(out.assessment).toContain('Continued skilled occupational therapy is indicated to address the deficits documented above (strength/endurance: poor endurance).');
+    expect(out.assessment).not.toMatch(/grade|adapt|monitor|cue|addressed/i);
     // And no necessity paragraph at all without a rated deficit.
     expect(fallbackGeneration(RILEY_THIN, PATIENT, 3).assessment).not.toMatch(/necessity|indicated|required/i);
   });
