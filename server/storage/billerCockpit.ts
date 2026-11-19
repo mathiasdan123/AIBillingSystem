@@ -159,7 +159,9 @@ export async function getBillerCockpit(practiceId: number): Promise<BillerCockpi
     },
     {
       key: "deniedNoAppeal",
-      label: "Denied — needs appeal",
+      // Counts denied claims with no appeal started; a claim already in appeal
+      // is on the Appeals page, not here (QA demo pass 2026-11-19).
+      label: "Denied — no appeal started",
       count: deniedNoAppealCount,
       samples: deniedSamples,
       href: "/appeals",
