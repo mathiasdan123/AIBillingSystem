@@ -47,13 +47,16 @@ import {
   demoEraFileHash,
   ensureDemoPaymentRecords,
   ensureDemoClaimPayers,
+  DEMO_SEED_SUBMIT_OFFSET_DAYS,
   matchDemoPayer,
   isProcessZoneSeedTime,
   repairDemoSeededAppointments,
   repairDemoSeededClaimDates,
 } from '../services/demoPractice';
 import { decryptRemittanceLineItem } from '../services/phiEncryptionService';
-import { zonedDateString } from '../utils/timezone';
+import { zonedAddDays, zonedDateString } from '../utils/timezone';
+import { getTableColumns } from 'drizzle-orm';
+import { claims, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates } from '@shared/schema';
 import { zonedTimeString } from '../utils/dateOnly';
 
 describe('ensureDemoPractice', () => {
@@ -361,7 +364,13 @@ describe('seeded claim dates (QA demo pass 2026-11-19, item 2)', () => {
     for (const claim of claims) {
       expect(claim.createdAt).toBeInstanceOf(Date);
       // Created at the end of the day of service, in the practice zone.
-      expect(zonedDateString(claim.createdAt, 'America/New_York')).toBe(claim.dateOfService);
+      // The claims table has no date-of-service column; the service day is the
+      // created day, two days before submission for every seeded claim.
+      expect(claim.dateOfService).toBeUndefined();
+      if (claim.submittedAt) {
+        expect(zonedDateString(zonedAddDays(claim.submittedAt, -DEMO_SEED_SUBMIT_OFFSET_DAYS, 'America/New_York'), 'America/New_York'))
+          .toBe(zonedDateString(claim.createdAt, 'America/New_York'));
+      }
       if (claim.submittedAt) expect(claim.createdAt.getTime()).toBeLessThan(claim.submittedAt.getTime());
       if (claim.paidAt) expect(claim.submittedAt.getTime()).toBeLessThan(claim.paidAt.getTime());
       expect(claim.updatedAt.getTime()).toBeGreaterThanOrEqual(claim.createdAt.getTime());
@@ -401,7 +410,7 @@ describe('ensureDemoPaymentRecords (QA demo pass 2026-11-19, item 1)', () => {
     total_amount: '289.00',
     paid_amount: '246.65',
     paid_at: paidAt,
-    date_of_service: '2026-10-26',
+    submitted_at: new Date('2026-10-28T14:00:00.000Z'), // service day 2026-10-26 (two days earlier, Eastern)
   };
 
   beforeEach(() => {
@@ -540,5 +549,78 @@ describe('demo claim payers (QA demo pass 2026-11-19, item 8: DEMO-2-1006 payer 
     mockStorage.getClaims.mockResolvedValue([{ id: 1, claimNumber: 'DEMO-99-1000', patientId: 100, insuranceId: 4 }]);
     expect(await ensureDemoClaimPayers(99)).toBe(0);
     expect(mockStorage.getInsurances).not.toHaveBeenCalled();
+  });
+});
+
+describe('raw SQL in the demo repairs names only columns that exist (post-deploy 2026-11-19)', () => {
+  // The payment backfill selected c.date_of_service from claims; that column
+  // belongs to claim_line_items. Postgres refused the query, the catch-all
+  // logged a warning, and the production demo got no payment rows. The unit
+  // tests mocked pg and could not see it. This check runs every raw statement
+  // the repairs issue through the mocks and verifies each column reference
+  // against the Drizzle schema.
+  const dbColumns = (table: any) => new Set(Object.values(getTableColumns(table)).map((c: any) => c.name as string));
+  const tables: Record<string, Set<string>> = {
+    claims: dbColumns(claims),
+    remittance_advice: dbColumns(remittanceAdvice),
+    remittance_line_items: dbColumns(remittanceLineItems),
+    payment_postings: dbColumns(paymentPostings),
+    payment_transactions: dbColumns(paymentTransactions),
+    practice_cpt_rates: dbColumns(practiceCptRates),
+  };
+
+  function checkStatement(sql: string) {
+    const problems: string[] = [];
+    // INSERT INTO table (col, ...)
+    for (const m of sql.matchAll(/INSERT INTO\s+(\w+)\s*\(([^)]*)\)/g)) {
+      const cols = tables[m[1]];
+      expect(cols, `unknown table ${m[1]}`).toBeDefined();
+      for (const col of m[2].split(',').map((c) => c.trim()).filter(Boolean)) {
+        if (!cols.has(col)) problems.push(`${m[1]}.${col}`);
+      }
+    }
+    // UPDATE table SET ... / FROM table alias ... : alias.col and bare col = / IS / LIKE / >
+    for (const m of sql.matchAll(/(?:UPDATE|FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?([a-z]))?/g)) {
+      const cols = tables[m[1]];
+      if (!cols) continue;
+      const alias = m[2];
+      if (alias) {
+        for (const ref of sql.matchAll(new RegExp(`\\b${alias}\\.(\\w+)`, 'g'))) {
+          if (!cols.has(ref[1])) problems.push(`${m[1]}.${ref[1]} (as ${alias}.${ref[1]})`);
+        }
+      }
+    }
+    return problems;
+  }
+
+  it('every SELECT, INSERT and UPDATE the repairs issue references real columns', async () => {
+    vi.clearAllMocks();
+    const statements: string[] = [];
+    mockPool.query.mockImplementation(async (sql: string) => {
+      statements.push(String(sql));
+      return /FROM claims c/.test(sql)
+        ? { rows: [{ id: 42, claim_number: 'DEMO-99-1002', patient_id: 102, total_amount: '289.00', paid_amount: '246.65', paid_at: new Date('2026-11-13T15:00:00.000Z'), submitted_at: new Date('2026-10-28T14:00:00.000Z') }], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      statements.push(String(sql));
+      return /INSERT INTO remittance_advice/.test(sql) ? { rows: [{ id: 501 }], rowCount: 1 } : { rows: [], rowCount: 1 };
+    });
+    mockStorage.getPatient.mockResolvedValue({ id: 102, practiceId: 99, firstName: 'Mia', lastName: 'Example', insuranceProvider: 'UnitedHealthcare', insuranceId: 'DEMO1002' });
+
+    expect(await ensureDemoPaymentRecords(99)).toBe(1);
+    await repairDemoSeededClaimDates(99);
+    await ensureDemoClaimPayers(99);
+
+    expect(statements.length).toBeGreaterThan(4);
+    const problems = statements.flatMap(checkStatement);
+    expect(problems).toEqual([]);
+    // The exact regression: no statement touches claims.date_of_service.
+    expect(statements.some((q) => /date_of_service/.test(q) && /FROM claims/.test(q))).toBe(false);
+  });
+
+  it('a statement naming a column that does not exist is caught by the guard', () => {
+    expect(checkStatement('SELECT c.id, c.date_of_service FROM claims c WHERE c.practice_id = $1')).toEqual(['claims.date_of_service (as c.date_of_service)']);
+    expect(checkStatement('INSERT INTO payment_postings (practice_id, bogus_col) VALUES ($1, $2)')).toEqual(['payment_postings.bogus_col']);
   });
 });
