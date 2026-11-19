@@ -3466,6 +3466,13 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
   /** CLP07 payer claim control number — the payer's own id, kept for appeals/reference. */
   payerClaimId: varchar("payer_claim_id"),
   /**
+   * CLP02 claim status: 1/2/3 processed as primary/secondary/tertiary,
+   * 4 denied, 22 reversal of a previous payment. '4' is what makes a line a
+   * DENIAL rather than a contractual write-off (see eraDenialService).
+   * Nullable: legacy rows and JSON uploads without it are never denials.
+   */
+  claimStatusCode: varchar("claim_status_code"),
+  /**
    * How the line was matched: 'claim_number', a scored signal list such as
    * 'exact_name+service_date+cpt', or 'manual'. NULL on rows matched before
    * this column existed (those payments were posted under the old fused path).

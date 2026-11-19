@@ -18,6 +18,7 @@ import { postPayment } from '../services/paymentPostingService';
 import { ensureUnderpaymentFollowUp } from '../services/underpaymentPipelineService';
 import { autoMatchRemittance } from '../services/eraAutoMatchService';
 import { ingestRemittance } from '../services/remittanceIngestionService';
+import { applyRemittanceDenial, isDeniedRemittanceLine, postingReasonFields } from '../services/eraDenialService';
 import { db } from '../db';
 import {
   remittanceAdvice,
@@ -127,6 +128,7 @@ router.post('/upload', isAuthenticated, async (req: any, res: Response) => {
         memberId: item.memberId || null,
         claimReference: item.claimReference || null,
         payerClaimId: item.payerClaimId || null,
+        claimStatusCode: item.claimStatusCode != null && item.claimStatusCode !== '' ? String(item.claimStatusCode) : null,
         serviceDate: item.serviceDate || null,
         cptCode: item.cptCode || null,
         chargedAmount: parseFloat(item.chargedAmount) || 0,
@@ -390,6 +392,21 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
       return res.status(404).json({ message: 'Claim not found in this practice' });
     }
 
+    // A payer cannot have adjudicated a claim that was never sent. Auto-match
+    // already excludes draft/held claims for this reason; the manual route
+    // did not, so a remittance could be matched onto a Draft claim, which then
+    // carried a payment or a denial it could never have received (demo
+    // billing test 2026-11-19: denial matched to a Draft stayed Draft).
+    if (claim.status === 'draft' || claim.status === 'held') {
+      return res.status(400).json({
+        message:
+          `Claim ${claim.claimNumber || claim.id} is ${claim.status} — it has not been submitted, so a remittance ` +
+          'cannot be matched to it. Submit the claim first (or mark it submitted if it was filed outside TherapyBill), then match.',
+        code: 'claim_not_submitted',
+        claimStatus: claim.status,
+      });
+    }
+
     // Update line item. matchType 'manual' marks this as a human decision:
     // auto-match never re-decides or overwrites it, and the auto path never
     // posts it (this route records the payment itself, below).
@@ -408,6 +425,7 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     // sums non-reversed postings), and writes the payment_postings row that
     // A/R, patient statements and the collections basis all read from.
     const paidAmt = parseFloat(String(lineItem.paidAmount || '0'));
+    const postedBy = req.user?.claims?.sub ?? null;
     await postPayment(practiceId, {
       // Authoritative: supersedes any 277-derived posting on this claim.
       source: 'era',
@@ -421,8 +439,23 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
         parseFloat(String((lineItem as any).patientResponsibility ?? '0')).toFixed(2),
       ),
       allowedAmount: lineItem.allowedAmount != null ? String(lineItem.allowedAmount) : null,
-      postedBy: req.user?.claims?.sub ?? null,
+      // CARC / RARC on the posting, so the Payments tab says WHY an amount
+      // was adjusted instead of showing a bare write-off.
+      ...postingReasonFields(lineItem as any),
+      postedBy,
     } as any);
+
+    // A denied line (CLP02 4) marks the claim denied with the CARC as the
+    // reason and starts the appeal draft + follow-up. postPayment ran first:
+    // it owns paidAmount and the paid/partial status.
+    const denial = isDeniedRemittanceLine(lineItem as any)
+      ? await applyRemittanceDenial(practiceId, targetClaimId, lineItem as any, {
+          remittanceId,
+          payerName: remittance.payerName,
+          checkNumber: remittance.checkNumber ?? null,
+          postedBy,
+        })
+      : null;
 
     // Check if all line items are now matched
     const allItems = await db
@@ -440,9 +473,15 @@ router.post('/:id/line-items/:lineItemId/match', isAuthenticated, async (req: an
     }
 
     res.json({
-      message: 'Line item matched to claim successfully',
+      message: denial?.denied
+        ? `Line matched. The payer denied this claim (${denial.denialReason}); it is now Denied with an appeal drafted.`
+        : denial?.skippedReason === 'claim_has_payments'
+          ? 'Line matched. The payer denied this line; the claim keeps its status because other lines were paid.'
+          : 'Line item matched to claim successfully',
       lineItemId,
       claimId: targetClaimId,
+      denied: Boolean(denial?.denied),
+      denialReason: denial?.denied ? denial.denialReason : null,
     });
   } catch (error) {
     return safeErrorResponse(res, 500, 'Failed to manually match line item', error);

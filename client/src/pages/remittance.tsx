@@ -264,9 +264,13 @@ export default function Remittance() {
       const response = await apiRequest('POST', `/api/remittance/${remittanceId}/line-items/${lineItemId}/match`, { claimId });
       return response.json();
     },
-    onSuccess: () => {
-      toast({ title: "Success", description: "Line item matched to claim" });
+    onSuccess: (data: any) => {
+      toast({
+        title: data?.denied ? "Matched — claim denied by payer" : "Success",
+        description: data?.message || "Line item matched to claim",
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
       setShowManualMatchDialog(false);
       setMatchingLineItem(null);
       if (selectedRemittance) {

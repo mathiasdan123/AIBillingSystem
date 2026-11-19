@@ -45,6 +45,7 @@ import {
 } from '@shared/schema';
 import { eq, and, desc, sql, ilike, lte } from 'drizzle-orm';
 import { postPayment } from './paymentPostingService';
+import { applyRemittanceDenial, isDeniedRemittanceLine, postingReasonFields } from './eraDenialService';
 import { ensureUnderpaymentFollowUp } from './underpaymentPipelineService';
 import { scoreClaimAgainstRemittanceLine, isAutoMatch } from './eraMatchScoring';
 import { decryptRemittanceLineItem, decryptField } from './phiEncryptionService';
@@ -581,6 +582,10 @@ export async function autoMatchRemittance(
           parseFloat(String((lineItem as any).patientResponsibility ?? '0')).toFixed(2),
         ),
         allowedAmount: lineItem.allowedAmount != null ? String(lineItem.allowedAmount) : null,
+        // CARC / RARC on the posting (adjustmentReason / remarkCode were
+        // never filled by the ERA path, so the Payments tab showed a bare
+        // write-off with no reason).
+        ...postingReasonFields(lineItem),
         postedBy,
       } as any);
       posted++;
@@ -603,6 +608,28 @@ export async function autoMatchRemittance(
           lineItemId: lineItem.id,
           remittanceId: remittance.id,
           error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      }
+      continue;
+    }
+
+    // A denied line (CLP02 4): mark the claim denied with the CARC as the
+    // reason and start the appeal draft + work-queue follow-up. After
+    // postPayment on purpose — it owns paidAmount and the paid/partial
+    // status. Its own failure is logged inside; never fails the posting.
+    if (isDeniedRemittanceLine(lineItem)) {
+      try {
+        await applyRemittanceDenial(practiceId, claimId, lineItem, {
+          remittanceId: remittance.id,
+          payerName: remittance.payerName,
+          checkNumber: remittance.checkNumber ?? null,
+          postedBy,
+        });
+      } catch (denialError) {
+        logger.error('ERA auto-match: failed to apply denial to claim', {
+          claimId,
+          remittanceId: remittance.id,
+          error: denialError instanceof Error ? denialError.message : String(denialError),
         });
       }
     }

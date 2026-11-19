@@ -30,6 +30,8 @@ export interface NormalizedLineItem {
   claimReference: string | null;
   /** CLP07 payer claim control number — the payer's own id for this claim. */
   payerClaimId: string | null;
+  /** CLP02 claim status: 1/2/3 processed, 4 denied, 22 reversal. Optional for older callers. */
+  claimStatusCode?: string | null;
   serviceDate: string | null;
   cptCode: string | null;
   chargedAmount: number;
@@ -130,6 +132,7 @@ function normalizeServiceLine(
     memberId,
     claimReference: info?.patientControlNumber ? String(info.patientControlNumber) : null,
     payerClaimId: info?.payerClaimControlNumber ? String(info.payerClaimControlNumber) : null,
+    claimStatusCode: info?.claimStatusCode != null && info.claimStatusCode !== '' ? String(info.claimStatusCode) : null,
     serviceDate:
       toIsoDate(line?.serviceDate) ??
       toIsoDate(line?.serviceStartDate) ??
@@ -216,6 +219,7 @@ export function normalizeStedi835(report: any): NormalizedRemittance {
             memberId,
             claimReference: info?.patientControlNumber ? String(info.patientControlNumber) : null,
             payerClaimId: info?.payerClaimControlNumber ? String(info.payerClaimControlNumber) : null,
+            claimStatusCode: info?.claimStatusCode != null && info.claimStatusCode !== '' ? String(info.claimStatusCode) : null,
             serviceDate: toIsoDate(info?.claimStatementPeriodStart),
             cptCode: null,
             chargedAmount: num(info?.totalClaimChargeAmount),

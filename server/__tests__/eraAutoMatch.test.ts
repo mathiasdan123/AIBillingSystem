@@ -32,6 +32,7 @@ const H = vi.hoisted(() => ({
   },
   postPayment: vi.fn(),
   ensureFollowUp: vi.fn(),
+  applyDenial: vi.fn(),
 }));
 
 vi.mock('../services/logger', () => ({
@@ -42,6 +43,10 @@ vi.mock('../services/phiEncryptionService', () => ({
   decryptField: (v: any) => v,
 }));
 vi.mock('../services/paymentPostingService', () => ({ postPayment: H.postPayment }));
+vi.mock('../services/eraDenialService', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  applyRemittanceDenial: H.applyDenial,
+}));
 vi.mock('../services/underpaymentPipelineService', () => ({
   ensureUnderpaymentFollowUp: H.ensureFollowUp,
 }));
@@ -467,5 +472,82 @@ describe('autoMatchRemittance — posting the matched lines', () => {
     // The button can be pressed again once the underlying problem is fixed.
     const retry = await autoMatchRemittance(1, 500, null);
     expect(retry!.posted).toBe(1);
+  });
+});
+
+describe('autoMatchRemittance — denials and reason codes (demo billing test 2026-11-19)', () => {
+  it('carries the CARC / RARC onto the posting', async () => {
+    H.state.claims = [claim()];
+    H.state.remittance.lineItems = [
+      line({
+        claimReference: 'CLM-1001',
+        claimStatusCode: '1',
+        adjustmentReasonCodes: ['45', '2'],
+        remarkCodes: ['N130'],
+      }),
+    ];
+
+    await autoMatchRemittance(1, 500, 'user-1');
+
+    expect(H.postPayment.mock.calls[0][1]).toMatchObject({
+      adjustmentReason: '45: Charge exceeds fee schedule/maximum allowable/contracted/legislated amount; 2: Coinsurance amount',
+      remarkCode: 'N130',
+    });
+    // Processed as primary: a write-off, not a denial.
+    expect(H.applyDenial).not.toHaveBeenCalled();
+  });
+
+  it('applies a denied line (CLP02 4) to the claim after posting it', async () => {
+    H.state.claims = [claim({ totalAmount: '100.00' })];
+    H.state.remittance.lineItems = [
+      line({
+        claimReference: 'CLM-1001',
+        claimStatusCode: '4',
+        chargedAmount: '100.00',
+        allowedAmount: null,
+        paidAmount: '0.00',
+        adjustmentAmount: '100.00',
+        patientResponsibility: '0.00',
+        adjustmentReasonCodes: [{ code: 'CO-197', description: 'Contractual Obligation: Precertification/authorization/notification absent' }],
+        remarkCodes: [],
+      }),
+    ];
+    H.applyDenial.mockResolvedValue({ claimId: 7, denied: true, denialReason: 'CO-197: ...' });
+
+    const result = await autoMatchRemittance(1, 500, 'user-1');
+
+    expect(result!.posted).toBe(1);
+    expect(H.postPayment.mock.calls[0][1]).toMatchObject({
+      paymentAmount: '0.00',
+      adjustmentAmount: '100.00',
+      adjustmentReason: 'CO-197: Contractual Obligation: Precertification/authorization/notification absent',
+    });
+    expect(H.applyDenial).toHaveBeenCalledTimes(1);
+    const [practiceId, claimId, li, opts] = H.applyDenial.mock.calls[0];
+    expect([practiceId, claimId, li.id]).toEqual([1, 7, 1]);
+    expect(opts).toMatchObject({ remittanceId: 500, postedBy: 'user-1' });
+    expect(H.postPayment.mock.invocationCallOrder[0]).toBeLessThan(H.applyDenial.mock.invocationCallOrder[0]);
+  });
+
+  it('does not apply a denial when the posting failed (the line is flagged for retry instead)', async () => {
+    H.state.claims = [claim()];
+    H.state.remittance.lineItems = [line({ claimReference: 'CLM-1001', claimStatusCode: '4', paidAmount: '0.00' })];
+    H.postPayment.mockRejectedValueOnce(new Error('db down'));
+
+    const result = await autoMatchRemittance(1, 500, 'user-1');
+
+    expect(result!.postingFailures).toHaveLength(1);
+    expect(H.applyDenial).not.toHaveBeenCalled();
+  });
+
+  it('a denial-apply failure never fails the posting', async () => {
+    H.state.claims = [claim()];
+    H.state.remittance.lineItems = [line({ claimReference: 'CLM-1001', claimStatusCode: '4', paidAmount: '0.00' })];
+    H.applyDenial.mockRejectedValueOnce(new Error('pipeline down'));
+
+    const result = await autoMatchRemittance(1, 500, 'user-1');
+
+    expect(result!.posted).toBe(1);
+    expect(result!.postingFailures).toHaveLength(0);
   });
 });
