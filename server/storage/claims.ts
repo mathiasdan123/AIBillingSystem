@@ -1,6 +1,8 @@
 import {
   claims,
   claimLineItems,
+  claimFollowUps,
+  recoveryEvents,
   expenses,
   payments,
   cptCodes,
@@ -365,8 +367,25 @@ export async function deleteClaimLineItems(claimId: number): Promise<void> {
  * data.
  */
 export async function deleteDraftClaim(claimId: number): Promise<void> {
-  await db.delete(claimLineItems).where(eq(claimLineItems.claimId, claimId));
-  await db.delete(claims).where(eq(claims.id, claimId));
+  await db.transaction(async (tx: any) => {
+    // Rows a DRAFT can legitimately carry, all derived from the draft itself
+    // and meaningless once it is gone:
+    //  - recovery_events: the pre-submit risk check writes a count-only
+    //    "denial_risk_flagged" evidence row for a high-risk prediction
+    //    (demo pass 2026-11-19: every draft that had been through Submit
+    //    then failed to delete with a foreign-key violation, surfaced as a
+    //    bare 500). A draft was never transmitted, so it has no monetized
+    //    recovery events to preserve.
+    //  - claim_follow_ups: work-queue items pointing at the draft.
+    //  - claim_line_items: the draft's own procedures.
+    // Anything else referencing the claim (payments, remittances, appeals)
+    // cannot exist for a true draft; if it does, the FK violation propagates
+    // and the route turns it into a 409 that names the linked record.
+    await tx.delete(recoveryEvents).where(eq(recoveryEvents.claimId, claimId));
+    await tx.delete(claimFollowUps).where(eq(claimFollowUps.claimId, claimId));
+    await tx.delete(claimLineItems).where(eq(claimLineItems.claimId, claimId));
+    await tx.delete(claims).where(eq(claims.id, claimId));
+  });
 }
 
 // ==================== EXPENSES ====================

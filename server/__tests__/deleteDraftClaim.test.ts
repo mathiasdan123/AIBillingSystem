@@ -64,6 +64,34 @@ describe('DELETE /api/claims/:id', () => {
     expect(H.deleteDraftClaim).toHaveBeenCalledWith(42);
   });
 
+  it('turns a foreign-key violation into a 409 that names the linked record, not a bare 500', async () => {
+    // Demo pass 2026-11-19: drafts that had been through the pre-submit risk
+    // check could not be deleted; the FK violation surfaced as 500 "Failed to
+    // delete claim". storage now clears what a draft can carry; anything
+    // left over is reported by table.
+    H.deleteDraftClaim.mockRejectedValueOnce(Object.assign(new Error('violates foreign key constraint'), {
+      code: '23503',
+      table: 'payment_postings',
+      constraint: 'payment_postings_claim_id_claims_id_fk',
+    }));
+
+    const res = await request(app).delete('/api/claims/42');
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('has_linked_records');
+    expect(res.body.table).toBe('payment_postings');
+    expect(res.body.message).toMatch(/linked payment postings/);
+  });
+
+  it('still answers 500 for an unexpected error', async () => {
+    H.deleteDraftClaim.mockRejectedValueOnce(new Error('connection reset'));
+
+    const res = await request(app).delete('/api/claims/42');
+
+    expect(res.status).toBe(500);
+    expect(res.body.message).toBe('Failed to delete claim');
+  });
+
   it('refuses a SUBMITTED claim', async () => {
     H.claim.status = 'submitted';
 

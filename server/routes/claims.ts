@@ -939,6 +939,24 @@ router.delete('/:id', isAuthenticated, async (req: any, res) => {
 
     res.json({ message: 'Draft claim deleted', claimId });
   } catch (error: any) {
+    // Postgres foreign-key violation (23503): some other record still points
+    // at this claim. storage.deleteDraftClaim clears what a draft can carry
+    // (line items, follow-ups, risk-check evidence); anything left means this
+    // is not just working data. Say which record blocks it instead of a bare
+    // 500 (demo pass 2026-11-19).
+    if (error?.code === '23503') {
+      const linked = String(error?.table ?? '').replace(/_/g, ' ') || 'other records';
+      logger.warn('Draft claim delete blocked by linked records', {
+        claimId: req.params.id,
+        table: error?.table,
+        constraint: error?.constraint,
+      });
+      return res.status(409).json({
+        message: `This claim still has linked ${linked}, so it can't be deleted.`,
+        code: 'has_linked_records',
+        table: error?.table ?? null,
+      });
+    }
     return safeErrorResponse(res, 500, 'Failed to delete claim', error);
   }
 });
