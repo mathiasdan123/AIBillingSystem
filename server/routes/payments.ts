@@ -129,8 +129,8 @@ router.get('/payment-transactions', isAuthenticated, async (req: any, res) => {
 router.get('/payment-transactions/stats', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = periodBounds(req.query.startDate as string | undefined, req.query.endDate as string | undefined);
-    const stats = await storage.getPaymentStats(practiceId, start, end);
+    const { start, end, startDay, endDay } = periodBounds(req.query.startDate as string | undefined, req.query.endDate as string | undefined);
+    const stats = await storage.getPaymentStats(practiceId, start, end, { startDay, endDay });
     res.json(stats);
   } catch (error) {
     logger.error('Error fetching payment stats', { error: error instanceof Error ? error.message : String(error) });

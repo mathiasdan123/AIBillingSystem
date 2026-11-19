@@ -22,10 +22,14 @@ export interface AccountingLedgerRow {
 }
 
 export interface AccountingTotals {
+  /** Net of completed refunds. */
   totalRevenue: number;
   insuranceRevenue: number;
+  /** Net of completed refunds. */
   patientRevenue: number;
   pendingPayments: number;
+  /** Completed refunds in the period (already subtracted from the figures above). */
+  totalRefunded: number;
 }
 
 const csvCell = (value: unknown): string => {
@@ -92,11 +96,12 @@ export function buildTaxSummary(
 Period: ${period.start} to ${period.end}
 Generated: ${generatedOn}
 
-REVENUE SUMMARY
-===============
+REVENUE SUMMARY (net of refunds)
+================================
 Total Revenue: $${totals.totalRevenue.toFixed(2)}
   - Insurance Payments (posted ERA / manual postings): $${totals.insuranceRevenue.toFixed(2)}
   - Patient Payments (copays, balances, self-pay): $${totals.patientRevenue.toFixed(2)}
+    (after $${totals.totalRefunded.toFixed(2)} refunded to patients)
 
 Pending Patient Payments: $${totals.pendingPayments.toFixed(2)}
 

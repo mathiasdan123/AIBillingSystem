@@ -13,6 +13,8 @@
  * the page and its exports can rely on. Pure: callers pass the rows.
  */
 
+import { getBusinessTimeZone, zonedAddDays, zonedDateString, zonedInstant } from '../utils/timezone';
+
 export interface LedgerRow {
   /** Stable across sources: "txn-<id>" or "posting-<id>". */
   id: string;
@@ -60,19 +62,39 @@ export interface InsurancePostingLike {
   createdAt?: Date | string | null;
 }
 
-/** The YYYY-MM-DD part of a Date or ISO/date string; null when absent. */
-export function isoDay(value: Date | string | null | undefined): string | null {
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The calendar day of a value. A date-only string (a `date` column such as
+ * payment_date) is taken as is. A Date or timestamp is read in the practice
+ * zone, so a payment processed at 8:30 PM Eastern on the 18th is the 18th,
+ * not the 19th it would be in UTC.
+ */
+export function isoDay(value: Date | string | null | undefined, timeZone: string = getBusinessTimeZone()): string | null {
   if (!value) return null;
-  const s = value instanceof Date ? value.toISOString() : String(value);
-  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+  if (typeof value === 'string' && DATE_ONLY.test(value)) return value;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    // Not a timestamp: accept a leading YYYY-MM-DD if there is one.
+    const s = String(value);
+    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+  }
+  return zonedDateString(d, timeZone);
 }
 
 /**
- * Query-string period → bounds. A date-only `endDate` means the whole of
- * that day: the page sends "To: today" and the previous `new Date('YYYY-MM-DD')`
- * (UTC midnight) excluded everything that happened today.
+ * Query-string period → bounds, in the practice's timezone. A date-only
+ * `startDate` is local midnight of that day; a date-only `endDate` is the
+ * last millisecond of that local day, so "To: today" includes a payment
+ * taken this evening (the previous `new Date('YYYY-MM-DD')` was UTC
+ * midnight, which cut the whole local day off). A full timestamp is used as
+ * given. `startDay` / `endDay` are the calendar days for `date` columns.
  */
-export function periodBounds(startDate?: string, endDate?: string): {
+export function periodBounds(
+  startDate?: string,
+  endDate?: string,
+  timeZone: string = getBusinessTimeZone(),
+): {
   start?: Date;
   end?: Date;
   startDay?: string;
@@ -80,18 +102,36 @@ export function periodBounds(startDate?: string, endDate?: string): {
 } {
   const out: { start?: Date; end?: Date; startDay?: string; endDay?: string } = {};
   if (startDate) {
-    const d = new Date(startDate);
-    if (!Number.isNaN(d.getTime())) {
-      out.start = d;
-      out.startDay = isoDay(d) ?? undefined;
+    if (DATE_ONLY.test(startDate)) {
+      const d = zonedInstant(startDate, '00:00', timeZone);
+      if (!Number.isNaN(d.getTime())) {
+        out.start = d;
+        out.startDay = startDate;
+      }
+    } else {
+      const d = new Date(startDate);
+      if (!Number.isNaN(d.getTime())) {
+        out.start = d;
+        out.startDay = zonedDateString(d, timeZone);
+      }
     }
   }
   if (endDate) {
-    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(endDate);
-    const d = new Date(dateOnly ? `${endDate}T23:59:59.999Z` : endDate);
-    if (!Number.isNaN(d.getTime())) {
-      out.end = d;
-      out.endDay = dateOnly ? endDate : (isoDay(d) ?? undefined);
+    if (DATE_ONLY.test(endDate)) {
+      // Start of the next local day, minus one millisecond: an inclusive bound
+      // for the `lte` the storage queries use.
+      const nextDay = zonedInstant(endDate, '00:00', timeZone);
+      if (!Number.isNaN(nextDay.getTime())) {
+        const nextLocalMidnight = zonedInstant(zonedDateString(zonedAddDays(nextDay, 1, timeZone), timeZone), '00:00', timeZone);
+        out.end = new Date(nextLocalMidnight.getTime() - 1);
+        out.endDay = endDate;
+      }
+    } else {
+      const d = new Date(endDate);
+      if (!Number.isNaN(d.getTime())) {
+        out.end = d;
+        out.endDay = zonedDateString(d, timeZone);
+      }
     }
   }
   return out;
@@ -106,6 +146,7 @@ export function buildLedger(
   transactions: PatientPaymentLike[],
   postings: InsurancePostingLike[],
   patientNames: Map<number, string>,
+  timeZone: string = getBusinessTimeZone(),
 ): LedgerRow[] {
   const rows: LedgerRow[] = [];
 
@@ -113,7 +154,7 @@ export function buildLedger(
     rows.push({
       id: `txn-${t.id}`,
       source: 'patient',
-      date: isoDay(t.processedAt) ?? isoDay(t.createdAt) ?? '',
+      date: isoDay(t.processedAt, timeZone) ?? isoDay(t.createdAt, timeZone) ?? '',
       amount: money(t.amount),
       type: t.type || 'payment',
       category: t.category ?? null,
@@ -130,7 +171,7 @@ export function buildLedger(
     rows.push({
       id: `posting-${p.id}`,
       source: 'insurance',
-      date: isoDay(p.paymentDate) ?? isoDay(p.postedAt) ?? isoDay(p.createdAt) ?? '',
+      date: isoDay(p.paymentDate, timeZone) ?? isoDay(p.postedAt, timeZone) ?? isoDay(p.createdAt, timeZone) ?? '',
       amount: money(p.paymentAmount),
       type: 'payment',
       category: 'insurance',

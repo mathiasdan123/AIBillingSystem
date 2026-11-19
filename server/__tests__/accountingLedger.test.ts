@@ -40,27 +40,44 @@ function makeApp(): Express {
   return app;
 }
 
-describe('periodBounds', () => {
-  it('covers the whole end day for a date-only endDate (the page sends "To: today")', () => {
-    const b = periodBounds('2026-11-01', '2026-11-19');
-    expect(b.start?.toISOString()).toBe('2026-11-01T00:00:00.000Z');
-    expect(b.end?.toISOString()).toBe('2026-11-19T23:59:59.999Z');
+const ET = 'America/New_York';
+
+describe('periodBounds (practice timezone)', () => {
+  it('covers the whole LOCAL end day for a date-only endDate (the page sends "To: today")', () => {
+    const b = periodBounds('2026-11-01', '2026-11-19', ET);
+    // Nov 1 is still EDT (UTC-4); Nov 19 is EST (UTC-5).
+    expect(b.start?.toISOString()).toBe('2026-11-01T04:00:00.000Z');
+    expect(b.end?.toISOString()).toBe('2026-11-20T04:59:59.999Z');
     expect(b.startDay).toBe('2026-11-01');
     expect(b.endDay).toBe('2026-11-19');
   });
 
-  it('passes a full timestamp through and ignores garbage', () => {
-    const b = periodBounds('2026-11-01T12:00:00Z', 'nope');
-    expect(b.start?.toISOString()).toBe('2026-11-01T12:00:00.000Z');
-    expect(b.end).toBeUndefined();
-    expect(periodBounds()).toEqual({});
+  it('an evening payment after 8pm ET counts on its own day', () => {
+    // 8:30 PM Eastern on the 18th is 01:30Z on the 19th. A UTC bound would
+    // have put it on the 19th and left it out of "To: Nov 18".
+    const evening = new Date('2026-11-19T01:30:00.000Z');
+    const b = periodBounds('2026-11-18', '2026-11-18', ET);
+    expect(b.start!.getTime() <= evening.getTime() && evening.getTime() <= b.end!.getTime()).toBe(true);
+    expect(isoDay(evening, ET)).toBe('2026-11-18');
+    const next = periodBounds('2026-11-19', '2026-11-19', ET);
+    expect(evening.getTime() < next.start!.getTime()).toBe(true);
   });
 
-  it('isoDay reads the calendar day of a Date or a date string', () => {
-    expect(isoDay(new Date('2026-11-13T15:00:00.000Z'))).toBe('2026-11-13');
-    expect(isoDay('2026-11-13')).toBe('2026-11-13');
-    expect(isoDay(null)).toBeNull();
-    expect(isoDay('soon')).toBeNull();
+  it('passes a full timestamp through, reads its local day, and ignores garbage', () => {
+    const b = periodBounds('2026-11-01T12:00:00Z', 'nope', ET);
+    expect(b.start?.toISOString()).toBe('2026-11-01T12:00:00.000Z');
+    expect(b.startDay).toBe('2026-11-01');
+    expect(b.end).toBeUndefined();
+    expect(periodBounds(undefined, undefined, ET)).toEqual({});
+    expect(periodBounds('2026-11-01T03:00:00Z', undefined, ET).startDay).toBe('2026-10-31');
+  });
+
+  it('isoDay keeps a date-only string and reads a timestamp in the practice zone', () => {
+    expect(isoDay(new Date('2026-11-13T15:00:00.000Z'), ET)).toBe('2026-11-13');
+    expect(isoDay(new Date('2026-11-14T03:30:00.000Z'), ET)).toBe('2026-11-13');
+    expect(isoDay('2026-11-13', ET)).toBe('2026-11-13');
+    expect(isoDay(null, ET)).toBeNull();
+    expect(isoDay('soon', ET)).toBeNull();
   });
 });
 
@@ -77,6 +94,7 @@ describe('buildLedger', () => {
         { id: 502, claimId: 43, payerName: null, paymentDate: '2026-11-18', paymentAmount: '100.00', checkNumber: '1234', source: 'manual' },
       ],
       new Map([[102, 'Mia Example'], [103, 'Liam Demo']]),
+      ET,
     );
     expect(rows.map((r) => r.id)).toEqual(['txn-2', 'txn-3', 'posting-502', 'txn-1', 'posting-501']);
     expect(rows.find((r) => r.id === 'txn-1')).toEqual({
@@ -92,6 +110,16 @@ describe('buildLedger', () => {
     expect(rows.find((r) => r.id === 'posting-502')).toMatchObject({ method: 'check', party: 'Insurance' });
     expect(rows.find((r) => r.id === 'txn-3')).toMatchObject({ party: 'Patient', status: 'pending' });
   });
+
+  it('dates an evening patient payment on its local day, not the UTC day', () => {
+    const rows = buildLedger(
+      [{ id: 9, patientId: 1, amount: '30.00', type: 'payment', category: 'copay', processor: 'manual', status: 'completed', processedAt: new Date('2026-11-19T01:30:00.000Z') }],
+      [],
+      new Map(),
+      ET,
+    );
+    expect(rows[0].date).toBe('2026-11-18');
+  });
 });
 
 describe('GET /api/payment-transactions/ledger', () => {
@@ -106,11 +134,11 @@ describe('GET /api/payment-transactions/ledger', () => {
     storageStub.getPatientsByIds.mockResolvedValue(new Map([[102, { id: 102, firstName: 'Mia', lastName: 'Example' }]]));
   });
 
-  it('scopes both sources to the caller practice and the period, and attaches patient names', async () => {
+  it('scopes both sources to the caller practice and the local period, and attaches patient names', async () => {
     const res = await request(makeApp()).get('/api/payment-transactions/ledger?startDate=2026-11-01&endDate=2026-11-19').expect(200);
     expect(storageStub.getPaymentTransactions).toHaveBeenCalledWith(7, {
-      startDate: new Date('2026-11-01T00:00:00.000Z'),
-      endDate: new Date('2026-11-19T23:59:59.999Z'),
+      startDate: new Date('2026-11-01T04:00:00.000Z'),
+      endDate: new Date('2026-11-20T04:59:59.999Z'),
     });
     expect(storageStub.getPaymentPostingsForPeriod).toHaveBeenCalledWith(7, '2026-11-01', '2026-11-19');
     expect(storageStub.getPatientsByIds).toHaveBeenCalledWith([102]);
@@ -125,9 +153,14 @@ describe('GET /api/payment-transactions/ledger', () => {
     expect(storageStub.getPaymentPostingsForPeriod.mock.calls[0][0]).toBe(7);
   });
 
-  it('the stats route covers the whole end day', async () => {
+  it('the stats route covers the whole local end day and passes the calendar days for date columns', async () => {
     storageStub.getPaymentStats.mockResolvedValue({ totalRevenue: 1 });
     await request(makeApp()).get('/api/payment-transactions/stats?startDate=2026-11-01&endDate=2026-11-19').expect(200);
-    expect(storageStub.getPaymentStats).toHaveBeenCalledWith(7, new Date('2026-11-01T00:00:00.000Z'), new Date('2026-11-19T23:59:59.999Z'));
+    expect(storageStub.getPaymentStats).toHaveBeenCalledWith(
+      7,
+      new Date('2026-11-01T04:00:00.000Z'),
+      new Date('2026-11-20T04:59:59.999Z'),
+      { startDay: '2026-11-01', endDay: '2026-11-19' },
+    );
   });
 });

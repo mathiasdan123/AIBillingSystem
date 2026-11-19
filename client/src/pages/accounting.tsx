@@ -21,10 +21,13 @@ import {
 
 /** GET /api/payment-transactions/stats — the server computes every figure the cards show. */
 interface PaymentStats {
+  /** Net of completed refunds. */
   totalRevenue: number;
   pendingPayments: number;
   insuranceRevenue: number;
+  /** Net of completed refunds. */
   patientRevenue: number;
+  totalRefunded: number;
   transactionCount: number;
   insurancePostingCount: number;
 }
@@ -69,13 +72,16 @@ export default function AccountingPage() {
 
   // The server figures are authoritative; the ledger-derived fallback only
   // covers the moment before stats arrive.
-  const sumCompleted = (rows: AccountingLedgerRow[]) =>
-    rows.filter((r) => r.status === "completed" && r.type === "payment").reduce((sum, r) => sum + r.amount, 0);
-  const insuranceRevenue = stats?.insuranceRevenue ?? sumCompleted(transactions.filter((r) => r.source === "insurance"));
-  const patientRevenue = stats?.patientRevenue ?? sumCompleted(transactions.filter((r) => r.source === "patient"));
+  const sumCompleted = (rows: AccountingLedgerRow[], type: string) =>
+    rows.filter((r) => r.status === "completed" && r.type === type).reduce((sum, r) => sum + r.amount, 0);
+  const patientRows = transactions.filter((r) => r.source === "patient");
+  const totalRefunded = stats?.totalRefunded ?? sumCompleted(patientRows, "refund");
+  const insuranceRevenue = stats?.insuranceRevenue ?? sumCompleted(transactions.filter((r) => r.source === "insurance"), "payment");
+  // Net of refunds: money returned to a patient is not revenue.
+  const patientRevenue = stats?.patientRevenue ?? sumCompleted(patientRows, "payment") - totalRefunded;
   const totalRevenue = stats?.totalRevenue ?? insuranceRevenue + patientRevenue;
   const pendingPayments = stats?.pendingPayments ?? transactions.filter((r) => r.status === "pending").reduce((sum, r) => sum + r.amount, 0);
-  const totals = { totalRevenue, insuranceRevenue, patientRevenue, pendingPayments };
+  const totals = { totalRevenue, insuranceRevenue, patientRevenue, pendingPayments, totalRefunded };
 
   const download = (content: string, mime: string, filename: string) => {
     const blob = new Blob([content], { type: mime });
@@ -165,6 +171,7 @@ export default function AccountingPage() {
               <div className="flex items-center mt-2 text-sm text-green-600" data-testid="text-total-revenue-detail">
                 <TrendingUp className="w-4 h-4 mr-1" />
                 {transactions.length} payments in period
+                {totalRefunded > 0 && <span className="ml-1 text-slate-500">· net of ${totalRefunded.toFixed(2)} refunded</span>}
               </div>
             </CardContent>
           </Card>
@@ -227,7 +234,7 @@ export default function AccountingPage() {
                 </div>
               </div>
               <div className="text-sm text-slate-500 mt-2" data-testid="text-patient-detail">
-                {totalRevenue > 0 ? Math.round((patientRevenue / totalRevenue) * 100) : 0}% of revenue · copays, balances, self-pay
+                {totalRevenue > 0 ? Math.round((patientRevenue / totalRevenue) * 100) : 0}% of revenue · copays, balances, self-pay, net of refunds
               </div>
             </CardContent>
           </Card>
@@ -373,7 +380,7 @@ export default function AccountingPage() {
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                       <div>
                         <div className="font-medium">Total Revenue</div>
-                        <div className="text-sm text-slate-500">Selected period</div>
+                        <div className="text-sm text-slate-500">Selected period, net of refunds</div>
                       </div>
                       <div className="text-xl font-bold text-green-600">
                         ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -391,7 +398,9 @@ export default function AccountingPage() {
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                       <div>
                         <div className="font-medium">Patient Payments</div>
-                        <div className="text-sm text-slate-500">Copays, balances, self-pay</div>
+                        <div className="text-sm text-slate-500">
+                          Copays, balances, self-pay{totalRefunded > 0 ? ` · net of $${totalRefunded.toFixed(2)} refunded` : ""}
+                        </div>
                       </div>
                       <div className="text-xl font-bold text-purple-600">
                         ${patientRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}

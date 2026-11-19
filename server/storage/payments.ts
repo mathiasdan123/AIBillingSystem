@@ -357,7 +357,13 @@ export async function getPaymentPostingsForPeriod(
     .orderBy(desc(paymentPostings.paymentDate), desc(paymentPostings.id));
 }
 
-export async function getPaymentStats(practiceId: number, startDate?: Date, endDate?: Date): Promise<{
+export async function getPaymentStats(
+  practiceId: number,
+  startDate?: Date,
+  endDate?: Date,
+  /** Calendar days for the `date` columns (payment_postings.payment_date); derived from the instants in UTC when absent. */
+  days?: { startDay?: string; endDay?: string },
+): Promise<{
   totalCollected: number;
   totalPending: number;
   totalRefunded: number;
@@ -368,7 +374,7 @@ export async function getPaymentStats(practiceId: number, startDate?: Date, endD
   /** Non-reversed insurance postings (payment_postings) in the period. */
   insuranceCollected: number;
   insurancePostingCount: number;
-  /** The figures the Accounting page shows (QA demo pass 2026-11-19): */
+  /** The figures the Accounting page shows (QA demo pass 2026-11-19). Revenue is net of completed refunds. */
   totalRevenue: number;
   insuranceRevenue: number;
   patientRevenue: number;
@@ -388,8 +394,8 @@ export async function getPaymentStats(practiceId: number, startDate?: Date, endD
       .where(and(...conditions)),
     getPaymentPostingsForPeriod(
       practiceId,
-      startDate ? startDate.toISOString().slice(0, 10) : undefined,
-      endDate ? endDate.toISOString().slice(0, 10) : undefined,
+      days?.startDay ?? (startDate ? startDate.toISOString().slice(0, 10) : undefined),
+      days?.endDay ?? (endDate ? endDate.toISOString().slice(0, 10) : undefined),
     ),
   ]);
   const insuranceCollected = postings.reduce((sum: number, p: PaymentPosting) => sum + parseFloat(p.paymentAmount || '0'), 0);
@@ -436,9 +442,10 @@ export async function getPaymentStats(practiceId: number, startDate?: Date, endD
     byMethod,
     insuranceCollected,
     insurancePostingCount: postings.length,
-    totalRevenue: totalCollected + insuranceCollected,
+    // Net of completed refunds: money returned to a patient is not revenue.
+    totalRevenue: totalCollected - totalRefunded + insuranceCollected,
     insuranceRevenue: insuranceCollected,
-    patientRevenue: totalCollected,
+    patientRevenue: totalCollected - totalRefunded,
     pendingPayments: totalPending,
   };
 }

@@ -41,13 +41,16 @@ describe('buildTaxSummary', () => {
   it('reports the server totals and splits counts by source', () => {
     const text = buildTaxSummary(
       { start: '2026-11-01', end: '2026-11-19' },
-      { totalRevenue: 271.65, insuranceRevenue: 246.65, patientRevenue: 25, pendingPayments: 40 },
+      // Server figures are net of the $10 refund: 25 collected - 10 refunded + 246.65 insurance.
+      { totalRevenue: 261.65, insuranceRevenue: 246.65, patientRevenue: 15, pendingPayments: 40, totalRefunded: 10 },
       rows,
       '2026-11-19',
     );
-    expect(text).toContain('Total Revenue: $271.65');
+    expect(text).toContain('REVENUE SUMMARY (net of refunds)');
+    expect(text).toContain('Total Revenue: $261.65');
     expect(text).toContain('Insurance Payments (posted ERA / manual postings): $246.65');
-    expect(text).toContain('Patient Payments (copays, balances, self-pay): $25.00');
+    expect(text).toContain('Patient Payments (copays, balances, self-pay): $15.00');
+    expect(text).toContain('(after $10.00 refunded to patients)');
     expect(text).toContain('Pending Patient Payments: $40.00');
     expect(text).toContain('Insurance postings: 1');
     expect(text).toContain('Patient payments: 3');
