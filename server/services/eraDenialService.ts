@@ -29,7 +29,7 @@
  * manual Deny button and the 277 status poller do.
  */
 
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { remittanceLineItems } from '@shared/schema';
 import { storage } from '../storage';
@@ -143,12 +143,6 @@ export interface DenialPipelineState {
   followUpCreated: boolean;
   error?: string;
 }
-
-/**
- * Automatic retries (poller, Auto-Match) stop here; the line's "Retry
- * denial" button always may. A denial retry never posts money.
- */
-export const MAX_AUTO_DENIAL_ATTEMPTS = 5;
 
 export interface ApplyDenialResult {
   claimId: number;
@@ -365,11 +359,7 @@ export async function applyRemittanceDenialToLine(
       .set(
         result.applied
           ? { denialAppliedAt: new Date(), denialError: null }
-          : {
-              denialAppliedAt: null,
-              denialError: clip(error, REASON_TEXT_LIMIT),
-              denialAttempts: sql`COALESCE(${remittanceLineItems.denialAttempts}, 0) + 1`,
-            },
+          : { denialAppliedAt: null, denialError: clip(error, REASON_TEXT_LIMIT) },
       )
       .where(eq(remittanceLineItems.id, line.id));
   } catch (markError) {
@@ -388,24 +378,25 @@ export async function applyRemittanceDenialToLine(
 export interface DenialPendingLineLike extends RemittanceLineLike {
   status?: string | null;
   claimId?: number | null;
+  matchType?: string | null;
   autoPostedAt?: Date | string | null;
-  postedAt?: Date | string | null;
   denialAppliedAt?: Date | string | null;
-  denialAttempts?: number | null;
+}
+
+/**
+ * Whether a matched line's payment has been recorded, from the line alone
+ * (payment postings do not carry the line id): the auto path stamps
+ * autoPostedAt once it has posted; the manual match route posts in the
+ * same request as the match (matchType 'manual'); matchType NULL is a row
+ * matched and posted under the old fused path. A line auto-matched by a
+ * match-only pass (ERA_AUTO_POST off) has none of these and is not posted.
+ */
+export function isLinePaymentRecorded(line: DenialPendingLineLike): boolean {
+  return line.status === 'matched' && line.claimId != null &&
+    (line.autoPostedAt != null || line.matchType === 'manual' || line.matchType == null);
 }
 
 /** A posted, denied line whose denial has not been (fully) applied yet. */
 export function isDenialPending(line: DenialPendingLineLike): boolean {
-  return (
-    line.status === 'matched' &&
-    line.claimId != null &&
-    isDeniedRemittanceLine(line) &&
-    (line.autoPostedAt != null || line.postedAt != null) &&
-    line.denialAppliedAt == null
-  );
-}
-
-/** Pending AND still within the automatic retry budget. */
-export function isDenialAutoRetryable(line: DenialPendingLineLike): boolean {
-  return isDenialPending(line) && (line.denialAttempts ?? 0) < MAX_AUTO_DENIAL_ATTEMPTS;
+  return isLinePaymentRecorded(line) && isDeniedRemittanceLine(line) && line.denialAppliedAt == null;
 }

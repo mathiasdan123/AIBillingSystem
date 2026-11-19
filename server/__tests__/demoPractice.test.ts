@@ -500,12 +500,9 @@ describe('ensureDemoPaymentRecords (QA demo pass 2026-11-19, item 1)', () => {
     const posting = calls.find((c) => /INSERT INTO payment_postings/.test(c.sql))!;
     expect(posting.params).toEqual([
       99, 42, 'UnitedHealthcare', 'DEMO-CHK-99-1002', '2026-11-13', '246.65',
-      '17.35', '25.00', '271.65', paidAt, 501,
+      '17.35', '25.00', '271.65', paidAt,
     ]);
     expect(posting.sql).toMatch(/'era'/);
-    // The posting is linked to its remittance line (one posting identity per line, #497).
-    expect(posting.sql).toMatch(/remittance_line_item_id/);
-    expect(posting.sql).toMatch(/SELECT id FROM remittance_line_items WHERE remittance_id = \$11/);
 
     const copay = calls.find((c) => /INSERT INTO payment_transactions/.test(c.sql))!;
     expect(copay.sql).toMatch(/'payment', 'copay'/);

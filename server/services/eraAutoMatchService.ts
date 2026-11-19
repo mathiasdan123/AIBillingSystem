@@ -44,9 +44,8 @@ import {
   feeSchedules,
 } from '@shared/schema';
 import { eq, and, desc, sql, ilike, lte } from 'drizzle-orm';
-import { MAX_AUTO_DENIAL_ATTEMPTS } from './eraDenialService';
-import { postRemittanceLinePayment } from './paymentPostingService';
-import { applyRemittanceDenialToLine, isDenialAutoRetryable, isDenialPending, postingReasonFields } from './eraDenialService';
+import { postPayment } from './paymentPostingService';
+import { applyRemittanceDenialToLine, isDenialPending, isLinePaymentRecorded, postingReasonFields } from './eraDenialService';
 import { ensureUnderpaymentFollowUp } from './underpaymentPipelineService';
 import { scoreClaimAgainstRemittanceLine, isAutoMatch } from './eraMatchScoring';
 import { decryptRemittanceLineItem, decryptField } from './phiEncryptionService';
@@ -94,7 +93,7 @@ export interface AutoMatchResult {
   matched: number;
   /** Payments recorded by this run — includes lines linked by an earlier match-only pass. */
   posted: number;
-  /** Lines this run had work to consider: unmatched + auto-matched-but-unposted + pending denials. */
+  /** Lines this run had work to consider: unmatched + auto-matched-but-unposted. */
   total: number;
   needsReview: number;
   results: Array<{ lineItemId: number; claimId: number | null; matchType: string }>;
@@ -109,11 +108,47 @@ export interface AutoMatchResult {
   /**
    * Posted denied lines whose denial could not be applied (claim status,
    * appeal draft or follow-up). The money IS recorded; the denial stays
-   * pending on the line and the next run retries it.
+   * pending on the line (Retry denial button / Auto-Match retries it).
    */
   denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
-  /** Pending denials not retried because the automatic budget is used up (the line's Retry button still can). */
-  denialsExhausted: number;
+}
+
+export interface PendingDenialResult {
+  denialsApplied: number;
+  denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
+}
+
+/**
+ * Apply every posted-but-pending denial on a remittance: claim status + CARC
+ * reason + appeal draft + follow-up. Never posts money: only lines whose
+ * payment is already recorded (isLinePaymentRecorded) are considered.
+ */
+export async function retryPendingDenials(
+  practiceId: number,
+  remittance: { id: number; payerName: string | null; checkNumber: string | null },
+  lineItems: any[],
+  postedBy: string | null,
+): Promise<PendingDenialResult> {
+  const result: PendingDenialResult = { denialsApplied: 0, denialFailures: [] };
+  for (const lineItem of lineItems) {
+    if (!isDenialPending(lineItem)) continue;
+    const outcome = await applyRemittanceDenialToLine(practiceId, lineItem, {
+      remittanceId: remittance.id,
+      payerName: remittance.payerName,
+      checkNumber: remittance.checkNumber ?? null,
+      postedBy,
+    });
+    if (outcome.applied) {
+      result.denialsApplied++;
+      lineItem.denialAppliedAt = new Date();
+      lineItem.denialError = null;
+    } else {
+      const error = outcome.pipeline.error ?? outcome.skippedReason ?? 'denial not applied';
+      lineItem.denialError = error;
+      result.denialFailures.push({ claimId: lineItem.claimId, lineItemId: lineItem.id, error });
+    }
+  }
+  return result;
 }
 
 interface ClaimCandidate {
@@ -419,84 +454,6 @@ export async function findRemittancesNeedingMatch(
 }
 
 /**
- * Remittances with a posted, denied (CLP02 4) line whose denial has not
- * been applied and is still within the automatic retry budget. The poller
- * revisits these with retryPendingDenials — which never posts money.
- */
-export async function findRemittancesWithPendingDenials(
-  practiceId: number,
-  limit: number,
-): Promise<number[]> {
-  const rows = await db
-    .selectDistinct({ id: remittanceAdvice.id })
-    .from(remittanceAdvice)
-    .innerJoin(
-      remittanceLineItems,
-      eq(remittanceLineItems.remittanceId, remittanceAdvice.id),
-    )
-    .where(
-      and(
-        eq(remittanceAdvice.practiceId, practiceId),
-        eq(remittanceLineItems.status, 'matched'),
-        eq(remittanceLineItems.claimStatusCode, '4'),
-        sql`${remittanceLineItems.claimId} IS NOT NULL`,
-        sql`(${remittanceLineItems.autoPostedAt} IS NOT NULL OR ${remittanceLineItems.postedAt} IS NOT NULL)`,
-        sql`${remittanceLineItems.denialAppliedAt} IS NULL`,
-        sql`COALESCE(${remittanceLineItems.denialAttempts}, 0) < ${MAX_AUTO_DENIAL_ATTEMPTS}`,
-      ),
-    )
-    .limit(limit);
-  return rows.map((r: any) => r.id);
-}
-
-export interface PendingDenialResult {
-  denialsApplied: number;
-  denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
-  /** Pending lines skipped because they used up the automatic retry budget. */
-  denialsExhausted: number;
-}
-
-/**
- * Apply every posted-but-pending denial on a remittance: claim status + CARC
- * reason + appeal draft + follow-up. Never posts money. `unbounded` (the
- * line's Retry button) ignores the automatic attempt budget.
- */
-export async function retryPendingDenials(
-  practiceId: number,
-  remittance: { id: number; payerName: string | null; checkNumber: string | null },
-  lineItems: any[],
-  postedBy: string | null,
-  options: { unbounded?: boolean; onlyLineItemId?: number } = {},
-): Promise<PendingDenialResult> {
-  const result: PendingDenialResult = { denialsApplied: 0, denialFailures: [], denialsExhausted: 0 };
-  for (const lineItem of lineItems) {
-    if (options.onlyLineItemId != null && lineItem.id !== options.onlyLineItemId) continue;
-    if (!isDenialPending(lineItem)) continue;
-    if (!options.unbounded && !isDenialAutoRetryable(lineItem)) {
-      result.denialsExhausted++;
-      continue;
-    }
-    const outcome = await applyRemittanceDenialToLine(practiceId, lineItem, {
-      remittanceId: remittance.id,
-      payerName: remittance.payerName,
-      checkNumber: remittance.checkNumber ?? null,
-      postedBy,
-    });
-    if (outcome.applied) {
-      result.denialsApplied++;
-      lineItem.denialAppliedAt = new Date();
-      lineItem.denialError = null;
-    } else {
-      const error = outcome.pipeline.error ?? outcome.skippedReason ?? 'denial not applied';
-      lineItem.denialError = error;
-      lineItem.denialAttempts = (lineItem.denialAttempts ?? 0) + 1;
-      result.denialFailures.push({ claimId: lineItem.claimId, lineItemId: lineItem.id, error });
-    }
-  }
-  return result;
-}
-
-/**
  * Auto-match a remittance's unmatched line items AND post the payments.
  *
  * Runs the same matchRemittanceLineItems pass as the poller, then records a
@@ -533,18 +490,14 @@ export async function autoMatchRemittance(
 
   // Auto-matched lines whose money is not recorded yet. matchType null means
   // the row predates the match/post split and was posted by the old fused
-  // path — posting it again would double-count real dollars. autoPostedAt
-  // stays a legacy gate (lines posted before the line id was recorded on
-  // the posting); for everything else the committed posting carrying this
-  // line's id is the truth, and postRemittanceLinePayment refuses a second.
+  // path — posting it again would double-count real dollars.
   const toPost = lineItems.filter(
     (li: any) =>
       li.status === 'matched' &&
       li.claimId != null &&
       li.matchType != null &&
       li.matchType !== 'manual' &&
-      li.autoPostedAt == null &&
-      li.postedAt == null,
+      li.autoPostedAt == null,
   );
 
   const linkedIds = new Set(
@@ -643,21 +596,27 @@ export async function autoMatchRemittance(
       .set(claimUpdate)
       .where(eq(claims.id, claimId));
 
+    // Mark the line posted BEFORE calling postPayment and roll back on
+    // failure. If the rollback itself fails, the failure is still visible in
+    // postingFailures/logs — biasing toward "posting missed and flagged"
+    // over "posting recorded twice", which inflates collections and the fee.
+    const autoPostedAt = new Date();
+    await db
+      .update(remittanceLineItems)
+      .set({ autoPostedAt })
+      .where(eq(remittanceLineItems.id, lineItem.id));
+    // Mirror the marker on the in-memory line so the denial step below sees
+    // this line as posted (isLinePaymentRecorded); cleared again on rollback.
+    lineItem.autoPostedAt = autoPostedAt;
+
     // The payment posting is the record the whole money path reads from
     // (A/R, patient statements, and the 6%-of-collections basis). postPayment
     // owns claim.paidAmount and status: it SUMS non-reversed postings, so a
     // multi-line ERA accumulates instead of the last line overwriting the
     // total, and a partial payment lands on 'partial' rather than closing
     // the claim.
-    //
-    // The posting carries this line's id and the database allows one active
-    // posting per line, so this is atomic: a simultaneous manual match, or
-    // a retry after a crash between the commit and the marker below, gets
-    // alreadyPosted instead of a second row. The markers are written only
-    // after the commit — a marker never claims money that is not recorded.
     try {
-      const { alreadyPosted } = await postRemittanceLinePayment(practiceId, {
-        remittanceLineItemId: lineItem.id,
+      await postPayment(practiceId, {
         // Authoritative: supersedes any 277-derived posting on this claim.
         source: 'era',
         claimId,
@@ -679,54 +638,41 @@ export async function autoMatchRemittance(
         ...postingReasonFields(lineItem),
         postedBy,
       } as any);
-      if (alreadyPosted) {
-        logger.warn('ERA auto-match: line already had an active posting; markers caught up, nothing posted', {
-          claimId,
-          remittanceId: remittance.id,
-          lineItemId: lineItem.id,
-        });
-      } else {
-        posted++;
-      }
-      const postedAt = new Date();
-      lineItem.autoPostedAt = postedAt;
-      lineItem.postedAt = postedAt;
-      try {
-        await db
-          .update(remittanceLineItems)
-          .set({ autoPostedAt: postedAt, postedAt })
-          .where(eq(remittanceLineItems.id, lineItem.id));
-      } catch (markError) {
-        // The posting is committed; only the convenience marker is missing.
-        // The next run finds the posting by line id and writes the marker.
-        logger.error('ERA auto-match: posting recorded but the line marker could not be written', {
-          lineItemId: lineItem.id,
-          remittanceId: remittance.id,
-          error: markError instanceof Error ? markError.message : String(markError),
-        });
-      }
+      posted++;
     } catch (postError) {
       // A failed posting must be visible, not swallowed — the claim would
-      // otherwise show matched with no money behind it. Nothing was posted
-      // and no marker was written, so the next run simply tries again.
+      // otherwise show matched with no money behind it.
       logger.error('ERA auto-match: failed to record payment posting', {
         claimId,
         remittanceId: remittance.id,
         error: postError instanceof Error ? postError.message : String(postError),
       });
       postingFailures.push({ claimId, lineItemId: lineItem.id });
+      lineItem.autoPostedAt = null;
+      try {
+        await db
+          .update(remittanceLineItems)
+          .set({ autoPostedAt: null })
+          .where(eq(remittanceLineItems.id, lineItem.id));
+      } catch (rollbackError) {
+        logger.error('ERA auto-match: failed to clear autoPostedAt after posting failure', {
+          lineItemId: lineItem.id,
+          remittanceId: remittance.id,
+          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      }
     }
   }
 
-  // Denied lines (CLP02 4) whose posting is recorded but whose denial is not
+  // Denied lines (CLP02 4) whose payment is recorded but whose denial is not
   // yet applied to the claim: the ones posted just now AND any left pending
-  // by an earlier run (or by the manual match route) whose denial step
+  // by an earlier run or by the manual match route whose denial step
   // failed. The posting is never repeated here — only the denial: claim
   // status + CARC reason + appeal draft + follow-up. Each line records its
-  // own outcome (denialAppliedAt / denialError), so a failure is visible and
-  // retried next run instead of being lost.
+  // own outcome (denialAppliedAt / denialError), so a failure is visible
+  // (Denial pending badge) and retried instead of being lost.
   const pendingBefore = lineItems.filter((li: any) => isDenialPending(li)).length;
-  const { denialsApplied, denialFailures, denialsExhausted } = await retryPendingDenials(
+  const { denialsApplied, denialFailures } = await retryPendingDenials(
     practiceId,
     remittance as any,
     lineItems,
@@ -734,9 +680,10 @@ export async function autoMatchRemittance(
   );
 
   // Update remittance status. 'processed' means done: every line is matched
-  // AND every auto-matched line has its payment recorded. A remittance with
-  // matched-but-unposted lines stays 'pending' so the Auto-Match button
-  // remains available to post them.
+  // AND every line has its payment recorded AND no posted denial is still
+  // waiting to reach its claim. Anything short of that stays 'pending' so
+  // the Auto-Match button (and the line's Retry denial button) remains
+  // available.
   const allItems = await db
     .select()
     .from(remittanceLineItems)
@@ -744,15 +691,9 @@ export async function autoMatchRemittance(
 
   const allMatched =
     allItems.length > 0 && allItems.every((item: any) => item.status === 'matched');
-  const allAutoPosted = allItems.every(
-    (item: any) =>
-      item.matchType == null || item.matchType === 'manual' || item.autoPostedAt != null || item.postedAt != null,
-  );
-  // A remittance with a posted denial still waiting to reach its claim is
-  // not done: 'pending' keeps the Auto-Match buttons (and the line's Retry
-  // denial button) visible until the denial is applied.
+  const allPosted = allItems.every((item: any) => isLinePaymentRecorded(item));
   const noPendingDenials = !allItems.some((item: any) => isDenialPending(item));
-  const processed = allMatched && allAutoPosted && noPendingDenials;
+  const processed = allMatched && allPosted && noPendingDenials;
 
   await db
     .update(remittanceAdvice)
@@ -771,6 +712,5 @@ export async function autoMatchRemittance(
     postingFailures,
     denialsApplied,
     denialFailures,
-    denialsExhausted,
   };
 }

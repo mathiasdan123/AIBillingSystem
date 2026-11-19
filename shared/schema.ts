@@ -16,7 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-import { relations, sql } from "drizzle-orm";
+import { relations } from "drizzle-orm";
 
 // Session storage table (required for Replit Auth)
 export const sessions = pgTable(
@@ -3494,28 +3494,14 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
    */
   autoPostedAt: timestamp("auto_posted_at"),
   /**
-   * Convenience marker: the payment posting for this line is recorded, by
-   * EITHER path. Written AFTER the posting commits. The source of truth is
-   * the payment_postings row carrying this line's id (unique while active),
-   * so a crash between the two leaves a posting without a marker — which
-   * the next pass recognises — never a marker without a posting.
-   */
-  postedAt: timestamp("posted_at"),
-  /**
    * CLP02 4 (denied) lines: the denial was applied to the claim AND the
    * appeal draft / follow-up pipeline completed. NULL on a posted denied
-   * line means the denial is still pending; the next auto-match run or a
-   * manual match of the same line retries it without touching the posting.
+   * line means the denial is still pending; the line's Retry denial button
+   * or the Auto-Match button re-runs it. Never touches the posting.
    */
   denialAppliedAt: timestamp("denial_applied_at"),
   /** Why the last denial application failed; cleared on success. */
   denialError: text("denial_error"),
-  /**
-   * Failed automatic denial applications so far. The poller and Auto-Match
-   * stop retrying at MAX_AUTO_DENIAL_ATTEMPTS; the line's "Retry denial"
-   * button always may. Never involves money.
-   */
-  denialAttempts: integer("denial_attempts").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_remittance_line_items_remittance").on(table.remittanceId),
@@ -4348,17 +4334,6 @@ export const paymentPostings = pgTable("payment_postings", {
   // see postPayment. Without that, a claim confirmed paid by the 4-hourly
   // status cron and then again by the ERA would count the money twice.
   source: varchar("source"),
-  /**
-   * The remittance line this ERA posting records — ONE posting identity for
-   * the auto and manual paths (#497 review). The partial unique index below
-   * makes "post this line's money" atomic at the database: two simultaneous
-   * requests, or a retry after a crash, cannot both insert; the loser sees
-   * the committed posting and reports "already posted". The line's
-   * posted_at / auto_posted_at are convenience markers written AFTER this
-   * row commits, never the source of truth. Nullable: postings predating
-   * this column, 277-derived and manual postings have none.
-   */
-  remittanceLineItemId: integer("remittance_line_item_id").references(() => remittanceLineItems.id),
   postedBy: varchar("posted_by").references(() => users.id),
   postedAt: timestamp("posted_at").defaultNow(),
   reversed: boolean("reversed").default(false),
@@ -4369,11 +4344,6 @@ export const paymentPostings = pgTable("payment_postings", {
   index("idx_payment_postings_practice_id").on(table.practiceId),
   index("idx_payment_postings_claim_id").on(table.claimId),
   index("idx_payment_postings_payment_date").on(table.paymentDate),
-  // One ACTIVE posting per remittance line. A reversed posting drops out so
-  // a reversal can be re-posted; NULL line ids (non-ERA postings) are free.
-  uniqueIndex("uq_payment_postings_line_active")
-    .on(table.remittanceLineItemId)
-    .where(sql`${table.remittanceLineItemId} IS NOT NULL AND ${table.reversed} = false`),
 ]);
 
 export const insertPaymentPostingSchema = createInsertSchema(paymentPostings).omit({

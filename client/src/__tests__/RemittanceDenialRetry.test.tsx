@@ -32,8 +32,8 @@ const RECORD = {
 const PENDING_LINE = {
   id: 31, remittanceId: 500, claimId: 73, patientName: 'Ethan Example', memberId: 'W2', serviceDate: '2026-11-17', cptCode: '97140',
   chargedAmount: '100.00', allowedAmount: null, paidAmount: '0.00', adjustmentAmount: '100.00', status: 'matched', matchType: 'manual',
-  adjustmentReasonCodes: [{ code: 'CO-197', description: 'x' }], remarkCodes: [], claimStatusCode: '4', postedAt: '2026-11-19T15:00:00Z',
-  denialAppliedAt: null, denialError: 'AI generator unavailable', denialAttempts: 5,
+  adjustmentReasonCodes: [{ code: 'CO-197', description: 'x' }], remarkCodes: [], claimStatusCode: '4', autoPostedAt: null,
+  denialAppliedAt: null, denialError: 'AI generator unavailable',
 };
 
 const posts: string[] = [];
@@ -54,7 +54,7 @@ beforeEach(() => {
     if (method === 'POST') {
       posts.push(url);
       if (/retry-denial$/.test(url)) {
-        return jsonResponse({ message: 'Payment was already recorded; not posted again. The payer denied claim CLM-1 (CO-197); it was already Denied, an appeal was drafted (#91), and a denial follow-up was added to the work queue.', partial: false, denial: { applied: true } });
+        return jsonResponse({ message: 'Line is matched to claim CLM-1; its payment was already recorded and is not posted again. The payer denied claim CLM-1 (CO-197); it was already Denied, an appeal was drafted (#91), and a denial follow-up was added to the work queue.', partial: false, denial: { applied: true } });
       }
       return jsonResponse({});
     }

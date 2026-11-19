@@ -56,19 +56,22 @@ interface RemittanceLineItem {
   /** 835 CLP02: '4' is a payer denial. */
   claimStatusCode?: string | null;
   autoPostedAt?: string | null;
-  postedAt?: string | null;
   denialAppliedAt?: string | null;
   denialError?: string | null;
-  denialAttempts?: number | null;
 }
 
-/** A posted, denied line whose claim status / appeal / follow-up step has not gone through. */
+/**
+ * A posted, denied line whose claim status / appeal / follow-up step has not
+ * gone through. "Posted" mirrors the server's isLinePaymentRecorded: the
+ * auto path stamps autoPostedAt, the manual match posts in the same request,
+ * matchType null is a legacy fused-path row.
+ */
 function isDenialPending(item: RemittanceLineItem): boolean {
   return (
     item.status === 'matched' &&
     item.claimId != null &&
     item.claimStatusCode === '4' &&
-    (item.postedAt != null || item.autoPostedAt != null) &&
+    (item.autoPostedAt != null || item.matchType === 'manual' || item.matchType == null) &&
     item.denialAppliedAt == null
   );
 }

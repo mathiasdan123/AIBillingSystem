@@ -45,9 +45,8 @@ import {
   applyRemittanceDenial,
   applyRemittanceDenialToLine,
   denialReasonForLine,
-  isDenialAutoRetryable,
   isDenialPending,
-  MAX_AUTO_DENIAL_ATTEMPTS,
+  isLinePaymentRecorded,
   isDeniedRemittanceLine,
   postingReasonFields,
 } from '../services/eraDenialService';
@@ -227,7 +226,7 @@ describe('applyRemittanceDenial', () => {
 });
 
 describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
-  const LINE = { ...DENIED_LINE, claimId: 73, status: 'matched', postedAt: new Date('2026-11-18'), denialAppliedAt: null };
+  const LINE = { ...DENIED_LINE, claimId: 73, status: 'matched', matchType: 'manual', denialAppliedAt: null };
 
   it('stamps denialAppliedAt and clears denialError when nothing is left to retry', async () => {
     storageStub.getClaim.mockResolvedValue({ id: 73, practiceId: 1, status: 'submitted' });
@@ -243,8 +242,7 @@ describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
     pipelineMock.mockRejectedValueOnce(new Error('AI generator unavailable'));
     const result = await applyRemittanceDenialToLine(1, LINE, { remittanceId: 500 });
     expect(result.applied).toBe(false);
-    expect(lineUpdates[0]).toMatchObject({ denialAppliedAt: null, denialError: 'AI generator unavailable' });
-    expect(lineUpdates[0].denialAttempts).toBeDefined(); // COALESCE(denial_attempts,0)+1
+    expect(lineUpdates[0]).toEqual({ denialAppliedAt: null, denialError: 'AI generator unavailable' });
     // The claim did get its denial; only the downstream step is pending.
     expect(storageStub.updateClaim).toHaveBeenCalledWith(73, expect.objectContaining({ status: 'denied' }));
   });
@@ -279,26 +277,20 @@ describe('applyRemittanceDenialToLine — the denial-pending marker', () => {
   });
 });
 
-describe('isDenialAutoRetryable', () => {
-  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', postedAt: new Date(), denialAppliedAt: null };
-  it('stops at MAX_AUTO_DENIAL_ATTEMPTS; pending stays pending for a human retry', () => {
-    expect(isDenialAutoRetryable({ ...base, denialAttempts: 0 })).toBe(true);
-    expect(isDenialAutoRetryable({ ...base, denialAttempts: MAX_AUTO_DENIAL_ATTEMPTS - 1 })).toBe(true);
-    expect(isDenialAutoRetryable({ ...base, denialAttempts: MAX_AUTO_DENIAL_ATTEMPTS })).toBe(false);
-    expect(isDenialPending({ ...base, denialAttempts: MAX_AUTO_DENIAL_ATTEMPTS })).toBe(true);
+describe('isLinePaymentRecorded / isDenialPending', () => {
+  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', matchType: 'manual', autoPostedAt: null, denialAppliedAt: null };
+  it('a line\'s payment counts as recorded from the auto marker, a manual match, or a legacy fused-path row', () => {
+    expect(isLinePaymentRecorded(base)).toBe(true); // manual route posts in the same request
+    expect(isLinePaymentRecorded({ ...base, matchType: null })).toBe(true); // legacy fused path
+    expect(isLinePaymentRecorded({ ...base, matchType: 'claim_number', autoPostedAt: new Date() })).toBe(true);
+    // Auto-matched by a match-only pass (ERA_AUTO_POST off): linked, not posted.
+    expect(isLinePaymentRecorded({ ...base, matchType: 'claim_number', autoPostedAt: null })).toBe(false);
+    expect(isLinePaymentRecorded({ ...base, status: 'unmatched', claimId: null })).toBe(false);
   });
-});
-
-describe('isDenialPending', () => {
-  const base = { status: 'matched', claimId: 73, claimStatusCode: '4', postedAt: new Date(), autoPostedAt: null, denialAppliedAt: null };
-  it('is a posted, matched, denied line whose denial is not applied', () => {
+  it('pending = recorded + denied + not applied', () => {
     expect(isDenialPending(base)).toBe(true);
-    expect(isDenialPending({ ...base, postedAt: null, autoPostedAt: new Date() })).toBe(true);
-  });
-  it('is not: unposted, already applied, not a denial, or unmatched', () => {
-    expect(isDenialPending({ ...base, postedAt: null })).toBe(false);
+    expect(isDenialPending({ ...base, matchType: 'claim_number', autoPostedAt: null })).toBe(false);
     expect(isDenialPending({ ...base, denialAppliedAt: new Date() })).toBe(false);
     expect(isDenialPending({ ...base, claimStatusCode: '1' })).toBe(false);
-    expect(isDenialPending({ ...base, status: 'unmatched', claimId: null })).toBe(false);
   });
 });

@@ -25,15 +25,11 @@ const H = vi.hoisted(() => ({
   autoMatch: vi.fn(),
   matchOnly: vi.fn(),
   needingMatch: vi.fn(),
-  pendingDenials: vi.fn(async () => [] as number[]),
-  retryDenials: vi.fn(async () => ({ denialsApplied: 0, denialFailures: [], denialsExhausted: 0 })),
-  remittance: null as any,
   stediKey: vi.fn(),
 }));
 
 vi.mock('../db', () => {
   const db: any = {
-    query: { remittanceAdvice: { findFirst: async () => H.remittance } },
     select: () => ({ from: () => ({ where: () => Promise.resolve(H.practices) }) }),
     update: () => ({
       set: (values: any) => ({
@@ -66,12 +62,9 @@ vi.mock('../services/eraAutoMatchService', () => ({
   autoMatchRemittance: H.autoMatch,
   matchRemittanceLineItems: H.matchOnly,
   findRemittancesNeedingMatch: H.needingMatch,
-  findRemittancesWithPendingDenials: H.pendingDenials,
-  retryPendingDenials: H.retryDenials,
 }));
 vi.mock('../services/phiEncryptionService', () => ({
   encryptRemittanceLineItem: (i: any) => i,
-  decryptRemittanceLineItem: (i: any) => i,
 }));
 
 import { pollAndIngestEras } from '../services/eraPollingService';
@@ -97,9 +90,6 @@ beforeEach(() => {
   });
   H.matchOnly.mockResolvedValue({ linked: 0, total: 0, needsReview: 0, results: [] });
   H.needingMatch.mockResolvedValue([]);
-  H.pendingDenials.mockResolvedValue([]);
-  H.retryDenials.mockResolvedValue({ denialsApplied: 0, denialFailures: [], denialsExhausted: 0 });
-  H.remittance = null;
 });
 
 describe('pollAndIngestEras', () => {
@@ -209,26 +199,6 @@ describe('pollAndIngestEras', () => {
     expect(H.autoMatch).not.toHaveBeenCalled();
     expect(summary.lineItemsLinked).toBe(4);
     expect(summary.lineItemsFlaggedForReview).toBe(2);
-  });
-
-  it('revisits remittances with posted-but-pending denials: bounded retry, never a posting (#497 review)', async () => {
-    H.ingest.mockResolvedValue({ status: 'duplicate', reason: 'transaction_id', remittanceId: 500 });
-    H.pendingDenials.mockResolvedValue([502]);
-    H.remittance = { id: 502, practiceId: 1, payerName: 'Aetna', checkNumber: 'QA-1', lineItems: [{ id: 9, status: 'matched', claimId: 7, claimStatusCode: '4', postedAt: new Date(), denialAppliedAt: null, denialAttempts: 1 }] };
-    H.retryDenials.mockResolvedValue({ denialsApplied: 1, denialFailures: [{ claimId: 8, lineItemId: 10, error: 'AI generator unavailable' }], denialsExhausted: 0 });
-
-    const summary = await pollAndIngestEras();
-
-    expect(H.retryDenials).toHaveBeenCalledTimes(1);
-    const [practiceId, remittance, lines, postedBy, options] = H.retryDenials.mock.calls[0] as any[];
-    expect(practiceId).toBe(1);
-    expect(remittance.id).toBe(502);
-    expect(lines[0].id).toBe(9);
-    expect(postedBy).toBeNull();
-    expect(options).toBeUndefined(); // bounded: the automatic attempt budget applies
-    expect(H.autoMatch).not.toHaveBeenCalled(); // the revisit never posts money
-    expect(summary.denialsApplied).toBe(1);
-    expect(summary.denialFailures).toBe(1);
   });
 
   it('with ERA_AUTO_POST=false, still MATCHES new ingests but never posts', async () => {

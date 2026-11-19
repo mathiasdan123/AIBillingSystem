@@ -25,7 +25,7 @@
  *    in ingestRemittance.
  */
 import { and, eq, isNull, or } from 'drizzle-orm';
-import { practices, remittanceAdvice } from '@shared/schema';
+import { practices } from '@shared/schema';
 import { db } from '../db';
 import logger from './logger';
 import { getStediApiKeyForPractice, isStediConfigured } from './stediService';
@@ -36,10 +36,8 @@ import {
   autoMatchRemittance,
   matchRemittanceLineItems,
   findRemittancesNeedingMatch,
-  findRemittancesWithPendingDenials,
-  retryPendingDenials,
 } from './eraAutoMatchService';
-import { encryptRemittanceLineItem, decryptRemittanceLineItem } from './phiEncryptionService';
+import { encryptRemittanceLineItem } from './phiEncryptionService';
 
 /** How far back to look the first time a practice is polled. */
 const INITIAL_LOOKBACK_DAYS = 30;
@@ -69,8 +67,6 @@ export interface EraPollSummary {
   /** Lines deliberately left unmatched with a review flag for a human. */
   lineItemsFlaggedForReview: number;
   postingFailures: number;
-  denialsApplied: number;
-  denialFailures: number;
   errors: Array<{ practiceId: number; transactionId?: string; error: string }>;
 }
 
@@ -84,8 +80,6 @@ function emptySummary(): EraPollSummary {
     lineItemsLinked: 0,
     lineItemsFlaggedForReview: 0,
     postingFailures: 0,
-    denialsApplied: 0,
-    denialFailures: 0,
     errors: [],
   };
 }
@@ -236,8 +230,6 @@ async function ingestOne(
   summary.lineItemsMatched += matchResult.matched;
   summary.lineItemsFlaggedForReview += matchResult.needsReview;
   summary.postingFailures += matchResult.postingFailures.length;
-  summary.denialsApplied += matchResult.denialsApplied ?? 0;
-  summary.denialFailures += matchResult.denialFailures?.length ?? 0;
 
   if (matchResult.postingFailures.length > 0) {
     // Matched but NOT recorded is the dangerous state: the claim looks
@@ -279,33 +271,6 @@ async function backfillUnmatchedRemittances(
         remittanceId,
         error: err?.message,
       });
-      summary.errors.push({ practiceId, error: err?.message ?? 'unknown' });
-    }
-  }
-
-  // Posted denials (CLP02 4) whose claim step failed earlier: bounded retry
-  // (MAX_AUTO_DENIAL_ATTEMPTS per line). Never posts money — the posting is
-  // already committed; only the claim status / appeal / follow-up is redone.
-  const pendingDenialIds = await findRemittancesWithPendingDenials(
-    practiceId,
-    MAX_MATCH_BACKFILL_PER_PRACTICE,
-  );
-  for (const remittanceId of pendingDenialIds) {
-    try {
-      const remittance = await db.query.remittanceAdvice.findFirst({
-        where: and(eq(remittanceAdvice.id, remittanceId), eq(remittanceAdvice.practiceId, practiceId)),
-        with: { lineItems: true },
-      });
-      if (!remittance) continue;
-      const lines = (remittance.lineItems ?? []).map(decryptRemittanceLineItem) as any[];
-      const outcome = await retryPendingDenials(practiceId, remittance as any, lines, null);
-      summary.denialsApplied += outcome.denialsApplied;
-      summary.denialFailures += outcome.denialFailures.length;
-      if (outcome.denialFailures.length > 0) {
-        logger.warn('ERA denial retry: some denials still pending', { practiceId, remittanceId, failures: outcome.denialFailures });
-      }
-    } catch (err: any) {
-      logger.error('ERA denial retry failed for remittance', { practiceId, remittanceId, error: err?.message });
       summary.errors.push({ practiceId, error: err?.message ?? 'unknown' });
     }
   }
