@@ -214,4 +214,46 @@ run('demo practice provisioning (real Postgres)', () => {
     await demo.ensureDemoPractice();
     expect(await newestPaidDay()).toBe(intendedNewestDay());
   }, 120_000);
+
+  it('a legacy seeded appointment (no marker, created in the seed batch) is stamped and then shifted; a hand-made look-alike with the exact seed shape is never touched', async () => {
+    const [{ id: patientId }] = (await client.query('SELECT id FROM patients WHERE practice_id = $1 ORDER BY id LIMIT 1', [practiceId])).rows;
+    const [{ id: therapistId }] = (await client.query("SELECT id FROM users WHERE practice_id = $1 AND role = 'therapist' LIMIT 1", [practiceId])).rows;
+    const tz = getBusinessTimeZone();
+    // Both rows: seed title, demo therapist, 45 minutes, on the hour at 10:00 practice time, no notes.
+    const insert = async (title: string, createdAtSql: string, startLocalDay: string) => {
+      const { rows } = await client.query(
+        `INSERT INTO appointments (practice_id, patient_id, therapist_id, title, notes, start_time, end_time, duration_minutes, status, created_at)
+         VALUES ($1, $2, $3, $4, NULL, $5, $5::timestamp + interval '45 minutes', 45, 'scheduled', ${createdAtSql})
+         RETURNING id, start_time::text AS start`,
+        [practiceId, patientId, therapistId, title, `${startLocalDay} 15:00:00`], // 15:00Z = 10:00 EST
+      );
+      return rows[0] as { id: number; start: string };
+    };
+    const seedMomentSql = `(SELECT min(created_at) FROM patients WHERE practice_id = ${practiceId})`;
+    const legacy = await insert('Occupational Therapy', `${seedMomentSql} + interval '3 seconds'`, '2026-12-01');
+    const lookAlike = await insert('Occupational Therapy', `${seedMomentSql} + interval '47 minutes'`, '2026-12-02');
+    expect(tz).toBe('America/New_York');
+
+    // Next login: the legacy row is stamped, the look-alike is not.
+    await demo.ensureDemoPractice();
+    const notes = async (id: number) => (await client.query('SELECT notes FROM appointments WHERE id = $1', [id])).rows[0].notes;
+    expect(await notes(legacy.id)).toBe(demo.DEMO_SEED_APPOINTMENT_MARKER);
+    expect(await notes(lookAlike.id)).toBeNull();
+
+    // Age the demo and log in again: the stamped legacy row moves with the seed, the look-alike stays exactly where it was.
+    await ageSeededRows();
+    await demo.ensureDemoPractice();
+    expect(await newestPaidDay()).toBe(intendedNewestDay());
+    const startOf = async (id: number) => (await client.query('SELECT start_time::text AS s FROM appointments WHERE id = $1', [id])).rows[0].s as string;
+    // Aged by 30 (wall-clock preserved) then rolled forward by 30: back to its original instant.
+    expect(await startOf(legacy.id)).toBe(legacy.start);
+    expect(await startOf(lookAlike.id)).toBe(lookAlike.start);
+    // ...and the legacy row did move in between (the shift and the aging are each 30 days, so check the aging alone moved it):
+    await ageSeededRows();
+    expect(await startOf(legacy.id)).not.toBe(legacy.start);
+    expect(await startOf(lookAlike.id)).toBe(lookAlike.start);
+    await demo.ensureDemoPractice();
+    expect(await startOf(legacy.id)).toBe(legacy.start);
+    expect(await startOf(lookAlike.id)).toBe(lookAlike.start);
+  }, 120_000);
 });

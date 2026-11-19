@@ -340,7 +340,38 @@ export function isProcessZoneSeedTime(start: Date, timeZone: string): boolean {
  * exact-hour UTC instant at a nonsensical local hour is the safest available
  * signature. Never blocks a demo login: failures are logged.
  */
-/** The full seed shape, used only to stamp the marker onto rows seeded before it existed. */
+/**
+ * Seed-only fingerprint for appointments that predate the marker.
+ *
+ * seedDemoData writes the patients and the appointments in one batch, so a
+ * legacy seeded appointment was created within seconds of the practice's
+ * first patient. A visitor cannot book anything before the seed has run
+ * and the calendar has rendered, so a hand-made appointment is always
+ * created well outside this window, whatever its title, therapist,
+ * length or start time. The shape check alone could not tell the two
+ * apart (review of #491); the shape AND this window can.
+ */
+export const DEMO_SEED_BATCH_WINDOW_MS = 2 * 60 * 1000;
+
+/** When the demo practice was seeded: its earliest patient row. Null when it has none. */
+export async function getDemoSeedMoment(practiceId: number): Promise<Date | null> {
+  const pool = await getPool();
+  const result = await pool.query(
+    `SELECT min(created_at) AS seeded_at FROM patients WHERE practice_id = $1`,
+    [practiceId],
+  );
+  const seededAt = result.rows?.[0]?.seeded_at;
+  return seededAt ? new Date(seededAt) : null;
+}
+
+export function createdInSeedBatch(createdAt: Date | string | null | undefined, seedMoment: Date | null): boolean {
+  if (!createdAt || !seedMoment) return false;
+  const t = new Date(createdAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return Math.abs(t - seedMoment.getTime()) <= DEMO_SEED_BATCH_WINDOW_MS;
+}
+
+/** The full seed shape, used (with the seed-batch fingerprint) only to stamp the marker onto rows seeded before it existed. */
 export function isSeededDemoAppointmentShape(
   appt: { title?: string | null; durationMinutes?: number | null },
   start: Date,
@@ -363,6 +394,7 @@ export async function repairDemoSeededAppointments(
   const result = { retimed: 0, assigned: 0 };
   try {
     const tz = getBusinessTimeZone();
+    const seedMoment = await getDemoSeedMoment(practiceId);
     const rows = await storage.getAppointments(practiceId);
     for (const appt of rows) {
       if (appt.title !== DEMO_SEED_APPOINTMENT_TITLE) continue;
@@ -384,13 +416,20 @@ export async function repairDemoSeededAppointments(
         patch.therapistId = therapistId;
         result.assigned++;
       }
-      // Rows seeded before the marker existed: stamp it when the row has the
-      // whole seed shape (seed title, the demo therapist, 45 minutes, on the
-      // hour, 9-14 practice time, no notes of its own). A hand-booked
-      // appointment would have to match all of that to be mistaken for one.
+      // Rows seeded before the marker existed: stamp it only when the row has
+      // the whole seed shape (seed title, the demo therapist, 45 minutes, on
+      // the hour, 9-14 practice time, no notes of its own) AND was created in
+      // the seed batch, within DEMO_SEED_BATCH_WINDOW_MS of the practice's
+      // first patient. A hand-made appointment is created long after that,
+      // so a look-alike with the exact seed shape is never stamped, and the
+      // date roll-forward (which matches the marker only) never moves it.
       const effectiveStart = (patch.startTime as Date | undefined) ?? start;
       const effectiveTherapist = (patch.therapistId as string | undefined) ?? appt.therapistId;
-      if (!appt.notes && isSeededDemoAppointmentShape(appt, effectiveStart, effectiveTherapist, therapistId, tz)) {
+      if (
+        !appt.notes &&
+        createdInSeedBatch(appt.createdAt as any, seedMoment) &&
+        isSeededDemoAppointmentShape(appt, effectiveStart, effectiveTherapist, therapistId, tz)
+      ) {
         patch.notes = DEMO_SEED_APPOINTMENT_MARKER;
       }
       if (Object.keys(patch).length > 0) {

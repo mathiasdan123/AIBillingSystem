@@ -51,7 +51,10 @@ import {
   keepDemoDatesCurrent,
   calendarDaysBetween,
   isSeededDemoAppointmentShape,
+  createdInSeedBatch,
+  getDemoSeedMoment,
   shiftTimestampByLocalDaysSql,
+  DEMO_SEED_BATCH_WINDOW_MS,
   DEMO_SEED_APPOINTMENT_MARKER,
   DEMO_SEED_SUBMIT_OFFSET_DAYS,
   DEMO_NEWEST_PAID_OFFSET_DAYS,
@@ -63,7 +66,7 @@ import {
 import { decryptRemittanceLineItem } from '../services/phiEncryptionService';
 import { zonedAddDays, zonedDateString } from '../utils/timezone';
 import { getTableColumns } from 'drizzle-orm';
-import { claims, claimLineItems, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates, appointments } from '@shared/schema';
+import { claims, claimLineItems, remittanceAdvice, remittanceLineItems, paymentPostings, paymentTransactions, practiceCptRates, appointments, patients } from '@shared/schema';
 import { zonedTimeString } from '../utils/dateOnly';
 
 describe('ensureDemoPractice', () => {
@@ -307,15 +310,29 @@ describe('ensureDemoPractice', () => {
       expect(mockStorage.updateAppointment).not.toHaveBeenCalled();
     });
 
-    it('stamps the seed marker (once) onto a correctly timed seeded row that predates it', async () => {
-      mockStorage.getAppointments.mockResolvedValue([seeded(3, NEW_9, { therapistId: 'demo-therapist-99', notes: null })]);
+    // The practice was seeded (first patient created) at this instant.
+    const SEEDED_AT = new Date('2026-11-01T13:16:11.000Z');
+    const seedMomentKnown = () => mockPool.query.mockResolvedValueOnce({ rows: [{ seeded_at: SEEDED_AT }], rowCount: 1 });
+
+    it('stamps the seed marker (once) onto a correctly timed seeded row created in the seed batch', async () => {
+      seedMomentKnown();
+      mockStorage.getAppointments.mockResolvedValue([seeded(3, NEW_9, { therapistId: 'demo-therapist-99', notes: null, createdAt: new Date(SEEDED_AT.getTime() + 4_000) })]);
       const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
       expect(out).toEqual({ retimed: 0, assigned: 0 });
       expect(mockStorage.updateAppointment).toHaveBeenCalledWith(3, { notes: DEMO_SEED_APPOINTMENT_MARKER });
     });
 
-    it('only assigns the therapist (no re-time) on a seeded row that is correctly timed but unassigned, and stamps the marker', async () => {
-      mockStorage.getAppointments.mockResolvedValue([seeded(4, NEW_9)]);
+    it('never stamps a hand-made look-alike: exact seed shape, but created after the seed batch', async () => {
+      seedMomentKnown();
+      mockStorage.getAppointments.mockResolvedValue([seeded(7, NEW_9, { therapistId: 'demo-therapist-99', notes: null, createdAt: new Date(SEEDED_AT.getTime() + 45 * 60 * 1000) })]);
+      const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
+      expect(out).toEqual({ retimed: 0, assigned: 0 });
+      expect(mockStorage.updateAppointment).not.toHaveBeenCalled();
+    });
+
+    it('only assigns the therapist (no re-time) on a seeded row that is correctly timed but unassigned, and stamps the marker when it is from the seed batch', async () => {
+      seedMomentKnown();
+      mockStorage.getAppointments.mockResolvedValue([seeded(4, NEW_9, { createdAt: SEEDED_AT })]);
       const out = await repairDemoSeededAppointments(99, 'demo-therapist-99');
       expect(out).toEqual({ retimed: 0, assigned: 1 });
       const [, patch] = mockStorage.updateAppointment.mock.calls[0];
@@ -584,6 +601,7 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
     practice_cpt_rates: dbColumns(practiceCptRates),
     claim_line_items: dbColumns(claimLineItems),
     appointments: dbColumns(appointments),
+    patients: dbColumns(patients),
   };
 
   function checkStatement(sql: string) {
@@ -631,6 +649,7 @@ describe('raw SQL in the demo repairs names only columns that exist (post-deploy
     expect(await ensureDemoPaymentRecords(99)).toBe(1);
     await repairDemoSeededClaimDates(99);
     await ensureDemoClaimPayers(99);
+    await repairDemoSeededAppointments(99, 'demo-therapist-99');
     expect(await keepDemoDatesCurrent(99)).toBe(30);
 
     expect(statements.length).toBeGreaterThan(4);
@@ -811,16 +830,34 @@ describe('seed marker on appointments', () => {
     expect(isSeededDemoAppointmentShape({ ...appt, title: 'Follow-up' }, tenAm, 'demo-therapist-99', 'demo-therapist-99', tz)).toBe(false);
   });
 
-  it('repairDemoSeededAppointments stamps the marker onto a pre-marker seeded row and leaves a row with its own notes alone', async () => {
+  it('repairDemoSeededAppointments stamps the marker onto a pre-marker seeded row from the seed batch, and leaves a row with its own notes and a later look-alike alone', async () => {
     vi.clearAllMocks();
+    const seededAt = new Date('2026-11-01T13:16:11.000Z');
+    mockPool.query.mockResolvedValueOnce({ rows: [{ seeded_at: seededAt }], rowCount: 1 });
     const tenAm = new Date('2026-11-05T15:00:00.000Z');
+    const shape = { title: 'Occupational Therapy', therapistId: 'demo-therapist-99', durationMinutes: 45, startTime: tenAm, endTime: new Date(tenAm.getTime() + 45 * 60 * 1000) };
     mockStorage.getAppointments.mockResolvedValue([
-      { id: 1, title: 'Occupational Therapy', therapistId: 'demo-therapist-99', durationMinutes: 45, startTime: tenAm, endTime: new Date(tenAm.getTime() + 45 * 60 * 1000), notes: null },
-      { id: 2, title: 'Occupational Therapy', therapistId: 'demo-therapist-99', durationMinutes: 45, startTime: tenAm, endTime: null, notes: 'Parent requested morning slot' },
+      { id: 1, ...shape, notes: null, createdAt: new Date(seededAt.getTime() + 1_500) },
+      { id: 2, ...shape, notes: 'Parent requested morning slot', createdAt: seededAt },
+      { id: 3, ...shape, notes: null, createdAt: new Date('2026-11-18T11:10:37.000Z') }, // a visitor's look-alike, booked 17 days later
     ]);
     mockStorage.updateAppointment.mockImplementation(async (id: number, patch: any) => ({ id, ...patch }));
     await repairDemoSeededAppointments(99, 'demo-therapist-99');
     expect(mockStorage.updateAppointment).toHaveBeenCalledTimes(1);
     expect(mockStorage.updateAppointment).toHaveBeenCalledWith(1, { notes: DEMO_SEED_APPOINTMENT_MARKER });
+    // The seed moment comes from the practice's first patient row.
+    expect(String(mockPool.query.mock.calls[0][0])).toMatch(/min\(created_at\) AS seeded_at FROM patients WHERE practice_id = \$1/);
+  });
+
+  it('createdInSeedBatch: within two minutes of the seed moment, never without one', async () => {
+    const seededAt = new Date('2026-11-01T13:16:11.000Z');
+    expect(createdInSeedBatch(new Date(seededAt.getTime() + DEMO_SEED_BATCH_WINDOW_MS), seededAt)).toBe(true);
+    expect(createdInSeedBatch(new Date(seededAt.getTime() - 30_000), seededAt)).toBe(true);
+    expect(createdInSeedBatch(new Date(seededAt.getTime() + DEMO_SEED_BATCH_WINDOW_MS + 1), seededAt)).toBe(false);
+    expect(createdInSeedBatch(seededAt, null)).toBe(false);
+    expect(createdInSeedBatch(null, seededAt)).toBe(false);
+    expect(createdInSeedBatch('garbage', seededAt)).toBe(false);
+    mockPool.query.mockResolvedValueOnce({ rows: [{ seeded_at: null }], rowCount: 1 });
+    expect(await getDemoSeedMoment(99)).toBeNull();
   });
 });
