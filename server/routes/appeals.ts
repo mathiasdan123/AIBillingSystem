@@ -390,12 +390,23 @@ router.post('/appeals', isAuthenticated, async (req: any, res) => {
     // Update claim status to appeal
     await storage.updateClaim(claimId, { status: 'appeal' });
 
+    // Timeline (#469), with #470's deadline: the stored date and its basis
+    // (payer policy, practice default, estimate or manual), and the status
+    // actually stored — "ready" is earned, so a drafted letter may still be a draft.
+    const storedDeadline = (appeal as any).deadlineDate ?? manualDeadline ?? basis.deadlineDate;
     await recordClaimEvent({
       claimId,
       practiceId,
       eventType: 'appeal_created',
-      summary: `Appeal created (${appeal.appealLevel}) — ${appealResult ? 'letter drafted, status ready' : 'status draft'}; filing deadline ${calculatedDeadline}`,
-      metadata: { appealId: appeal.id, appealLevel: appeal.appealLevel, status: appeal.status, deadlineDate: calculatedDeadline },
+      summary: `Appeal created (${appeal.appealLevel}) — ${appealLetter ? 'letter drafted' : 'no letter'}, status ${appeal.status}; filing deadline ${storedDeadline ?? 'not set'} (${describeDeadlineBasis(appeal as any)})`,
+      metadata: {
+        appealId: appeal.id,
+        appealLevel: appeal.appealLevel,
+        status: appeal.status,
+        deadlineDate: storedDeadline,
+        deadlineSource: (appeal as any).deadlineSource ?? null,
+        readinessIssues: readiness.issues,
+      },
       createdBy: req.user?.claims?.sub,
     });
 

@@ -53,7 +53,8 @@ vi.mock('../services/logger', () => ({ default: { error: vi.fn(), info: vi.fn(),
 import appealsRouter from '../routes/appeals';
 
 const PRACTICE = { id: 7, name: 'Bright Steps', npi: '0000000001', address: '123 Demo Way', phone: '(555) 010-0000', appealWindowDays: null };
-const CLAIM = { id: 42, status: 'denied', patientId: 99, claimNumber: 'DEMO-2-1006', totalAmount: '289.00', denialReason: 'prior authorization required' };
+// practiceId: the route refuses a claim outside the caller's practice (#469).
+const CLAIM = { id: 42, practiceId: 7, status: 'denied', patientId: 99, claimNumber: 'DEMO-2-1006', totalAmount: '289.00', denialReason: 'prior authorization required' };
 const PATIENT = { id: 99, firstName: 'Ava', lastName: 'Sample', dateOfBirth: '2018-04-11' };
 
 function makeApp(): Express {

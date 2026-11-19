@@ -65,14 +65,18 @@ describe('POST /api/appeals', () => {
     expect(res.status).toBe(200);
     expect(storageStub.updateClaim).toHaveBeenCalledWith(42, { status: 'appeal' });
     expect(createClaimEventMock).toHaveBeenCalledTimes(1);
+    // The event carries the status actually stored: "ready" is earned (#470),
+    // and this fixture's practice has no real letterhead, so it is a draft.
+    const storedStatus = storageStub.createAppeal.mock.calls[0][0].status;
     expect(createClaimEventMock.mock.calls[0][0]).toMatchObject({
       claimId: 42,
       practiceId: 7,
       eventType: 'appeal_created',
-      metadata: { appealId: 999, appealLevel: 'initial', status: 'ready', deadlineDate: '2027-01-17' },
+      metadata: { appealId: 999, appealLevel: 'initial', status: storedStatus, deadlineDate: '2027-01-17', deadlineSource: 'manual' },
       createdBy: 'biller-7',
     });
     expect(createClaimEventMock.mock.calls[0][0].summary).toContain('2027-01-17');
+    expect(createClaimEventMock.mock.calls[0][0].summary).toContain(`status ${storedStatus}`);
   });
 
   it("refuses to open an appeal on another practice's claim", async () => {
