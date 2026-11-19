@@ -88,6 +88,24 @@ function renderPage() {
 const jsonResponse = (body: unknown) => ({ ok: true, json: async () => body }) as unknown as Response;
 
 describe('Revenue at Risk work queue', () => {
+  it('shows an overdue due date, the payer deadline beside it, and the overdue count on the Past Deadline card', async () => {
+    slices['?queue=open'] = [
+      item(9, { dueDate: '2026-11-16T00:00:00.000Z', overdue: true, appealDeadline: '2027-01-16', appealStatus: 'ready' }),
+    ];
+    base.followUps = { total: 1, byPriority: { high: 1 }, overdue: 1 } as any;
+    try {
+      renderPage();
+      const due = await screen.findByTestId('due-date-9');
+      expect(due.textContent).toContain('due Nov 16, 2026 (overdue)');
+      expect(screen.getByTestId('appeal-deadline-9').textContent).toContain('payer deadline Jan 16, 2027');
+      expect(screen.getByTestId('text-past-deadline-detail').textContent).toContain('1 queue item overdue');
+      expect(screen.getByText(/open denials/).textContent).toContain('$300 open denials');
+    } finally {
+      slices['?queue=open'] = [item(1)];
+      base.followUps = { total: 3, byPriority: { high: 1 } } as any;
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.apiRequest.mockResolvedValue(jsonResponse({ id: 1, snoozedUntil: '2026-11-21T05:00:00.000Z' }));

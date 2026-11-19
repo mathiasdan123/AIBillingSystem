@@ -75,8 +75,16 @@ export async function generateFollowUps(practiceId: number): Promise<ClaimFollow
   }
 
   const newFollowUps: InsertClaimFollowUp[] = [];
+  // Open denial_appeal tasks whose claim has since been reopened to draft.
+  // Reopen reclassifies them now (#469); these predate that.
+  const staleDenialTaskIds: number[] = [];
 
   for (const claim of practiceClaims) {
+    if (claim.status === 'draft') {
+      for (const fu of existingFollowUps) {
+        if (fu.claimId === claim.id && fu.followUpType === 'denial_appeal') staleDenialTaskIds.push(fu.id);
+      }
+    }
     // Check denied claims needing appeal
     if (claim.status === 'denied') {
       const key = `${claim.id}:denial_appeal`;
@@ -135,6 +143,14 @@ export async function generateFollowUps(practiceId: number): Promise<ClaimFollow
         }
       }
     }
+  }
+
+  if (staleDenialTaskIds.length > 0) {
+    await db
+      .update(claimFollowUps)
+      .set({ followUpType: 'correction_resubmit', updatedAt: now })
+      .where(inArray(claimFollowUps.id, staleDenialTaskIds));
+    logger.info('Reclassified denial follow-ups on reopened draft claims', { practiceId, count: staleDenialTaskIds.length });
   }
 
   if (newFollowUps.length === 0) {

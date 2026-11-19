@@ -36,6 +36,12 @@ interface ActionItem {
   dueDate: string | null;
   notes: string | null;
   appealId?: number;
+  appealStatus?: string | null;
+  /** Payer filing deadline (YYYY-MM-DD) of the open appeal on this claim, if any. */
+  appealDeadline?: string | null;
+  claimStatus?: string | null;
+  /** Open item whose due day is already past. */
+  overdue?: boolean;
   status: string;
   snoozedUntil: string | null;
   completedAt: string | null;
@@ -45,7 +51,7 @@ interface RevenueAtRiskSummary {
   atRisk: { deniedAwaitingAppeal: number; aging61Plus: number; total: number };
   recovered: { last90Days: number; appealsWon: number; successRate: number };
   appeals: { pendingSubmission: number; pastDeadline: number };
-  followUps: { total: number; byPriority: Record<string, number> };
+  followUps: { total: number; byPriority: Record<string, number>; overdue?: number };
   actionQueue: ActionItem[];
 }
 
@@ -206,7 +212,7 @@ export default function RevenueAtRisk() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground">
-                {money(data.atRisk.deniedAwaitingAppeal)} unappealed denials ·{" "}
+                {money(data.atRisk.deniedAwaitingAppeal)} open denials ·{" "}
                 {money(data.atRisk.aging61Plus)} aging 61+ days
               </CardContent>
             </Card>
@@ -249,8 +255,11 @@ export default function RevenueAtRisk() {
                   {data.appeals.pastDeadline}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-xs text-muted-foreground">
-                Appeals past their filing deadline
+              <CardContent className="text-xs text-muted-foreground" data-testid="text-past-deadline-detail">
+                Appeals past their payer filing deadline
+                {(data.followUps.overdue ?? 0) > 0 && (
+                  <span className="text-red-600"> · {data.followUps.overdue} queue item{data.followUps.overdue === 1 ? "" : "s"} overdue</span>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -346,14 +355,22 @@ export default function RevenueAtRisk() {
                             ) : (
                               <button
                                 type="button"
-                                className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                                className={`inline-flex items-center gap-1 underline-offset-2 hover:underline ${item.overdue ? "text-red-600" : ""}`}
                                 title="Edit due date"
                                 onClick={() => setEditingDueFor(item.followUpId)}
                                 data-testid={`due-date-${item.followUpId}`}
                               >
                                 <CalendarDays className="h-3 w-3" />
-                                {item.dueDate ? `due ${formatDateOnly(item.dueDate)}` : "set due date"}
+                                {item.dueDate ? `due ${formatDateOnly(item.dueDate)}${item.overdue ? " (overdue)" : ""}` : "set due date"}
                               </button>
+                            )}
+                            {/* The task's due day is when to act; the payer's filing
+                                deadline is the appeal's own date. Both are shown so the
+                                queue never seems to contradict the Appeals page. */}
+                            {item.appealDeadline && (
+                              <span data-testid={`appeal-deadline-${item.followUpId}`}>
+                                · payer deadline {formatDateOnly(item.appealDeadline)}
+                              </span>
                             )}
                             {view === "snoozed" && item.snoozedUntil && (
                               <span data-testid={`snoozed-until-${item.followUpId}`}>

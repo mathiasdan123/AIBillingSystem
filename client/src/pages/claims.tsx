@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1171,6 +1171,14 @@ export default function Claims() {
   const [showSuperbillDialog, setShowSuperbillDialog] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState<Claim | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  // Export Claims: the button shows a spinner and refuses a second click
+  // while the export is being fetched (QA demo pass 2026-11-19, item 7: no
+  // visible feedback between the click and the download).
+  const [exporting, setExporting] = useState(false);
+  // /claims?claimId=N opens that claim's detail once (deep link from the
+  // Revenue at Risk queue and the claim timeline; QA demo pass 2026-11-19).
+  const deepLinkHandled = useRef(false);
+  const handleViewClaimRef = useRef<(claim: Claim) => void>(() => {});
   const [showPayDialog, setShowPayDialog] = useState(false);
   const [showDenyDialog, setShowDenyDialog] = useState(false);
   const [paidAmount, setPaidAmount] = useState("");
@@ -1384,6 +1392,25 @@ export default function Claims() {
     enabled: isAuthenticated,
     retry: false,
   });
+
+  useEffect(() => {
+    if (!isAuthenticated || deepLinkHandled.current) return;
+    const raw = new URLSearchParams(window.location.search).get("claimId");
+    const claimId = raw ? parseInt(raw, 10) : NaN;
+    if (!Number.isInteger(claimId) || claimId <= 0) return;
+    deepLinkHandled.current = true;
+    (async () => {
+      try {
+        // Fetched by id rather than looked up in the current page: the linked
+        // claim may be on another page or filtered out of the list.
+        const res = await apiRequest("GET", `/api/claims/${claimId}`);
+        handleViewClaimRef.current(await res.json());
+      } catch {
+        toast({ title: "Claim not found", description: `Claim ${claimId} could not be opened.`, variant: "destructive" });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   const { data: cptCodes } = useQuery<any[]>({
     queryKey: ['/api/cpt-codes'],
@@ -2324,8 +2351,12 @@ export default function Claims() {
     pendingAmount: claimsSummary?.pendingAmount || 0,
   };
 
+  // While the patient / payer lists are still loading (right after a deploy
+  // the first render has claims but not patients yet), show a placeholder
+  // rather than "Unknown", which reads as a data problem.
   const getPatientName = (patientId: number) => {
-    const patient = patients?.find(p => p.id === patientId);
+    if (!patients) return '…';
+    const patient = patients.find(p => p.id === patientId);
     return patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown';
   };
 
@@ -2344,7 +2375,8 @@ export default function Claims() {
   };
 
   const getInsuranceName = (insuranceId: number) => {
-    const insurance = insurances?.find(i => i.id === insuranceId);
+    if (!insurances) return '…';
+    const insurance = insurances.find(i => i.id === insuranceId);
     return insurance?.name || 'Unknown';
   };
 
@@ -2472,6 +2504,7 @@ export default function Claims() {
       setClaimAppeals([]);
     }
   };
+  handleViewClaimRef.current = handleViewClaim;
 
   const handleMarkPaid = (claim: Claim) => {
     setSelectedClaim(claim);
@@ -2510,7 +2543,11 @@ export default function Claims() {
           <Button
             variant="outline"
             className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0"
+            disabled={exporting}
+            data-testid="button-export-claims"
             onClick={async () => {
+              if (exporting) return;
+              setExporting(true);
               try {
                 // Export ALL rows matching the current filters, not just the
                 // visible page — the `all=1` path returns every match.
@@ -2542,12 +2579,14 @@ export default function Claims() {
                 toast({ title: "Export Complete", description: `Exported ${rows.length} claims to CSV.` });
               } catch {
                 toast({ title: "Export Failed", description: "Could not export claims. Please try again.", variant: "destructive" });
+              } finally {
+                setExporting(false);
               }
             }}
           >
-            <Download className="w-4 h-4 mr-1 md:mr-2" />
-            <span className="hidden sm:inline">Export Claims</span>
-            <span className="sm:hidden">Export</span>
+            {exporting ? <Loader2 className="w-4 h-4 mr-1 md:mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-1 md:mr-2" />}
+            <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export Claims"}</span>
+            <span className="sm:hidden">{exporting ? "Exporting…" : "Export"}</span>
           </Button>
           <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
             <FileText className="w-4 h-4 mr-1 md:mr-2" />
