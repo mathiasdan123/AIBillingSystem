@@ -136,7 +136,92 @@ export interface AiSoapBillingResponse {
    * review especially carefully before signing/billing, so the UI surfaces it.
    */
   generationMode: "ai" | "fallback";
+  /**
+   * Set only when generationMode is "fallback" because a live AI attempt was
+   * made and did not produce a usable note: "ai_output_unparseable" = the
+   * model replied but its JSON could not be parsed even after one retry and
+   * a trailing-comma repair; "ai_call_failed" = the call itself threw (auth,
+   * rate limit, network, abort). Absent for the no-key and forced-fallback
+   * paths, which never attempted a call. Never silent: the same reason is
+   * logged at error level with the underlying message.
+   */
+  fallbackReason?: "ai_output_unparseable" | "ai_call_failed";
 }
+
+/**
+ * Conservative repair for the one malformed-JSON shape the model is known to
+ * emit with stop_reason "end_turn": a trailing comma before a closing `}` or
+ * `]` (eval run 44423563561, P3 sample 1: "Expected double-quoted property
+ * name in JSON at position 4144"). String-aware, so a comma inside a quoted
+ * value is never touched; everything else is left for JSON.parse to reject.
+ */
+export function repairTrailingCommas(json: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < json.length && /\s/.test(json[j])) j++;
+      if (json[j] === "}" || json[j] === "]") continue; // drop the trailing comma
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * Pull the JSON object out of the model's reply (dropping any markdown fence
+ * it added despite the instruction) and parse it. On a SyntaxError, try once
+ * more after repairTrailingCommas; if that does not parse either, rethrow the
+ * ORIGINAL error so the log names the real defect, not the repaired text's.
+ */
+export function parseSoapAiJson(responseText: string): { value: any; repaired: boolean } {
+  const jsonMatch =
+    responseText.match(/```json\n?([\s\S]*?)\n?```/) ||
+    responseText.match(/\{[\s\S]*\}/);
+  const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
+  try {
+    return { value: JSON.parse(jsonStr), repaired: false };
+  } catch (original) {
+    if (!(original instanceof SyntaxError)) throw original;
+    const repaired = repairTrailingCommas(jsonStr);
+    if (repaired === jsonStr) throw original;
+    try {
+      return { value: JSON.parse(repaired), repaired: true };
+    } catch {
+      throw original;
+    }
+  }
+}
+
+/** The model replied, but no attempt produced parseable JSON. */
+export class SoapAiOutputError extends Error {
+  constructor(
+    message: string,
+    readonly attempts: number,
+    readonly cause: unknown,
+  ) {
+    super(message);
+    this.name = "SoapAiOutputError";
+  }
+}
+
+/** One initial call plus one retry on a parse failure. */
+const MAX_AI_OUTPUT_ATTEMPTS = 2;
 
 /**
  * AI-powered SOAP note and billing code generation
@@ -283,7 +368,11 @@ export async function generateSoapNoteAndBilling(
   const systemPrompt = buildSystemPrompt(insuranceData);
   const userPrompt = buildUserPrompt(request, patient, billingUnits, insuranceData, treatmentPlan, treatmentGoals, priorSessions);
 
-  try {
+  // One model call. `attempt` > 1 is the retry after a parse failure: the
+  // route's live preview is already holding the first reply's text, so a
+  // retry forwards no deltas to it (the route's own heartbeat keeps the
+  // connection warm); the final note arrives whole in the 'done' event.
+  const runModelOnce = async (attempt: number) => {
     // Use streaming so we don't hit a long hang on a single request. The SDK
     // auto-retries non-streaming calls on certain errors with a default 10-min
     // timeout, which can push a single "create" call past the ALB's idle
@@ -295,9 +384,10 @@ export async function generateSoapNoteAndBilling(
       // stops at end_turn when the note is complete (~1300-1400 tokens for a
       // typical note; more for a clinically rich session). Keep the ceiling
       // generous so a long-but-legitimate note is never truncated mid-JSON
-      // (truncation fails JSON.parse below → silent fallback to a rule-based
-      // note). Perceived speed comes from streaming the note as it's written,
-      // not from a tight cap. See the audit notes in adversarial review.
+      // (truncation fails the parse below → fallback to a rule-based note,
+      // flagged as such). Perceived speed comes from streaming the note as
+      // it's written, not from a tight cap. See the audit notes in
+      // adversarial review.
       max_tokens: 6000,
       // 0.5. A 0.2 trial (2026-11-04) did not make code choices repeatable
       // (identical inputs still split 97530/97112/97110 across samples) and
@@ -311,10 +401,11 @@ export async function generateSoapNoteAndBilling(
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    if (options.onProgress || options.onTextDelta) {
+    const onTextDelta = attempt === 1 ? options.onTextDelta : undefined;
+    if (options.onProgress || onTextDelta) {
       stream.on("text", (t: string) => {
         options.onProgress?.();
-        options.onTextDelta?.(t);
+        onTextDelta?.(t);
       });
     }
     // Abort the upstream generation if the HTTP client disconnects, so an
@@ -328,18 +419,19 @@ export async function generateSoapNoteAndBilling(
 
     // Output-token visibility for latency diagnosis (alongside the route's
     // durationMs). stop_reason "max_tokens" means the note hit the ceiling and
-    // was truncated — the JSON.parse below then fails and we fall back to a
+    // was truncated — the parse below then fails and we fall back to a
     // rule-based note, so surface it loudly for alerting rather than letting a
     // templated note ship silently.
     if (finalMessage.stop_reason === "max_tokens") {
       logger.warn(
         "SOAP AI generation hit max_tokens — note truncated, will fall back to rule-based",
-        { outputTokens: finalMessage.usage.output_tokens },
+        { outputTokens: finalMessage.usage.output_tokens, attempt },
       );
     } else {
       logger.info("SOAP AI usage", {
         outputTokens: finalMessage.usage.output_tokens,
         stopReason: finalMessage.stop_reason,
+        ...(attempt > 1 ? { attempt } : {}),
       });
     }
 
@@ -350,13 +442,45 @@ export async function generateSoapNoteAndBilling(
     if (!responseText) {
       throw new Error("No response from AI");
     }
+    return { responseText, stopReason: finalMessage.stop_reason };
+  };
 
-    // Strip markdown fencing if Claude added any, then parse
-    const jsonMatch =
-      responseText.match(/```json\n?([\s\S]*?)\n?```/) ||
-      responseText.match(/\{[\s\S]*\}/);
-    const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
-    const aiResponse = JSON.parse(jsonStr);
+  try {
+    let aiResponse: any;
+    for (let attempt = 1; ; attempt++) {
+      const { responseText, stopReason } = await runModelOnce(attempt);
+      try {
+        const parsed = parseSoapAiJson(responseText);
+        if (parsed.repaired) {
+          logger.warn("Repaired trailing comma(s) in SOAP AI JSON output", {
+            attempt,
+            stopReason,
+            outputLength: responseText.length,
+          });
+        }
+        aiResponse = parsed.value;
+        break;
+      } catch (parseError) {
+        const message = parseError instanceof Error ? parseError.message : String(parseError);
+        if (
+          !(parseError instanceof SyntaxError) ||
+          attempt >= MAX_AI_OUTPUT_ATTEMPTS ||
+          options.signal?.aborted
+        ) {
+          throw new SoapAiOutputError(
+            `SOAP AI output was not valid JSON after ${attempt} attempt(s): ${message}`,
+            attempt,
+            parseError,
+          );
+        }
+        logger.warn("SOAP AI output was not valid JSON; retrying the model call once", {
+          attempt,
+          error: message,
+          stopReason,
+          outputLength: responseText.length,
+        });
+      }
+    }
 
     // Validate and enhance the response
     const hasMostRecentPlanContext = !!priorSessions?.[0]?.plan;
@@ -370,9 +494,28 @@ export async function generateSoapNoteAndBilling(
     );
 
   } catch (error) {
+    const fallbackReason: NonNullable<AiSoapBillingResponse["fallbackReason"]> =
+      error instanceof SoapAiOutputError ? "ai_output_unparseable" : "ai_call_failed";
     console.error("AI generation error:", error);
-    // Fallback to rule-based generation if AI fails
-    return applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request);
+    // Never silent: a templated note is about to be returned in place of a
+    // generated one. Say why, with the underlying error, at error level.
+    logger.error("SOAP AI generation failed; returning the rule-based FALLBACK note", {
+      fallbackReason,
+      error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof SoapAiOutputError
+        ? {
+            attempts: error.attempts,
+            cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+          }
+        : {}),
+      patientId: request.patientId,
+      practiceId: request.practiceId,
+    });
+    // Fallback to rule-based generation if AI fails, flagged as such.
+    return {
+      ...(await applyPracticeCptRates(fallbackGeneration(request, patient, billingUnits, fallbackContext), request)),
+      fallbackReason,
+    };
   }
 }
 
