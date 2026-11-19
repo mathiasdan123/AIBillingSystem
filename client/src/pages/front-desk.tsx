@@ -164,9 +164,15 @@ export default function FrontDeskPage() {
     ? appointments
     : ((appointments as any)?.data ?? []);
 
+  // `archived=include` (mirrors #474 on Claims): this list resolves the
+  // patient NAME on existing records, and those belong to the patient after
+  // the patient is archived. The default list excludes archived patients,
+  // which made their existing records read "Patient #n" (QA 2026-11-18).
+  // Pickers that create something new use `pickablePatients` instead.
   const { data: patients = [] } = useQuery<Patient[]>({
-    queryKey: ["/api/patients"],
+    queryKey: ["/api/patients", "?archived=include"],
   });
+  const pickablePatients = patients.filter((p: any) => !p.archivedAt);
   const { data: therapists = [] } = useQuery<Therapist[]>({
     queryKey: ["/api/therapists"],
   });
@@ -312,7 +318,7 @@ export default function FrontDeskPage() {
       <WalkInDialog
         open={walkInOpen}
         onOpenChange={setWalkInOpen}
-        patients={patients}
+        patients={pickablePatients}
         therapists={therapists}
       />
 

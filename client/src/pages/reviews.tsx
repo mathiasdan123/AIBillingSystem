@@ -220,15 +220,21 @@ export default function ReviewsPage() {
     },
   });
 
-  // Fetch patients
+  // Fetch patients: name lookups for every review plus the request picker.
+  // `archived=include` (mirrors #474 on Claims): this list resolves the
+  // patient NAME on existing records, and those belong to the patient after
+  // the patient is archived. The default list excludes archived patients,
+  // which made their existing records read "Patient #n" (QA 2026-11-18).
+  // Pickers that create something new use `pickablePatients` instead.
   const { data: patients = [] } = useQuery<Patient[]>({
-    queryKey: ["/api/patients"],
+    queryKey: ["/api/patients", "?archived=include"],
     queryFn: async () => {
-      const res = await fetch("/api/patients");
+      const res = await fetch("/api/patients?archived=include");
       if (!res.ok) throw new Error("Failed to fetch patients");
       return res.json();
     },
   });
+  const pickablePatients = patients.filter((p: any) => !p.archivedAt);
 
   // Fetch patient feedback
   const { data: feedback = [], isLoading: feedbackLoading } = useQuery<PatientFeedback[]>({
@@ -494,7 +500,7 @@ export default function ReviewsPage() {
                 </DialogDescription>
               </DialogHeader>
               <SendRequestForm
-                patients={patients}
+                patients={pickablePatients}
                 onSubmit={(data) => sendRequest.mutate(data)}
                 isLoading={sendRequest.isPending}
               />
