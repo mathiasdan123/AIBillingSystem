@@ -16,6 +16,7 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       upsertUser: vi.fn(),
       getAppointments: vi.fn(),
       updateAppointment: vi.fn(),
+      getPatient: vi.fn(),
     },
     mockClient,
     // pool.query is the un-pooled path used by normalizeDemoRates and
@@ -30,7 +31,23 @@ vi.mock('../storage', () => ({ storage: mockStorage }));
 vi.mock('../services/logger', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../db', () => ({ getPool: vi.fn(async () => mockPool) }));
 
-import { ensureDemoPractice, DEMO_THERAPIST, isProcessZoneSeedTime, repairDemoSeededAppointments } from '../services/demoPractice';
+// ensureDemoPaymentRecords encrypts the remittance line's PHI fields with the
+// real helper; give it a key when the environment has none.
+if (!process.env.PHI_ENCRYPTION_KEY) {
+  process.env.PHI_ENCRYPTION_KEY = 'a'.repeat(64);
+}
+
+import {
+  ensureDemoPractice,
+  DEMO_THERAPIST,
+  DEMO_PATIENT_RESPONSIBILITY,
+  demoEraFileHash,
+  ensureDemoPaymentRecords,
+  isProcessZoneSeedTime,
+  repairDemoSeededAppointments,
+  repairDemoSeededClaimDates,
+} from '../services/demoPractice';
+import { decryptRemittanceLineItem } from '../services/phiEncryptionService';
 import { zonedDateString } from '../utils/timezone';
 import { zonedTimeString } from '../utils/dateOnly';
 
@@ -314,5 +331,164 @@ describe('ensureDemoPractice', () => {
       mockStorage.getAppointments.mockRejectedValue(new Error('db down'));
       await expect(repairDemoSeededAppointments(99, 'demo-therapist-99')).resolves.toEqual({ retimed: 0, assigned: 0 });
     });
+  });
+});
+
+describe('seeded claim dates (QA demo pass 2026-11-19, item 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    let nextPatientId = 100;
+    mockStorage.createPatient.mockImplementation(async () => ({ id: nextPatientId++ }));
+    mockStorage.createAppointment.mockResolvedValue({ id: 1 });
+    mockStorage.createClaim.mockResolvedValue({ id: 1 });
+    mockStorage.getPatientsByEmail.mockResolvedValue([]);
+    mockStorage.getAppointments.mockResolvedValue([]);
+    mockStorage.getTherapistsByPractice.mockResolvedValue([{ id: 'demo-therapist-99', role: 'therapist' }]);
+    mockStorage.getDemoPractice.mockResolvedValue(undefined);
+    mockStorage.createPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([]);
+  });
+
+  it('creates every claim before it is submitted, and submitted before it is paid', async () => {
+    await ensureDemoPractice();
+    const claims = mockStorage.createClaim.mock.calls.map((c) => c[0]);
+    expect(claims.length).toBeGreaterThan(0);
+    for (const claim of claims) {
+      expect(claim.createdAt).toBeInstanceOf(Date);
+      // Created at the end of the day of service, in the practice zone.
+      expect(zonedDateString(claim.createdAt, 'America/New_York')).toBe(claim.dateOfService);
+      if (claim.submittedAt) expect(claim.createdAt.getTime()).toBeLessThan(claim.submittedAt.getTime());
+      if (claim.paidAt) expect(claim.submittedAt.getTime()).toBeLessThan(claim.paidAt.getTime());
+      expect(claim.updatedAt.getTime()).toBeGreaterThanOrEqual(claim.createdAt.getTime());
+    }
+    expect(claims.filter((c) => c.submittedAt).length).toBeGreaterThan(0);
+  });
+
+  it('repairs an already-seeded practice: only DEMO-* claims created after their own submittedAt', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 7 });
+    const repaired = await repairDemoSeededClaimDates(99);
+    expect(repaired).toBe(7);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(params).toEqual([99]);
+    expect(sql).toMatch(/UPDATE claims/);
+    expect(sql).toMatch(/claim_number LIKE 'DEMO-%'/);
+    expect(sql).toMatch(/created_at > submitted_at/);
+    expect(sql).toMatch(/created_at = submitted_at - interval '2 days'/);
+  });
+
+  it('runs both repairs on every login to an already-seeded practice', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+    mockStorage.getPatientsByEmail.mockResolvedValue([{ id: 2, practiceId: 99 }]);
+    await ensureDemoPractice();
+    const sqls = mockPool.query.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((q) => q.includes('created_at > submitted_at'))).toBe(true);
+    expect(sqls.some((q) => q.includes('FROM claims c') && q.includes('payment_postings'))).toBe(true);
+  });
+});
+
+describe('ensureDemoPaymentRecords (QA demo pass 2026-11-19, item 1)', () => {
+  const paidAt = new Date('2026-11-13T15:00:00.000Z');
+  const paidClaim = {
+    id: 42,
+    claim_number: 'DEMO-99-1002',
+    patient_id: 102,
+    total_amount: '289.00',
+    paid_amount: '246.65',
+    paid_at: paidAt,
+    date_of_service: '2026-10-26',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStorage.getPatient.mockResolvedValue({
+      id: 102,
+      practiceId: 99,
+      firstName: 'Mia',
+      lastName: 'Example',
+      insuranceProvider: 'UnitedHealthcare',
+      insuranceId: 'DEMO1002',
+    });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (/INSERT INTO remittance_advice/.test(sql)) return { rows: [{ id: 501 }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    });
+  });
+
+  it('is a no-op when every paid demo claim already has a posting', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    expect(await ensureDemoPaymentRecords(99)).toBe(0);
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(params).toEqual([99]);
+    expect(sql).toMatch(/status = 'paid'/);
+    expect(sql).toMatch(/NOT EXISTS/);
+  });
+
+  it('writes the ERA, matched line item, posting and patient copay for a paid claim, in one transaction', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [paidClaim], rowCount: 1 });
+
+    expect(await ensureDemoPaymentRecords(99)).toBe(1);
+
+    const calls = mockClient.query.mock.calls.map(([sql, params]) => ({ sql: String(sql), params }));
+    const order = calls.map((c) => c.sql.split(/\s+/).slice(0, 3).join(' '));
+    expect(order[0]).toBe('BEGIN');
+    expect(order[order.length - 1]).toBe('COMMIT');
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+
+    const era = calls.find((c) => /INSERT INTO remittance_advice/.test(c.sql))!;
+    expect(era.sql).toMatch(/ON CONFLICT \(practice_id, file_hash\)/);
+    expect(era.params).toEqual([
+      99, '2026-11-13', 'UnitedHealthcare', 'DEMO-CHK-99-1002', '246.65', paidAt,
+      demoEraFileHash(99, 'DEMO-99-1002'),
+    ]);
+
+    const line = calls.find((c) => /INSERT INTO remittance_line_items/.test(c.sql))!;
+    const [remittanceId, claimId, patientName, memberId, serviceDate, cpt, charged, allowed, paid, adjustment, patientResp, contractual, reasonCodes, claimRef] = line.params;
+    expect([remittanceId, claimId, serviceDate, cpt, claimRef]).toEqual([501, 42, '2026-10-26', '97530', 'DEMO-99-1002']);
+    // PHI fields are stored encrypted and round-trip through the real decryptor.
+    expect(patientName).not.toContain('Example');
+    expect(decryptRemittanceLineItem({ patientName, memberId })).toMatchObject({ patientName: 'Example, Mia', memberId: 'DEMO1002' });
+    expect([charged, allowed, paid, adjustment, patientResp, contractual]).toEqual([
+      '289.00', '271.65', '246.65', '42.35', '25.00', '17.35',
+    ]);
+    // paid + patient responsibility + contractual write-off = charged
+    expect(Number(paid) + Number(patientResp) + Number(contractual)).toBeCloseTo(Number(charged), 2);
+    expect(JSON.parse(reasonCodes).map((r: any) => r.code)).toEqual(['CO-45', 'PR-3']);
+    expect(line.sql).toMatch(/'matched', \$14, 'claim_number'/);
+
+    const posting = calls.find((c) => /INSERT INTO payment_postings/.test(c.sql))!;
+    expect(posting.params).toEqual([
+      99, 42, 'UnitedHealthcare', 'DEMO-CHK-99-1002', '2026-11-13', '246.65',
+      '17.35', '25.00', '271.65', paidAt,
+    ]);
+    expect(posting.sql).toMatch(/'era'/);
+
+    const copay = calls.find((c) => /INSERT INTO payment_transactions/.test(c.sql))!;
+    expect(copay.sql).toMatch(/'payment', 'copay'/);
+    expect(copay.sql).toMatch(/'completed'/);
+    expect(copay.params.slice(0, 4)).toEqual([102, 99, 42, String(DEMO_PATIENT_RESPONSIBILITY.toFixed(2))]);
+    expect(zonedDateString(copay.params[5], 'America/New_York')).toBe('2026-11-15');
+  });
+
+  it('rolls back the claim and keeps going when a statement fails, without throwing', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [paidClaim], rowCount: 1 });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (/INSERT INTO remittance_advice/.test(sql)) return { rows: [{ id: 501 }], rowCount: 1 };
+      if (/INSERT INTO payment_postings/.test(sql)) throw new Error('boom');
+      return { rows: [], rowCount: 1 };
+    });
+    expect(await ensureDemoPaymentRecords(99)).toBe(0);
+    const sqls = mockClient.query.mock.calls.map((c) => String(c[0]));
+    expect(sqls).toContain('ROLLBACK');
+    expect(sqls).not.toContain('COMMIT');
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a claim whose patient is not in the demo practice', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [paidClaim], rowCount: 1 });
+    mockStorage.getPatient.mockResolvedValue({ id: 102, practiceId: 1, firstName: 'Real', lastName: 'Person' });
+    expect(await ensureDemoPaymentRecords(99)).toBe(0);
+    expect(mockPool.connect).not.toHaveBeenCalled();
   });
 });

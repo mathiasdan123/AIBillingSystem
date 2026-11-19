@@ -25,9 +25,11 @@
  * dataset once, then returns the existing one on every later call.
  */
 
+import crypto from 'crypto';
 import { storage } from '../storage';
 import { getPool } from '../db';
 import logger from './logger';
+import { encryptRemittanceLineItem } from './phiEncryptionService';
 import { getBusinessTimeZone, zonedAddDays, zonedDateString, zonedInstant } from '../utils/timezone';
 import { zonedTimeString } from '../utils/dateOnly';
 import type { Practice } from '@shared/schema';
@@ -168,6 +170,8 @@ export async function ensureDemoPractice(): Promise<Practice> {
       await ensureDemoFixturePatients(existing.id);
       const therapistId = await ensureDemoTherapist(existing.id);
       await repairDemoSeededAppointments(existing.id, therapistId);
+      await repairDemoSeededClaimDates(existing.id);
+      await ensureDemoPaymentRecords(existing.id);
       return existing;
     }
   }
@@ -211,6 +215,8 @@ export async function ensureDemoPractice(): Promise<Practice> {
     await ensureDemoFixturePatients(practice.id);
     const therapistId = await ensureDemoTherapist(practice.id);
     await repairDemoSeededAppointments(practice.id, therapistId);
+    await repairDemoSeededClaimDates(practice.id);
+    await ensureDemoPaymentRecords(practice.id);
     return practice;
   } finally {
     // Unlock on the SAME connection, then return it to the pool.
@@ -470,9 +476,15 @@ async function seedDemoData(practiceId: number): Promise<void> {
     } as any);
   }
 
-  // Claims across the revenue cycle.
+  // Claims across the revenue cycle. createdAt is the end of the day of
+  // service, so the row's history reads created → submitted → paid; without
+  // it every claim was "created" at seed time, after its own submittedAt
+  // (QA demo pass 2026-11-19, item 2). updatedAt is the latest milestone.
   for (let i = 0; i < DEMO_CLAIMS.length; i++) {
     const c = DEMO_CLAIMS[i];
+    const createdAt = dayAt(c.serviceOffset, 17);
+    const submittedAt = c.submitOffset != null ? dayAt(c.submitOffset) : null;
+    const paidAt = c.paidOffset != null ? dayAt(c.paidOffset) : null;
     await storage.createClaim({
       practiceId,
       patientId: patientIds[c.patientIdx],
@@ -483,9 +495,217 @@ async function seedDemoData(practiceId: number): Promise<void> {
       paidAmount: c.paid,
       status: c.status,
       dateOfService: isoDate(c.serviceOffset),
-      submittedAt: c.submitOffset != null ? dayAt(c.submitOffset) : null,
-      paidAt: c.paidOffset != null ? dayAt(c.paidOffset) : null,
+      submittedAt,
+      paidAt,
+      createdAt,
+      updatedAt: paidAt ?? submittedAt ?? createdAt,
       denialReason: c.status === 'denied' ? 'CO-197: Precertification/authorization absent' : null,
     } as any);
   }
+}
+
+/**
+ * One-time repair for demo practices seeded before the createdAt fix above:
+ * their claims carry created_at = seed time, which is AFTER the back-dated
+ * submitted_at/paid_at, so the claim detail showed a claim submitted before
+ * it existed. Rebuilds created_at as the seed intends (service day, two
+ * days before submission: every seeded submitOffset is serviceOffset + 2)
+ * and updated_at as the latest milestone. Scope: the demo practice's own
+ * DEMO-* claims whose created_at is still after submitted_at, so hand-made
+ * demo claims and already-repaired rows are untouched. Never blocks a demo
+ * login.
+ */
+export async function repairDemoSeededClaimDates(practiceId: number): Promise<number> {
+  try {
+    const pool = await getPool();
+    const result = await pool.query(
+      `UPDATE claims
+          SET created_at = submitted_at - interval '2 days',
+              updated_at = COALESCE(paid_at, submitted_at)
+        WHERE practice_id = $1
+          AND claim_number LIKE 'DEMO-%'
+          AND submitted_at IS NOT NULL
+          AND created_at > submitted_at`,
+      [practiceId],
+    );
+    if (result.rowCount) {
+      logger.info('Repaired demo seeded claim dates', { practiceId, repaired: result.rowCount });
+    }
+    return result.rowCount ?? 0;
+  } catch (error) {
+    logger.warn('Could not repair demo seeded claim dates', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
+}
+
+/**
+ * Payment records behind the seeded paid claims (QA demo pass 2026-11-19,
+ * item 1).
+ *
+ * seedDemoData sets paidAmount/paidAt on three claims and nothing else, so
+ * the dashboard (which sums claims.paidAmount) showed $686.50 collected while
+ * every screen that reads the money's paper trail showed $0: ERA/835
+ * (remittance_advice + remittance_line_items), Deposits (remittances in the
+ * period, awaiting or matched to a deposit) and Accounting
+ * (payment_transactions). The Recovery Ledger is not a collections view (it
+ * reads appeal outcomes and underpayment recoveries) and is left alone.
+ *
+ * For each paid DEMO-* claim that has no payment posting, this writes what
+ * the real ERA path (ingestRemittance → autoMatchRemittance → postPayment)
+ * would have left behind, dated to the claim's paidAt:
+ *   - one processed remittance_advice (the payer's check), idempotent on the
+ *     (practice_id, file_hash) unique index;
+ *   - one matched, auto-posted remittance_line_items row for the claim, PHI
+ *     fields encrypted like the ingestion service does;
+ *   - one 'era' payment_postings row;
+ *   - a completed patient copay in payment_transactions for the patient
+ *     responsibility on the line (the Accounting page reads only that table;
+ *     an insurance payment never lands there in the real flow either).
+ * Amounts reconcile: paid + patient responsibility + contractual adjustment
+ * = charged. postPayment itself is not used: it recomputes the claim status
+ * from paid vs charged (which would flip these to 'partial') and stamps
+ * paidAt = now.
+ *
+ * Runs on every ensureDemoPractice call, so the production demo practice
+ * picks it up on the next demo login; a no-op once every paid claim has a
+ * posting. Each claim's rows are written in one transaction. Never blocks a
+ * demo login.
+ */
+export const DEMO_PATIENT_RESPONSIBILITY = 25;
+/** Representative OT treatment code for the remittance line; the seeded claims carry no line items. */
+export const DEMO_ERA_CPT = '97530';
+
+export function demoEraFileHash(practiceId: number, claimNumber: string): string {
+  return crypto.createHash('sha256').update(`demo-era:${practiceId}:${claimNumber}`).digest('hex');
+}
+
+const money = (n: number): string => n.toFixed(2);
+
+export async function ensureDemoPaymentRecords(practiceId: number): Promise<number> {
+  let created = 0;
+  try {
+    const pool = await getPool();
+    const pending = await pool.query(
+      `SELECT c.id, c.claim_number, c.patient_id, c.total_amount, c.paid_amount, c.paid_at, c.date_of_service
+         FROM claims c
+        WHERE c.practice_id = $1
+          AND c.status = 'paid'
+          AND c.claim_number LIKE 'DEMO-%'
+          AND c.paid_amount IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_postings p WHERE p.claim_id = c.id AND p.reversed = false
+          )
+        ORDER BY c.id`,
+      [practiceId],
+    );
+    const tz = getBusinessTimeZone();
+    for (const row of pending.rows ?? []) {
+      const total = Number(row.total_amount);
+      const paid = Number(row.paid_amount);
+      if (!(paid > 0) || !(total >= paid)) continue;
+      const patient = await storage.getPatient(row.patient_id);
+      if (!patient || patient.practiceId !== practiceId) continue;
+
+      const writeOff = total - paid;
+      const patientResp = writeOff >= DEMO_PATIENT_RESPONSIBILITY ? DEMO_PATIENT_RESPONSIBILITY : 0;
+      const contractual = writeOff - patientResp;
+      const allowed = paid + patientResp;
+      const paidAt = row.paid_at ? new Date(row.paid_at) : new Date();
+      const paidDay = zonedDateString(paidAt, tz);
+      const claimNumber = String(row.claim_number);
+      const checkNumber = `DEMO-CHK-${claimNumber.replace(/^DEMO-/, '')}`;
+      const payerName = (patient as any).insuranceProvider || 'Demo Health Plan';
+      const line = encryptRemittanceLineItem({
+        patientName: `${patient.lastName}, ${patient.firstName}`,
+        memberId: (patient as any).insuranceId ?? null,
+      });
+      const reasonCodes = [
+        { code: 'CO-45', description: 'Charge exceeds fee schedule/maximum allowable or contracted/legislated fee arrangement' },
+        ...(patientResp > 0 ? [{ code: 'PR-3', description: 'Co-payment amount' }] : []),
+      ];
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const era = await client.query(
+          `INSERT INTO remittance_advice
+             (practice_id, received_date, payer_name, check_number, check_date, total_payment_amount,
+              status, processed_at, file_hash, created_at)
+           VALUES ($1, $2, $3, $4, $2, $5, 'processed', $6, $7, $6)
+           ON CONFLICT (practice_id, file_hash) DO UPDATE SET status = EXCLUDED.status
+           RETURNING id`,
+          [practiceId, paidDay, payerName, checkNumber, money(paid), paidAt, demoEraFileHash(practiceId, claimNumber)],
+        );
+        const remittanceId = era.rows?.[0]?.id;
+        if (!remittanceId) throw new Error('remittance_advice insert returned no id');
+
+        await client.query(
+          `INSERT INTO remittance_line_items
+             (remittance_id, claim_id, patient_name, member_id, service_date, cpt_code,
+              charged_amount, allowed_amount, paid_amount, adjustment_amount,
+              patient_responsibility, contractual_adjustment, adjustment_reason_codes,
+              status, claim_reference, match_type, matched_at, auto_posted_at, created_at)
+           SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb,
+                  'matched', $14, 'claim_number', $15, $15, $15
+            WHERE NOT EXISTS (SELECT 1 FROM remittance_line_items WHERE remittance_id = $1)`,
+          [
+            remittanceId, row.id, line.patientName, line.memberId, row.date_of_service, DEMO_ERA_CPT,
+            money(total), money(allowed), money(paid), money(writeOff),
+            money(patientResp), money(contractual), JSON.stringify(reasonCodes),
+            claimNumber, paidAt,
+          ],
+        );
+
+        await client.query(
+          `INSERT INTO payment_postings
+             (practice_id, claim_id, payer_name, check_number, payment_date, payment_amount,
+              adjustment_amount, adjustment_reason, patient_responsibility, allowed_amount,
+              copay_amount, source, posted_at, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'CO-45', $8, $9, $8, 'era', $10, $10)`,
+          [
+            practiceId, row.id, payerName, checkNumber, paidDay, money(paid),
+            money(contractual), money(patientResp), money(allowed), paidAt,
+          ],
+        );
+
+        if (patientResp > 0) {
+          const copayAt = zonedAddDays(paidAt, 2, tz);
+          await client.query(
+            `INSERT INTO payment_transactions
+               (patient_id, practice_id, claim_id, amount, type, category, description,
+                processor, status, processed_at, created_at, updated_at)
+             SELECT $1, $2, $3, $4, 'payment', 'copay', $5, 'manual', 'completed', $6, $6, $6
+              WHERE NOT EXISTS (
+                SELECT 1 FROM payment_transactions WHERE claim_id = $3 AND type = 'payment'
+              )`,
+            [
+              row.patient_id, practiceId, row.id, money(patientResp),
+              `Copay for date of service ${row.date_of_service ?? paidDay} (claim ${claimNumber})`,
+              copayAt,
+            ],
+          );
+        }
+
+        await client.query('COMMIT');
+        created++;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    if (created) {
+      logger.info('Demo payment records created for paid claims', { practiceId, created });
+    }
+  } catch (error) {
+    logger.warn('Could not create demo payment records', {
+      practiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return created;
 }
