@@ -11,6 +11,7 @@ import express, { type Express } from 'express';
 import request from 'supertest';
 
 import { buildLedger, periodBounds, isoDay } from '../services/accountingLedger';
+import { zonedInstant } from '../utils/timezone';
 
 const { storageStub } = vi.hoisted(() => ({
   storageStub: {
@@ -70,6 +71,16 @@ describe('periodBounds (practice timezone)', () => {
     expect(b.end).toBeUndefined();
     expect(periodBounds(undefined, undefined, ET)).toEqual({});
     expect(periodBounds('2026-11-01T03:00:00Z', undefined, ET).startDay).toBe('2026-10-31');
+  });
+
+  it('ignores array and other non-string query values instead of throwing (parameter tampering)', () => {
+    expect(periodBounds(['2026-11-01', '2026-11-02'], ['2026-11-19'], ET)).toEqual({});
+    expect(periodBounds({ toString: () => '2026-11-01' }, 42, ET)).toEqual({});
+    expect(periodBounds(['2026-11-01'], '2026-11-19', ET)).toEqual({
+      end: new Date('2026-11-20T04:59:59.999Z'),
+      endDay: '2026-11-19',
+    });
+    expect(zonedInstant(['2026-11-01'] as any, '00:00', ET).getTime()).toBeNaN();
   });
 
   it('isoDay keeps a date-only string and reads a timestamp in the practice zone', () => {
@@ -145,6 +156,16 @@ describe('GET /api/payment-transactions/ledger', () => {
     expect(res.body).toHaveLength(2);
     expect(res.body[0]).toMatchObject({ id: 'txn-1', party: 'Mia Example', date: '2026-11-15' });
     expect(res.body[1]).toMatchObject({ id: 'posting-501', party: 'UnitedHealthcare', amount: 246.65 });
+  });
+
+  it('treats a repeated startDate/endDate (array) as no bound and still answers 200', async () => {
+    await request(makeApp()).get('/api/payment-transactions/ledger?startDate=2026-11-01&startDate=2026-11-02&endDate[]=2026-11-19').expect(200);
+    expect(storageStub.getPaymentTransactions).toHaveBeenCalledWith(7, { startDate: undefined, endDate: undefined });
+    expect(storageStub.getPaymentPostingsForPeriod).toHaveBeenCalledWith(7, undefined, undefined);
+    storageStub.getPaymentStats.mockResolvedValue({ totalRevenue: 0 });
+    await request(makeApp()).get('/api/payment-transactions/stats?startDate=2026-11-01&startDate=2026-11-02').expect(200);
+    expect(storageStub.getPaymentStats).toHaveBeenCalledWith(7, undefined, undefined, { startDay: undefined, endDay: undefined });
+    await request(makeApp()).get('/api/payment-transactions?endDate=x&endDate=y').expect(200);
   });
 
   it('ignores a ?practiceId for another practice', async () => {

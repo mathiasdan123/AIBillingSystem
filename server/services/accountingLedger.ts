@@ -91,8 +91,8 @@ export function isoDay(value: Date | string | null | undefined, timeZone: string
  * given. `startDay` / `endDay` are the calendar days for `date` columns.
  */
 export function periodBounds(
-  startDate?: string,
-  endDate?: string,
+  startDateInput?: unknown,
+  endDateInput?: unknown,
   timeZone: string = getBusinessTimeZone(),
 ): {
   start?: Date;
@@ -101,6 +101,10 @@ export function periodBounds(
   endDay?: string;
 } {
   const out: { start?: Date; end?: Date; startDay?: string; endDay?: string } = {};
+  // Express delivers a repeated query key as an array; anything but a string is no date.
+  const asStr = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const startDate = asStr(startDateInput);
+  const endDate = asStr(endDateInput);
   if (startDate) {
     if (DATE_ONLY.test(startDate)) {
       const d = zonedInstant(startDate, '00:00', timeZone);

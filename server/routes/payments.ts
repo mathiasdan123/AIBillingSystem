@@ -110,7 +110,10 @@ router.get('/payment-transactions', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
     // A date-only endDate covers the whole of that day (see periodBounds).
-    const { start, end } = periodBounds(req.query.startDate as string | undefined, req.query.endDate as string | undefined);
+    const { start, end } = periodBounds(
+      typeof req.query.startDate === 'string' ? req.query.startDate : undefined,
+      typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
+    );
     const filters = {
       patientId: req.query.patientId ? parseInt(req.query.patientId as string) : undefined,
       status: req.query.status as string | undefined,
@@ -129,7 +132,10 @@ router.get('/payment-transactions', isAuthenticated, async (req: any, res) => {
 router.get('/payment-transactions/stats', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end, startDay, endDay } = periodBounds(req.query.startDate as string | undefined, req.query.endDate as string | undefined);
+    const { start, end, startDay, endDay } = periodBounds(
+      typeof req.query.startDate === 'string' ? req.query.startDate : undefined,
+      typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
+    );
     const stats = await storage.getPaymentStats(practiceId, start, end, { startDay, endDay });
     res.json(stats);
   } catch (error) {
@@ -150,7 +156,10 @@ router.get('/payment-transactions/stats', isAuthenticated, async (req: any, res)
 router.get('/payment-transactions/ledger', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end, startDay, endDay } = periodBounds(req.query.startDate as string | undefined, req.query.endDate as string | undefined);
+    const { start, end, startDay, endDay } = periodBounds(
+      typeof req.query.startDate === 'string' ? req.query.startDate : undefined,
+      typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
+    );
     const [transactions, postings] = await Promise.all([
       storage.getPaymentTransactions(practiceId, { startDate: start, endDate: end }),
       storage.getPaymentPostingsForPeriod(practiceId, startDay, endDay),
