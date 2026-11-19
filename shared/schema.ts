@@ -3493,6 +3493,23 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
    * never a legacy row (matchType NULL) posted under the old fused path.
    */
   autoPostedAt: timestamp("auto_posted_at"),
+  /**
+   * The payment posting for this line was recorded, by EITHER path (the
+   * auto path sets autoPostedAt as well, which stays its own gate). The
+   * manual match route keys its idempotency on this: a retry after a
+   * failure later in the request never posts the money twice. Set BEFORE
+   * postPayment and cleared if it fails, like autoPostedAt.
+   */
+  postedAt: timestamp("posted_at"),
+  /**
+   * CLP02 4 (denied) lines: the denial was applied to the claim AND the
+   * appeal draft / follow-up pipeline completed. NULL on a posted denied
+   * line means the denial is still pending; the next auto-match run or a
+   * manual match of the same line retries it without touching the posting.
+   */
+  denialAppliedAt: timestamp("denial_applied_at"),
+  /** Why the last denial application failed; cleared on success. */
+  denialError: text("denial_error"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_remittance_line_items_remittance").on(table.remittanceId),

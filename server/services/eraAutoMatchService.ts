@@ -45,7 +45,7 @@ import {
 } from '@shared/schema';
 import { eq, and, desc, sql, ilike, lte } from 'drizzle-orm';
 import { postPayment } from './paymentPostingService';
-import { applyRemittanceDenial, isDeniedRemittanceLine, postingReasonFields } from './eraDenialService';
+import { applyRemittanceDenialToLine, isDenialPending, postingReasonFields } from './eraDenialService';
 import { ensureUnderpaymentFollowUp } from './underpaymentPipelineService';
 import { scoreClaimAgainstRemittanceLine, isAutoMatch } from './eraMatchScoring';
 import { decryptRemittanceLineItem, decryptField } from './phiEncryptionService';
@@ -103,6 +103,14 @@ export interface AutoMatchResult {
    * clean success.
    */
   postingFailures: Array<{ claimId: number; lineItemId: number }>;
+  /** Denied (CLP02 4) lines whose claim was marked denied / pipeline completed on this run. */
+  denialsApplied: number;
+  /**
+   * Posted denied lines whose denial could not be applied (claim status,
+   * appeal draft or follow-up). The money IS recorded; the denial stays
+   * pending on the line and the next run retries it.
+   */
+  denialFailures: Array<{ claimId: number; lineItemId: number; error: string }>;
 }
 
 interface ClaimCandidate {
@@ -554,10 +562,13 @@ export async function autoMatchRemittance(
     // failure. If the rollback itself fails, the failure is still visible in
     // postingFailures/logs — biasing toward "posting missed and flagged"
     // over "posting recorded twice", which inflates collections and the fee.
+    const postedAt = new Date();
     await db
       .update(remittanceLineItems)
-      .set({ autoPostedAt: new Date() })
+      .set({ autoPostedAt: postedAt, postedAt })
       .where(eq(remittanceLineItems.id, lineItem.id));
+    lineItem.autoPostedAt = postedAt;
+    lineItem.postedAt = postedAt;
 
     // The payment posting is the record the whole money path reads from
     // (A/R, patient statements, and the 6%-of-collections basis). postPayment
@@ -598,10 +609,12 @@ export async function autoMatchRemittance(
         error: postError instanceof Error ? postError.message : String(postError),
       });
       postingFailures.push({ claimId, lineItemId: lineItem.id });
+      lineItem.autoPostedAt = null;
+      lineItem.postedAt = null;
       try {
         await db
           .update(remittanceLineItems)
-          .set({ autoPostedAt: null })
+          .set({ autoPostedAt: null, postedAt: null })
           .where(eq(remittanceLineItems.id, lineItem.id));
       } catch (rollbackError) {
         logger.error('ERA auto-match: failed to clear autoPostedAt after posting failure', {
@@ -610,28 +623,33 @@ export async function autoMatchRemittance(
           error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         });
       }
-      continue;
     }
+  }
 
-    // A denied line (CLP02 4): mark the claim denied with the CARC as the
-    // reason and start the appeal draft + work-queue follow-up. After
-    // postPayment on purpose — it owns paidAmount and the paid/partial
-    // status. Its own failure is logged inside; never fails the posting.
-    if (isDeniedRemittanceLine(lineItem)) {
-      try {
-        await applyRemittanceDenial(practiceId, claimId, lineItem, {
-          remittanceId: remittance.id,
-          payerName: remittance.payerName,
-          checkNumber: remittance.checkNumber ?? null,
-          postedBy,
-        });
-      } catch (denialError) {
-        logger.error('ERA auto-match: failed to apply denial to claim', {
-          claimId,
-          remittanceId: remittance.id,
-          error: denialError instanceof Error ? denialError.message : String(denialError),
-        });
-      }
+  // Denied lines (CLP02 4) whose posting is recorded but whose denial is not
+  // yet applied to the claim: the ones posted just now AND any left pending
+  // by an earlier run (or by the manual match route) whose denial step
+  // failed. The posting is never repeated here — only the denial: claim
+  // status + CARC reason + appeal draft + follow-up. Each line records its
+  // own outcome (denialAppliedAt / denialError), so a failure is visible and
+  // retried next run instead of being lost.
+  let denialsApplied = 0;
+  const denialFailures: Array<{ claimId: number; lineItemId: number; error: string }> = [];
+  for (const lineItem of lineItems.filter((li: any) => isDenialPending(li))) {
+    const outcome = await applyRemittanceDenialToLine(practiceId, lineItem, {
+      remittanceId: remittance.id,
+      payerName: remittance.payerName,
+      checkNumber: remittance.checkNumber ?? null,
+      postedBy,
+    });
+    if (outcome.applied) {
+      denialsApplied++;
+    } else {
+      denialFailures.push({
+        claimId: lineItem.claimId,
+        lineItemId: lineItem.id,
+        error: outcome.pipeline.error ?? outcome.skippedReason ?? 'denial not applied',
+      });
     }
   }
 
@@ -666,5 +684,7 @@ export async function autoMatchRemittance(
     needsReview: matchOutcome.needsReview,
     results: matchOutcome.results,
     postingFailures,
+    denialsApplied,
+    denialFailures,
   };
 }

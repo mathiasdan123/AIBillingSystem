@@ -266,8 +266,13 @@ export default function Remittance() {
     },
     onSuccess: (data: any) => {
       toast({
-        title: data?.denied ? "Matched — claim denied by payer" : "Success",
+        title: data?.partial
+          ? "Matched — denial step needs a retry"
+          : data?.denied || data?.claimStatus === 'denied'
+            ? "Matched — claim denied by payer"
+            : "Success",
         description: data?.message || "Line item matched to claim",
+        variant: data?.partial ? "destructive" : "default",
       });
       queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
       queryClient.invalidateQueries({ queryKey: ['/api/claims'] });

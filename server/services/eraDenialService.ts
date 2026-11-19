@@ -29,6 +29,9 @@
  * manual Deny button and the 277 status poller do.
  */
 
+import { eq } from 'drizzle-orm';
+import { db } from '../db';
+import { remittanceLineItems } from '@shared/schema';
 import { storage } from '../storage';
 import { recordClaimEvent, clip } from './claimEventService';
 import { processDeniedClaim } from './denialPipelineService';
@@ -129,21 +132,81 @@ export interface ApplyDenialOptions {
   postedBy?: string | null;
 }
 
+/** What the appeal-draft / follow-up pipeline actually did. Always reported, never assumed. */
+export interface DenialPipelineState {
+  /** False when the claim's status meant the pipeline had nothing to do (e.g. already under appeal). */
+  ran: boolean;
+  appealCreated: boolean;
+  /** An appeal already existed for the claim and was kept. */
+  appealReused: boolean;
+  appealId?: number;
+  followUpCreated: boolean;
+  error?: string;
+}
+
 export interface ApplyDenialResult {
   claimId: number;
-  /** The claim's status became 'denied'. */
+  /** This call changed the claim's status to 'denied'. */
   denied: boolean;
+  /** The claim's status after this call. */
+  claimStatus: string | null;
   denialReason: string;
-  /** Why the claim was left in its status, when it was. */
-  skippedReason?: 'not_denied' | 'claim_not_found' | 'claim_has_payments' | 'already_denied';
-  pipeline?: { appealCreated: boolean; appealId?: number; followUpCreated: boolean; error?: string };
+  /**
+   * Nothing is left to retry: the claim carries the denial (or legitimately
+   * keeps its status) AND the pipeline finished. False means the caller
+   * should leave the line's denial pending so the next run tries again.
+   */
+  applied: boolean;
+  skippedReason?: 'not_denied' | 'claim_not_found' | 'claim_has_payments' | 'claim_reopened';
+  pipeline: DenialPipelineState;
+}
+
+const NO_PIPELINE: DenialPipelineState = { ran: false, appealCreated: false, appealReused: false, followUpCreated: false };
+
+/**
+ * Run the appeal draft + denial_appeal follow-up for a denied claim and say
+ * truthfully what happened. processDeniedClaim is idempotent (it keeps an
+ * existing appeal and dedups the follow-up), so this is safe to rerun until
+ * it succeeds. A draft that silently produced no appeal (the generator
+ * returned nothing) is reported as an error so the step is retried.
+ */
+async function runDenialPipeline(claimId: number): Promise<DenialPipelineState> {
+  try {
+    const r = await processDeniedClaim(claimId);
+    if (r.skippedReason === 'claim_status_appeal') {
+      return { ...NO_PIPELINE, appealReused: true };
+    }
+    if (r.skippedReason && r.skippedReason !== 'appeal_exists') {
+      return { ...NO_PIPELINE, error: `Denial pipeline skipped: ${r.skippedReason}` };
+    }
+    const state: DenialPipelineState = {
+      ran: true,
+      appealCreated: r.appealCreated,
+      appealReused: r.skippedReason === 'appeal_exists',
+      appealId: r.appealId,
+      followUpCreated: r.followUpCreated,
+      error: r.error,
+    };
+    if (!state.error && !state.appealCreated && !state.appealReused) {
+      state.error = 'Appeal draft was not created (the generator returned nothing)';
+    }
+    return state;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('ERA denial: denial pipeline failed', { claimId, error: message });
+    return { ...NO_PIPELINE, error: message };
+  }
 }
 
 /**
  * Apply a denied remittance line to its claim. Call AFTER postPayment, which
  * owns paidAmount and sets paid/partial when money arrived; a denial of one
  * line on a claim another line paid keeps that status and only gets a
- * timeline note. Idempotent: a claim already denied is not re-processed.
+ * timeline note.
+ *
+ * Resumable: an already-denied claim is not re-flagged, but its appeal /
+ * follow-up pipeline still runs, so a failure after the status change is
+ * picked up by the next attempt. Nothing here posts money.
  */
 export async function applyRemittanceDenial(
   practiceId: number,
@@ -152,7 +215,14 @@ export async function applyRemittanceDenial(
   opts: ApplyDenialOptions,
 ): Promise<ApplyDenialResult> {
   const denialReason = denialReasonForLine(line);
-  const result: ApplyDenialResult = { claimId, denied: false, denialReason };
+  const result: ApplyDenialResult = {
+    claimId,
+    denied: false,
+    claimStatus: null,
+    denialReason,
+    applied: true,
+    pipeline: { ...NO_PIPELINE },
+  };
 
   if (!isDeniedRemittanceLine(line)) {
     result.skippedReason = 'not_denied';
@@ -162,9 +232,11 @@ export async function applyRemittanceDenial(
   const claim = await storage.getClaim(claimId);
   if (!claim || claim.practiceId !== practiceId) {
     result.skippedReason = 'claim_not_found';
+    result.applied = false;
     logger.warn('ERA denial: claim not found for practice', { practiceId, claimId, remittanceId: opts.remittanceId });
     return result;
   }
+  result.claimStatus = claim.status ?? null;
 
   const codes = adjustmentReasonCodeEntries(line).map((e) => e.code);
   const remarks = remarkCodeEntries(line).map((e) => e.code);
@@ -179,6 +251,7 @@ export async function applyRemittanceDenial(
     payerName: opts.payerName ?? null,
     checkNumber: opts.checkNumber ?? null,
   };
+  const lineLabel = line.cptCode ? `line ${line.cptCode}` : 'a line';
 
   if (claim.status === 'paid' || claim.status === 'partial') {
     // Money was recorded on this claim (this line or another), so the
@@ -188,54 +261,115 @@ export async function applyRemittanceDenial(
       claimId,
       practiceId,
       eventType: 'note_added',
-      summary: `ERA denied ${line.cptCode ? `line ${line.cptCode}` : 'a line'}: ${clip(denialReason)} (claim stays ${claim.status}; other lines paid)`,
+      summary: `ERA denied ${lineLabel}: ${clip(denialReason)} (claim stays ${claim.status}; other lines paid)`,
       metadata: { ...baseMetadata, previousStatus: claim.status, statusChanged: false },
       createdBy: opts.postedBy ?? null,
     });
     return result;
   }
 
-  if (claim.status === 'denied') {
-    result.skippedReason = 'already_denied';
+  if (claim.status === 'draft') {
+    // Only reachable for a claim that WAS transmitted and has since been
+    // reopened for correction (the match routes refuse never-sent drafts).
+    // The ERA is the verdict on the earlier filing; the biller is already
+    // correcting it, so the draft is left alone and the fact goes on the
+    // timeline. The reopen already created the correction follow-up.
+    result.skippedReason = 'claim_reopened';
+    await recordClaimEvent({
+      claimId,
+      practiceId,
+      eventType: 'note_added',
+      summary: `ERA for the earlier submission denied ${lineLabel}: ${clip(denialReason)} (claim is a draft being corrected; status unchanged)`,
+      metadata: { ...baseMetadata, previousStatus: claim.status, statusChanged: false },
+      createdBy: opts.postedBy ?? null,
+    });
     return result;
   }
 
-  await storage.updateClaim(claimId, { status: 'denied', denialReason } as any);
-  result.denied = true;
+  if (claim.status !== 'denied' && claim.status !== 'appeal') {
+    await storage.updateClaim(claimId, { status: 'denied', denialReason } as any);
+    result.denied = true;
+    result.claimStatus = 'denied';
 
-  await recordClaimEvent({
-    claimId,
-    practiceId,
-    eventType: 'denied',
-    summary: `Denied by ${opts.payerName || 'payer'} (ERA): ${clip(denialReason)}`,
-    metadata: { ...baseMetadata, denialReason, previousStatus: claim.status, statusChanged: true },
-    createdBy: opts.postedBy ?? null,
-  });
+    await recordClaimEvent({
+      claimId,
+      practiceId,
+      eventType: 'denied',
+      summary: `Denied by ${opts.payerName || 'payer'} (ERA): ${clip(denialReason)}`,
+      metadata: { ...baseMetadata, denialReason, previousStatus: claim.status, statusChanged: true },
+      createdBy: opts.postedBy ?? null,
+    });
 
-  logger.info('ERA denial applied to claim', {
-    practiceId,
-    claimId,
-    remittanceId: opts.remittanceId,
-    previousStatus: claim.status,
-    adjustmentReasonCodes: codes,
-  });
-
-  // Appeal draft + denial_appeal follow-up, same as the Deny button and the
-  // 277 poller. Its failures are reported, never thrown: the denial itself
-  // is already on the claim.
-  try {
-    const pipeline = await processDeniedClaim(claimId);
-    result.pipeline = {
-      appealCreated: pipeline.appealCreated,
-      appealId: pipeline.appealId,
-      followUpCreated: pipeline.followUpCreated,
-      error: pipeline.error,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error('ERA denial: denial pipeline failed', { claimId, error: message });
-    result.pipeline = { appealCreated: false, followUpCreated: false, error: message };
+    logger.info('ERA denial applied to claim', {
+      practiceId,
+      claimId,
+      remittanceId: opts.remittanceId,
+      previousStatus: claim.status,
+      adjustmentReasonCodes: codes,
+    });
   }
 
+  // Appeal draft + denial_appeal follow-up, same as the Deny button and the
+  // 277 poller. Runs even when the claim was already denied, so a pipeline
+  // failure after the status change is retried next time.
+  result.pipeline = await runDenialPipeline(claimId);
+  result.applied = !result.pipeline.error;
   return result;
+}
+
+/**
+ * Apply a line's denial and record the outcome ON THE LINE: denialAppliedAt
+ * when nothing is left to retry, denialError (with denialAppliedAt cleared)
+ * otherwise. Both posting paths call this after the payment is recorded,
+ * and the auto-match run retries every posted denied line that is still
+ * pending. Never throws: a thrown error becomes a denialError.
+ */
+export async function applyRemittanceDenialToLine(
+  practiceId: number,
+  line: RemittanceLineLike & { id: number; claimId?: number | null },
+  opts: ApplyDenialOptions,
+): Promise<ApplyDenialResult> {
+  const claimId = line.claimId as number;
+  let result: ApplyDenialResult;
+  try {
+    result = await applyRemittanceDenial(practiceId, claimId, line, opts);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('ERA denial: applying the denial threw', { claimId, lineItemId: line.id, remittanceId: opts.remittanceId, error: message });
+    result = {
+      claimId,
+      denied: false,
+      claimStatus: null,
+      denialReason: denialReasonForLine(line),
+      applied: false,
+      pipeline: { ...NO_PIPELINE, error: message },
+    };
+  }
+
+  const error = result.applied ? null : (result.pipeline.error ?? result.skippedReason ?? 'denial not applied');
+  try {
+    await db
+      .update(remittanceLineItems)
+      .set(result.applied ? { denialAppliedAt: new Date(), denialError: null } : { denialAppliedAt: null, denialError: clip(error, REASON_TEXT_LIMIT) })
+      .where(eq(remittanceLineItems.id, line.id));
+  } catch (markError) {
+    // The denial outcome is still in the result/logs; the line simply stays
+    // pending and is retried next run.
+    logger.error('ERA denial: failed to record the denial outcome on the line', {
+      lineItemId: line.id,
+      error: markError instanceof Error ? markError.message : String(markError),
+    });
+  }
+  return result;
+}
+
+/** A posted, denied line whose denial has not been (fully) applied yet. */
+export function isDenialPending(line: RemittanceLineLike & { status?: string | null; claimId?: number | null; autoPostedAt?: Date | string | null; postedAt?: Date | string | null; denialAppliedAt?: Date | string | null }): boolean {
+  return (
+    line.status === 'matched' &&
+    line.claimId != null &&
+    isDeniedRemittanceLine(line) &&
+    (line.autoPostedAt != null || line.postedAt != null) &&
+    line.denialAppliedAt == null
+  );
 }
