@@ -331,3 +331,46 @@ describe('ClaimFullDetail payments tab — denial vs write-off', () => {
   });
 });
 
+/**
+ * Status tab, Clearinghouse Response (demo retest 2026-11-19, cosmetic): a
+ * long single-line response value widened the whole tab, forcing horizontal
+ * scroll and clipping the Clearinghouse "Status:" / "Submitted:" values off
+ * the right edge. The JSON now wraps inside a bounded box.
+ */
+describe('ClaimFullDetail status tab — clearinghouse response wraps', () => {
+  afterEach(() => { liveClaim = { ...SNAPSHOT, totalAmount: '200.00' }; vi.clearAllMocks(); });
+
+  const longToken = 'x'.repeat(600);
+
+  function setup(clearinghouseResponse: unknown) {
+    liveClaim = {
+      ...SNAPSHOT, status: 'submitted', clearinghouseClaimId: 'STEDI-1', clearinghouseStatus: 'simulated',
+      clearinghouseSubmittedAt: '2026-11-19T15:00:00.000Z', clearinghouseResponse,
+    };
+    mockApiRequest.mockImplementation(async (_m: string, url: string) => {
+      if (url === '/api/claims/5') return jsonResponse(liveClaim);
+      return jsonResponse([]);
+    });
+    renderDetail({ status: 'submitted' });
+    clickTab('tab-status');
+  }
+
+  it('wraps a long response inside a bounded box and keeps the status fields in the normal flow', async () => {
+    setup({ success: true, status: 'simulated', message: longToken });
+    const pre = await screen.findByTestId('clearinghouse-response');
+    expect(pre.className).toMatch(/whitespace-pre-wrap/);
+    expect(pre.className).toMatch(/break-all/);
+    expect(pre.className).toMatch(/max-w-full/);
+    expect(pre.className).not.toMatch(/overflow-x-auto/);
+    expect(pre.textContent).toContain('"status": "simulated"');
+    expect(screen.getByText('Status:')).toBeInTheDocument();
+    expect(screen.getByText('Submitted:')).toBeInTheDocument();
+  });
+
+  it('a string response that is not JSON is shown as is instead of crashing the tab', async () => {
+    setup('TA1*ACK*not json');
+    const pre = await screen.findByTestId('clearinghouse-response');
+    expect(pre.textContent).toBe('TA1*ACK*not json');
+  });
+});
+

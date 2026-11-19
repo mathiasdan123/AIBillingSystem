@@ -106,6 +106,23 @@ const CLAIM_EVENT_LOOK: Record<string, { label: string; bg: string; fg: string; 
 };
 
 // Comprehensive claim detail component with tabs for billing, payments, and status
+
+/** Pretty-print the stored clearinghouse response; a string that is not JSON is shown as is rather than throwing. */
+function formatClearinghouseResponse(value: unknown): string {
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
   claim: any;
   lineItems: any[];
@@ -966,14 +983,20 @@ export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems,
           </div>
         )}
 
-        {/* Clearinghouse Response */}
+        {/* Clearinghouse Response. Wrapped (whitespace-pre-wrap + break-all)
+            and boxed (min-w-0 / max-w-full): a long single-line value used to
+            widen the whole tab, forcing horizontal scroll and pushing the
+            Clearinghouse "Status:" / "Submitted:" values off the right edge
+            (demo retest 2026-11-19). The JSON stays readable; nothing else
+            moves. */}
         {claim.clearinghouseResponse && (
-          <div className="border-t pt-4">
+          <div className="border-t pt-4 min-w-0 max-w-full">
             <Label className="text-slate-700 font-semibold mb-2 block">Clearinghouse Response</Label>
-            <pre className="text-xs bg-slate-50 p-3 rounded-lg border overflow-x-auto max-h-48 overflow-y-auto">
-              {typeof claim.clearinghouseResponse === 'string'
-                ? JSON.stringify(JSON.parse(claim.clearinghouseResponse), null, 2)
-                : JSON.stringify(claim.clearinghouseResponse, null, 2)}
+            <pre
+              className="text-xs bg-slate-50 p-3 rounded-lg border max-w-full max-h-48 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all"
+              data-testid="clearinghouse-response"
+            >
+              {formatClearinghouseResponse(claim.clearinghouseResponse)}
             </pre>
           </div>
         )}
