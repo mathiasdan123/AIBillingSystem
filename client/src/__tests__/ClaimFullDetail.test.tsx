@@ -80,6 +80,35 @@ function renderDetail(claimOverrides: any = {}) {
   );
 }
 
+describe('ClaimFullDetail payment dates', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders a posting\'s payment_date as the stored calendar day, not a day early in New York (billing pass 2026-11-19)', async () => {
+    mockApiRequest.mockImplementation(async (_m: string, url: string) => {
+      if (url === '/api/claims/5') return jsonResponse(liveClaim);
+      if (url.startsWith('/api/payment-postings')) {
+        return jsonResponse([
+          { id: 6, paymentAmount: '246.65', paymentDate: '2026-11-13', payerName: 'UnitedHealthcare', checkNumber: 'DEMO-CHK-2-1002', reversed: false },
+        ]);
+      }
+      if (url.startsWith('/api/patients/')) return jsonResponse({ patientId: 1, balance: 0 });
+      if (url.startsWith('/api/icd10-codes')) return jsonResponse([]);
+      return jsonResponse({});
+    });
+    renderDetail();
+    // Radix tabs activate on pointer down, not on click alone.
+    const tab = screen.getByRole('tab', { name: 'Payments' });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    expect(await screen.findByText('Nov 13, 2026')).toBeInTheDocument();
+    // The old new Date('2026-11-13').toLocaleDateString() rendered 11/12/2026 west of UTC.
+    expect(screen.queryByText(/11\/12\/2026/)).toBeNull();
+    expect(screen.getByText('DEMO-CHK-2-1002')).toBeInTheDocument();
+  });
+});
+
 describe('ClaimFullDetail billed totals', () => {
   beforeEach(() => {
     mockApiRequest.mockImplementation(async (_m: string, url: string) => {

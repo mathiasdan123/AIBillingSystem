@@ -46,10 +46,16 @@ async function applySchema(url: string): Promise<void> {
     const existing = await client.query("SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'public'");
     if (existing.rows[0].n > 0) throw new Error('DEMO_PROVISION_DATABASE_URL must point at an empty database');
     for (const statement of statements) await client.query(statement);
-    // A small payer catalog so the demo claims can be linked to payers.
+    // A small payer catalog so the demo claims can be linked to payers, and
+    // the CPT / ICD-10 rows the seeded service lines use.
     await client.query(
       `INSERT INTO insurances (name, payer_code) VALUES ('Aetna', '00400'), ('Cigna', '00500'), ('UnitedHealth', '00600'), ('Blue Cross Blue Shield', '00300')`,
     );
+    await client.query(
+      `INSERT INTO cpt_codes (code, description, category, base_rate, billing_units)
+       VALUES ('97530', 'Therapeutic activities', 'treatment', '289.00', 1), ('97110', 'Therapeutic exercises', 'treatment', '289.00', 1), ('97140', 'Manual therapy', 'treatment', '289.00', 1)`,
+    );
+    await client.query(`INSERT INTO icd10_codes (code, description, category) VALUES ('F82', 'Specific developmental disorder of motor function', 'developmental')`);
   } finally {
     await client.end();
   }
@@ -115,6 +121,16 @@ run('demo practice provisioning (real Postgres)', () => {
 
     // Payer link: every DEMO claim points at a catalog row.
     expect(await count("SELECT count(*)::int AS n FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%' AND insurance_id IS NULL", [practiceId])).toBe(0);
+
+    // Service lines: every DEMO claim has exactly one line that reconciles with its total,
+    // dated on the claim's service day, and the demo ERA line names that same code.
+    expect(await count(`SELECT count(*)::int AS n FROM claims c WHERE c.practice_id = $1 AND c.claim_number LIKE 'DEMO-%' AND (SELECT count(*) FROM claim_line_items l WHERE l.claim_id = c.id) <> 1`, [practiceId])).toBe(0);
+    expect(await count(`SELECT count(*)::int AS n FROM claims c JOIN claim_line_items l ON l.claim_id = c.id WHERE c.practice_id = $1 AND c.claim_number LIKE 'DEMO-%' AND (l.amount <> c.total_amount OR l.units <> 1 OR l.modifier <> 'GO' OR l.icd10_code_id IS NULL)`, [practiceId])).toBe(0);
+    expect(await count(`SELECT count(*)::int AS n FROM claims c JOIN claim_line_items l ON l.claim_id = c.id WHERE c.practice_id = $1 AND c.claim_number LIKE 'DEMO-%' AND l.date_of_service <> (c.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York')::date`, [practiceId])).toBe(0);
+    expect(await count(`SELECT count(*)::int AS n FROM remittance_line_items rl JOIN claim_line_items cl ON cl.claim_id = rl.claim_id JOIN cpt_codes cc ON cc.id = cl.cpt_code_id JOIN remittance_advice r ON r.id = rl.remittance_id WHERE r.practice_id = $1 AND rl.cpt_code <> cc.code`, [practiceId])).toBe(0);
+    expect((await client.query(`SELECT cc.code, c.total_amount::text AS total FROM claims c JOIN claim_line_items l ON l.claim_id = c.id JOIN cpt_codes cc ON cc.id = l.cpt_code_id WHERE c.practice_id = $1 AND c.claim_number LIKE 'DEMO-%' ORDER BY c.id`, [practiceId])).rows.map((r: any) => `${r.total}=${r.code}`)).toEqual([
+      '289.00=97530', '216.00=97110', '289.00=97530', '216.00=97110', '289.00=97530', '150.00=97140', '216.00=97110', '289.00=97530', '216.00=97110',
+    ]);
   }, 120_000);
 
   it('a second login is a no-op: nothing is duplicated', async () => {
@@ -133,8 +149,10 @@ run('demo practice provisioning (real Postgres)', () => {
     await client.query('DELETE FROM remittance_line_items WHERE remittance_id IN (SELECT id FROM remittance_advice WHERE practice_id = $1)', [practiceId]);
     await client.query('DELETE FROM remittance_advice WHERE practice_id = $1', [practiceId]);
     await client.query('UPDATE claims SET insurance_id = NULL, created_at = now() WHERE practice_id = $1', [practiceId]);
+    await client.query("DELETE FROM claim_line_items WHERE claim_id IN (SELECT id FROM claims WHERE practice_id = $1 AND claim_number LIKE 'DEMO-%')", [practiceId]);
 
     await demo.ensureDemoPractice();
+    expect(await count(`SELECT count(*)::int AS n FROM claim_line_items l JOIN claims c ON c.id = l.claim_id WHERE c.practice_id = $1 AND c.claim_number LIKE 'DEMO-%'`, [practiceId])).toBe(9);
 
     expect(await count('SELECT count(*)::int AS n FROM remittance_advice WHERE practice_id = $1', [practiceId])).toBe(3);
     expect(await count('SELECT count(*)::int AS n FROM payment_postings WHERE practice_id = $1', [practiceId])).toBe(3);
