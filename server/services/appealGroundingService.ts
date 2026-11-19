@@ -260,7 +260,51 @@ export const APPEAL_ASSERTION_RULES: AssertionRule[] = [
 // A sentence ends at . ! ? or a line break; numbered/bulleted list lines are
 // whole sentences by themselves. The RE/letterhead block lines have no
 // terminal punctuation and are matched as lines.
-const SENTENCE_RE = /[^.!?\n]+(?:[.!?]+|(?=\n)|$)/g;
+//
+// Implemented as a single left-to-right scan rather than the regex
+// /[^.!?\n]+(?:[.!?]+|(?=\n)|$)/g it replaces: CodeQL flagged that pattern as
+// polynomial (js/polynomial-redos) on biller-edited letter text. Boundaries
+// are identical: a sentence is a run of non-terminator characters followed by
+// its terminal punctuation run, or ending just before a line break / at the
+// end of the text. Bare terminators (a line break, or punctuation with no text
+// before it) are not sentences and are left in place by replaceSentences.
+const SENTENCE_TERMINATORS = new Set(['.', '!', '?']);
+
+/** [start, end) spans of each sentence in `text`, in order. Linear in text length. */
+function sentenceSpans(text: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const ch = text[i];
+    if (ch === '\n' || SENTENCE_TERMINATORS.has(ch)) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < n && text[j] !== '\n' && !SENTENCE_TERMINATORS.has(text[j])) j++;
+    while (j < n && SENTENCE_TERMINATORS.has(text[j])) j++;
+    spans.push([i, j]);
+    i = j;
+  }
+  return spans;
+}
+
+/** The sentences of `text`, in order (what the regex match() used to return). */
+export function splitSentences(text: string): string[] {
+  return sentenceSpans(text).map(([s, e]) => text.slice(s, e));
+}
+
+/** Rebuild `text` with each sentence passed through `fn`; non-sentence characters are kept as-is. */
+function replaceSentences(text: string, fn: (sentence: string) => string): string {
+  let out = '';
+  let cursor = 0;
+  for (const [s, e] of sentenceSpans(text)) {
+    out += text.slice(cursor, s) + fn(text.slice(s, e));
+    cursor = e;
+  }
+  return out + text.slice(cursor);
+}
 
 function unsupportedRulesIn(sentence: string, g: AppealGrounding): AssertionRule[] {
   return APPEAL_ASSERTION_RULES.filter((r) => r.pattern.test(sentence) && !r.supported(g));
@@ -269,7 +313,7 @@ function unsupportedRulesIn(sentence: string, g: AppealGrounding): AssertionRule
 /** Detection only: does `text` still assert something the grounding does not support? */
 export function hasUnsupportedAppealAssertion(text: string | null | undefined, g: AppealGrounding): boolean {
   if (!text) return false;
-  for (const sentence of text.match(SENTENCE_RE) ?? []) {
+  for (const sentence of splitSentences(text)) {
     if (unsupportedRulesIn(sentence, g).length > 0) return true;
   }
   return false;
@@ -279,7 +323,7 @@ export function hasUnsupportedAppealAssertion(text: string | null | undefined, g
 export function unsupportedAppealAssertionKeys(text: string | null | undefined, g: AppealGrounding): string[] {
   if (!text) return [];
   const keys = new Set<string>();
-  for (const sentence of text.match(SENTENCE_RE) ?? []) {
+  for (const sentence of splitSentences(text)) {
     for (const r of unsupportedRulesIn(sentence, g)) keys.add(r.key);
   }
   return Array.from(keys);
@@ -301,7 +345,7 @@ function tidyLetter(text: string): string {
  */
 export function stripUnsupportedAppealAssertions(text: string | null | undefined, g: AppealGrounding): string {
   if (!text || !hasUnsupportedAppealAssertion(text, g)) return text ?? '';
-  const stripped = text.replace(SENTENCE_RE, (sentence) => (unsupportedRulesIn(sentence, g).length > 0 ? '' : sentence));
+  const stripped = replaceSentences(text, (sentence) => (unsupportedRulesIn(sentence, g).length > 0 ? '' : sentence));
   // Renumber consecutive "N. " lines so removed arguments leave no gaps.
   let counter = 0;
   let lastWasItem = false;

@@ -27,6 +27,7 @@ import {
   normalizeGroundingInputs,
   stripUnsupportedAppealAssertions,
   type AppealGrounding,
+  splitSentences,
 } from '../services/appealGroundingService';
 import { appealGenerator } from '../aiAppealGenerator';
 import { formatDateOnlyShort, addDaysToDateOnly } from '../utils/dateOnly';
@@ -308,5 +309,39 @@ describe('computeAppealDeadline', () => {
     expect(addDaysToDateOnly('2026-03-01', 10)).toBe('2026-03-11'); // crosses the US DST change
     expect(addDaysToDateOnly('2026-10-25', 10)).toBe('2026-11-04');
     expect(addDaysToDateOnly('not-a-date', 10)).toBeNull();
+  });
+});
+
+describe('splitSentences (linear replacement for the polynomial SENTENCE_RE)', () => {
+  // The regex CodeQL flagged (js/polynomial-redos). Kept here only as the
+  // oracle: the scanner must produce exactly the same segments.
+  const LEGACY_SENTENCE_RE = /[^.!?\n]+(?:[.!?]+|(?=\n)|$)/g;
+  const samples = [
+    '',
+    'One sentence.',
+    'No terminal punctuation',
+    'First. Second! Third? Fourth',
+    'Ellipsis... then more?! And a tail',
+    'Line one\nLine two\n\nLine four.\n',
+    '\n\n...\n!!\n',
+    'Dear Appeals Department,\n\nGROUNDS FOR APPEAL:\n1. The service was urgent.\n2. Progress notes are enclosed.\n\nSincerely,\n[Provider Name]',
+    'Trailing spaces here.   \n   Leading spaces there. Mixed?Yes!No.',
+    '. .. . leading dots then text. and text.',
+  ];
+
+  it('matches the legacy regex segment-for-segment', () => {
+    for (const s of samples) {
+      expect(splitSentences(s)).toEqual(s.match(LEGACY_SENTENCE_RE) ?? []);
+    }
+  });
+
+  it('is linear on the input that made the regex polynomial', () => {
+    // A long run of non-terminators followed by a line break: the old regex
+    // re-scanned the run from every start offset. 200k chars must be quick.
+    const long = 'a'.repeat(200_000) + '\n' + 'b'.repeat(200_000);
+    const started = Date.now();
+    const parts = splitSentences(long);
+    expect(parts).toHaveLength(2);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });
