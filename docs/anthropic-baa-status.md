@@ -9,7 +9,7 @@ On July 14, 2026, the BAA request was escalated to a human on Anthropic's Privac
 **Conversation ID (reference):** 215475077323219
 
 ## Account / org details
-- **Product surface:** first-party Anthropic API (Messages API, `ANTHROPIC_API_KEY`)
+- **Product surface:** first-party Anthropic API (Messages API)
 - **Organization:** daniel's Individual Org
 - **Organization ID:** 75169edf-cffe-451e-8c23-223b2e70ac01
 - **Account email:** daniel@therapybillai.com
