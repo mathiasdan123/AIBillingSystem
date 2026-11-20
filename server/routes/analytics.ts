@@ -1025,12 +1025,9 @@ router.get('/recovery-ledger', isAuthenticated, async (req: any, res) => {
         message: 'No practice specified. Pass ?practiceId or use an account assigned to a practice.',
       });
     }
-    // Non-admins may only read their own practice's ledger.
-    if (
-      user?.role !== 'admin' &&
-      req.userPracticeId &&
-      practiceId !== req.userPracticeId
-    ) {
+    // Practice check for every caller except the platform admin. A caller
+    // with no practice assignment may not pick one by query parameter.
+    if (!req.isPlatformAdmin && practiceId !== req.userPracticeId) {
       return res.status(403).json({ message: 'Access denied for the requested practice.' });
     }
 
@@ -1073,7 +1070,8 @@ router.get('/biller-cockpit', isAuthenticated, async (req: any, res) => {
         message: 'No practice specified. Pass ?practiceId or use an account assigned to a practice.',
       });
     }
-    if (user?.role !== 'admin' && req.userPracticeId && practiceId !== req.userPracticeId) {
+    // Practice check for every caller except the platform admin.
+    if (!req.isPlatformAdmin && practiceId !== req.userPracticeId) {
       return res.status(403).json({ message: 'Access denied for the requested practice.' });
     }
 
