@@ -73,8 +73,8 @@ PHI_ENCRYPTION_KEY=your-64-char-hex-key
 # Environment
 NODE_ENV=development
 
-# AI (Anthropic required for the billing assistant; OpenAI optional for SOAP notes)
-ANTHROPIC_API_KEY=sk-ant-your-key
+# AI (Claude via AWS Bedrock, using the AWS credential chain; OpenAI optional for SOAP notes)
+AI_PROVIDER=bedrock
 OPENAI_API_KEY=sk-your-openai-key   # optional
 
 # Payments (Stripe)

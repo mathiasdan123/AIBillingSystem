@@ -87,7 +87,7 @@ migrations/          # Drizzle SQL migrations (18 files)
 |---------|---------|---------|--------|
 | Stedi | `STEDI_API_KEY` | Eligibility, claims submission, claim status | Test key configured, sandbox verified |
 | Stripe | `STRIPE_SECRET_KEY` | Patient/practice billing | Configured |
-| Anthropic | `ANTHROPIC_API_KEY` | AI billing assistant (Claude), claim accuracy review, appeals | Configured |
+| Anthropic (via AWS Bedrock) | `AI_PROVIDER=bedrock` | AI billing assistant (Claude), claim accuracy review, appeals | Configured |
 | OpenAI | `OPENAI_API_KEY` | SOAP notes generation | Optional |
 | Twilio | `TWILIO_ACCOUNT_SID` | SMS reminders | Optional |
 | ElevenLabs | `ELEVENLABS_API_KEY` | Text-to-speech | Optional |
@@ -178,7 +178,7 @@ DATABASE_URL=        # PostgreSQL connection string (RDS in production)
 SESSION_SECRET=      # Min 32 chars
 PHI_ENCRYPTION_KEY=  # 64-char hex (32 bytes)
 NODE_ENV=            # development or production
-ANTHROPIC_API_KEY=   # Claude API key for AI billing assistant
+AI_PROVIDER=         # bedrock (Claude via AWS Bedrock, AWS credential chain)
 STEDI_API_KEY=       # Stedi clearinghouse API key
 STRIPE_SECRET_KEY=   # Stripe payment processing
 STRIPE_PUBLISHABLE_KEY= # Stripe client-side key
