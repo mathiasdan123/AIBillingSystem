@@ -45,7 +45,7 @@ When the insurer responds (30-90 days typical), the user records **Won**, **Lost
 ## What our system does not do (yet)
 
 - **No auto-submission** of appeals — every payer has a different process; auto-submission would skip human review and increase the lose rate.
-- **No phone calls** — see [voice-agent-proposal.md](voice-agent-proposal.md).
+- **No phone calls** — payer phone calls are still handled by staff.
 - **No specific win-rate promises** — outcomes depend on the denial, the payer, and the documentation strength.
 
 ## What to listen for in a demo
@@ -62,4 +62,3 @@ If a prospect's biller says any of these, lead with denials/appeals:
 
 ## See also
 - [denials-playbook-biller.md](denials-playbook-biller.md) — the detailed step-by-step for the person actually doing the work.
-- [voice-agent-proposal.md](voice-agent-proposal.md) — proposal for adding programmatic payer phone calls.
