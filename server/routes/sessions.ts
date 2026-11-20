@@ -671,9 +671,25 @@ router.patch('/users/:id/supervision', isAuthenticated, isAdminOrBilling, async 
     const userId = req.params.id;
     const { supervisorId, requiresCosign } = req.body;
 
+    // The supervisee must be in the caller's practice (platform admin
+    // excepted), and a supervisor must be in the supervisee's practice.
+    const supervisee = await storage.getUser(userId);
+    if (!supervisee) return res.status(404).json({ message: "User not found" });
+    const callerPracticeId = req.userPracticeId ?? null;
+    if (!req.isPlatformAdmin && (!callerPracticeId || supervisee.practiceId !== callerPracticeId)) {
+      logger.warn('Supervision update refused: user outside the caller practice', { userId, callerId: req.user?.claims?.sub });
+      return res.status(404).json({ message: "User not found" });
+    }
+
     if (supervisorId) {
+      if (supervisorId === userId) {
+        return res.status(400).json({ message: "A user cannot supervise themselves" });
+      }
       const supervisor = await storage.getUser(supervisorId);
-      if (!supervisor) return res.status(400).json({ message: "Supervisor not found" });
+      if (!supervisor || supervisor.practiceId !== supervisee.practiceId) {
+        logger.warn('Supervision update refused: supervisor not in the user practice', { userId, supervisorId });
+        return res.status(400).json({ message: "Supervisor not found" });
+      }
     }
 
     const updatedUser = await storage.updateUserSupervision(userId, supervisorId || null, requiresCosign ?? false);
