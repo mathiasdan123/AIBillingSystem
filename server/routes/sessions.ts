@@ -648,6 +648,16 @@ router.get('/users/:id/supervisees', isAuthenticated, async (req: any, res) => {
     if (currentUserId !== supervisorId && currentUser?.role !== 'admin') {
       return res.status(403).json({ message: "Not authorized to view these supervisees" });
     }
+    // Practice check for every caller except the platform admin: an admin
+    // may list supervisees only for a supervisor in their own practice.
+    if (currentUserId !== supervisorId && !req.isPlatformAdmin) {
+      const supervisor = await storage.getUser(supervisorId);
+      const callerPracticeId = req.userPracticeId ?? currentUser?.practiceId ?? null;
+      if (!supervisor || !callerPracticeId || supervisor.practiceId !== callerPracticeId) {
+        logger.warn('Unauthorized supervisee list attempt', { userId: currentUserId, supervisorId });
+        return res.status(404).json({ message: 'Supervisor not found' });
+      }
+    }
     const supervisees = await storage.getSupervisees(supervisorId);
     res.json(supervisees);
   } catch (error) {
