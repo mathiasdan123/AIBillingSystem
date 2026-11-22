@@ -36,6 +36,7 @@ import { derivePracticeUnitRate, describeUnitRate } from "@/lib/practiceRate";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
+import { describeBilledUnits, formatUnits, getMissingRequiredFields } from "@/lib/soapForm";
 import ActivityCptPairingEditor from "@/components/ActivityCptPairingEditor";
 import GeneratedSoapSection, { type SoapSectionKey } from "@/components/GeneratedSoapSection";
 
@@ -1112,6 +1113,14 @@ export default function SoapNotes() {
   // Get patient info
   const patient = patients?.find(p => p.id === selectedPatient);
 
+  // Required inputs still missing; the Generate button lists them instead of
+  // just being disabled.
+  const missingRequiredFields = getMissingRequiredFields({
+    hasPatient: !!(selectedPatient || (isNewPatient && newPatientData.firstName.trim())),
+    activityCount: selectedActivities.length,
+    nextSessionFocus,
+  });
+
   // AI Generation - Calls the real AI backend service
   const generateNoteAndCodes = async () => {
     const hasPatient = selectedPatient || (isNewPatient && newPatientData.firstName.trim());
@@ -1452,10 +1461,10 @@ export default function SoapNotes() {
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <FileText className="w-6 h-6 text-blue-600" />
-              Pediatric OT Documentation
+              SOAP Notes
             </h1>
             <p className="text-muted-foreground mt-1">
-              Select activities performed &rarr; AI drafts the note and suggests billing codes for your review
+              Pediatric OT documentation: select activities performed &rarr; AI drafts the note and suggests billing codes for your review
             </p>
           </div>
           <Button
@@ -2646,7 +2655,8 @@ export default function SoapNotes() {
             {/* Generate Button */}
             <Button
               onClick={generateNoteAndCodes}
-              disabled={isGenerating || (!selectedPatient && !(isNewPatient && newPatientData.firstName.trim())) || selectedActivities.length === 0}
+              disabled={isGenerating || missingRequiredFields.length > 0}
+              aria-describedby={missingRequiredFields.length > 0 ? "generate-missing-fields" : undefined}
               className="w-full h-12 text-base bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
             >
               {isGenerating ? (
@@ -2661,6 +2671,17 @@ export default function SoapNotes() {
                 </>
               )}
             </Button>
+
+            {missingRequiredFields.length > 0 && (
+              <p
+                id="generate-missing-fields"
+                role="status"
+                className="text-xs text-amber-700 text-center -mt-2"
+                data-testid="generate-missing-fields"
+              >
+                To generate, still needed: {missingRequiredFields.join(", ")}
+              </p>
+            )}
 
             {/* Live preview: the note materializes here while Claude writes it. */}
             {isGenerating && streamPreview && (
@@ -2717,7 +2738,7 @@ export default function SoapNotes() {
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
                             <Badge className={`font-mono ${index === 0 ? 'bg-green-600' : ''}`}>{code.code}</Badge>
-                            <span className="text-xs text-muted-foreground">{code.units} unit(s)</span>
+                            <span className="text-xs text-muted-foreground">{formatUnits(code.units)}</span>
                           </div>
                           {isAdmin && (
                             <span className={`text-sm font-semibold ${index === 0 ? 'text-green-700' : 'text-green-600'}`}>
@@ -2739,7 +2760,7 @@ export default function SoapNotes() {
                       </div>
                     )}
                     <p className="text-xs text-muted-foreground">
-                      {(generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0)} units × {duration} min session
+                      {describeBilledUnits((generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0), duration)}
                     </p>
 
                     {/* AI Billing Rationale */}
@@ -3098,11 +3119,9 @@ export default function SoapNotes() {
                                 />
                               </div>
                             ) : (
-                              <div className="border-b-2 border-slate-300 pb-2 mb-2 h-16 flex items-end">
-                                <p className="text-muted-foreground/70 italic text-sm">
-                                  {user?.firstName} {user?.lastName}
-                                </p>
-                              </div>
+                              // Empty signature line: the printed name sits right below it,
+                              // so repeating it here showed the name twice.
+                              <div className="border-b-2 border-slate-300 pb-2 mb-2 h-16" aria-label="Signature line" />
                             )}
                             <p className="text-sm font-medium text-foreground">
                               {therapistSignature?.name || `${user?.firstName} ${user?.lastName}`}
